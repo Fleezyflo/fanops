@@ -112,23 +112,6 @@ def test_expand_filters_sibling_owned_terms_after_llm(tmp_path, monkeypatch):
     assert hv.load_vocab(cfg).get(a, {}).get("terms") == ["drillscene"]
 
 
-def test_expand_if_due_noop_when_responder_manual(tmp_path, monkeypatch):
-    """Fail-open: with FANOPS_RESPONDER=manual, vocab expand is a no-op (no LLM call)."""
-    cfg = Config(root=tmp_path)
-    pid = _persona(cfg); _link_active(cfg, pid)
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
-    called = []
-
-    def _boom(*a, **k):
-        called.append(1); raise AssertionError("claude must not run in manual mode")
-
-    monkeypatch.setattr(hv, "claude_json", _boom)
-    r = hv.expand_vocab_if_due(cfg)
-    assert r.get("refreshed") is False
-    assert r.get("reason") in ("responder_manual", "manual", "not_llm")
-    assert called == []
-    assert not cfg.hashtag_vocab_path.exists()
-
 
 def test_input_fingerprint_is_stable_and_input_sensitive(tmp_path):
     """MOL-693: the fingerprint is stable across reloads and sensitive to every own-persona input."""

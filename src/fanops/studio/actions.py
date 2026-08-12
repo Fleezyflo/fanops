@@ -11,7 +11,7 @@ from typing import Optional
 from pydantic import ValidationError
 
 from fanops.config import Config
-from fanops.errors import AuthError, ToolchainMissingError, reason
+from fanops.errors import AuthError, ToolchainMissingError, fail_open, reason
 from fanops.ledger import Ledger
 from fanops.models import (CaptionSet, ClipState, ErrorKind, MomentDecision, MomentHookDecision, Platform, Post,
                            PostState, _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
@@ -192,12 +192,8 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
                **({"content_tags": content_tags} if content_tags else {}),
                **({"hashtag_metrics": hashtag_metrics} if hashtag_metrics else {})}
     if model is None:
-        # NO haphazard claude (ROOT): Regenerate calls the LLM, so it obeys the SAME single switch as every
-        # other gate — refuse unless the operator EXPLICITLY enabled the AI responder. Never spawn `claude`
-        # just because the binary is on PATH. (An injected `model` is the test/programmatic path — unchanged.)
-        if cfg.responder_mode != "llm":
-            return ActionResult(ok=False, error="AI responder is off — turn it on in Go-Live → AI Responder "
-                                "(or edit the caption by hand in Review). Regenerate uses the LLM.")
+        # Gates are answered ONLY by the LLM, so Regenerate always uses the LLM (an injected `model` is the
+        # test/programmatic path — unchanged).
         from fanops.llm import claude_json
         model = claude_json
     try:                                                # the slow generation, OUTSIDE any lock
@@ -206,6 +202,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
         return ActionResult(ok=False, error=f"Regenerate needs `{cfg.llm_cli_binary}` on PATH (run "
                             f"`fanops autopilot` once to enable auto mode): {str(exc)[:160]}")
     except Exception as exc:
+        get_logger(cfg)("regenerate", post_id, "regenerate_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"regenerate failed: {str(exc)[:160]}")
     try:
         cs = CaptionSet(**{**out, "request_id": "regen"})
@@ -266,6 +263,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     try:
         _, rc = render_moment(snap, cfg, mom_id, aspect=clip.aspect)
     except Exception as exc:
+        get_logger(cfg)("reburn", post_id, "reburn_render_failed", err=str(exc)[:120])
         return ActionResult(ok=False, error=f"re-burn render failed: {str(exc)[:120]}")
     if rc.state is ClipState.error:
         return ActionResult(ok=False, error=rc.error_reason or "re-burn render failed")
@@ -287,6 +285,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
                 led2.clips[rc.id] = rc
             _stamp_edited(led2, post_id, _now(None))
     except Exception as exc:
+        get_logger(cfg)("reburn", post_id, "reburn_write_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": post_id, "hook": hook, "hook_burned": hook_burned})
 
@@ -405,6 +404,7 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
                     p.scheduled_time = t
                     moved += 1
     except Exception as exc:
+        get_logger(cfg)("schedule", handle, "accept_suggestions_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"accept suggestions failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"rescheduled": moved, "outcome": "suggestions_accepted", "handle": handle})
 
@@ -432,6 +432,7 @@ def reconcile_inflight(cfg: Config) -> ActionResult:
     try:
         summary = reconcile_due(cfg)
     except Exception as exc:
+        get_logger(cfg)("reconcile", "-", "reconcile_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"reconcile failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"outcome": "reconciled", **summary})
 
@@ -460,14 +461,12 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     if (err := _studio_publish_guard(cfg, post)):
         return ActionResult(ok=False, error=err)
     if (pf := preflight_publish_media(cfg, post, led=led)):
-        try:
+        with fail_open("studio.actions.publish_now"):
             with Ledger.transaction(cfg) as led:
                 p = led.posts.get(post_id)
                 if p is not None:
                     led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.bad_payload,
                                        error_reason=pf)
-        except Exception:
-            pass
         return ActionResult(ok=False, error=pf)
     from fanops.post.compress import persist_post_shrink
     persist_post_shrink(cfg, led, post_id)
@@ -485,6 +484,7 @@ def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionR
     except Exception as exc:
         # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
         # Flask as a 500 — the cockpit surfaces it cleanly (mirrors run_advance's broad catch).
+        get_logger(cfg)("publish", post_id, "publish_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"publish failed: {str(exc)[:160]}")
     # ONLY 'published' is success: _publish_one advances submitted -> published on a clean poster return,
     # so any other terminal state means the post did NOT fully ship. A None return means the CLAIM gate
@@ -585,6 +585,7 @@ def repost_post(cfg: Config, post_id: str) -> ActionResult:
                               batch_id=src.batch_id,
                               variation_axis=src.variation_axis))
     except Exception as exc:
+        get_logger(cfg)("repost", post_id, "repost_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id, "batch_id": src.batch_id, "account": src.account})
 
@@ -642,8 +643,8 @@ def _warm_target_aspect(cfg: Config, moment_id: str, aspect) -> None:
     # as today (never a crash); the snapshot state is discarded — only the on-disk mp4+fp persist, and the
     # transaction re-resolves authoritatively.
     from fanops.crosspost import _clip_for_aspect
-    try: _clip_for_aspect(Ledger.load(cfg), cfg, moment_id, aspect)
-    except Exception: pass
+    with fail_open("studio.actions._warm_target_aspect"):
+        _clip_for_aspect(Ledger.load(cfg), cfg, moment_id, aspect)
 
 def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platform: str, *,
                          now: Optional[datetime] = None) -> ActionResult:
@@ -664,7 +665,9 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
     try: plat = Platform(platform)
     except ValueError: return ActionResult(ok=False, error=f"unknown platform: {platform!r}")
     try: accts = Accounts.load(cfg)
-    except Exception as exc: return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
+    except Exception as exc:
+        get_logger(cfg)("crosspost", target_account, "accounts_load_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     surf = next((s for s in accts.surfaces() if s.account == target_account and s.platform is plat), None)
     if surf is None:
         return ActionResult(ok=False, error=f"no active surface {target_account}/{platform} — onboard it in Go Live first")
@@ -707,6 +710,7 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
                               post_type=("post" if surf.platform is Platform.instagram else None),
                               clip_profile=cfg.clip_profile, batch_id=src_batch))
     except Exception as exc:
+        get_logger(cfg)("crosspost", clip_id, "crosspost_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"cross-post failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": False,
                                          "surface": f"{surf.account}/{surf.platform.value}"})
@@ -784,6 +788,7 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
             for p in due:
                 p.scheduled_time = sched[p.id]
     except Exception as exc:
+        get_logger(cfg)("schedule", handle or "-", "reschedule_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"reschedule failed: {str(exc)[:160]}")
     # R3/D17: audit which posts moved + the handle scope (None = whole bucket).
     if due:
@@ -824,6 +829,7 @@ def shift_account_schedule(cfg: Config, handle: str, hours: float | str, *, now:
                 except (ValueError, TypeError):
                     continue
     except Exception as exc:
+        get_logger(cfg)("schedule", handle, "shift_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"shift failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"shifted": moved, "handle": handle, "hours": hours})
 
@@ -922,6 +928,7 @@ def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Opti
         key = Config.auth_key_name_from_error(exc)
         return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
     except Exception as exc:
+        get_logger(cfg)("publish", handle or "-", "publish_due_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"publish due failed: {str(exc)[:160]}")
     write_audit(cfg, "publish_due_bucket", [], reason="studio_publish_due_bucket", handle=handle, batch=batch, **summary)
     return ActionResult(ok=True, detail={**summary, "plan": plan.__dict__})
@@ -974,6 +981,7 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
             else:
                 led.set_post_state(post_id, st, error_kind=None)
     except Exception as exc:
+        get_logger(cfg)("resolve", post_id, "resolve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
     write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
     outcome = "live_shipped" if st is PostState.published else "failed"
@@ -998,6 +1006,7 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
     except (RuntimeError, AuthError) as exc:
         return ActionResult(ok=False, error=str(exc)[:160])
     except Exception as exc:
+        get_logger(cfg)("metrics", "-", "metrics_pull_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"metrics pull failed: {str(exc)[:160]}")
     try:
         with Ledger.transaction(cfg) as led:
@@ -1010,11 +1019,10 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
                 added += len(new_rows)
                 deg += sum(1 for r in new_rows if r.get("lift_degraded"))
     except Exception as exc:
+        get_logger(cfg)("metrics", "-", "metrics_apply_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"metrics apply failed: {str(exc)[:160]}")
-    try:
+    with fail_open("studio.actions.pull_metrics_studio.digest"):
         write_digest(Ledger.load(cfg), cfg)
-    except Exception:
-        pass
     write_audit(cfg, "pull_metrics", [], reason="studio_pull_metrics", analyzed=analyzed, series_rows=added)
     return ActionResult(ok=True, detail={"outcome": "metrics_pulled", "analyzed": analyzed,
                                           "series_rows": added, "degraded": deg, "pollable": len(pollable)})
@@ -1054,6 +1062,7 @@ def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> Act
                 # see "this post was once part of batch X" in the audit / Posted history.
                 moved.append(pid)
     except Exception as exc:
+        get_logger(cfg)("review", "-", "bulk_send_to_review_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"bulk_send_to_review failed: {str(exc)[:160]}")
     # R3/D17: audit the bulk revert — the most operator-impactful action in the system.
     if moved:
@@ -1108,6 +1117,7 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
                 _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
+        get_logger(cfg)("recover", "-", "retry_rate_limit_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
@@ -1141,6 +1151,7 @@ def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize
                 _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
+        get_logger(cfg)("recover", "-", "retry_oversize_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
@@ -1172,6 +1183,7 @@ def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transie
                 _rearm_to_queued(led, pid)
                 retried.append(pid)
     except Exception as exc:
+        get_logger(cfg)("recover", "-", "retry_transient_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
     if retried:
         write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
@@ -1221,6 +1233,7 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                 else:
                     return ActionResult(ok=False, error=f"unknown recover action: {action}")
     except Exception as exc:
+        get_logger(cfg)("recover", "-", "recover_posts_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"recover_posts failed: {str(exc)[:160]}")
     if retried or discarded:
         write_audit(cfg, "recover_posts", retried or discarded, reason=reason,

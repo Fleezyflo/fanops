@@ -214,7 +214,8 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
     try:
         from fanops.timing_bias import timing_bias_hour_for
         hour_hint = timing_bias_hour_for(led, cfg, surf.account)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("crosspost", surf.account, "timing_bias_hint_failed", err=str(exc)[:120])
         hour_hint = None
     sched = surface_time(base, surf.account, surf.platform.value, date_str, i,
                          clip_id=clip.id, lead_minutes=cfg.publish_lead_minutes,

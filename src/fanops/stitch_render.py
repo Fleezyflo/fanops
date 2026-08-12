@@ -91,7 +91,7 @@ def _impact_cut_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
             try:
                 plan = make_stitch_plan(c, m, src, base_fp=base_fp)
             except Exception as e:                       # fail-open per candidate — the pass still completes
-                log("impact_cut", c.id, "warn", err=str(e)[:120]); continue
+                get_logger(cfg)("impact_cut", c.id, "warn", err=str(e)[:120]); continue
             if plan is not None:
                 out.append((plan, m.id))
     return out
@@ -132,7 +132,7 @@ def _intro_tease_candidates(led: Ledger, cfg: Config, log) -> list[tuple]:
                                   base_fingerprint=base_fp,
                                   rank_score=round(float(top["fit_score"]), 4), rationale=top.get("rationale"))
             except Exception as e:                       # fail-open per candidate — the pass still completes
-                log("intro_tease", c.id, "warn", err=str(e)[:120]); continue
+                get_logger(cfg)("intro_tease", c.id, "warn", err=str(e)[:120]); continue
             out.append((plan, m.id))
     return out
 
@@ -250,7 +250,7 @@ def _prewarm_impact(led: Ledger, cfg: Config, p: StitchPlan, render_moment, log)
         render_moment(led, cfg, base.parent_id, aspect=base.aspect, cut_window=cw,
                       clip_id=_stitch_clip_id(p.id, base.aspect.value), born_state=ClipState.stitch_draft)
     except Exception as e:                                # fail-open: the commit pass renders it in-lock instead
-        log("impact_cut", p.id, "warn", err=str(e)[:120])
+        get_logger(cfg)("impact_cut", p.id, "warn", err=str(e)[:120])
 
 
 def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
@@ -282,7 +282,7 @@ def _prewarm_intro(led: Ledger, cfg: Config, p: StitchPlan, log) -> None:
     except Exception as e:                                # belt-and-braces: prepend_intro itself fails open, so rare
         with contextlib.suppress(OSError):
             fail_marker.write_text(json.dumps({"fp": fp}))   # an attempt that raised is still a genuine compose failure
-        log("intro_tease", p.id, "warn", err=str(e)[:120])
+        get_logger(cfg)("intro_tease", p.id, "warn", err=str(e)[:120])
 
 
 def render_approved_stitches(led: Ledger, cfg: Config, strategies=None) -> Ledger:

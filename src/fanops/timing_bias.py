@@ -72,7 +72,8 @@ def timing_bias_hour_for(led, cfg, handle: str) -> "int | None":
     hour = win["publish_hour"]
     try:
         window = cfg.account_window(handle)
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("timing_bias", handle, "account_window_failed", err=str(exc)[:120])
         window = None                                    # unknown window -> treat as 24h open (fail-open)
     return hour if _in_window(hour, window) else None
 

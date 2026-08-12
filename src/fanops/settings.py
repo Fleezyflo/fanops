@@ -14,12 +14,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # about what "on" means without either side being wrong on its own terms. The dependency runs THIS way
 # because config.py is stdlib-only (30 ms to import) while this module pulls pydantic (a further
 # 143 ms); the ~50 modules that import config must not pay that for a four-word frozenset.
-from fanops.config import bool_word, env_bool
+from fanops.config import bool_word, env_bool, parse_scrape_cap, parse_scrape_delay
 
 _log = logging.getLogger("fanops.settings")
 
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_RESPONDERS = frozenset({"llm", "manual"})
+_VALID_RESPONDERS = frozenset({"llm"})
 _VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _STRIP_STR_FIELDS = (
@@ -89,7 +89,7 @@ def _validate_responder(v: object) -> str:
     s = str(v).strip().lower()
     if not s: return ""
     if s not in _VALID_RESPONDERS:
-        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; the only valid value is 'llm' (or leave it unset)")
     return s
 
 
@@ -116,7 +116,7 @@ def _strict_validate_responder(v: object) -> str:
     s = str(v).strip().lower()
     if not s: return ""
     if s not in _VALID_RESPONDERS:
-        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; valid: llm, manual")
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={s!r}; the only valid value is 'llm' (or leave it unset)")
     return s
 
 
@@ -126,6 +126,14 @@ def _strict_validate_llm_transport(v: object) -> str:
     if not s: return ""
     if s not in _VALID_LLM_TRANSPORTS:
         raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: claude, cursor")
+    return s
+
+
+def _strict_validate_scrape_delay(v: object) -> str:
+    if v is None: return ""
+    s = str(v).strip()
+    if not s: return ""
+    parse_scrape_delay(s)   # raises ValueError on malformed/inverted/negative/wrong-arity
     return s
 
 
@@ -192,7 +200,7 @@ class Settings(BaseSettings):
     FANOPS_IG_SCRAPE_PASSWORD: str | None = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: BoolEnv = ""
     FANOPS_RESPONDER: StudioStr = ""
-    FANOPS_LLM_TRANSPORT: str = ""
+    FANOPS_LLM_TRANSPORT: StudioStr = ""
     FANOPS_LLM_MODEL: str = ""
     FANOPS_ARTIST_NAME: str = ""
     FANOPS_CLIP_PROFILE: StudioStr = ""
@@ -243,6 +251,7 @@ class Settings(BaseSettings):
     FANOPS_CONCURRENT_WORKERS: int = 4
     FANOPS_POSTIZ_AUTOSTART: BoolEnv = ""
     FANOPS_POSTIZ_COMPOSE_DIR: str | None = None
+    FANOPS_AUTO_ADOPT: BoolEnv = ""
     XDG_CACHE_HOME: str | None = None
 
     @field_validator("ANTHROPIC_API_KEY", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_MEDIA_PUBLIC_BASE",
@@ -262,20 +271,17 @@ class Settings(BaseSettings):
     @field_validator("FANOPS_HASHTAG_SCRAPE_TRY_CAP", mode="before")
     @classmethod
     def _scrape_try_cap(cls, v):
-        iv = _parse_int(v, 25)
-        return iv if iv >= 1 else 25
+        return parse_scrape_cap(v, default=25, floor=1)
 
     @field_validator("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", mode="before")
     @classmethod
     def _scrape_cotag_cap(cls, v):
-        iv = _parse_int(v, 40)
-        return iv if iv >= 0 else 40
+        return parse_scrape_cap(v, default=40, floor=0)
 
     @field_validator("FANOPS_HASHTAG_SCRAPE_PARALLEL", mode="before")
     @classmethod
     def _scrape_parallel(cls, v):
-        iv = _parse_int(v, 1)
-        return iv if iv >= 1 else 1
+        return parse_scrape_cap(v, default=1, floor=1)
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod
@@ -402,14 +408,14 @@ class Settings(BaseSettings):
         return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
-        # Empty/unset → llm (locked; matches Config.responder_mode + docs/CONFIG.md).
-        # Typo/unknown → warn + manual (safe refuse; empty alone is llm).
+        # Gates are answered ONLY by the LLM (the manual responder was retired). Empty/unset OR the
+        # literal 'llm' resolve to 'llm'; ANYTHING ELSE is a HARD REFUSE (ValueError) — never the old
+        # silent warn->manual (there is no manual mode to fall back to). Mirrors Config.responder_mode;
+        # the FANOPS_RESPONDER field validator already refuses a bad value at construction.
         v = (self.FANOPS_RESPONDER or "").strip().lower()
-        if not v: return "llm"
-        if v not in _VALID_RESPONDERS:
-            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
-            return "manual"
-        return v
+        if v in ("", "llm"):
+            return "llm"
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={v!r}; the only valid value is 'llm' (or leave it unset)")
 
     def llm_transport(self) -> str:
         v = (self.FANOPS_LLM_TRANSPORT or "").strip().lower()
@@ -437,6 +443,8 @@ class Settings(BaseSettings):
             data["FANOPS_RESPONDER"] = _strict_field("FANOPS_RESPONDER", _strict_validate_responder, v)
         if (v := data.get("FANOPS_LLM_TRANSPORT")):
             data["FANOPS_LLM_TRANSPORT"] = _strict_field("FANOPS_LLM_TRANSPORT", _strict_validate_llm_transport, v)
+        if (v := data.get("FANOPS_HASHTAG_SCRAPE_DELAY")):
+            data["FANOPS_HASHTAG_SCRAPE_DELAY"] = _strict_field("FANOPS_HASHTAG_SCRAPE_DELAY", _strict_validate_scrape_delay, v)
         for name in BOOL_ENV_FIELDS:
             if (v := data.get(name)):
                 data[name] = _strict_field(name, _strict_validate_bool_word, v)

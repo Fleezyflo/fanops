@@ -28,6 +28,7 @@ def preview_wipe(cfg: Config) -> ActionResult:
     try:
         led = Ledger.load(cfg)
     except Exception as exc:
+        get_logger(cfg)("ledger_wipe", "-", "preview_ledger_unreadable", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"ledger unreadable: {str(exc)[:160]}. Run `fanops doctor` first.")
     return ActionResult(ok=True, detail=ledger_wipe.wipe_preview(led))
 
@@ -60,7 +61,7 @@ def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
     try:
         snap = Ledger.snapshot(cfg)
     except Exception as exc:
-        log("ledger_wipe", "-", "wipe_refused_snapshot_failed", err=str(exc)[:160])
+        get_logger(cfg)("ledger_wipe", "-", "wipe_refused_snapshot_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not take the mandatory pre-wipe snapshot: {str(exc)[:160]}")
     if not ledger_wipe.snapshot_is_restorable(snap):
         log("ledger_wipe", "-", "wipe_refused_snapshot_unverified")
@@ -68,7 +69,7 @@ def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
     try:
         result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, plan_ceiling=ceiling)
     except Exception as exc:
-        log("ledger_wipe", "-", "wipe_failed", err=str(exc)[:160])
+        get_logger(cfg)("ledger_wipe", "-", "wipe_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"wipe failed (snapshot preserved at {snap}): {str(exc)[:160]}")
     log("ledger_wipe", "-", "wipe_done", snapshot=str(snap), **result["removed"])
     return ActionResult(ok=True, detail={"snapshot": str(snap), "removed": result["removed"]})

@@ -174,6 +174,46 @@ def env_bool(raw: str | None, *, default: bool) -> bool:
     return default if parsed is None else parsed
 
 
+# The hashtag Layer A scrape knobs are declared ONCE here so the RUNTIME read path
+# (ig_hashtag_scrape / fanops_hashtags) and the STRICT boundary (Settings.strict_validate -> doctor)
+# apply the SAME rule to the SAME env var — the field on `Settings` used to be a cosmetic copy that
+# validated a value the pass never actually read through. A malformed knob now fails LOUD at the
+# doctor boundary while the unattended run keeps its documented default (fail-open-with-breadcrumb).
+_SCRAPE_DELAY_DEFAULT = (1.0, 3.0)   # instagrapi delay_range seconds (MOL-698); the pacing that survives a typo
+
+
+def parse_scrape_delay(raw: str | None) -> list[float] | None:
+    """FANOPS_HASHTAG_SCRAPE_DELAY -> instagrapi `delay_range` [lo, hi] seconds, or None to DISABLE
+    pacing ("0"). Unset/blank -> the default pair. RAISES ValueError on any malformed value (wrong
+    arity, non-numeric, negative, inverted) so the strict boundary (Settings.strict_validate) surfaces
+    it in doctor — the runtime reader catches that and keeps the default so a fat-fingered env can never
+    silently remove the pacing that earned the 2026-07-29 account lock when it was absent."""
+    s = (raw or "").strip()
+    if not s:
+        return list(_SCRAPE_DELAY_DEFAULT)
+    if s == "0":
+        return None
+    try:
+        vals = [float(p) for p in s.replace(" ", "").split(",")]
+    except ValueError as e:
+        raise ValueError(f'malformed FANOPS_HASHTAG_SCRAPE_DELAY={raw!r}; want "lo,hi" seconds, or 0 to disable') from e
+    if len(vals) != 2 or vals[0] < 0 or vals[1] < vals[0]:
+        raise ValueError(f'invalid FANOPS_HASHTAG_SCRAPE_DELAY={raw!r}; want "lo,hi" with 0<=lo<=hi, or 0 to disable')
+    return vals
+
+
+def parse_scrape_cap(raw: str | None, *, default: int, floor: int) -> int:
+    """Parse a hashtag-scrape integer knob (try-cap / co-tag enqueue / parallel). Unset/blank -> `default`;
+    a value below `floor` clamps to `default` (a small cap is a valid operator choice, just re-normalized).
+    RAISES ValueError on a non-integer — the strict boundary raises it through (doctor surfaces the typo),
+    the runtime reader catches it and keeps its default. THE one rule both paths share, so the `Settings`
+    field is no longer a cosmetic copy of a separately-written runtime parser."""
+    if raw is None or (isinstance(raw, str) and not str(raw).strip()):
+        return default
+    v = int(raw)   # ValueError on a non-int: raised through by Settings, caught (fail-open) by the runtime reader
+    return v if v >= floor else default
+
+
 class Config:
     def __init__(self, root: Path | str | None = None):
         env_root = os.environ.get("FANOPS_ROOT")
@@ -530,18 +570,15 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        # Foundation honesty: empty/unset FANOPS_RESPONDER resolves to 'llm' (matches docs/CONFIG.md).
-        # Presence of `claude` on PATH never auto-toggles anything — only this env (or Studio/autopilot/
-        # daemon --responder writes) sets the mode. Fail-closed: doctor + preflight refuse when mode is
-        # llm and the LLM CLI is missing. Typo policy (safe refuse): UNKNOWN values (e.g. 'llmm') warn
-        # and fall back to 'manual' — never treat a typo as llm. Empty/unset alone is llm; typos stay manual.
+        # Gates are answered ONLY by the LLM (the manual responder was retired). FANOPS_RESPONDER is now
+        # a vestigial validate-or-REFUSE switch, not a controllable choice: empty/unset OR the literal
+        # 'llm' resolve to 'llm'; ANYTHING ELSE is a HARD REFUSE (ValueError), never a silent fall-back.
+        # A typo used to warn->manual and quietly stop answering gates; there is no manual mode to fall
+        # back to, so a bad value must fail loudly (doctor + preflight surface it non-zero) instead.
         v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
-        if not v:
+        if v in ("", "llm"):
             return "llm"
-        if v not in {"llm", "manual"}:
-            _log.warning("ignoring unknown FANOPS_RESPONDER=%r (using manual); valid: llm, manual", v)
-            return "manual"
-        return v
+        raise ValueError(f"unrecognized FANOPS_RESPONDER={v!r}; the only valid value is 'llm' (or leave it unset)")
 
     @property
     def llm_transport(self) -> str:
@@ -748,8 +785,8 @@ class Config:
         # M6 structural-hooks: the intro-tease PRODUCER (an LLM-vision matcher pairs a clean clip with a
         # relevant intro asset, then a compose-prepend renders the "wait for it" tease into a stitch_draft).
         # Per-format gate, DEFAULT OFF (PRD "intro-tease family disableable"). Needs the router on (to reserve
-        # clean_awaiting_strategy:intro_tease moments) AND FANOPS_RESPONDER=llm (the matcher is an agent gate);
-        # with this off there is no matcher gate and no intro_tease plans/renders -> non-regression.
+        # clean_awaiting_strategy:intro_tease moments); the matcher is an agent gate, always answered by the LLM.
+        # With this off there is no matcher gate and no intro_tease plans/renders -> non-regression.
         return env_bool(os.getenv("FANOPS_INTRO_TEASE"), default=False)
 
     @property

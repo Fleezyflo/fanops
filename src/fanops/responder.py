@@ -1,10 +1,10 @@
 # src/fanops/responder.py
 """Autonomous agent-gate answerer (FIX F02/F13 + AUDIT B1/H2/N1). Behind the file contract: reads
-pending *.request.json, produces a schema-valid *.response.json. ManualResponder = no-op (a human
-writes the files). LlmResponder = calls `claude -p` (via fanops.llm.claude_json_meta) with the committed
-prompt + the exact pydantic JSON schema, validates the output, and writes the response. Each request
-is QUARANTINED (one bad gate logs + stays pending, never halts the others — mirrors advance()'s
-per-unit quarantine). get_responder() picks by FANOPS_RESPONDER and returns a WORKING llm responder."""
+pending *.request.json, produces a schema-valid *.response.json. LlmResponder = calls `claude -p`
+(via fanops.llm.claude_json_meta) with the committed prompt + the exact pydantic JSON schema, validates
+the output, and writes the response. Each request is QUARANTINED (one bad gate logs + stays pending,
+never halts the others — mirrors advance()'s per-unit quarantine). Gates are answered ONLY by the LLM:
+get_responder() always returns the WORKING llm responder (the no-op ManualResponder was retired)."""
 from __future__ import annotations
 import contextlib
 import hashlib
@@ -51,18 +51,6 @@ _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "capti
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
 _VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
 _GATE_DETERMINISTIC_MAX = 3   # MOL-235: after N same-gate deterministic failures, escalate source to error
-
-class ManualResponder:
-    def __init__(self, cfg: Config): self.cfg = cfg
-    def answer_pending(self, cfg: Config, *, kinds: tuple[str, ...] | list[str] | None = None,
-                       parallel: bool | None = None) -> int:
-        # Wave 7: still a no-op write path (human owns *.response.json), but pending>0 is no longer silent.
-        allow = set(kinds) if kinds is not None else None
-        waiting = sum(len(pending(cfg, kind=kind)) for kind in _SCHEMA
-                      if allow is None or kind in allow)
-        if waiting:
-            get_logger(cfg)("responder", "manual", "pending_unanswered", n=waiting)
-        return 0
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
@@ -146,7 +134,7 @@ class LlmResponder:
             log("responder", f"{kind}:{key}", "toolchain_error", err=str(e)[:160])
             self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} toolchain error: {str(e)[:160]}", log)
         except Exception as e:              # transient model/CLI failure: log, leave pending
-            log("responder", f"{kind}:{key}", "error", err=str(e)[:160])
+            get_logger(cfg)("responder", f"{kind}:{key}", "error", err=str(e)[:160])
         return False
 
     def _on_deterministic_fail(self, cfg: Config, kind: str, key: str, reason: str, log) -> None:
@@ -197,7 +185,7 @@ class LlmResponder:
                     saved = True
         except Exception as e:
             with contextlib.suppress(Exception):
-                log("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
+                get_logger(cfg)("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
         if saved:
             discard_gate(cfg, kind, key)      # H07: terminal moments gate must not linger pending
 
@@ -249,6 +237,8 @@ class LlmResponder:
             return sum(fut.result() for fut in as_completed(futs))
 
 def get_responder(cfg: Config):
-    if cfg.responder_mode == "llm":
-        return LlmResponder(cfg)                    # now a WORKING responder (claude -p default)
-    return ManualResponder(cfg)
+    # Gates are answered ONLY by the LLM — there is no other responder. Reading responder_mode here
+    # is the one hard-refuse chokepoint on the answer path: an unknown FANOPS_RESPONDER raises rather
+    # than silently degrading to a no-op (the manual responder was retired).
+    cfg.responder_mode                              # validate-or-refuse (empty/llm ok; anything else raises)
+    return LlmResponder(cfg)                        # the WORKING responder (claude -p default)

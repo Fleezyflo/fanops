@@ -34,7 +34,7 @@ def maybe_shrink_for_cap(cfg: Config, path: Path, cap: int, *, label: str = "upl
             try:
                 r = subprocess.run(cmd, capture_output=True, timeout=600)
             except Exception as exc:
-                log(label, path.stem, "shrink_failed", err=str(exc)[:120])
+                get_logger(cfg)(label, path.stem, "shrink_failed", err=str(exc)[:120])
                 return path
             if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
                 continue

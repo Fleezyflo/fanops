@@ -25,7 +25,7 @@ def learning_validated(cfg: Config) -> bool:
         return False
     try:
         return bool(json.loads(p.read_text()).get("metrics_confirmed"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError, AttributeError):
         return False                                # corrupt scratch file -> treat as unvalidated
 
 

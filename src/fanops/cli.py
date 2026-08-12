@@ -263,7 +263,8 @@ def cmd_verify_live(cfg: Config) -> int:
     for p in targets:
         try:
             res = confirm_post_live(cfg, p, reported_username=p.account)   # best-effort username for the TikTok gate
-        except Exception:
+        except Exception as exc:
+            get_logger(cfg)("verify_live", p.id, "confirm_failed", err=str(exc)[:120])
             res = {"confirmed": False, "owner": None}                      # read path never crashes on one post
         if res.get("confirmed"): confirmed += 1
         print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
@@ -358,10 +359,18 @@ def cmd_doctor(cfg: Config, args=None) -> int:
         return 0 if report_is_healthy(rep) else 1
     print("fanops doctor")
     for c in rep.checks:
-        mark = "PASS" if c["ok"] else "FAIL"
+        # A WARN-tier check keeps ok=True (never a failure) but rides warn/warn_hint — render it as [WARN]
+        # so an operational backlog / unconfirmed state is not a silent false-green PASS. FAIL shows its
+        # hint; a plain PASS (no warn) shows nothing.
+        if c["ok"] and c.get("warn"):
+            mark = "WARN"
+        else:
+            mark = "PASS" if c["ok"] else "FAIL"
         line = f"  [{mark}] {c['label']}"
         if not c["ok"]:
             line += f"  -> {c['hint']}"
+        elif c.get("warn") and c.get("warn_hint"):
+            line += f"  -> {c['warn_hint']}"
         print(line)
     for d in rep.deps:
         mark = "ok" if d.ok else "DOWN"
@@ -744,11 +753,10 @@ def cmd_daemon(cfg: Config, args) -> int:
     try:
         if act == "install":
             interval = daemon.parse_interval(args.interval)
-            res = daemon.install(cfg, interval=interval, responder=args.responder)
+            res = daemon.install(cfg, interval=interval)
             print(f"daemon installed -> {res['plist']}")
             print(f"  fanops {daemon._fanops_bin()}  |  interval {interval}s  |  loaded {res['loaded']}  |  responder {res['responder']}")
-            if res["discloses_llm"]:                      # DISCLOSE the recurring-LLM cost — never silently turn the AI on
-                print(f"  ⚠ hands-off runs the AI responder — invokes the LLM CLI ~every {interval}s. Use `--responder manual` for no-LLM scheduling.")
+            print(f"  hands-off answers pending gates with the LLM CLI (~every {interval}s).")
             print("  next: fanops daemon status   |   stop: fanops daemon stop")
             return 0
         if act == "status":
@@ -819,9 +827,9 @@ def cmd_init(cfg: Config, args) -> int:
 
 
 def cmd_autopilot(cfg: Config, args) -> int:
-    # One command -> autonomous: enable the llm responder (durably, in .env) + install the supervising
-    # daemon, then print a readiness report. dryrun by default (publishes nothing); going
-    # live is a separate, deliberate step via Postiz or the manual publish-queue.
+    # One command -> autonomous: install the supervising daemon + print a readiness report (doctor).
+    # Gates are always answered by the LLM, so there is no AI switch to flip. dryrun by default
+    # (publishes nothing); going live is a separate, deliberate step via Postiz or the manual publish-queue.
     try:
         interval = daemon.parse_interval(args.interval)
         res = autopilot.autopilot(cfg, interval=interval, install_daemon=not args.no_daemon)
@@ -829,7 +837,7 @@ def cmd_autopilot(cfg: Config, args) -> int:
         # non-darwin / launchctl absent / bad --interval / unwritable .env -> one clean line + exit 2
         print(f"autopilot: {e}", file=sys.stderr); return 2
     print("fanops autopilot — the per-clip work is now autonomous")
-    print(f"  responder -> {res['responder']} (answers its own moment/caption gates via the LLM CLI; no hand-typing)")
+    print(f"  responder -> {res['responder']} (gates answered by the LLM CLI; no hand-typing)")
     print(f"  backend   -> {res['backend']}" + ("  (dryrun: schedules posts, publishes NOTHING)" if res["backend"] == "dryrun" else ""))
     d = res["daemon"]
     if d:
@@ -1013,14 +1021,11 @@ def main(argv: list[str] | None = None) -> int:
     dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
     p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
     p_dins.add_argument("--interval", default="10m")
-    # DECOUPLED AI switch: 'inherit' (default) installs scheduling WITHOUT forcing the LLM on — the run
-    # resolves the ambient responder. 'llm'/'manual' persist an explicit choice to .env (durable).
-    p_dins.add_argument("--responder", default="inherit", choices=["inherit", "llm", "manual"])
     dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
     dae_sub.add_parser("ensure", help="re-assert main daemon load if absent (keeper hook)")
     p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
     p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
-    p_auto = sub.add_parser("autopilot", help="one command -> autonomous: enable llm responder (durably) + install the daemon")
+    p_auto = sub.add_parser("autopilot", help="one command -> autonomous: install the supervising daemon + report readiness (doctor)")
     p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
     p_up = sub.add_parser("up", help="one-step self-healing bring-up: git/Postiz/daemon/Studio -> one READY/NOT-READY verdict")
     p_up.add_argument("--no-restart", action="store_true", help="skip the daemon freshness kickstart (leave a running daemon on its current code)")
@@ -1120,40 +1125,42 @@ def _check_preflight(cfg: Config) -> int:
     do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
     returns 0 clean, else prints an actionable line to stderr and returns 2.
 
-      - FANOPS_RESPONDER=llm but `claude` is not on PATH: the responder shells `claude -p`; without
-        the binary every gate raises ToolchainMissingError and stays pending -> zero content. Hard
-        exit 2 with an install + `claude login` pointer. (AUTH NOTE 2026-06-04: the responder uses
-        the operator's EXISTING `claude` subscription/login — plain `claude -p`, NOT `--bare`, so it
-        rides the OAuth/keychain session, NOT an API key. We therefore require `claude` PRESENT +
-        logged in, NOT `ANTHROPIC_API_KEY`. A true login check needs a network call, so we hard-block
-        only on the binary's ABSENCE and otherwise point the operator at `claude login` — a
-        logged-out `claude` then surfaces loudly via the run's `run halted`/heartbeat path, not a
-        traceback.)
+      - The LLM CLI is not on PATH: gates are answered ONLY by the LLM (the manual responder was
+        retired), so the responder shells `claude -p`; without the binary every gate raises
+        ToolchainMissingError and stays pending -> zero content. Hard exit 2 with an install +
+        `claude login` pointer — ALWAYS (empty/unset FANOPS_RESPONDER resolves to llm too). (AUTH NOTE
+        2026-06-04: the responder uses the operator's EXISTING `claude` subscription/login — plain
+        `claude -p`, NOT `--bare`, so it rides the OAuth/keychain session, NOT an API key. We require
+        `claude` PRESENT + logged in, NOT `ANTHROPIC_API_KEY`. A true login check needs a network call,
+        so we hard-block only on the binary's ABSENCE and otherwise point the operator at `claude login`.)
 
-    Explicit FANOPS_RESPONDER=manual + dryrun poster (no creds) trips neither and passes cleanly
-    (exit 0). Empty/unset responder resolves to llm, so missing CLI fails closed (same as explicit llm)."""
+      - FANOPS_RESPONDER set to anything but 'llm' (or unset): HARD REFUSE — there is no manual mode to
+        fall back to, so a bad value must fail loudly rather than silently stop answering gates."""
     import shutil
     from fanops.llm import _CURSOR_SUPPORTS_VISION
     problems = []
-    if cfg.responder_mode == "llm":
-        cli_bin = cfg.llm_cli_binary
-        if shutil.which(cli_bin) is None:
-            # Fail closed for both explicit FANOPS_RESPONDER=llm and empty/unset (default llm).
-            if cli_bin == "cursor-agent":
-                problems.append(
-                    "FANOPS_RESPONDER=llm but `cursor-agent` is not on PATH — the autonomous responder "
-                    "shells `cursor-agent -p`. Install Cursor CLI on this host, or set LLM transport to "
-                    "claude in Studio Go-Live (the single switch).")
-            else:
-                problems.append(
-                    "FANOPS_RESPONDER=llm but `claude` is not on PATH — the autonomous responder shells "
-                    "`claude -p` using your existing Claude subscription. Install Claude Code and run "
-                    "`claude login` on this host (no API key needed).")
-        if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
+    try:
+        cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; else raises)
+    except ValueError as e:
+        problems.append(str(e))
+    cli_bin = cfg.llm_cli_binary
+    if shutil.which(cli_bin) is None:
+        # ALWAYS fail closed: gates are answered only by the LLM, so a missing CLI produces zero content.
+        if cli_bin == "cursor-agent":
             problems.append(
-                "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
-                "set LLM transport to claude in Studio Go-Live (single switch; transport is absolute, "
-                "no silent claude fallback).")
+                "`cursor-agent` is not on PATH — the autonomous responder shells `cursor-agent -p` to "
+                "answer every gate. Install Cursor CLI on this host, or set LLM transport to claude in "
+                "Studio Go-Live (the single switch).")
+        else:
+            problems.append(
+                "`claude` is not on PATH — the autonomous responder shells `claude -p` using your existing "
+                "Claude subscription to answer every gate. Install Claude Code and run `claude login` on "
+                "this host (no API key needed).")
+    if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
+        problems.append(
+            "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
+            "set LLM transport to claude in Studio Go-Live (single switch; transport is absolute, "
+            "no silent claude fallback).")
     _raw_poster = (cfg.poster_backend_raw or "").strip().lower()
     if _raw_poster == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),
@@ -1205,6 +1212,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 get_responder(cfg).answer_pending(cfg)
                 s = advance(cfg, base_time=base_time)
             except Exception as e:
+                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 return None
             # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
@@ -1268,7 +1276,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         except Exception as e:
             get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
     # MOL-644: LLM niche-vocab expand (search roots only) — before Layer A so new seeds measure this tick.
-    # Gated on FANOPS_RESPONDER=llm inside expand_vocab_if_due; fail-open. MOL-693: input-driven, not
+    # expand_vocab_if_due is input-driven + fail-open (gates are always answered by the LLM). MOL-693: not
     # periodic — a persona is asked only when its (name, voice, niche) fingerprint moves, so calling this
     # every tick is free for unchanged personas and picks an edit up on the very next tick.
     try:
@@ -1276,7 +1284,7 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         vr = expand_vocab_if_due(cfg)
         if vr.get("refreshed"):
             get_logger(cfg)("hashtag_vocab", "-", "expanded", ok=vr.get("ok", 0), fail=vr.get("fail", 0))
-        elif vr.get("reason") and vr.get("reason") not in ("fresh", "responder_manual"):
+        elif vr.get("reason") and vr.get("reason") != "fresh":
             get_logger(cfg)("hashtag_vocab", "-", "expand_skipped", reason=vr.get("reason", ""))
     except Exception as e:
         get_logger(cfg)("hashtag_vocab", "-", "expand_error", err=f"{type(e).__name__}: {str(e)[:120]}")
@@ -1756,6 +1764,7 @@ def _dispatch(cfg: Config, args) -> int:
                 except RunBusyError as e:
                     print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:
+                    get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
                     print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 time.sleep(interval)
         try:

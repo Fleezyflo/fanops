@@ -19,7 +19,12 @@ def _call_name(func: ast.AST) -> str | None:
 
 
 def _handler_non_silent(body: list[ast.stmt]) -> bool:
-    """True when the except body logs, re-raises, or delegates to fail_open."""
+    """True when the except body logs, re-raises, or delegates to a known logging helper.
+
+    Known helpers: fail_open (always logs), get_logger/getLogger + logging levels + log (event log),
+    _quarantine (pipeline: always logs before stamping error state),
+    _capture_poll_exc (reconcile: defers into results; apply re-raises and logs).
+    """
     for stmt in body:
         for sub in ast.walk(stmt):
             if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and sub is not stmt:
@@ -34,7 +39,7 @@ def _handler_non_silent(body: list[ast.stmt]) -> bool:
             if isinstance(sub, ast.Call):
                 f = sub.func
                 n = _call_name(f)
-                if n in ("fail_open", "getLogger", "get_logger", "warning"):
+                if n in ("fail_open", "getLogger", "get_logger", "warning", "debug", "info", "error", "exception", "critical", "log", "_quarantine", "_capture_poll_exc"):
                     return True
                 if isinstance(f, ast.Call) and _call_name(f.func) == "get_logger":
                     return True
@@ -74,53 +79,14 @@ def _scan_silent_swallows() -> dict[str, int]:
 
 
 def _baseline_silent_swallows() -> dict[str, int]:
-    """Measured after Wave 3 cheap fail_open cluster (−6): agentstep/artifacts/cutover/pipeline_status/audit."""
-    return {
-        "src/fanops/accounts.py": 2,
-        "src/fanops/caption.py": 2,
-        "src/fanops/cli.py": 3,
-        "src/fanops/clip.py": 1,
-        "src/fanops/compose.py": 4,
-        "src/fanops/crosspost.py": 1,
-        "src/fanops/daemon.py": 5,
-        "src/fanops/doctor.py": 9,
-        "src/fanops/fanops_hashtags.py": 2,
-        "src/fanops/framing.py": 9,
-        "src/fanops/health.py": 2,
-        "src/fanops/health_model.py": 5,
-        "src/fanops/llm.py": 2,
-        "src/fanops/moments.py": 3,
-        "src/fanops/persona_research.py": 1,
-        "src/fanops/pipeline.py": 13,
-        "src/fanops/pipeline_run.py": 2,
-        "src/fanops/post/compress.py": 1,
-        "src/fanops/post/postiz.py": 1,
-        "src/fanops/post/run.py": 4,
-        "src/fanops/post/zernio.py": 3,
-        "src/fanops/postiz_lifecycle.py": 2,
-        "src/fanops/produce.py": 8,
-        "src/fanops/reconcile.py": 12,
-        "src/fanops/responder.py": 2,
-        "src/fanops/secret_provider.py": 1,
-        "src/fanops/stitch_render.py": 4,
-        "src/fanops/studio/actions.py": 23,
-        "src/fanops/studio/actions_approve.py": 8,
-        "src/fanops/studio/actions_casting.py": 2,
-        "src/fanops/studio/actions_run.py": 7,
-        "src/fanops/studio/actions_segments.py": 2,
-        "src/fanops/studio/actions_wipe.py": 3,
-        "src/fanops/studio/app.py": 1,
-        "src/fanops/studio/golive.py": 15,
-        "src/fanops/studio/personas.py": 10,
-        "src/fanops/studio/views.py": 15,
-        "src/fanops/studio/views_common.py": 2,
-        "src/fanops/studio/views_results.py": 3,
-        "src/fanops/studio/views_review.py": 1,
-        "src/fanops/timeutil.py": 2,
-        "src/fanops/timing_bias.py": 1,
-        "src/fanops/transcribe.py": 2,
-        "src/fanops/validation_gate.py": 1,
-    }
+    """Measured after Wave 3 cheap fail_open cluster (−6): agentstep/artifacts/cutover/pipeline_status/audit.
+    Wave 2b breadcrumbed the unattended pipeline spine; Wave 2b leftover pass dropped pipeline/reconcile/produce
+    to 0 by teaching the ratchet house helpers (_quarantine, log, _capture_poll_exc) and narrowing _parked_age.
+    Wave 2c breadcrumbed the remainder to 0 (daemon/post/*/framing/moments/compose/stitch_render/health*/
+    studio leftovers) and narrowed pure parse/import probes (llm/pipeline_run/timeutil/transcribe/validation_gate/
+    secret_provider). Wave 2c leftovers cleared: persona_research already breadcrumbs via get_logger; views_common
+    already breadcrumbs via _log.warning — both taught by existing helpers, baseline empty."""
+    return {}
 
 
 def test_silent_swallow_count_does_not_exceed_baseline():

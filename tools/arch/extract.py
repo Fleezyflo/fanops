@@ -291,7 +291,7 @@ def _handler_non_silent(body: list[ast.stmt]) -> bool:
             if isinstance(sub, ast.Call):
                 f = sub.func
                 n = _call_name(f)
-                if n in ("fail_open", "getLogger", "get_logger", "warning"):
+                if n in ("fail_open", "getLogger", "get_logger", "warning", "debug", "info", "error", "exception", "critical", "log", "_quarantine", "_capture_poll_exc"):
                     return True
                 if isinstance(f, ast.Call) and _call_name(f.func) == "get_logger":
                     return True

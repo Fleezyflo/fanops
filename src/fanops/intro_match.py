@@ -6,7 +6,7 @@ context (keyframes, router reason, transcript, hook) against the candidate THIRD
 (thumbnail, origin_kind); the llm responder answers RANKED pairings; ingest writes them onto
 Moment.intro_matches for the producer (stitch_render._intro_tease_candidates).
 
-Gated on cfg.intro_tease + FANOPS_RESPONDER=llm and FAIL-OPEN: no responder, no
+Gated on cfg.intro_tease ONLY (gates are always answered by the LLM now) and FAIL-OPEN: no
 answer, or a corrupt answer leaves the moment unmatched (-> no intro_tease plan), and impact-cut + the bare
 clip are unaffected — a poisoned matcher pair must never wedge the loop. The gate key is EPHEMERAL (moment +
 candidate set + MATCHER_VERSION), SEPARATE from the durable content-addressed stitch_plan id, so changing
@@ -87,7 +87,7 @@ def request_intro_match(led: Ledger, cfg: Config) -> Ledger:
     work). Idempotent per (moment, candidate set): re-writing would mint a fresh request_id and DELETE the
     responder's answer (write_request invalidates it) -> the gate never clears. Write once; a changed set
     yields a new key -> a new gate."""
-    if not (cfg.intro_tease and cfg.responder_mode == "llm"):
+    if not cfg.intro_tease:
         return led
     cands = _candidates(led)
     reserved = _reserved(led)
@@ -114,7 +114,7 @@ def ingest_intro_match(led: Ledger, cfg: Config) -> Ledger:
     (best fit first), keeping only pairings that name a REAL candidate asset AND carry a tease_text (a
     pairing the prepend can actually render). No-op until the gate lands (stays unmatched). Fail-open: a
     corrupt/invalid response reads as None (agentstep logs it) -> the moment stays unmatched, never raises."""
-    if not (cfg.intro_tease and cfg.responder_mode == "llm"):
+    if not cfg.intro_tease:
         return led
     cands = _candidates(led)
     if not cands:

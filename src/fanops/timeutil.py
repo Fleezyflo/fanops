@@ -14,7 +14,10 @@ process system tz was the M1 root: a server in PST silently rendered every time 
 without labelling it, so the operator's clock was wrong. Storage stays canonical UTC; this
 module is the single web-boundary conversion layer."""
 from __future__ import annotations
+import logging
 from datetime import datetime, timedelta, timezone
+
+_log = logging.getLogger("fanops.timeutil")
 try:
     from zoneinfo import ZoneInfo            # 3.9+, std-lib — IANA tz database lookup
 except ImportError:                          # pragma: no cover — old Python
@@ -35,8 +38,8 @@ def _operator_zone(cfg) -> "timezone | object | None":
         return timezone.utc
     try:
         return ZoneInfo(name)
-    except Exception:
-        return timezone.utc                  # unknown name -> UTC, never a silent re-localize
+    except (KeyError, ValueError):
+        return timezone.utc                  # unknown/malformed name -> UTC, never a silent re-localize
 
 
 def parse_iso(ts: str) -> datetime:
@@ -181,7 +184,8 @@ def to_local_display_hybrid(ts, *, cfg=None, now=None) -> str:
         if dt is None: return base
         ref = now if now is not None else datetime.now(timezone.utc)
         return f"{base} ({_relative_fragment(ref - dt)})"
-    except Exception:
+    except Exception as exc:
+        _log.warning("to_local_display_hybrid: relative fragment failed (%s); absolute only", exc)
         return base                                  # bad now / any failure -> absolute string unchanged
 
 

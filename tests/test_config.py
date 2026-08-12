@@ -133,9 +133,11 @@ def test_responder_defaults_llm_when_unset(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_RESPONDER", "  ")
     assert Config(root=tmp_path).responder_mode == "llm"
 
-def test_responder_manual_explicit(monkeypatch, tmp_path):
+def test_responder_manual_now_hard_refused(monkeypatch, tmp_path):
+    # The no-op manual responder was retired: FANOPS_RESPONDER=manual is a HARD REFUSE, not a mode.
     monkeypatch.setenv("FANOPS_RESPONDER", "manual")
-    assert Config(root=tmp_path).responder_mode == "manual"
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).responder_mode
 
 def test_responder_llm_explicit(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
@@ -179,14 +181,13 @@ def test_is_live_backend_postiz_uses_postiz_key(monkeypatch, tmp_path):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     assert Config(root=tmp_path).is_live_backend is True         # postiz + postiz key → live
 
-def test_responder_mode_unknown_falls_back_to_manual(monkeypatch, tmp_path, caplog):
-    # Typo policy (safe refuse): unknown FANOPS_RESPONDER (e.g. llmm) warns and treats as manual.
-    # Empty/unset alone is llm — typos must NOT resolve to llm.
+def test_responder_mode_unknown_hard_refuses(monkeypatch, tmp_path):
+    # Typo policy is now FAIL LOUD, not warn->manual: there is no manual mode to fall back to, so an
+    # unknown FANOPS_RESPONDER (e.g. 'llmm') RAISES rather than silently disabling the answer path.
+    # Empty/unset alone still resolves to llm — only a NON-EMPTY bad value raises.
     monkeypatch.setenv("FANOPS_RESPONDER", "llmm")               # typo of "llm"
-    with caplog.at_level(logging.WARNING):
-        mode = Config(root=tmp_path).responder_mode
-    assert mode == "manual"                                      # unknown never resolves to a bogus mode
-    assert any("FANOPS_RESPONDER" in r.getMessage() for r in caplog.records)
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).responder_mode
 
 def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, caplog):
     # high: is_live + no global creds falls through to per-channel readiness; a TORN accounts.json
@@ -710,3 +711,87 @@ def test_xdg_cache_home_config_settings_agree(monkeypatch, tmp_path, raw):
     cfg_root = Config(root=tmp_path).whisper_cache_root
     expected = (Path.home() / ".cache" / "whisper") if s is None else (Path(s).expanduser() / "whisper")
     assert cfg_root == expected
+
+
+# ---- Wave 3: shared scrape-delay / scrape-cap parsers (one rule, two boundaries) ----
+
+def test_parse_scrape_delay_contract():
+    """The delay parser Settings.strict_validate and the runtime reader now share. Unset/blank -> the
+    default pair; "0" -> None (pacing off); a good pair round-trips; every malformed shape RAISES so the
+    strict boundary can fail loud (the runtime reader catches it and keeps the default)."""
+    from fanops.config import parse_scrape_delay, _SCRAPE_DELAY_DEFAULT
+    assert parse_scrape_delay(None) == list(_SCRAPE_DELAY_DEFAULT)
+    assert parse_scrape_delay("   ") == list(_SCRAPE_DELAY_DEFAULT)
+    assert parse_scrape_delay("0") is None
+    assert parse_scrape_delay("1.5,4") == [1.5, 4.0]
+    assert parse_scrape_delay(" 2 , 5 ") == [2.0, 5.0]
+    for bad in ("abc", "1", "1,2,3", "5,2", "-1,3", "2,x"):
+        with pytest.raises(ValueError):
+            parse_scrape_delay(bad)
+
+
+def test_parse_scrape_cap_contract():
+    """The integer-knob parser (try-cap / co-tag / parallel). Unset/blank -> default; below floor clamps
+    to default (a valid re-normalized operator choice); a good value passes; a non-int RAISES."""
+    from fanops.config import parse_scrape_cap
+    assert parse_scrape_cap(None, default=25, floor=1) == 25
+    assert parse_scrape_cap("  ", default=25, floor=1) == 25
+    assert parse_scrape_cap("0", default=25, floor=1) == 25          # sub-floor clamps to default
+    assert parse_scrape_cap("50", default=25, floor=1) == 50
+    assert parse_scrape_cap("0", default=40, floor=0) == 0           # floor=0 keeps an explicit 0
+    with pytest.raises(ValueError):
+        parse_scrape_cap("lots", default=25, floor=1)
+
+
+def test_scrape_delay_bad_raises_at_settings_validate_but_runtime_fails_open(monkeypatch, caplog):
+    """The two boundaries in one test: doctor's strict path RAISES on a malformed delay, while the Layer A
+    runtime reader catches it, breadcrumbs, and keeps the default pacing (a fat-fingered env must never
+    silently remove the pacing that the 2026-07-29 account lock proved is load-bearing)."""
+    from pydantic import ValidationError
+    from fanops.config import _SCRAPE_DELAY_DEFAULT
+    from fanops.ig_hashtag_scrape import _scrape_delay_range
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "5,2")          # inverted range
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_HASHTAG_SCRAPE_DELAY" in str(ei.value)
+    with caplog.at_level(logging.WARNING):
+        assert _scrape_delay_range() == list(_SCRAPE_DELAY_DEFAULT)   # runtime fails OPEN to the default
+    assert any("FANOPS_HASHTAG_SCRAPE_DELAY" in r.getMessage() for r in caplog.records)
+
+
+def test_scrape_try_cap_noninteger_raises_at_settings_but_runtime_fails_open(monkeypatch):
+    """A non-integer try-cap raises at the strict boundary (doctor) yet the runtime reader keeps its
+    module default — the strict copy is no longer cosmetic, both route through parse_scrape_cap."""
+    from pydantic import ValidationError
+    from fanops import fanops_hashtags
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "notanint")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_HASHTAG_SCRAPE_TRY_CAP" in str(ei.value)
+    assert fanops_hashtags._scrape_try_cap() == fanops_hashtags._SCRAPE_TRY_CAP
+
+
+def test_auto_adopt_is_registered_boolenv(monkeypatch):
+    """FANOPS_AUTO_ADOPT is a first-class BoolEnv now (not a raw os.getenv typo-stays-ON read): a garbage
+    word fails the strict boundary, and a real off-word validates — the daemon reads it via env_bool so
+    "false"/"off" actually turns the drift self-adopt OFF (the old `!= "0"` treated them as ON)."""
+    from pydantic import ValidationError
+    from fanops.settings import Settings, BOOL_ENV_FIELDS
+    from fanops.config import env_bool
+    assert "FANOPS_AUTO_ADOPT" in BOOL_ENV_FIELDS
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "maybee")
+    with pytest.raises(ValidationError) as ei:
+        _validate_settings()
+    assert "FANOPS_AUTO_ADOPT" in str(ei.value)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "false")
+    Settings()  # must not raise
+    assert env_bool("false", default=True) is False
+    assert env_bool("off", default=True) is False
+
+
+def test_llm_transport_is_studio_settable():
+    """FANOPS_LLM_TRANSPORT is Studio-settable (Go-Live), so it is typed StudioStr — the canonical
+    STUDIO_SETTABLE projection (config_introspect's STUDIO column) must include it, not miss it as a
+    plain str (Wave 3.5 alignment)."""
+    from fanops.settings import STUDIO_SETTABLE
+    assert "FANOPS_LLM_TRANSPORT" in STUDIO_SETTABLE

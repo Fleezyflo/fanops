@@ -29,10 +29,13 @@ def _keyring_set_password(service: str, username: str, password: str) -> None:
 
 def _keyring_delete_password(service: str, username: str) -> None:
     import keyring  # noqa: PLC0415 — lazy; optional [keyring] extra
+    import keyring.errors  # noqa: PLC0415
     try:
         keyring.delete_password(service, username)
-    except Exception:
-        pass  # absent entry is fine
+    except keyring.errors.PasswordDeleteError:
+        pass  # absent entry is fine (idempotent unset)
+    except Exception as exc:
+        _log.warning("_keyring_delete_password: delete failed for %s (%s)", username, exc)
 
 
 def get_secret(env_key: str, *, quiet: bool = False) -> str | None:

@@ -11,10 +11,12 @@ compose"; True signals a real composed render). Runs OUTSIDE any ledger flock (a
 a long or hung render never wedges the ledger — the one safety property that keeps a heavy in-process
 MoviePy render off the autonomous lock-holding path."""
 from __future__ import annotations
-import hashlib, json, shutil
+import hashlib, json, logging, shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
+
+_log = logging.getLogger("fanops.compose")
 
 # Parity with clip.py / overlay.py ffmpeg bound — a produced render re-encodes, same ceiling.
 _RENDER_TIMEOUT = 600.0
@@ -102,6 +104,7 @@ def compose_clip(base_clip_path: str, out_path: str, spec: TemplateSpec, *,
     try:
         renderer(base_clip_path, out_path, spec, timeout=timeout)
     except Exception as exc:                            # ImportError (no moviepy), API drift, render fail
+        _log.warning("compose_clip: render failed (%s: %s); using base clip", type(exc).__name__, str(exc)[:120])
         _failopen(base, out_path, log,
                   f"compose failed ({type(exc).__name__}: {str(exc)[:160]}) — using base clip")
         return False
@@ -155,6 +158,7 @@ def prepend_intro(base_clip_path: str, intro_asset_path: str, out_path: str, *,
         renderer(base_clip_path, intro_asset_path, out_path, tease_text=tease_text,
                  intro_seconds=intro_seconds, timeout=timeout)
     except Exception as exc:                                # ImportError (no moviepy), API drift, render fail
+        _log.warning("prepend_intro: render failed (%s: %s); using base clip", type(exc).__name__, str(exc)[:120])
         _failopen(base, out_path, log,
                   f"prepend failed ({type(exc).__name__}: {str(exc)[:160]}) — using base clip")
         return False
@@ -226,8 +230,8 @@ def _moviepy_prepend_render(base_clip_path: str, intro_asset_path: str, out_path
         for c in opened:
             try:
                 c.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("compose: clip handle close failed (%s)", exc)
 
 
 def _moviepy_render(base_clip_path: str, out_path: str, spec: TemplateSpec, *, timeout: float) -> None:
@@ -293,5 +297,5 @@ def _moviepy_render(base_clip_path: str, out_path: str, spec: TemplateSpec, *, t
         for c in opened:
             try:
                 c.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning("compose: clip handle close failed (%s)", exc)

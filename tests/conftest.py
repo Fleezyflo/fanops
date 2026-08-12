@@ -51,7 +51,7 @@ def ledger_lock_is_free(cfg) -> bool:
 # (credentials, tuning numbers, and the four read directly by config.py with no Settings field).
 _NON_FLAG_LEAKY = ("FANOPS_ROOT", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_API_KEY", "POSTIZ_URL", "FANOPS_MEDIA_PUBLIC_BASE",
               "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "FANOPS_HOOK_JUDGE",
-              "FANOPS_RESPONDER",   # explicit llm/manual switch (PATH never auto-enables) — must not leak across tests/CI
+              "FANOPS_RESPONDER",   # llm-only validate-or-refuse switch — must not leak across tests/CI
               # LLM transport/model: the operator persists FANOPS_LLM_TRANSPORT=cursor (+ an optional
               # FANOPS_LLM_MODEL) to the repo .env — must not leak into the dispatch-default/AUTO tests.
               "FANOPS_LLM_TRANSPORT", "FANOPS_LLM_MODEL",
@@ -67,9 +67,8 @@ _NON_FLAG_LEAKY = ("FANOPS_ROOT", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_AP
               # bringup: the `fanops up` on-demand-script path override — a repo .env value must not leak
               # into the bring-up tests that assert the DEFAULT $HOME/postiz-selfhost path when unset.
               "FANOPS_POSTIZ_ONDEMAND",
-              # self-adopt: DEFAULTS ON — a repo .env =0 (or =1) must not leak into the loop tests
-              # (test_run_loop.py runs `run --loop`; adoption must be decided by the test, not the env).
-              "FANOPS_AUTO_ADOPT",
+              # FANOPS_AUTO_ADOPT is now a registered BoolEnv (Settings) -> auto-scrubbed via BOOL_ENV_FIELDS
+              # (DEFAULTS ON; a repo .env =0/=1 must not leak into test_run_loop.py's `run --loop`).
               # MOL-732: the operator tz decides which CALENDAR DAY (and hour) a stamp buckets into —
               # timeutil.operator_local_day / publish_buckets, publish_due's daily quota, the allocator's
               # day_used. The operator's live .env DOES set it, so a leak silently moves every day
@@ -136,10 +135,10 @@ def _hermetic_publish_env():
     # isolate reframe/fingerprint/hook wiring and must not write .ass files. Tests that exercise subs
     # opt back in explicitly (monkeypatch delenv/setenv burn_subs).
     os.environ["FANOPS_BURN_SUBS"] = "0"
-    # Production empty FANOPS_RESPONDER → llm, but the hermetic unit suite has no Claude CLI.
-    # Pin manual here so pipeline/cli tests are not refused by preflight; tests that assert the
-    # production default must monkeypatch.delenv("FANOPS_RESPONDER") explicitly.
-    os.environ["FANOPS_RESPONDER"] = "manual"
+    # FANOPS_RESPONDER is scrubbed above (it is in _LEAKY_ENV), so it resolves to the production default
+    # 'llm'. Gates are answered ONLY by the LLM now (the no-op ManualResponder was retired) and 'manual'
+    # is a HARD REFUSE, so the suite can no longer pin it to dodge the preflight — the LLM is MOCKED
+    # instead by the _hermetic_llm fixture below (CLI present + default model raises a transient error).
     try:
         yield
     finally:
@@ -148,6 +147,31 @@ def _hermetic_publish_env():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_llm(monkeypatch):
+    """Gates are answered ONLY by the LLM now (the manual responder was retired), so the unit suite can no
+    longer pin FANOPS_RESPONDER=manual to dodge the preflight — that value is a HARD REFUSE. Instead the
+    suite MOCKS the LLM two ways: (1) make the LLM CLI resolvable so doctor/preflight pass without a real
+    install (no real binary is ever executed), and (2) make the responder's `claude -p` seam
+    (fanops.responder.claude_json_meta) raise a TRANSIENT error so an incidental default answer_pending
+    leaves every gate pending WITHOUT bumping the deterministic ceiling (the generic-Exception branch) —
+    the same 'nothing gets answered' no-op the old ManualResponder gave, via the REAL llm code path.
+    Tests that inject their own model bypass (2); tests that exercise the default model re-patch
+    fanops.responder.claude_json_meta themselves (their patch wins, applied after this autouse fixture);
+    tests that need the CLI genuinely ABSENT (preflight/doctor failure paths) monkeypatch shutil.which
+    back to return None for the binary."""
+    import shutil
+    _real_which = shutil.which
+    def _which(name, *a, **k):
+        if name in ("claude", "cursor-agent"):
+            return f"/usr/bin/{name}"                     # pretend the LLM CLI is installed — never actually run
+        return _real_which(name, *a, **k)
+    monkeypatch.setattr("shutil.which", _which)
+    def _no_llm(*_a, **_k):
+        raise RuntimeError("hermetic unit suite: no live LLM (inject a model, or patch claude_json_meta)")
+    monkeypatch.setattr("fanops.responder.claude_json_meta", _no_llm)
 
 
 # ── VCR: source external API shapes from the REAL call, never a guess ──────────────────────────────

@@ -29,6 +29,7 @@ from fanops.signals import detect_signals
 from fanops.clip import render_aspects_for
 from fanops.stitch_render import prewarm_approved_stitches
 from fanops.artifacts import infer_resume_stage
+from fanops.log import get_logger
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     try:
         led = Ledger.load(cfg)
     except Exception as e:
-        log("produce", source_id, "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS this source's production -> error, not warn (alerting keys on error)
+        get_logger(cfg)("produce", source_id, "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS this source's production -> error, not warn (alerting keys on error)
         return SourceResult(source_id, str(e)[:120])
     s = led.sources.get(source_id)
     if s is None or s.origin_kind == "third_party":
@@ -110,7 +111,7 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
         if _warm_signals(led.sources[source_id], resume_at):
             led = detect_signals(led, cfg, source_id)
     except Exception as e:
-        log("produce", source_id, "warn", err=str(e)[:120])
+        get_logger(cfg)("produce", source_id, "warn", err=str(e)[:120])
         err = f"{type(e).__name__}: {e}"
     for m in list(led.moments.values()):
         if m.parent_id != source_id:
@@ -119,11 +120,11 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
             try:
                 led, _ = render_aspects_for(led, cfg, m.id, aspects=aspects)
             except Exception as e:
-                log("produce", m.id, "warn", err=str(e)[:120])
+                get_logger(cfg)("produce", m.id, "warn", err=str(e)[:120])
     try:
         _prewarm_hook_keyframes(cfg, led, source_id, log=log)
     except Exception as e:
-        log("produce", source_id, "warn", err=str(e)[:120])
+        get_logger(cfg)("produce", source_id, "warn", err=str(e)[:120])
     return SourceResult(source_id, err)
 
 
@@ -141,7 +142,7 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
     try:
         led = Ledger.load(cfg)
     except Exception as e:
-        log("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
+        get_logger(cfg)("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
         return
     ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]
     if ids:
@@ -152,7 +153,7 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
                     try:
                         fut.result()                     # each producer already fail-opens
                     except Exception as e:
-                        log("produce", "-", "warn",
+                        get_logger(cfg)("produce", "-", "warn",
                             err=f"worker crash: {type(e).__name__}: {str(e)[:120]}")
         else:
             for sid in ids:
@@ -164,4 +165,4 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
         try:
             prewarm_approved_stitches(led, cfg, log, strategies=strategies)
         except Exception as e:
-            log("produce", "-", "warn", err=str(e)[:120])
+            get_logger(cfg)("produce", "-", "warn", err=str(e)[:120])

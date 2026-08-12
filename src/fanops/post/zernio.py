@@ -353,7 +353,8 @@ def _scrubbed_transport(exc: Exception, stage: str, cfg: Config | None = None) -
         msg = f"Zernio {stage} transport failed ({name}): {detail}"  # the presign url is not a credential
     try:
         return type(exc)(msg)
-    except Exception:
+    except Exception as build_exc:                       # exotic exc class won't take a bare message -> safe RequestException
+        _log.warning("_scrubbed_transport: could not rebuild %s (%s); degrading to RequestException", name, build_exc)
         return requests.exceptions.RequestException(msg)
 
 
@@ -403,7 +404,8 @@ def zernio_upload_media(cfg: Config, path: Path, *, account_id: str | None = Non
         raise RuntimeError(f"Zernio presign failed ({r.status_code}): {_evidence(cfg, r)}")
     try:
         body = r.json(); upload_url = body.get("uploadUrl"); public_url = body.get("publicUrl")
-    except Exception:
+    except Exception as exc:                             # unparseable presign 2xx body -> fail loud below (no url)
+        get_logger(cfg)("publish", "-", "zernio_presign_unparseable", err=str(exc)[:120])
         upload_url = public_url = None
     if not upload_url or not public_url:
         raise RuntimeError("Zernio presign 2xx but no uploadUrl/publicUrl (body withheld)")

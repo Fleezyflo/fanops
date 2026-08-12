@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from fanops.config import Config
+from fanops.config import Config, parse_scrape_cap
 from fanops.log import get_logger
 from fanops.hashtags import (METRIC_FIELD, RECORD_NUM_FIELDS, _norm, _metric, _num,
                              load_measurements, ranked_tags)
@@ -53,36 +53,26 @@ _SCRAPE_PARALLEL = 1  # FANOPS_HASHTAG_SCRAPE_PARALLEL read retained; fetch sequ
 
 
 def _scrape_parallel() -> int:
-    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL")
-    if raw is None:
-        return _SCRAPE_PARALLEL
+    # Shared rule (config.parse_scrape_cap) — the SAME parse/clamp Settings validates; the module
+    # constant stays the default so tests can monkeypatch it and env still wins when set. Non-int -> default.
     try:
-        v = int(raw)
+        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL"), default=_SCRAPE_PARALLEL, floor=1)
     except ValueError:
         return _SCRAPE_PARALLEL
-    return v if v >= 1 else _SCRAPE_PARALLEL
 
 
 def _scrape_try_cap() -> int:
-    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP")
-    if raw is None:
-        return _SCRAPE_TRY_CAP
     try:
-        v = int(raw)
+        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP"), default=_SCRAPE_TRY_CAP, floor=1)
     except ValueError:
         return _SCRAPE_TRY_CAP
-    return v if v >= 1 else _SCRAPE_TRY_CAP
 
 
 def _scrape_cotag_enqueue_cap() -> int:
-    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE")
-    if raw is None:
-        return _SCRAPE_COTAG_ENQUEUE_CAP
     try:
-        v = int(raw)
+        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE"), default=_SCRAPE_COTAG_ENQUEUE_CAP, floor=0)
     except ValueError:
         return _SCRAPE_COTAG_ENQUEUE_CAP
-    return v if v >= 0 else _SCRAPE_COTAG_ENQUEUE_CAP
 
 
 def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
@@ -978,6 +968,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
     except Exception as exc:                                  # noqa: BLE001 — the tick must never die here
+        get_logger(cfg)("hashtags", "-", "refresh_error", err=str(exc)[:160])
         return {"refreshed": False, "reason": f"error: {str(exc)}"}
 
 
@@ -1052,7 +1043,7 @@ def cmd_hashtags_discover(cfg: Config) -> int:
     try:
         personas = _posting_personas(cfg)
     except Exception as exc:                                  # noqa: BLE001 — a report must never break a schedule
-        log("hashtags", "-", "discover_skipped", level="warning", err=str(exc)[:160]); return 0
+        get_logger(cfg)("hashtags", "-", "discover_skipped", level="warning", err=str(exc)[:160]); return 0
     if not personas:
         log("hashtags", "-", "no_personas", level="warning",
             hint="add one in the Studio Personas tab first"); return 0

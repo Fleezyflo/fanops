@@ -4,6 +4,7 @@ participates. surfaces() yields each (handle, account_id, platform). resolve_acc
 maps a handle to its hosted-backend id (FIX F06: v1 passed the handle straight to the backend)."""
 from __future__ import annotations
 import json
+import logging
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
@@ -15,6 +16,8 @@ from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform, validate_account_handle
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
 from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
+
+_log = logging.getLogger("fanops.accounts")
 
 class AccountStatus(str, Enum):
     planned = "planned"; warming = "warming"; active = "active"; retired = "retired"
@@ -171,6 +174,7 @@ class Accounts:
                     a.accounts.append(Account(**x))
                 except Exception as e:
                     a.skipped_rows.append(f"row {i}: {_reason(e)}")
+                    _log.warning("Accounts.load: skipped account row %s (%s)", i, _reason(e))
         _hydrate_from_personas(a, cfg)               # A1: linked accounts read their persona's voice/corpus/levers
         return a
 
@@ -397,6 +401,7 @@ def load_accounts_safe(cfg: Config) -> tuple["Accounts", Optional[str]]:
     try:
         return Accounts.load(cfg), None
     except Exception as e:
+        _log.warning("load_accounts_safe: accounts.json unreadable (%s); using empty registry", str(e)[:160])
         return Accounts(cfg), str(e)[:160]
 
 

@@ -135,6 +135,7 @@ def refresh_integrations(cfg: Config) -> ActionResult:
         # Fixed message (no str(exc)) — the key must never reach an ActionResult.error (ecc:python-review).
         return ActionResult(ok=False, error="FATAL auth failure — check POSTIZ_API_KEY.")
     except Exception as exc:
+        get_logger(cfg)("golive", "-", "list_integrations_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not list Postiz integrations: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"integrations": integrations})
 
@@ -170,6 +171,7 @@ def refresh_zernio_accounts(cfg: Config) -> ActionResult:
     except ZernioAuthError:
         return ActionResult(ok=False, error="FATAL auth failure — check ZERNIO_API_KEY.")
     except Exception as exc:
+        get_logger(cfg)("golive", "-", "list_zernio_accounts_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not list Zernio accounts: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"accounts": accounts})
 
@@ -205,6 +207,7 @@ def set_account_backend(cfg: Config, handle: str, platform: str, backend: str, c
     except ValueError as exc:                            # unknown platform / backend
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "route_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not route {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "backend": bk or "default"})
 
@@ -226,6 +229,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "") ->
     except ValueError as exc:                            # duplicate handle / unknown platform / blank
         return ActionResult(ok=False, error=str(exc))
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "add_account_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not add {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"added": handle, "platforms": platforms})
 
@@ -254,22 +258,9 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     return set_flag(cfg, "FANOPS_ACCOUNT_CASTING", on)
 
 
-def set_ai_responder(cfg: Config, on: bool) -> ActionResult:
-    """THE single, explicit AI switch (FANOPS_RESPONDER=llm|manual) from the Go-Live tab — the ONLY intended
-    way to turn the LLM responder on/off. ON means the pipeline answers its own moment/caption/hook gates by
-    invoking `claude` (on every run/kick/daemon-tick); OFF (manual) means gates stay pending for a human. This
-    is the NO-haphazard-claude contract made operator-visible: claude fires because THIS toggle is on, never
-    because the binary happens to be on PATH. Dual-written so it takes effect immediately AND persists across
-    restarts/daemon-ticks. Works in dryrun OR live (orthogonal to publishing). Durable-write failure -> clean error."""
-    err = _dual_write(cfg, "FANOPS_RESPONDER", "llm" if on else "manual")
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"responder": "llm" if on else "manual"})
-
-
 def set_llm_transport(cfg: Config, transport: str) -> ActionResult:
     """Set FANOPS_LLM_TRANSPORT (claude | cursor) from the Go-Live tab — which CLI the autonomous responder
-    shells when FANOPS_RESPONDER=llm. Dual-written (.env + os.environ) so it takes effect immediately on the
+    shells to answer the agent gates. Dual-written (.env + os.environ) so it takes effect immediately on the
     next gate without a Studio restart. Unknown values -> clean error."""
     transport = (transport or "").strip().lower()
     if transport not in ("claude", "cursor"):
@@ -282,18 +273,17 @@ def set_llm_transport(cfg: Config, transport: str) -> ActionResult:
 
 def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:
     """Install + load the launchd pipeline driver (hands-off processing) from the Go-Live tab — no CLI. The
-    daemon is SCHEDULING only; it inherits the ambient AI switch (set_ai_responder), so installing it never
-    turns the LLM on by itself. Off-darwin / launchctl-absent / bad interval -> clean ActionResult (never a
-    trace). Reports whether the resolved responder means recurring `claude` so the operator sees the cost."""
+    daemon is SCHEDULING only; gates are always answered by the LLM, so installing it just schedules the
+    unattended loop (it never writes FANOPS_RESPONDER). Off-darwin / launchctl-absent / bad interval ->
+    clean ActionResult (never a trace)."""
     from fanops import daemon
     try:
         secs = daemon.parse_interval(interval)
-        res = daemon.install(cfg, interval=secs, responder="inherit")
+        res = daemon.install(cfg, interval=secs)
     except (RuntimeError, ToolchainMissingError, ValueError) as exc:
         return ActionResult(ok=False, error=f"daemon install failed: {reason(exc)}")
     return ActionResult(ok=res.get("loaded", False), detail={"daemon_installed": True, "interval": secs,
-                        "loaded": res.get("loaded", False), "responder": res.get("responder"),
-                        "discloses_llm": res.get("discloses_llm", False)})
+                        "loaded": res.get("loaded", False), "responder": res.get("responder")})
 
 
 def uninstall_daemon(cfg: Config) -> ActionResult:
@@ -393,6 +383,7 @@ def map_account(cfg: Config, handle: str, platform: str, integration_id: str) ->
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "map_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not map {handle} {platform}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle, "platform": platform, "account_id": integration_id})
 
@@ -420,6 +411,7 @@ def set_meta_creds(cfg: Config, handle: str, ig_user_id: str, token: str = "") -
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "set_ig_user_id_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not set IG user id for {handle}: {str(exc)[:160]}")
     if token:                                                    # write-only secret -> keyring + os.environ
         key = per_account_token_env_key(handle)
@@ -506,6 +498,7 @@ def discover_channels(cfg: Config) -> ActionResult:
             notes.append(f"{name}: auth failed — check {key_name}")   # fixed text; the key is never echoed
             continue
         except Exception as exc:
+            get_logger(cfg)("golive", name, "discover_list_failed", err=str(exc)[:120])
             notes.append(f"{name}: could not list channels ({str(exc)[:120]})")
             continue
         for r in remote:
@@ -556,6 +549,7 @@ def adopt_channels(cfg: Config, selections: list, confirmed: bool = False) -> Ac
         except (ValueError, KeyError) as exc:                # unknown platform/handle/lean — clean per-row error
             rows.append({"handle": handle, "platform": platform, "ok": False, "error": str(exc)})
         except Exception as exc:
+            get_logger(cfg)("golive", handle, "adopt_row_failed", err=str(exc)[:160])
             rows.append({"handle": handle, "platform": platform, "ok": False, "error": str(exc)[:160]})
     return ActionResult(ok=True, detail={"adopted": adopted, "routed": routed, "rows": rows})
 
@@ -571,6 +565,7 @@ def remove_account(cfg: Config, handle: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "remove_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not remove {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"removed": handle})
 
@@ -587,6 +582,7 @@ def demote_account(cfg: Config, handle: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "demote_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not demote {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"demoted": handle})
 
@@ -602,6 +598,7 @@ def promote_account(cfg: Config, handle: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "promote_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not promote {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"promoted": handle})
 
@@ -617,6 +614,7 @@ def set_persona(cfg: Config, handle: str, persona: str) -> ActionResult:
     except KeyError:
         return ActionResult(ok=False, error=f"no such account: {handle}")
     except Exception as exc:
+        get_logger(cfg)("golive", handle, "set_persona_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not set persona for {handle}: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"handle": handle})
 
@@ -638,6 +636,7 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
         accounts = Accounts.load(cfg)
         problems = accounts.validate()                   # malformed/empty-id accounts -> clean error, not 500
     except Exception as exc:
+        get_logger(cfg)("go_live", "-", "accounts_load_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     if problems:
         return ActionResult(ok=False, error="not ready — accounts.json: " + "; ".join(problems))
@@ -675,9 +674,9 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     err = _dual_write(cfg, "FANOPS_LIVE", "1")
     if err:
         return ActionResult(ok=False, error=err)
-    # ROOT decouple (NO haphazard claude): going LIVE is the PUBLISH switch — orthogonal to the AI switch.
-    # It must NOT force FANOPS_RESPONDER=llm (that silently spawned `claude` on every tick after a go-live).
-    # The AI responder is enabled EXPLICITLY and separately (Go-Live → AI Responder / set_ai_responder).
+    # ROOT decouple: going LIVE is the PUBLISH switch — orthogonal to the answer path. Gates are always
+    # answered by the LLM (the manual responder was retired), so a go-live neither turns the LLM "on" nor
+    # writes FANOPS_RESPONDER; publishing stays gated behind Review regardless.
     # M3c: scrape stale FANOPS_POSTER=dryrun — .env.example seeds it; pre-M3b go_dryrun wrote it;
     # M3b go_live never updated it. Studio dual-writes os.environ immediately; the resident daemon
     # loop reloads .env each tick (load_dotenv override=True). One-shot CLI/Studio restarts also
@@ -732,6 +731,7 @@ def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, conf
     except PostizAuthError:
         return ActionResult(ok=False, error="FATAL auth failure — check POSTIZ_API_KEY.")   # fixed string, never str(exc)
     except Exception as exc:
+        get_logger(cfg)("golive", "-", "validate_list_integrations_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not list Postiz integrations: {str(exc)[:160]}")
     if not integration_id or integration_id not in known:
         return ActionResult(ok=False, error="pick the throwaway channel to validate against (one of your mapped Postiz integrations).")
@@ -749,6 +749,7 @@ def validate_learning(cfg: Config, *, integration_id: Optional[str] = None, conf
     except CutoverError as exc:
         return ActionResult(ok=False, error=str(exc))                        # cutover messages carry no key (ids/fixed text)
     except Exception as exc:
+        get_logger(cfg)("golive", "-", "validate_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"validation failed: {str(exc)[:160]}")
     return ActionResult(ok=True, detail={"validated": True, "reconciliation": metrics.get("reconciliation"),
                                          "lift_score": lift.get("lift_score")})

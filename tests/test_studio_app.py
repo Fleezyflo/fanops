@@ -108,23 +108,12 @@ def test_daemon_health_off_is_optin_not_fault(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     import fanops.studio.views as V
     monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "not installed", "loaded": False,
-                        "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600,
-                        "responder": "llm", "discloses_llm": True})
+                        "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600})
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" not in html                        # NOT framed as a fault
     assert "until fixed" not in html                             # the alarmist copy is gone
     assert "optional" in html.lower() and "off" in html.lower()  # honest opt-in framing
     assert "claude" in html.lower()                              # discloses the recurring-LLM cost
-
-def test_daemon_health_off_no_llm_disclosure_when_manual(tmp_path, monkeypatch):
-    # When the resolved responder is manual, the opt-in card must NOT warn about claude (no false cost claim).
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "not installed", "loaded": False,
-                        "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600,
-                        "responder": "manual", "discloses_llm": False})
-    html = _client(cfg).get("/home/daemon-health").data.decode()
-    assert "data-daemon-warn" not in html and "claude" not in html.lower()
 
 def test_home_daemon_health_does_not_call_daemon_status(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)

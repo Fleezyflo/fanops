@@ -1,8 +1,8 @@
 # tests/test_intro_match.py — M6 (structural-hooks): the LLM-vision intro PAIRING matcher gate.
 # request_intro_match writes one agent gate per router-reserved (clean_awaiting_strategy:intro_tease)
 # moment carrying the clip context vs the candidate third-party intro assets; the llm responder answers ranked
-# pairings; ingest writes them onto Moment.intro_matches for the producer. Gated on cfg.intro_tease +
-# FANOPS_RESPONDER=llm, FAIL-OPEN (no responder / corrupt answer -> moment stays unmatched, never wedges).
+# pairings; ingest writes them onto Moment.intro_matches for the producer. Gated on cfg.intro_tease ONLY
+# (gates are always answered by the LLM now), FAIL-OPEN (corrupt answer -> moment stays unmatched, never wedges).
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -13,8 +13,8 @@ from fanops.intro_match import (request_intro_match, ingest_intro_match,
                                 MATCHER_VERSION, _candidates)
 
 
-def _cfg(tmp_path, monkeypatch, *, llm=True, tease=True):
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm" if llm else "manual")
+def _cfg(tmp_path, monkeypatch, *, tease=True):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")   # gates are always answered by the LLM (the only mode)
     if tease: monkeypatch.setenv("FANOPS_INTRO_TEASE", "1")
     else: monkeypatch.delenv("FANOPS_INTRO_TEASE", raising=False)
     return Config(root=tmp_path)
@@ -54,11 +54,6 @@ def test_request_writes_one_gate_with_clip_and_candidates(tmp_path, monkeypatch)
     payload = json.loads(request_path(cfg, "intro_match", keys[0]).read_text())
     assert payload["clip"]["moment_id"] == "m1" and payload["matcher_version"] == MATCHER_VERSION
     assert {c["asset_id"] for c in payload["candidates"]} == {"i1", "i2"}
-
-def test_no_gate_when_responder_not_llm(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch, llm=False); led = _seed(cfg)
-    request_intro_match(led, cfg)
-    assert pending(cfg, kind="intro_match") == []
 
 def test_no_gate_when_intro_tease_off(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, tease=False); led = _seed(cfg)

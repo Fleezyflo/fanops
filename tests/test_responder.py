@@ -1,27 +1,26 @@
 import json
+import pytest
 from fanops.config import Config
-from fanops.responder import get_responder, ManualResponder
+from fanops.responder import get_responder, LlmResponder
 
-def test_manual_responder_is_noop(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+def test_get_responder_is_always_llm(tmp_path, monkeypatch):
+    # Gates are answered ONLY by the LLM (the no-op ManualResponder was retired): empty/unset OR the
+    # literal 'llm' both resolve to the WORKING LlmResponder — there is no other responder to pick.
     cfg = Config(root=tmp_path)
-    r = get_responder(cfg)
-    assert isinstance(r, ManualResponder)
-    assert r.answer_pending(cfg) == 0                # writes nothing; a human does
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    assert isinstance(get_responder(cfg), LlmResponder)
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    assert isinstance(get_responder(cfg), LlmResponder)
 
 
-def test_manual_responder_logs_when_pending(tmp_path, monkeypatch):
-    # Wave 7: ManualResponder still writes nothing, but pending>0 leaves a surfaced breadcrumb.
-    from fanops.agentstep import write_request
-    monkeypatch.setenv("FANOPS_RESPONDER", "manual")
+def test_get_responder_hard_refuses_unknown(tmp_path, monkeypatch):
+    # There is no manual mode to fall back to, so a bad FANOPS_RESPONDER must fail LOUDLY at the answer-path
+    # chokepoint (get_responder reads responder_mode) rather than silently degrading to a no-op.
     cfg = Config(root=tmp_path)
-    write_request(cfg, kind="moments", key="src_1",
-                  payload={"source_id": "src_1", "duration": 10.0, "transcript": [], "signal_peaks": []})
-    events = []
-    monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append((a, k))))
-    r = get_responder(cfg)
-    assert r.answer_pending(cfg) == 0
-    assert any(ev[0][2] == "pending_unanswered" and ev[1].get("n") == 1 for ev in events)
+    for bad in ("manual", "bogus"):
+        monkeypatch.setenv("FANOPS_RESPONDER", bad)
+        with pytest.raises(ValueError):
+            get_responder(cfg)
 
 def test_responder_screens_text_once(tmp_path, monkeypatch):
     # MOL-166: model-authored text is screened ONCE at the responder boundary — em-dashes never land on disk.

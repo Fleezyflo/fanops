@@ -128,7 +128,7 @@ def test_loop_reloads_env_from_disk_each_iteration(tmp_path, monkeypatch, mocker
     """B01 C1: resident loop must pick up .env disk writes without process restart."""
     _setup_accounts(tmp_path, monkeypatch)
     env = tmp_path / ".env"
-    env.write_text("FANOPS_LIVE=1\nFANOPS_RESPONDER=manual\n")
+    env.write_text("FANOPS_LIVE=1\nFANOPS_RESPONDER=llm\n")
     monkeypatch.setenv("FANOPS_LIVE", "1")                 # stale process env — disk flip must override
     import fanops.cli as cli
     config_calls: list = []
@@ -142,7 +142,7 @@ def test_loop_reloads_env_from_disk_each_iteration(tmp_path, monkeypatch, mocker
     def track_live(cfg, *, base_time):
         is_live_seen.append(cfg.is_live)
         if len(is_live_seen) == 1:
-            env.write_text("FANOPS_LIVE=0\nFANOPS_RESPONDER=manual\n")   # disk-only flip
+            env.write_text("FANOPS_LIVE=0\nFANOPS_RESPONDER=llm\n")   # disk-only flip
         return _idle_summary()
     _stub_run(mocker, cli, advance_side_effect=track_live)
     n = 2

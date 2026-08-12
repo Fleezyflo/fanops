@@ -354,7 +354,8 @@ def create_app(cfg: Config) -> Flask:
             led = Ledger.load(cfg)
             acct = _account_arg()
             return {"inflight_watch": views.inflight_watch(led, cfg, account=acct)}
-        except Exception:
+        except Exception as exc:
+            logger.warning("inflight_watch inject failed (empty watch): %s", exc)
             return {"inflight_watch": []}
 
     @app.context_processor

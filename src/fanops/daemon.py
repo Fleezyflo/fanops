@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib, json, logging, os, plistlib, re, shutil, socket, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
-from fanops.config import Config
+from fanops.config import Config, env_bool
 from fanops.errors import ToolchainMissingError
 
 _log = logging.getLogger(__name__)
@@ -98,10 +98,10 @@ def _daemon_path() -> str:
     return ":".join(out)
 
 def resolve_responder(cfg: Config) -> str:
-    """The responder a hands-off `fanops run` fire WILL use — returns `cfg.responder_mode` only
-    (no PATH probing). Empty/unset FANOPS_RESPONDER → 'llm'; typo → warn+'manual'. The daemon
-    plist is responder-AGNOSTIC: SCHEDULING and the AI SWITCH are decoupled — this just reports
-    what the run resolves at fire time, which the CLI/Studio then DISCLOSE."""
+    """The responder a hands-off `fanops run` fire WILL use — always 'llm' now (the manual responder was
+    retired; gates are answered ONLY by the LLM). Returns `cfg.responder_mode`, which VALIDATES
+    FANOPS_RESPONDER (empty/unset OR 'llm' → 'llm'; anything else raises). The daemon plist is
+    responder-AGNOSTIC — SCHEDULING is decoupled from the answer path; this just reports the fire-time mode."""
     return cfg.responder_mode
 
 def format_interval(secs: int) -> str:
@@ -118,8 +118,8 @@ def _installed_program(cfg: Config) -> str | None:
         args = pl.get("ProgramArguments") or []
         if isinstance(args, list) and args and isinstance(args[0], str):
             return args[0]
-    except Exception:
-        pass
+    except Exception as exc:                             # unreadable/corrupt plist -> no program claim (fail-open)
+        _log.warning("_installed_program: could not read %s (%s)", p, exc)
     return None
 
 def _plist_spec(cfg: Config, interval: int) -> dict:
@@ -180,7 +180,8 @@ def installed_interval(cfg: Config) -> int | None:
         return None
     try:
         pl = plistlib.loads(p.read_bytes())
-    except Exception:
+    except Exception as exc:                             # corrupt on-disk plist must never crash `daemon status`
+        _log.warning("installed_interval: could not read %s (%s)", p, exc)
         return None
     env = pl.get("EnvironmentVariables") or {}
     if isinstance(env, dict):
@@ -301,24 +302,17 @@ def _load_plist(plist: Path, label: str) -> bool:
 
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
 
-def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
+def install(cfg: Config, *, interval: int) -> dict:
     """Write the plist (direct `fanops run --loop` exec) and load via launchctl. Idempotent: bootout any
     prior copy first (ignore its rc), then bootstrap; fall back to `load -w` on older macOS.
 
-    `responder` is the AI-switch CHOICE, decoupled from this scheduling install:
-      - 'inherit' (default): touch NOTHING — the fire-time run resolves the ambient responder. Installing
-        the driver never silently turns the LLM on.
-      - 'llm'/'manual': PERSIST it to .env (the durable single source of truth) so every future fire honors it.
-    Returns the RESOLVED responder + `discloses_llm` so the caller can DISCLOSE the recurring-LLM cost."""
+    SCHEDULING ONLY — the daemon NEVER writes FANOPS_RESPONDER. Gates are always answered by the LLM (the
+    manual responder was retired), so installing the driver has no AI-switch product choice to make; it just
+    schedules the unattended loop. Returns the resolved responder (always 'llm') for the status line."""
     _require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
     cfg.control.mkdir(parents=True, exist_ok=True)
-    if responder in ("llm", "manual"):
-        from fanops.autopilot import set_env_var          # lazy: avoids a daemon<->autopilot import cycle at load
-        set_env_var(cfg.root / ".env", "FANOPS_RESPONDER", responder)   # durable; loop reloads .env each tick
-        resolved = responder
-    else:
-        resolved = resolve_responder(cfg)                 # 'inherit' -> what the run resolves ambiently, persist nothing
+    resolved = resolve_responder(cfg)                     # always 'llm' (validates FANOPS_RESPONDER); persists nothing
     pp = plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
     if pp.exists():
@@ -336,7 +330,7 @@ def install(cfg: Config, *, interval: int, responder: str = "inherit") -> dict:
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
     return {"plist": str(pp), "interval": interval, "loaded": loaded,
-            "responder": resolved, "discloses_llm": resolved == "llm", **keeper}
+            "responder": resolved, **keeper}
 
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
@@ -368,7 +362,9 @@ def ensure(cfg: Config) -> dict:
     # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
     # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
     # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
-    if os.getenv("FANOPS_AUTO_ADOPT", "1") != "0":
+    # env_bool (default ON): off-words ("0"/"false"/"no"/"off") disable; a typo keeps the default ON
+    # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
+    if env_bool(os.getenv("FANOPS_AUTO_ADOPT"), default=True):
         from fanops.errors import fail_open
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
@@ -461,7 +457,8 @@ def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | 
         r = _launchctl("list", label)
         loaded = r.returncode == 0
         pid = _grep_int(r.stdout, "PID") if loaded else None
-    except Exception:
+    except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
+        _log.warning("sibling_agent_status: launchctl list %s failed (%s)", label, exc)
         loaded, pid = False, None
     if not installed:
         verdict = "not installed"
@@ -482,7 +479,8 @@ def sibling_agents_status() -> list[dict]:
         iv = spec.get("poll_interval_s", SIBLING_POLL_INTERVAL_S)
         try:
             out.append(sibling_agent_status(spec["label"], short=str(spec["short"]), poll_interval_s=int(iv)))
-        except Exception:
+        except Exception as exc:                         # one sibling's probe failing must not sink the rest (fail-open)
+            _log.warning("sibling_agents_status: %s status failed (%s)", spec.get("label"), exc)
             out.append({"label": spec["label"], "short": spec["short"], "installed": False, "loaded": False,
                         "verdict": "unknown", "poll_interval_s": int(iv), "alarm": False})
     return out
@@ -622,7 +620,8 @@ def studio_agent_status() -> dict:
         r = _launchctl("list", STUDIO_LABEL)
         loaded = r.returncode == 0
         pid = _grep_int(r.stdout, "PID") if loaded else None
-    except Exception:
+    except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
+        _log.warning("studio_agent_status: launchctl list %s failed (%s)", STUDIO_LABEL, exc)
         loaded, pid = False, None
     if not installed:
         verdict = "not installed"

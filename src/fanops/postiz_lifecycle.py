@@ -15,10 +15,13 @@ Safe by construction — ensure_up() does NOTHING unless ALL hold:
 Any failure is swallowed-then-returned (fail-open): a still-down Postiz then surfaces through
 the normal connection error in the poster, exactly as before this module existed.
 """
+import logging
 import sys
 import shutil
 import subprocess
 from pathlib import Path
+
+_log = logging.getLogger("fanops.postiz_lifecycle")
 
 _SCRIPT = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _WAIT_S = 150
@@ -40,7 +43,8 @@ def _backend_is_postiz(cfg) -> bool:
     try:
         from fanops.accounts import Accounts
         return any(p == "postiz" for _, _, p in Accounts.load(cfg).live_ready_channels())
-    except Exception:
+    except Exception as exc:
+        _log.warning("_backend_is_postiz: accounts load failed (%s); assuming no postiz channel", exc)
         return False
 
 
@@ -65,4 +69,5 @@ def ensure_up(cfg) -> None:
         subprocess.run(["bash", str(_SCRIPT), "ensure"], timeout=_WAIT_S,
                        capture_output=True, check=False)
     except Exception as e:  # fail-open: publishing proceeds; a down stack surfaces normally
+        _log.warning("ensure_up skipped (%s): %s", type(e).__name__, e)
         sys.stderr.write(f"[postiz_lifecycle] ensure_up skipped ({type(e).__name__}): {e}\n")

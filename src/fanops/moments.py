@@ -4,7 +4,7 @@ RECONCILES them into content-addressed Moment units (upsert + cascade-delete of 
 moments' lineage), so amplify actually changes the set instead of silently no-opping (the
 v1 bug). No tiers, no quotas — the agent returns as many valid picks as are worth posting."""
 from __future__ import annotations
-import math
+import logging, math
 from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -23,6 +23,8 @@ from fanops.moment_hook_learning import proven_hook_styles
 from fanops.personas import hook_author_slot
 from fanops.accounts import AccountStatus
 import os
+
+_log = logging.getLogger("fanops.moments")
 
 # M1b PASS 1: how many SOURCE stills the PICK author gets — a whole-source survey (a picking aid: judge
 # which windows are visually strong). Bounded so the opus+vision call stays under the claude -p image
@@ -199,7 +201,9 @@ def _corpus_hit(text, corpus) -> bool:
             if not term: continue
             needle = str(term).lstrip("#").lower()
             if needle and needle in hay: return True
-    except Exception: return False
+    except Exception as exc:
+        _log.warning("_corpus_hit: corpus scan failed (%s)", exc)
+        return False
     return False
 def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=None,
                         cfg=None, source_id: str | None = None) -> tuple:
@@ -270,7 +274,8 @@ def _pick_personas(cfg: Config, accounts) -> list[dict]:
             entry = _persona_entry(cfg, a)
             if not entry.get("directive"): continue
             out.append(entry)
-        except Exception:
+        except Exception as exc:
+            get_logger(cfg)("moments", getattr(a, "handle", "-"), "persona_entry_skipped", err=str(exc)[:120])
             continue
     return out
 
@@ -404,7 +409,8 @@ def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: li
     try:
         from fanops.accounts import Accounts
         by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
-    except Exception:
+    except Exception as exc:
+        get_logger(cfg)("source", source_id, "accounts_load_failed", err=str(exc)[:120])
         by_handle = {}
     keep: dict[str, Moment] = {}
     owner_n: dict[str, int] = {}

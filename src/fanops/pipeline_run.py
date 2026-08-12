@@ -55,7 +55,7 @@ def set_paused(cfg: Config, on: bool) -> None:
 def _read_body(lock_path: Path) -> dict:
     try:
         return json.loads(lock_path.read_text() or "{}")
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {}
 
 
@@ -63,7 +63,7 @@ def _iso_age(raw: str) -> int:
     try:
         t0 = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         return int(time.time() - t0.timestamp())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return 0
 
 
