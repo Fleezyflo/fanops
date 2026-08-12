@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from fanops.config import Config
+from fanops.errors import fail_open
 from fanops.gate_keys import gate_source_id
 from fanops.agentstep import pending, request_path, latest_request_id, _attempts_path
 from fanops.pipeline import GATE_KINDS
@@ -20,10 +21,10 @@ def _gate_attempt(cfg: Config, kind: str, key: str) -> int:
     p = _attempts_path(cfg, kind, key)
     if not p.exists():
         return 0
-    try:
-        return int(json.loads(p.read_text()).get("n", 0))
-    except Exception:
-        return 0
+    n = 0
+    with fail_open("pipeline_status._gate_attempt"):
+        n = int(json.loads(p.read_text()).get("n", 0))
+    return n
 
 
 def _gate_is_corrupt(cfg: Config, kind: str, key: str) -> bool:

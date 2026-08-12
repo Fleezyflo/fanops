@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
-from fanops.errors import CutoverError
+from fanops.errors import CutoverError, fail_open
 from fanops.track import _W, lift_score
 
 # Hardcoded, NOT operator-supplied, so the probe post can NEVER go live: the operator deletes it in
@@ -24,11 +24,11 @@ def _load_state(cfg: Config) -> dict:
     p = cfg.cutover_path
     if not p.exists():
         return {}
-    try:
+    out: dict = {}
+    with fail_open("cutover._load_state"):                   # corrupt scratch file -> start clean, never crash
         raw = json.loads(p.read_text())
-        return raw if isinstance(raw, dict) else {}
-    except Exception:
-        return {}                                            # corrupt scratch file -> start clean, never crash
+        out = raw if isinstance(raw, dict) else {}
+    return out
 
 def _save_state(cfg: Config, patch: dict) -> None:
     # XC-3: atomic (tmp + os.replace) like every other control file (controlio.write_json_atomic). A crash

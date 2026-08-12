@@ -14,6 +14,7 @@ import os
 from datetime import datetime, timezone
 from typing import Sequence
 from fanops.config import Config
+from fanops.errors import fail_open
 
 
 def write_audit(cfg: Config, action: str, post_ids: Sequence[str], *,
@@ -26,7 +27,7 @@ def write_audit(cfg: Config, action: str, post_ids: Sequence[str], *,
     NEVER raises: the caller's action MUST complete even if the audit write fails
     (disk full, dir-where-file-should-be, perms). The log is a tail-and-grep surface,
     not load-bearing for correctness."""
-    try:
+    with fail_open("audit.write_audit"):
         cfg.control.mkdir(parents=True, exist_ok=True)
         entry = {
             "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -43,8 +44,6 @@ def write_audit(cfg: Config, action: str, post_ids: Sequence[str], *,
             os.chmod(path, 0o600)
         except OSError:
             pass
-    except Exception:
-        pass
 
 
 def read_audit_tail(cfg: Config, n: int = 20) -> list[str]:
@@ -53,8 +52,8 @@ def read_audit_tail(cfg: Config, n: int = 20) -> list[str]:
     path = cfg.control / "studio_audit.log"
     if not path.exists():
         return []
-    try:
+    out: list[str] = []
+    with fail_open("audit.read_audit_tail"):
         lines = path.read_text(encoding="utf-8").splitlines()
-        return lines[-n:] if n > 0 else lines
-    except Exception:
-        return []
+        out = lines[-n:] if n > 0 else lines
+    return out
