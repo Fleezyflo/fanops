@@ -15,12 +15,15 @@ RE-EXPORTED below, so every existing `from fanops.personas import X` keeps resol
 `fanops.personas.discover_corpus` stays patchable at that exact attribute (tests monkeypatch it there)."""
 from __future__ import annotations
 import json
+import logging
 import re
 from typing import Optional
 from pydantic import BaseModel, Field
 from fanops.config import Config
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.persona_levers import vocab as _lever_vocab
+
+_log = logging.getLogger("fanops.personas")
 
 # The lever-engine vocabularies (the validated control surface — one lever per persona characteristic). Each
 # is the WRITE boundary for its lever: add/update_persona refuses an unknown value (never write a typo that
@@ -65,23 +68,38 @@ class Personas:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.personas: list[Persona] = []
+        # Per-row parse failures collected at load (index + reason). Mirrors Accounts.skipped_rows
+        # (MOL-79): ONE stray null / missing-field row must degrade to "that row skipped" rather than
+        # crash the whole registry. NOT silent: validate() promotes these to problems + load logs.
+        self.skipped_rows: list[str] = []
 
     @classmethod
     def load(cls, cfg: Config) -> "Personas":
         r = cls(cfg)
         p = cfg.personas_path
         if p.exists():
+            text = p.read_text()                       # an I/O error here is a real problem, not "invalid"
             try:
-                raw = json.loads(p.read_text())
-                personas: list[Persona] = []
-                for x in raw.get("personas", []):
-                    if not isinstance(x, dict): continue
+                raw = json.loads(text)                 # a corrupt file (bad JSON) still fails loud
+            except Exception as e:
+                raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+            # Wrong top-level shape is NOT a per-row typo — fail loud like Accounts.load.
+            if not isinstance(raw, dict):
+                raise ControlFileError(
+                    f"{p.name} invalid: top-level must be an object with a 'personas' list, got {type(raw).__name__}")
+            # Per-ROW leniency (Accounts.load parity): one bad row is skipped + recorded + logged;
+            # every other persona still loads. Skips surface via validate() -> doctor.
+            for i, x in enumerate(raw.get("personas", [])):
+                try:
+                    if not isinstance(x, dict):
+                        raise TypeError(f"expected object, got {type(x).__name__}")
                     d = dict(x)
                     d.pop("intake", None)                       # MOL-529: leftover intake keys ignored at load
-                    personas.append(Persona(**d))
-                r.personas = personas
-            except Exception as e:                 # a hand-edit typo: clear one-liner, not a raw traceback
-                raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+                    r.personas.append(Persona(**d))
+                except Exception as e:
+                    reason = _reason(e)
+                    r.skipped_rows.append(f"row {i}: {reason}")
+                    _log.warning("personas.json %s — malformed, skipped: %s", f"row {i}", reason)
         return r
 
     def get(self, pid: Optional[str]) -> Optional[Persona]:
@@ -89,6 +107,13 @@ class Personas:
 
     def all(self) -> list[Persona]:
         return list(self.personas)
+
+    def validate(self) -> list[str]:
+        """Config-integrity problems to surface (doctor/health). A per-row parse skip at load is
+        named HERE so a silently-dropped persona cannot vanish without a doctor hint — mirrors
+        Accounts.validate's skipped_rows promotion."""
+        return [f"personas.json {s} — malformed, skipped (fix the row in personas.json)"
+                for s in self.skipped_rows]
 
 
 def _slug(s: str) -> str:
