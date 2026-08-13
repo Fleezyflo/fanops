@@ -136,10 +136,12 @@ class LlmResponder:
         except (LlmToolchainError, ToolchainMissingError) as e:
             log("responder", f"{kind}:{key}", "toolchain_error", err=str(e)[:160])
             self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} toolchain error: {str(e)[:160]}", log)
-        except Exception as e:              # MOL-960: repeated generic failures burn the same attempt ceiling
+        except Exception as e:              # MOL-960: burn shared attempt ceiling; MOL-227: do NOT stamp degraded on bare Exception
             get_logger(cfg)("responder", f"{kind}:{key}", "error", err=str(e)[:160])
-            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} error: {str(e)[:160]}", log,
-                                       failure_class="generic")
+            n = record_attempt(cfg, kind, key)
+            if decide("generic", n) is EscalationPosture.terminate:
+                self._terminate_gate_source(cfg, kind, key, f"agent gate {kind} error: {str(e)[:160]}")
+                esc_clear_attempts(cfg, kind, key)
         return False
 
     def _on_deterministic_fail(self, cfg: Config, kind: str, key: str, reason: str, log,

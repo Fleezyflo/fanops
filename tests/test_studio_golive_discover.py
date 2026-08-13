@@ -6,6 +6,8 @@ unit-tested in test_golive_discover.py; THESE prove the Flask wiring + the index
 os.environ-leak guard: the routes read POSTIZ/ZERNIO keys via the env; restore the baseline after each
 test so a setenv never leaks into a later test (pytest-os-environ-leak-guard)."""
 import json
+from datetime import datetime, timezone
+from fanops.timeutil import iso_z
 import os
 import re
 import types
@@ -51,7 +53,7 @@ def _chan(cid, name, platform):
 def _seed_deps(cfg, rows):
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.deps_health_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "deps": [{"name": d[0], "ok": d[1], "detail": d[2], "status_code": d[3] if len(d) > 3 else None}
                  for d in rows],
     }))

@@ -84,7 +84,7 @@ def test_install_writes_files_and_bootstraps(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", fake)
     cfg = Config(root=tmp_path)
 
-    res = daemon.install(cfg, interval=600, responder="llm")
+    res = daemon.install(cfg, interval=600)
 
     assert daemon.plist_path().exists()
     pl = plistlib.loads(daemon.plist_path().read_bytes())
@@ -94,6 +94,7 @@ def test_install_writes_files_and_bootstraps(tmp_path, monkeypatch):
     uid = os.getuid()
     assert ["launchctl", "bootstrap", f"gui/{uid}", str(daemon.plist_path())] in fake.calls
     assert res["loaded"] is True
+    assert res["responder"] == "llm"
 
 
 def test_install_falls_back_to_load_when_bootstrap_never_confirms(tmp_path, monkeypatch):
@@ -118,7 +119,7 @@ def test_install_falls_back_to_load_when_bootstrap_never_confirms(tmp_path, monk
     monkeypatch.setattr(daemon.subprocess, "run", tracked)
     cfg = Config(root=tmp_path)
 
-    res = daemon.install(cfg, interval=600, responder="llm")
+    res = daemon.install(cfg, interval=600)
 
     assert ["launchctl", "load", "-w", str(daemon.plist_path())] in tracked.calls
     assert res["loaded"] is True
@@ -134,7 +135,7 @@ def test_install_loaded_false_when_print_fails_despite_bootstrap_rc0(tmp_path, m
     monkeypatch.setattr(daemon.subprocess, "run", fake)
     cfg = Config(root=tmp_path)
 
-    res = daemon.install(cfg, interval=600, responder="inherit")
+    res = daemon.install(cfg, interval=600)
 
     assert res["loaded"] is False
 
@@ -166,7 +167,7 @@ def test_install_retries_bootstrap_until_print_succeeds(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", tracked)
     cfg = Config(root=tmp_path)
 
-    res = daemon.install(cfg, interval=600, responder="inherit")
+    res = daemon.install(cfg, interval=600)
 
     assert res["loaded"] is True
     assert main_tries[0] == 3
@@ -180,7 +181,7 @@ def test_install_raises_on_non_darwin(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.sys, "platform", "linux")
     cfg = Config(root=tmp_path)
     with pytest.raises(RuntimeError, match="macOS"):
-        daemon.install(cfg, interval=600, responder="llm")
+        daemon.install(cfg, interval=600)
 
 
 def test_install_raises_clean_when_launchctl_absent(tmp_path, monkeypatch):
@@ -191,7 +192,7 @@ def test_install_raises_clean_when_launchctl_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", absent)
     cfg = Config(root=tmp_path)
     with pytest.raises(ToolchainMissingError, match="launchctl"):
-        daemon.install(cfg, interval=600, responder="llm")
+        daemon.install(cfg, interval=600)
 
 
 # ── Task 3: status (read-only liveness) ──────────────────────────────────────────────────────
@@ -672,7 +673,7 @@ def test_install_written_plist_prohibits_multiple_instances(tmp_path, monkeypatc
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
     cfg = Config(root=tmp_path)
-    daemon.install(cfg, interval=600, responder="inherit")
+    daemon.install(cfg, interval=600)
     pl = plistlib.loads(daemon.plist_path().read_bytes())
     assert pl.get("LSMultipleInstancesProhibited") is True
 
