@@ -3,25 +3,24 @@
 analytics field shape carry the signal the learning loop optimizes? The loop weights track._W, and the
 live Postiz backend delivers the labels _POSTIZ_LABEL_MAP maps (likes/shares/comments/reach/saves/views);
 `retention` is genuinely absent from the live label set — a known gap, NOT a doctor failure. So the
-verdict gates ONLY on `reach` (mapped from the live `reach` label), the one weighted key M4's
+verdict gates ONLY on `reach` (mapped from the live `reach` label), the one weighted key
 reach-attribution consumes. Tri-state, so 0 posts is never a vacuous PASS:
   PASS    — sampled posts carry a reach signal (the reach label reconciles)
   FAIL    — sampled posts carry analytics labels but NONE yields `reach`
   NO-DATA — no shipped posts, or none with usable analytics yet
-Genuinely read-only of the ledger: pulls analytics, never writes the ledger / flips a flag / calls
-record_metrics. The CLI persists the verdict to its OWN sidecar (00_control/learn_doctor.json) so M4
-gates on a machine-readable PASS — a SEPARATE gate from cutover.json/metrics_confirmed. The POSTIZ key
-is sent as auth by PostizMetricsClient and never logged/echoed here (mirror its sentinel discipline)."""
+Genuinely read-only: pulls analytics, prints a verdict, never writes the ledger / a control sidecar /
+flips a flag / calls record_metrics. Learning unlock is validation_gate.learning_validated →
+cutover.json metrics_confirmed, not this CLI. The POSTIZ key is sent as auth by PostizMetricsClient
+and never logged/echoed here (mirror its sentinel discipline)."""
 from __future__ import annotations
 from fanops.config import Config
-from fanops.controlio import write_json_atomic
 from fanops.log import get_logger
 from fanops.ledger import Ledger
 from fanops.models import PostState
 from fanops.track import _W
 
 # The ONE weighted key the verdict gates on: mapped from the live Postiz `reach` label and the field
-# M4 reach-attribution reads. `retention` is absent from the live label set (reported, never gated).
+# reach-attribution reads. `retention` is absent from the live label set (reported, never gated).
 _GATING_KEY = "reach"
 
 
@@ -72,17 +71,10 @@ def _mapped_lift_keys() -> set:
     return set(_POSTIZ_LABEL_MAP.values())
 
 
-def _persist_verdict(cfg: Config, report: dict) -> None:
-    # XC-3: atomic like every other control file (controlio.write_json_atomic). A crash mid-write must leave
-    # the PRIOR verdict, never a torn sidecar.
-    # write_json_atomic serializes the dict (every value here is JSON-native), so no json.dumps.
-    write_json_atomic(cfg.learn_doctor_path, report)
-
-
 def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
-    """`fanops learn doctor` — print the field-shape verdict and persist it for M4. Read-only; exits 0
-    on every branch (a diagnostic never aborts a pipeline). On a non-postiz backend or missing key it
-    prints guidance and returns without touching the network."""
+    """`fanops learn doctor` — print the field-shape verdict. Read-only; exits 0 on every branch
+    (a diagnostic never aborts a pipeline). On a non-postiz backend or missing key it prints guidance
+    and returns without touching the network."""
     if not cfg.backend_has_creds("postiz"):
         get_logger(cfg)("learn_doctor", "-", "missing_backend", level="warning",
                         hint="connect Postiz in Studio Go-Live (POSTIZ_API_KEY) and route a channel to postiz")
@@ -106,5 +98,4 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     if report["verdict"] != "PASS":
         log("learn_doctor", "-", "not_validated", level="warning",
             detail="Do NOT enable variant_* / reach-attribution paths yet")
-    _persist_verdict(cfg, report)
     return 0

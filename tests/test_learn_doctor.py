@@ -1,9 +1,9 @@
 # tests/test_learn_doctor.py
 # F2 — read-only learning-loop field-shape doctor. Answers ONE question: does the LIVE Postiz
-# analytics field shape carry the `reach` signal lift_score/M4 reach-attribution need? The verdict is
+# analytics field shape carry the `reach` signal lift_score/reach-attribution need? The verdict is
 # per-key on `reach` (mapped from the live `reach` label) — NOT all of _W: `retention` is genuinely
 # absent from the live label set (reported, never gated). `saves` now maps (the 2026-06-21 label fix).
-# Tri-state: PASS / FAIL / NO-DATA, so 0 posts is never a vacuous PASS. Persisted so M4 can gate on it.
+# Tri-state: PASS / FAIL / NO-DATA, so 0 posts is never a vacuous PASS. Prints/logs only — no sidecar.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -40,7 +40,7 @@ def test_verdict_fail_when_labels_present_but_no_reach(tmp_path):
 
 
 def test_verdict_no_data_on_zero_posts(tmp_path):
-    # No shipped posts -> empty fetch -> NO-DATA (NEVER a vacuous PASS that would let M4 attribute
+    # No shipped posts -> empty fetch -> NO-DATA (NEVER a vacuous PASS that would unlock learning
     # against unvalidated labels).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     rep = field_shape_report(led, cfg, list_posts=lambda w: [])
@@ -82,7 +82,7 @@ def test_cmd_non_postiz_backend_exits_zero_with_guidance(tmp_path):
     assert "FANOPS_POSTER" not in hints[0]
 
 
-def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):
+def test_cmd_logs_verdict_without_sidecar(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_API_KEY", "sk-test-doctor")
     cfg, led = _led_with_shipped(tmp_path)
@@ -90,9 +90,10 @@ def test_cmd_persists_verdict_for_m4_to_gate(tmp_path, monkeypatch, capsys):
     rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 4242}, "_raw_labels": ["impressions"]}]
     rc = cmd_learn_doctor(cfg, list_posts=lambda w: rows)
     assert rc == 0
-    assert cfg.learn_doctor_path.exists()
-    persisted = json.loads(cfg.learn_doctor_path.read_text())
-    assert persisted["verdict"] == "PASS"               # the persisted sidecar M4 gates on
+    assert not (cfg.control / "learn_doctor.json").exists()
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
+    reports = [r for r in recs if r["outcome"] == "report"]
+    assert reports and reports[-1]["verdict"] == "PASS"
 
 
 def test_cmd_never_logs_the_postiz_key(tmp_path, monkeypatch):
@@ -141,19 +142,3 @@ def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch):
     assert rc == 0
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
     assert any(r["outcome"] == "fetch_failed" for r in recs)
-
-
-# ---- WS-R1 XC-3: learn_doctor.json written atomically (no torn sidecar re-freezes M4) -----------
-def test_persist_verdict_is_atomic_no_torn_file_on_crash(tmp_path, monkeypatch):
-    # XC-3: a crash mid-write leaves the PRIOR valid learn_doctor.json, never a half-file.
-    import pytest
-    from fanops import learn_doctor, controlio
-    cfg = Config(root=tmp_path)
-    learn_doctor._persist_verdict(cfg, {"verdict": "PASS", "posts_sampled": 1})       # valid file
-    good = json.loads(cfg.learn_doctor_path.read_text())
-    def boom(src, dst): raise OSError("simulated crash during replace")
-    monkeypatch.setattr(controlio.os, "replace", boom)
-    with pytest.raises(OSError):
-        learn_doctor._persist_verdict(cfg, {"verdict": "FAIL"})
-    assert json.loads(cfg.learn_doctor_path.read_text()) == good     # prior verdict intact
-    assert not list(cfg.learn_doctor_path.parent.glob(cfg.learn_doctor_path.name + ".*tmp"))
