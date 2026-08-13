@@ -3,7 +3,7 @@
   "confidence": "CERTAIN",
   "declared_by_the_ci_tests": {
     "print": {
-      "cli_print_count": 177,
+      "cli_print_count": 176,
       "zero_print_modules": [
         "clip.py",
         "compose.py",
