@@ -325,7 +325,7 @@ def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
 def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_path, monkeypatch):
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
-    from fanops.agentstep import write_request, response_path
+    from fanops.agentstep import write_request, response_path, _attempts_path
     from fanops.responder import LlmResponder
     from fanops.llm import LlmContextLimitError
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
@@ -339,6 +339,70 @@ def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_pa
     assert not response_path(cfg, "moments", "src_1").exists()        # no answer written
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "context limit" in src.degraded_reason.lower()   # LABELLED, not silent-pending
+    assert src.state != SourceState.error                                 # below ceiling: refuse, not terminate
+    assert json.loads(_attempts_path(cfg, "moments", "src_1").read_text())["n"] == 1
+
+
+def test_context_limit_burns_attempts_to_terminal_moments(tmp_path, monkeypatch):
+    # MOL-960: context-limit pending-forever fixed — attempt burn → moments TERMINATE at ceiling.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import response_path, _attempts_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmContextLimitError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    def boom(kind, payload): raise LlmContextLimitError("claude -p context limit: prompt is too long")
+    r = LlmResponder(cfg, model=boom)
+    for _ in range(_GATE_DETERMINISTIC_MAX - 1):
+        assert r.answer_pending(cfg) == 0
+        assert Ledger.load(cfg).sources["src_1"].state != SourceState.error
+    assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.error
+    assert src.error_reason and "context limit" in src.error_reason.lower()
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    assert not response_path(cfg, "moments", "src_1").exists()
+
+
+def test_generic_failure_burns_attempts_to_terminal_moments(tmp_path, monkeypatch):
+    # MOL-960: repeated bare Exception burns the same shared ceiling (no infinite pending).
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _seed_source_and_moments_gate(cfg)
+    def boom(kind, payload): raise RuntimeError("cli flaked")
+    r = LlmResponder(cfg, model=boom)
+    for _ in range(_GATE_DETERMINISTIC_MAX - 1):
+        assert r.answer_pending(cfg) == 0
+        assert Ledger.load(cfg).sources["src_1"].state != SourceState.error
+    assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state == SourceState.error
+    assert src.error_reason and "error" in src.error_reason.lower()
+
+
+def test_context_limit_ceiling_degrade_clean_on_moment_hooks(tmp_path, monkeypatch):
+    # MOL-960: enrichment gate at context-limit ceiling → DEGRADE-clean (hook=None), not SourceState.error.
+    from fanops.ledger import Ledger
+    from fanops.models import SourceState
+    from fanops.agentstep import response_path
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.llm import LlmContextLimitError
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    _led, _mid, key = _seed_picked_moment_for_responder(cfg)
+    def boom(kind, payload): raise LlmContextLimitError("context limit")
+    r = LlmResponder(cfg, model=boom)
+    for _ in range(_GATE_DETERMINISTIC_MAX):
+        assert r.answer_pending(cfg) == 0
+    src = Ledger.load(cfg).sources["src_1"]
+    assert src.state != SourceState.error
+    data = json.loads(response_path(cfg, "moment_hooks", key).read_text())
+    assert data.get("hook") is None
 
 
 def test_schema_request_id_gate_populated(tmp_path, monkeypatch):

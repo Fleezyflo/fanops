@@ -7,14 +7,13 @@ from fanops.config import Config
 from fanops.errors import fail_open
 from fanops.gate_keys import gate_source_id
 from fanops.agentstep import pending, request_path, latest_request_id, _attempts_path
+from fanops.escalation import ATTEMPT_CEILING
 from fanops.pipeline import GATE_KINDS
 from fanops.pipeline_run import run_status_line
 from fanops.models import SourceState, _WORK_REMAINING_CLIP
 
 _RECOVERABLE = (SourceState.error, SourceState.moments_empty)
 _INVENTORY_STATES = (SourceState.retired, SourceState.discovered)
-
-_GATE_DETERMINISTIC_MAX = 3   # mirrors responder._GATE_DETERMINISTIC_MAX
 
 
 def _gate_attempt(cfg: Config, kind: str, key: str) -> int:
@@ -39,7 +38,7 @@ def wait_for_gate(cfg: Config, led, *, kind: str, key: str) -> str:
     sid = gate_source_id(led, kind, key)
     state = led.sources[sid].state.value if sid and sid in led.sources else "?"
     n = _gate_attempt(cfg, kind, key)
-    return f"wait={state}:{kind}:{key} (attempt {n}/{_GATE_DETERMINISTIC_MAX})"
+    return f"wait={state}:{kind}:{key} (attempt {n}/{ATTEMPT_CEILING})"
 
 
 def _pending_gates(cfg: Config) -> list[tuple[float, str, str]]:

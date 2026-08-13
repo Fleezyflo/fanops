@@ -47,8 +47,11 @@
   sibling gaps — `edit_caption` vs `regenerate_caption` — are in `studio/CLAUDE.md`.)
 - **Fail-open with a logged breadcrumb is the house norm** — a subprocess/parse failure degrades to a safe
   default AND logs first. When adding one, log first. New degradable fail-open code uses `errors.fail_open`; silent
-  `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. MOL-67 site tests remain behavioral
-  guards for already-fixed read helpers. The genuinely-swallowed sites are inventoried in `anomalies.md`.
+  `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. On the unattended progress spine
+  (responder / signals / stuck gates), breadcrumb alone is not enough — name a posture via `fanops.escalation`
+  (`degrade` / `refuse` / `terminate` / `nonzero`) and burn shared attempts through that module's sole
+  `ATTEMPT_CEILING` (no second counter). MOL-67 site tests remain behavioral guards for already-fixed read helpers.
+  The genuinely-swallowed sites are inventoried in `anomalies.md`.
 - **Atomic control-file writes** route through `controlio.write_json_atomic` / `write_text_atomic` /
   `write_bytes_atomic` (mkstemp same-dir + os.replace); ffmpeg/mpeg temps keep their own `.part` suffix (MOL-78).
 
