@@ -11,7 +11,7 @@ Without those, any ownership matrix is fiction: the same key means two things, a
 
 **Principle:** Control plane **declares intent and reads truth**. Data plane **executes and writes product state**. Observation **never mutates** the systems it diagnoses. Bring-up / process lifecycle has **one owner**, not a side effect of publish or doctor.
 
-**How to execute (adversarial bidding, anti-bloat):** [control-data-plane-execute.md](control-data-plane-execute.md) — parent orchestrates; propose → bloat/scope/wiring bidders → implement → independent verify.
+**How to execute:** implement the WPs lean against this brief + `AGENTS.md`. No CHANGE BID / bidder / APPROVE-theatre process.
 
 **Grounded on:** workspace evidence 2026-08-13. Symbols primary (STD-DOC-01). Existing stack pointer in `config-truth-plane.md` §Out of order.
 

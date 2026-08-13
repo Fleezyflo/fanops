@@ -1,7 +1,7 @@
 # Brief — Fail-open escalation policy + inventory remediation
 
 **Status:** draft for agent execution (await operator `APPROVE`)  
-**Execute via:** [fail-open-escalation-exec.md](fail-open-escalation-exec.md) (sub-agent wave + anti-bloat contract)  
+**How to execute:** implement lean against this brief + `AGENTS.md`. No EXEC / spawn theatre.  
 **Depends on:** [config-truth-plane.md](config-truth-plane.md) (remediation step 1) — **do not land policy binding until Config and Settings mean the same thing for every `FANOPS_*` the policy reads**  
 **Symptom this closes:** messy / unpredictable unattended behaviour — exit 0 while stuck, infinite pending gates, doctor green on WARN, sibling failures escalate while peers pend forever  
 **Prior root diagnosis:** remediation-order step 2 from the unattended-honesty root-cause session (fail-open without an escalation model)
