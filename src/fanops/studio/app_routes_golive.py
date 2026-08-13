@@ -164,20 +164,22 @@ def register_golive_routes(app, cfg):
 
     @app.get("/golive/health")
     def do_golive_health():
-        from fanops.health import SnapshotFreshness, read_dep_snapshot, refresh_runtime_snapshots
+        from fanops.health import SnapshotFreshness, read_dep_snapshot, system_health
         from fanops.health_model import DepHealth, project_deps_from_rows
         from fanops.studio import views_common
         compact = request.args.get("compact")
-        if request.args.get("refresh") == "1" and not compact:
-            refresh_runtime_snapshots(cfg)
-        sr = read_dep_snapshot(cfg)
+        live = request.args.get("refresh") == "1" and not compact
         deps_unknown = None
-        if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
-            # Non-FRESH must not render empty pills (reads as all-deps-fine). One unknown row.
-            deps_unknown = f"deps unknown (snapshot {sr.freshness.value})"
-            health = [DepHealth(name="deps", ok=False, detail=deps_unknown)]
+        if live:
+            health = system_health(cfg)
         else:
-            health = project_deps_from_rows(sr.data.get("deps") or [])
+            sr = read_dep_snapshot(cfg)
+            if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+                # Non-FRESH must not render empty pills (reads as all-deps-fine). One unknown row.
+                deps_unknown = f"deps unknown (snapshot {sr.freshness.value})"
+                health = [DepHealth(name="deps", ok=False, detail=deps_unknown)]
+            else:
+                health = project_deps_from_rows(sr.data.get("deps") or [])
         postiz_hint = views_common.postiz_autostart_hint(cfg)
         # Unknown ≠ confirmed down — no "Dependency down" banner for snapshot miss/stale.
         blocking_deps = ([] if deps_unknown else
