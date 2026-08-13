@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import fanops
 from fanops.config import Config
 from dotenv import load_dotenv
-from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError
+from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError, fail_open
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import ClipState, PostState, ErrorKind
@@ -263,8 +263,9 @@ def cmd_verify_live(cfg: Config) -> int:
     for p in targets:
         try:
             res = confirm_post_live(cfg, p, reported_username=p.account)   # best-effort username for the TikTok gate
-        except Exception as exc:
-            get_logger(cfg)("verify_live", p.id, "confirm_failed", err=str(exc)[:120])
+        except Exception:
+            with fail_open("cli.verify_live confirm degrade:"):
+                raise
             res = {"confirmed": False, "owner": None}                      # read path never crashes on one post
         if res.get("confirmed"): confirmed += 1
         print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
@@ -1212,7 +1213,8 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 get_responder(cfg).answer_pending(cfg)
                 s = advance(cfg, base_time=base_time)
             except Exception as e:
-                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
+                with fail_open("cli._run_once converge halt nonzero:"):
+                    raise
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 return None
             # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
@@ -1238,8 +1240,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
             print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
             get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
-        except Exception as e:
-            get_logger(cfg)("learn", "-", "error", err=f"{type(e).__name__}: {str(e)[:120]}")
+        except Exception:
+            with fail_open("cli._run_once learn degrade:"):
+                raise
     # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
     # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
     # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
@@ -1249,8 +1252,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         try:
             with Ledger.transaction(cfg) as led:
                 led = apply_variant_amplify(led, cfg)
-        except Exception as e:
-            get_logger(cfg)("variant_amplify", "-", "error", err=str(e)[:120])
+        except Exception:
+            with fail_open("cli._run_once variant_amplify degrade:"):
+                raise
     # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
     # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
     # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
@@ -1261,8 +1265,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         try:
             with Ledger.transaction(cfg) as led:
                 led = apply_p4_dim_bias(led, cfg)
-        except Exception as e:
-            get_logger(cfg)("p4_dim_bias", "-", "error", err=str(e)[:120])
+        except Exception:
+            with fail_open("cli._run_once p4_dim_bias degrade:"):
+                raise
     # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
     # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
     # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
@@ -1272,8 +1277,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         try:
             with Ledger.transaction(cfg) as led:
                 led = apply_timing_bias(led, cfg)
-        except Exception as e:
-            get_logger(cfg)("timing_bias", "-", "error", err=str(e)[:120])
+        except Exception:
+            with fail_open("cli._run_once timing_bias degrade:"):
+                raise
     # MOL-644: LLM niche-vocab expand (search roots only) — before Layer A so new seeds measure this tick.
     # expand_vocab_if_due is input-driven + fail-open (gates are always answered by the LLM). MOL-693: not
     # periodic — a persona is asked only when its (name, voice, niche) fingerprint moves, so calling this
@@ -1285,8 +1291,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtag_vocab", "-", "expanded", ok=vr.get("ok", 0), fail=vr.get("fail", 0))
         elif vr.get("reason") and vr.get("reason") != "fresh":
             get_logger(cfg)("hashtag_vocab", "-", "expand_skipped", reason=vr.get("reason", ""))
-    except Exception as e:
-        get_logger(cfg)("hashtag_vocab", "-", "expand_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    except Exception:
+        with fail_open("cli._run_once hashtag_vocab expand degrade:"):
+            raise
     # WS2: constant hashtag store update (instagrapi Layer A) — refresh at most once per cadence (12h),
     # gated on last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
     # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
@@ -1303,16 +1310,18 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
         elif r.get("reason") and r.get("reason") != "fresh":
             get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
-    except Exception as e:
-        get_logger(cfg)("hashtags", "-", "refresh_error", err=f"{type(e).__name__}: {e}")
+    except Exception:
+        with fail_open("cli._run_once hashtags refresh degrade:"):
+            raise
     # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
     try:
         from fanops.fanops_account_stats import refresh_account_stats_if_due
         r = refresh_account_stats_if_due(cfg)
         if r.get("refreshed"):
             get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
-    except Exception as e:
-        get_logger(cfg)("account_stats", "-", "refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    except Exception:
+        with fail_open("cli._run_once account_stats refresh degrade:"):
+            raise
     # S12: automated persona corpus refresh — INPUT-DRIVEN (personas.json+hashtags.json fingerprint in
     # .corpora_refresh.json, MOL-694), never a clock; own try/except.
     try:
@@ -1324,8 +1333,9 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("hashtags", "-", "corpora_refreshed", changed=cr.get("changed", 0), added=cr.get("added", 0))
         elif cr.get("reason") == "unchanged":               # inputs never moved — the quiet, normal tick
             get_logger(cfg)("hashtags", "-", "corpora_refresh_skipped", reason=cr.get("reason", ""))
-    except Exception as e:
-        get_logger(cfg)("hashtags", "-", "corpora_refresh_error", err=f"{type(e).__name__}: {str(e)[:120]}")
+    except Exception:
+        with fail_open("cli._run_once corpora refresh degrade:"):
+            raise
     return s
 
 
@@ -1763,7 +1773,8 @@ def _dispatch(cfg: Config, args) -> int:
                 except RunBusyError as e:
                     print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:
-                    get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
+                    with fail_open("cli.cmd_run loop tick halt degrade:"):
+                        raise
                     print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 time.sleep(interval)
         try:
