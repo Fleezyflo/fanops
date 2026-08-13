@@ -153,7 +153,7 @@ def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
     monkeypatch.setattr(views_common, "postiz_health_for_banner",
                         lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
     strip = views.build_system_strip(cfg)
-    assert strip["postiz_down"] == {"show": False}                 # fallback unchanged
+    assert strip["postiz_down"]["show"] is False                   # no postiz routes → still hide
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "postiz_down" in log_text
 

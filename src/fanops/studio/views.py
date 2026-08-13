@@ -784,7 +784,9 @@ def _postiz_down_on_helper_raise(cfg: Config) -> dict:
                 if accounts.effective_provider(a.handle, plat) == "postiz":
                     return unknown
         return {"show": False, "danger": False, "status": None, "hint": ""}
-    except Exception:
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("system_strip", "-", "postiz_route_check_error", err=str(exc)[:160])
         return {**unknown, "hint": "Postiz health unknown (route check failed)"}
 
 
