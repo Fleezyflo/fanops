@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from fanops.config import Config
 
@@ -513,15 +513,83 @@ def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
         return None
 
 
+
+def snapshot_postiz_probe(cfg: Config):
+    """Observe-mode Postiz probe: deps_health.json only — never calls postiz_health_probe."""
+    from fanops.health import SnapshotFreshness, read_dep_snapshot
+    from fanops.post.postiz import PostizHealth
+    sr = read_dep_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return PostizHealth(False, None, f"Postiz health unknown (snapshot {sr.freshness.value})")
+    for d in sr.data.get("deps") or []:
+        if (d.get("name") or "") != "postiz":
+            continue
+        ok = bool(d.get("ok"))
+        code = d.get("status_code")
+        detail = d.get("detail") or ""
+        if ok:
+            return PostizHealth(True, 200 if code is None else code, "")
+        return PostizHealth(False, code, detail or "Postiz unhealthy (snapshot)")
+    # Configured-but-missing-from-snapshot → unknown, not silent skip-green
+    if cfg.backend_has_creds("postiz"):
+        return PostizHealth(False, None, "Postiz missing from dep snapshot")
+    return PostizHealth(True, None, "skipped (not configured)")
+
+
+def snapshot_daemon_status(cfg: Config, interval: int) -> dict:
+    """Observe-mode launchd status: daemon strip snapshot only — never daemon.status()."""
+    from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
+    sr = read_daemon_strip_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return {"installed": False, "loaded": False, "verdict": f"snapshot {sr.freshness.value}",
+                "heartbeat_age_s": None, "interval": interval}
+    out = dict(sr.data)
+    out.setdefault("interval", interval)
+    return out
+
+
+def deps_from_snapshot(cfg: Config) -> list[DepHealth]:
+    """Observe-mode deps: project deps_health.json — no live docker/postiz/zernio probes."""
+    from fanops.health import SnapshotFreshness, read_dep_snapshot
+    sr = read_dep_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return [DepHealth("deps", False, f"deps unknown (snapshot {sr.freshness.value})",
+                          severity=Severity.UNKNOWN)]
+    return project_deps_from_rows(sr.data.get("deps") or [])
+
+
 def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None,
-                        led=None, list_posts=None, live_get=None) -> HealthReport:
-    """THE health owner — composes doctor checks, deps, field-shape, bounded live confirm."""
+                        led=None, list_posts=None, live_get=None,
+                        probe_policy: Literal["live", "observe"] = "live",
+                        daemon_status=None) -> HealthReport:
+
+    """THE health owner — composes doctor checks, deps, field-shape, bounded live confirm.
+
+    probe_policy:
+      - 'live' (default): real network/launchd probes — doctor / CLI / Go-Live readiness.
+      - 'observe': snapshot + local cfg only — Studio Home strip / CP observe (MOL-965 WP2-fix2).
+        Defaults postiz_probe→snapshot_postiz_probe, daemon_status→snapshot_daemon_status,
+        deps→deps_from_snapshot; skips Meta token network + bounded live confirm.
+    Explicit injectables always win over policy defaults.
+    """
     from fanops.doctor import _assemble_doctor_checks, _doctor_notes
-    checks = _assemble_doctor_checks(cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth)
-    live_chk = _bounded_live_confirm_check(cfg, get=live_get or get)
-    if live_chk is not None:
-        checks.append(live_chk)
+    if probe_policy == "observe":
+        if postiz_probe is None:
+            postiz_probe = snapshot_postiz_probe
+        if daemon_status is None:
+            daemon_status = snapshot_daemon_status
+    checks = _assemble_doctor_checks(
+        cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth,
+        daemon_status=daemon_status, probe_policy=probe_policy)
+    if probe_policy != "observe":
+        live_chk = _bounded_live_confirm_check(cfg, get=live_get or get)
+        if live_chk is not None:
+            checks.append(live_chk)
     notes = _doctor_notes(cfg)
-    deps = dep_health_list(cfg, postiz_probe=postiz_probe)
-    fshape = build_field_shape(cfg, led=led, list_posts=list_posts)
+    if probe_policy == "observe":
+        deps = deps_from_snapshot(cfg)
+        fshape = None  # no live Postiz list_posts on observe
+    else:
+        deps = dep_health_list(cfg, postiz_probe=postiz_probe)
+        fshape = build_field_shape(cfg, led=led, list_posts=list_posts)
     return HealthReport(checks=checks, notes=notes, deps=deps, field_shape=fshape)

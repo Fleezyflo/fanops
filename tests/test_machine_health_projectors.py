@@ -152,6 +152,7 @@ def test_build_system_strip_uses_build_health_report_projector(tmp_path, monkeyp
 
     def _fake_build(*a, **k):
         seen["build"] += 1
+        seen["kwargs"] = k
         return HealthReport(
             checks=[_check(HALF_LIVE_CHECK_LABEL, False, "from-projector")],
             notes=[],
@@ -162,6 +163,40 @@ def test_build_system_strip_uses_build_health_report_projector(tmp_path, monkeyp
     # Dryrun cfg + direct half_live_state would yield half_live=False; projector must win.
     strip = views.build_system_strip(cfg)
     assert seen["build"] == 1
+    assert seen["kwargs"].get("probe_policy") == "observe"
     assert strip["half_live"] is True
     assert strip["half_live_hint"] == "from-projector"
+
+
+def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_path, monkeypatch, mocker):
+    """probe_policy=observe must not invoke live postiz_health_probe or daemon.status (MOL-965 WP2-fix2)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    (tmp_path / "accounts.json").write_text(
+        '{"accounts":[{"handle":"@ig","account_id":"1","platforms":["instagram"],"status":"active"}]}'
+    )
+    cfg = Config(root=tmp_path)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime, timezone
+    import json
+    from fanops.timeutil import iso_z
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": iso_z(datetime.now(timezone.utc)),
+        "deps": [
+            {"name": "docker", "ok": True, "detail": "up", "status_code": None},
+            {"name": "postiz", "ok": False, "detail": "down", "status_code": 502},
+            {"name": "zernio", "ok": True, "detail": "skipped", "status_code": None},
+        ],
+    }))
+    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
+    status = mocker.patch("fanops.daemon.status")
+    from fanops.health_model import build_health_report, project_strip_health
+    rep = build_health_report(cfg, probe_policy="observe")
+    strip = project_strip_health(rep)
+    probe.assert_not_called()
+    status.assert_not_called()
+    # half_live still projects from the live-route check (local cfg — no network)
+    assert "half_live" in strip
 

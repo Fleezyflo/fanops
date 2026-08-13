@@ -241,7 +241,7 @@ _DAEMON_DEFAULT_INTERVAL_S = 600                           # fallback tick inter
 _GATE_STALE_TICKS = 3                                      # a pending agent-gate older than this many ticks is WARN-worthy (responder may be stuck)
 
 
-def _daemon_liveness_check(cfg: Config) -> dict:
+def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     """T12: (dict) 'the publish pump is alive AND the queue is draining'. TWO fail conditions:
       (a) the last `fanops run` heartbeat in run.log is older than _DAEMON_STALE_TICKS install intervals
           (dead/stopped/crashing pump) — OR the signal is ABSENT (never ran) -> FAIL CLOSED (unknown != alive);
@@ -251,14 +251,18 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     real liveness signal, not a proxy. The past-due gate reuses timeutil.is_due_or_past, the SAME <=now check
     publish_due fires on, so 'past-due here' == 'should have published already'. A grace window (2 intervals)
     keeps a just-due post from a false backlog flag. Ledger read is fail-open: an unreadable ledger degrades the
-    backlog half to 'unknown' (surfaced in the hint) while the heartbeat half still governs -> never a crash."""
+    backlog half to 'unknown' (surfaced in the hint) while the heartbeat half still governs -> never a crash.
+
+    `status_reader(cfg, interval) -> dict` injects launchd status (default: daemon.status). Observe-mode
+    passes a snapshot reader so CP Home never re-probes launchctl (MOL-965 WP2-fix2)."""
     from datetime import datetime, timezone
     from fanops import daemon
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
     lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
     st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
+    reader = status_reader or (lambda c, iv: daemon.status(c, interval=iv))
     try:
-        st = daemon.status(cfg, interval=interval)
+        st = reader(cfg, interval)
     except Exception:
         with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
             raise
@@ -473,8 +477,12 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     return out
 
 
-def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> list[dict]:
-    """Setup gate checks only (deps/field-shape composed by health_model.build_health_report)."""
+def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None,
+                            daemon_status=None, probe_policy: str = "live") -> list[dict]:
+    """Setup gate checks only (deps/field-shape composed by health_model.build_health_report).
+
+    probe_policy='observe': skip live Meta token network; postiz/zernio/daemon use injectables
+    (caller supplies snapshot readers). probe_policy='live' (default): real probes."""
     checks: list[dict] = []
     checks.append(_env_settings_check(cfg))
     # 1. media toolchain (host-dependent — informational pass/fail, the operator installs what's red)
@@ -604,15 +612,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     if htag is not None:
         checks.append(htag)
 
-    # T9: Meta token expiry preflight. When the Graph token (or a per-handle token) lapses, Postiz keeps
-    # publishing via its OWN OAuth while Graph verification + metrics silently die -> a repeat of this incident
-    # on a KNOWN date (~2026-08-18). Introspect each distinct resolvable token via debug_token: FAIL on an
-    # expired one, WARN inside a 10-day lead window (ok stays True so it never blocks a run, warn surfaces it),
-    # FAIL CLOSED on an unreadable introspection. The token VALUE is never echoed (only the handle + a date).
-    # `get` is injected so tests never hit the network; None -> the real requests.get inside meta_graph.
-    tcheck = _meta_token_expiry_check(cfg, get=get)
-    if tcheck is not None:
-        checks.append(tcheck)
+    # T9: Meta token expiry — live network only. Observe-mode skips (CP uses snapshots; no Graph re-probe).
+    if probe_policy != "observe":
+        tcheck = _meta_token_expiry_check(cfg, get=get)
+        if tcheck is not None:
+            checks.append(tcheck)
 
     # T10: REAL backend reachability on the publish path (the operator-confirms-health step, as code). Postiz's
     # docker health-check is nginx-only and LIES while the Node backend crash-loops (mastra_ai_spans) — the real
@@ -620,10 +624,14 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # check is applicable ONLY when that backend has creds (else it is N/A — never a false alarm on a single-
     # backend deployment), FAILS CLOSED on a down/unauthorized/erroring probe, and NEVER echoes a key. The
     # probes are injected so tests never hit the network; None -> the real client.
+    # Observe: caller must inject snapshot probes (build_health_report does); never default to live.
     pcheck = _postiz_reach_check(cfg, probe=postiz_probe)
     if pcheck is not None:
         checks.append(pcheck)
-    zcheck = _zernio_reach_check(cfg, auth=zernio_auth)
+    if probe_policy == "observe" and zernio_auth is None:
+        zcheck = None  # no live Zernio on observe unless injectable supplied
+    else:
+        zcheck = _zernio_reach_check(cfg, auth=zernio_auth)
     if zcheck is not None:
         checks.append(zcheck)
 
@@ -634,7 +642,8 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # is REAL, not a proxy: daemon._heartbeat_age_s reads the `heartbeat` line `fanops run` writes to run.log
     # every completed tick (a live clock -> a frozen age means the cron is dead / the tick crashes before the
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
-    dchk = _daemon_liveness_check(cfg)
+    # Observe: status_reader from snapshot (no daemon.status / launchctl).
+    dchk = _daemon_liveness_check(cfg, status_reader=daemon_status)
     checks.append(dchk)
     # Operational sensors: progress-blocking backlog → ok=False (doctor exit NONZERO); Layer A cooldown
     # stays warn-only. See _operational_sensor_checks.

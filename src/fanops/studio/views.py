@@ -816,10 +816,10 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    # Half-live from ONE HealthReport projector — never re-probe half_live_state here (MOL-965 WP2-fix).
+    # Half-live from ONE HealthReport projector — observe policy: no live postiz/daemon re-probe (MOL-965 WP2-fix2).
     try:
         from fanops.health_model import build_health_report, project_strip_health
-        strip_h = project_strip_health(build_health_report(cfg))
+        strip_h = project_strip_health(build_health_report(cfg, probe_policy="observe"))
         half_live, half_live_hint = strip_h["half_live"], strip_h["half_live_hint"]
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
