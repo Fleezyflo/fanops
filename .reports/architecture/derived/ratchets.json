@@ -30,7 +30,7 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "measured": {
     "print_calls_by_module": {
-      "fanops.cli": 173,
+      "fanops.cli": 177,
       "fanops.log": 1,
       "fanops.paths_rebase": 2,
       "fanops.recaption": 4,

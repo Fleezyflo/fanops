@@ -106,6 +106,19 @@
         "name": "SnapshotFreshness"
       }
     ],
+    "fanops.health_model": [
+      {
+        "line": 12,
+        "members": [
+          "FAIL",
+          "INFO",
+          "OK",
+          "UNKNOWN",
+          "WARN"
+        ],
+        "name": "Severity"
+      }
+    ],
     "fanops.models": [
       {
         "line": 61,

@@ -36,9 +36,9 @@ def test_cmd_run_converged_exits_0(tmp_path, monkeypatch):
 
 
 def test_progress_blocking_sensor_makes_report_unhealthy():
-    """Progress-blocking operational check (ok=False) flips report_is_healthy — not warn-only."""
+    """Progress-blocking operational check (severity=fail) flips report_is_healthy — not warn-only."""
     rep = HealthReport(
-        checks=[{"label": "no stale agent gates (responder answering)", "ok": False, "warn": True}],
+        checks=[{"label": "no stale agent gates (responder answering)", "ok": False, "severity": "fail"}],
         notes=[],
         deps=[DepHealth("docker", True, "up")],
     )

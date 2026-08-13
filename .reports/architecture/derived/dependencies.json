@@ -506,6 +506,7 @@
         "fanops.config",
         "fanops.errors",
         "fanops.escalation",
+        "fanops.health_model",
         "fanops.personas",
         "fanops.validation_gate"
       ],
@@ -750,6 +751,7 @@
         "fanops.doctor"
       ],
       "lazy": [
+        "fanops.health_model",
         "fanops.studio.golive"
       ],
       "optional": [],
@@ -2217,7 +2219,7 @@
     "fanops.hashtag_vocab": 0,
     "fanops.hashtags": 7,
     "fanops.health": 0,
-    "fanops.health_model": 1,
+    "fanops.health_model": 2,
     "fanops.hookcheck": 1,
     "fanops.hookscore": 2,
     "fanops.ids": 13,
@@ -2344,7 +2346,7 @@
     "fanops.daemon": 2,
     "fanops.digest": 7,
     "fanops.discover": 5,
-    "fanops.doctor": 6,
+    "fanops.doctor": 7,
     "fanops.errors": 0,
     "fanops.escalation": 2,
     "fanops.fanops_account_stats": 5,
@@ -2459,7 +2461,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 250,
+  "lazy_downward_count": 251,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3696,8 +3698,8 @@
     "G2_largest_scc_size": 73,
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 591,
-    "lazy_edges": 364,
+    "compile_edges_G1": 592,
+    "lazy_edges": 365,
     "lazy_edges_lateral": 42,
     "lazy_edges_strictly_upward": 72,
     "lazy_edges_to_equal_or_higher_level": 114,

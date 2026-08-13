@@ -272,13 +272,13 @@ def test_doctor_warns_on_expiring_meta_token(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     now = time.time()
 
-    # (a) FAR FUTURE (90 days) -> ok, no warn, no fail.
+    # (a) FAR FUTURE (90 days) -> Severity.OK.
     c = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now + 90 * 86400))))
-    assert c is not None and c["ok"] is True and not c.get("warn")
+    assert c is not None and c["ok"] is True and c.get("severity") == "ok"
 
-    # (b) INSIDE the lead window (<=10 days; use 5 days) -> WARN (ok stays True so it never blocks, warn set).
+    # (b) INSIDE the lead window (<=10 days; use 5 days) -> Severity.WARN (non-blocking).
     c2 = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now + 5 * 86400))))
-    assert c2 is not None and c2.get("warn") is True and "expir" in (c2["hint"] + c2.get("warn_hint", "")).lower()
+    assert c2 is not None and c2.get("severity") == "warn" and "expir" in (c2.get("hint") or "").lower()
 
     # (c) EXPIRED (past) -> FAIL.
     c3 = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now - 86400))))
@@ -533,21 +533,21 @@ def _fake_launchctl_daemon(**spec):
 
 # --- Hashtag Layer A scrape session (instagrapi) ---
 def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
+    """MOL-965: soft setup incompleteness is N/A (omitted) — never ok=True pretend PASS."""
     from fanops import doctor
     from fanops.config import Config
     monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     rep = doctor.doctor_report(cfg)
-    row = next(c for c in rep["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row["ok"] is True  # soft-ok: refresh still aborts; health stays green in dryrun
-    assert "scrape-login" in row["hint"] and "FANOPS_IG_SCRAPE_USER" in row["hint"]
+    assert not any("hashtag Layer A scrape" in c["label"] for c in rep["checks"])
+    assert doctor._hashtag_scrape_check(cfg) is None
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    # Credentials alone (no session file) stay soft-ok — setup-in-progress, not a dead session.
+    # Credentials alone (no session file) still N/A — setup-in-progress, not a green PASS.
     rep2 = doctor.doctor_report(Config(root=tmp_path))
-    row2 = next(c for c in rep2["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row2["ok"] is True and "scrape-login" in row2["hint"]
+    assert not any("hashtag Layer A scrape" in c["label"] for c in rep2["checks"])
+    assert doctor._hashtag_scrape_check(Config(root=tmp_path)) is None
 
 
 
@@ -701,15 +701,14 @@ def _by_label(rep, needle):
 
 
 def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
-    """PATH ok != authenticated. When the LLM CLI binary is present, the check stays PASS (ok=True, it
-    never blocks setup) but rides a WARN making explicit that PATH presence is NOT proof of login — the
-    only honest thing to say without burning a real gate call."""
+    """PATH ok != authenticated. When the LLM CLI binary is present, severity=WARN (non-blocking)
+    makes explicit that PATH is NOT proof of login — never a silent authenticated PASS."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = next((c for c in rep["checks"] if c.get("warn") and "NOT proof" in (c.get("warn_hint") or "")), None)
-    assert cli is not None and cli["ok"] is True and "on PATH" in cli["label"]
-    assert cli.get("warn") is True and "NOT proof" in cli.get("warn_hint", "")
+    cli = next((c for c in rep["checks"] if "on PATH" in c["label"] and "NOT proof" in (c.get("hint") or "")), None)
+    assert cli is not None and cli["ok"] is True and cli.get("severity") == "warn"
+    assert "NOT proof" in cli.get("hint", "")
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
@@ -726,8 +725,8 @@ def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypat
 
 
 def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):
-    """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as progress-blocking
-    sensors (ok=False + warn) so report_is_healthy / doctor exit are NONZERO (MOL-960)."""
+    """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as
+    Severity.FAIL so report_is_healthy / doctor exit are NONZERO (MOL-960/MOL-965)."""
     from fanops import pipeline_status
     from fanops.pipeline_status import SourceBacklog
     cfg = Config(root=tmp_path)
@@ -740,15 +739,15 @@ def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeyp
     monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
     checks = doctor._operational_sensor_checks(cfg)
     labels = {c["label"]: c for c in checks}
-    assert labels["no sources awaiting gate answers"]["warn"] is True
-    assert labels["no degraded/errored sources"]["warn"] is True
-    assert labels["no parked machine re-opens"]["warn"] is True
+    assert labels["no sources awaiting gate answers"]["severity"] == "fail"
+    assert labels["no degraded/errored sources"]["severity"] == "fail"
+    assert labels["no parked machine re-opens"]["severity"] == "fail"
     assert all(c["ok"] is False for c in checks)             # progress-blocking → unhealthy
 
 
 def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
-    """A pending agent-gate older than _GATE_STALE_TICKS ticks is progress-blocking (ok=False + warn);
-    a fresh gate would not surface. MOL-960: doctor exit must not stay green on a stuck responder."""
+    """A pending agent-gate older than _GATE_STALE_TICKS ticks is Severity.FAIL (progress-blocking);
+    a fresh gate would not surface. MOL-960/MOL-965: doctor exit must not stay green on a stuck responder."""
     from datetime import datetime, timezone
     from fanops import pipeline_status, daemon
     cfg = Config(root=tmp_path)
@@ -758,11 +757,11 @@ def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.ledger.Ledger.load",
                         classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
-    assert gate is not None and gate["ok"] is False and gate.get("warn") is True
+    assert gate is not None and gate["ok"] is False and gate.get("severity") == "fail"
 
 
 def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
-    """R1b: missing opened_at → None epoch → WARN 'gate age unknown' (not silent green / not-clean)."""
+    """R1b: missing opened_at → None epoch → Severity.UNKNOWN 'gate age unknown' (not silent green)."""
     from fanops import pipeline_status, daemon
     cfg = Config(root=tmp_path)
     monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(None, "moments", "legacy")])
@@ -770,8 +769,8 @@ def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.ledger.Ledger.load",
                         classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
-    assert gate is not None and gate["ok"] is False and gate.get("warn") is True
-    assert "gate age unknown" in (gate.get("warn_hint") or "")
+    assert gate is not None and gate["ok"] is False and gate.get("severity") == "unknown"
+    assert "gate age unknown" in (gate.get("hint") or "")
 
 
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):

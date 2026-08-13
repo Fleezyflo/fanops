@@ -1,19 +1,74 @@
-# src/fanops/health_model.py — MOL-298: ONE typed health owner; doctor/health/learn_doctor are views
+# src/fanops/health_model.py — MOL-298/MOL-965: ONE typed health owner; severity is the public contract
 from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from enum import Enum
 
 from fanops.config import Config
 
 _log = logging.getLogger("fanops.health")
 
 
-class DepHealth(NamedTuple):
-    """One runtime dependency's live verdict (docker / postiz / zernio)."""
+class Severity(str, Enum):
+    """Locked machine-health severity (MOL-965 WP1). Exit / healthy read this — not ok+warn soft-lies."""
+    OK = "ok"
+    INFO = "info"
+    WARN = "warn"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+# Rank for aggregation. UNKNOWN shares FAIL rank (required-signal unknown → unhealthy).
+_SEV_RANK = {
+    Severity.OK: 0,
+    Severity.INFO: 1,
+    Severity.WARN: 2,
+    Severity.FAIL: 3,
+    Severity.UNKNOWN: 3,
+}
+
+
+@dataclass(frozen=True)
+class DepHealth:
+    """One runtime dependency's live verdict (docker / postiz / zernio). Severity is mandatory."""
     name: str
     ok: bool
     detail: str
+    severity: Severity = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        sev = self.severity
+        if sev is None:
+            object.__setattr__(self, "severity", Severity.OK if self.ok else Severity.FAIL)
+        elif not isinstance(sev, Severity):
+            object.__setattr__(self, "severity", Severity(sev))
+
+
+def check_severity(check: dict) -> Severity:
+    """Read severity from a check dict. Production checks always carry it via doctor._check."""
+    raw = check.get("severity")
+    if raw is not None:
+        return raw if isinstance(raw, Severity) else Severity(raw)
+    # Legacy hand-built test dicts only — derive; do not invent a parallel warn channel.
+    if not check.get("ok", True):
+        return Severity.FAIL
+    if check.get("warn"):
+        return Severity.WARN
+    return Severity.OK
+
+
+def overall_severity(report: "HealthReport") -> Severity:
+    """Worst severity across checks + deps. WARN means non-blocking by construction (blocking → FAIL)."""
+    worst = Severity.OK
+    for c in report.checks:
+        sev = check_severity(c)
+        if _SEV_RANK[sev] > _SEV_RANK[worst]:
+            worst = sev
+    for d in report.deps:
+        sev = d.severity if isinstance(d.severity, Severity) else Severity(d.severity)
+        if _SEV_RANK[sev] > _SEV_RANK[worst]:
+            worst = sev
+    return worst
 
 
 @dataclass
@@ -37,9 +92,11 @@ class HealthReport:
         """Machine-readable JSON payload (MOL-299): healthy flag + serializable deps."""
         return {
             "healthy": report_is_healthy(self),
+            "severity": overall_severity(self).value,
             "checks": self.checks,
             "notes": self.notes,
-            "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail} for d in self.deps],
+            "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail, "severity": d.severity.value}
+                     for d in self.deps],
             "field_shape": self.field_shape,
         }
 
@@ -113,12 +170,12 @@ def render_prometheus_metrics(cfg: Config) -> str:
 
 
 def report_is_healthy(report: HealthReport) -> bool:
-    """Exit-code truth: any failed check or down dep -> unhealthy."""
-    if any(not c.get("ok", True) for c in report.checks):
-        return False
-    if any(not d.ok for d in report.deps):
-        return False
-    return True
+    """Exit-code truth (MOL-965): healthy iff overall severity ∈ {OK, INFO, WARN}.
+
+    WARN is non-blocking by construction — progress-blocking sensors emit FAIL (MOL-960).
+    UNKNOWN on required signals ranks with FAIL → unhealthy. Never maps UNKNOWN → healthy.
+    """
+    return overall_severity(report) in (Severity.OK, Severity.INFO, Severity.WARN)
 
 
 def _docker_dep() -> DepHealth:
@@ -204,8 +261,9 @@ def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
         hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
     if not hint:
         hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
+    sev = Severity.OK if healthy else Severity.FAIL
     return {"label": "Postiz backend reachable (real /integrations probe, not the nginx health-check)",
-            "ok": healthy, "hint": "" if healthy else hint}
+            "ok": healthy, "severity": sev.value, "hint": "" if healthy else hint}
 
 
 def daemon_liveness_check(cfg: Config) -> dict:
@@ -295,7 +353,9 @@ def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
             return None
         res = confirm_post_live(cfg, p, reported_username=p.account, get=get)
         ok = bool(res.get("confirmed"))
+        sev = Severity.OK if ok else Severity.FAIL
         return {"label": "recent publish still live on platform (bounded sample)", "ok": ok,
+                "severity": sev.value,
                 "hint": "" if ok else "the most recent published post could not be confirmed live — check platform / creds"}
     except Exception as exc:
         _log.warning("_bounded_live_confirm_check: live confirm failed (%s)", exc)
