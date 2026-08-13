@@ -242,15 +242,13 @@ invisible to the by-source status view.
 
 ---
 
-## INV-05 — "`Settings` is constructed per `Config()`" · **False** *(resolves `UNK-007`)*
+## INV-05 — Config / Settings dual plane · **Verified** *(resolves `UNK-007`)*
 
-**Claim** ([settings.py:1](src/fanops/settings.py:1)): *"typed env boundary (constructed per Config(),
-never import-cached)"*; ([settings.py:142-143](src/fanops/settings.py:142)): *"Built fresh per Config()
-after load_dotenv(override=True)"*.
+**Wiring** ([settings.py](src/fanops/settings.py)): `Config` is the live getenv façade; `Settings` is
+doctor / `fanops config` strict evaluation of the same declarations. There is no construction handoff.
 
-**`Config.__init__` never touches `Settings`.** [config.py:144-177](src/fanops/config.py:144) sets
-paths only. **All 74 `os.getenv` calls in config.py** read the environment **directly**.
-`Settings.runtime_load` — the method whose docstring makes the claim — has **zero callers in `src/`**.
+**`Config.__init__` never touches `Settings`.** [config.py](src/fanops/config.py) `__init__` sets
+paths only. Config properties read the environment **directly**.
 
 **Ownership / precedence / lifetime — proven:**
 
@@ -283,9 +281,8 @@ That is coherent.
   ([config.py:145](src/fanops/config.py:145)) — so it is invisible to `config_introspect`'s generated
   config surface. (Consistent with it being shell-only by design.)
 
-**Verdict: FALSE.** The docstring describes a wiring that does not exist. **No correctness hazard
-today** (there is no runtime disagreement, because there is no runtime handoff) — the hazard is
-maintenance: two hand-maintained parsers for one env surface.
+**Verdict: VERIFIED.** Dual plane: Config live getenv; Settings doctor / `fanops config` strict.
+There is no runtime disagreement because there is no runtime handoff.
 
 ---
 

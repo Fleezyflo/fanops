@@ -255,8 +255,8 @@ unaffected.
 
 `INV-01` (R1 "type level" — the validator fires at **load**, not at write; two comments assert a pydantic
 behaviour that does not exist) · `INV-02` (single-writer of `queued` — 7 writers) · `INV-03` (`get_poster`
-raises when live — it does not) · `INV-05` (`Settings` constructed per `Config()` — it never is;
-`runtime_load` has zero callers) · `INV-20` (**10 of 10** CLAUDE.md line refs are stale) · plus **this
+raises when live — it does not) · `INV-05` (Settings constructed by Config — it never is;
+dual plane, no handoff) · `INV-20` (**10 of 10** CLAUDE.md line refs are stale) · plus **this
 cycle's own two retractions** (SC-1, SC-2).
 
 ### 5.5 Security exposure (2)

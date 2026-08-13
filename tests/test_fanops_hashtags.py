@@ -929,8 +929,7 @@ def test_throttled_pass_with_progress_rederives_once_at_stop(tmp_path, monkeypat
 
 def test_try_cap_stop_with_progress_rederives_once(tmp_path, monkeypatch):
     """try_cap incompleteness ends the pass too — same single derive round as a clean finish."""
-    import fanops.fanops_hashtags as fh
-    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 7)
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "7")
     cfg = Config(root=tmp_path)
     metrics = _many_anchor_persona(cfg, 20)
     calls = _count_rederives(monkeypatch)
@@ -1057,9 +1056,8 @@ def test_stalest_remeasure_reaches_known_before_fresh_anchor(tmp_path, monkeypat
 
 def test_refresh_store_try_cap_ends_pass_without_complete_stamp(tmp_path, monkeypatch):
     """Scrape pass budget: stop after _SCRAPE_TRY_CAP tries, write evidence, do NOT stamp complete."""
-    import fanops.fanops_hashtags as fh
-    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)
-    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 0)   # no co-tag expansion in this proof
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "2")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "0")   # no co-tag expansion in this proof
     cfg = Config(root=tmp_path)
     from fanops import personas as P
     P.add_persona(cfg, name="A", voice="x", niche=["alpha", "beta", "gamma"], id="a")
@@ -1100,6 +1098,9 @@ def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
     assert fh._SCRAPE_DAY_BUDGET == 40
     assert Settings.model_fields["FANOPS_HASHTAG_SCRAPE_TRY_CAP"].default == 25
     assert fh._SCRAPE_COTAG_ENQUEUE_CAP == 40
+    c = Config(root=tmp_path)
+    assert c.hashtag_scrape_try_cap == 25
+    assert c.hashtag_scrape_cotag_enqueue == 40
     assert fh._VOLUME_MAX_AGE_DAYS == 30
     assert fh._MEASURE_MAX_AGE_DAYS == 30
     assert not hasattr(fh, "_CORPUS_MAX_AGE_HOURS")
@@ -1134,9 +1135,8 @@ def test_day_budget_exhaustion_skips_refresh(tmp_path, monkeypatch):
 
 def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
     """One anchor can harvest dozens of co-tags; only _SCRAPE_COTAG_ENQUEUE_CAP are measured this pass."""
-    import fanops.fanops_hashtags as fh
-    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 50)
-    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 2)
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "50")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "2")
     cfg = Config(root=tmp_path); _persona(cfg)
     # 5 co-tags in caption — only 2 may join the queue
     co = "#c1 #c2 #c3 #c4 #c5"
@@ -1153,9 +1153,8 @@ def test_refresh_store_cotag_enqueue_cap(tmp_path, monkeypatch):
 def test_refresh_store_cotags_measure_before_remeasure(tmp_path, monkeypatch):
     """Harvested co-tags must run BEFORE stale remesure — append put them behind the whole cache and
     starved craft/burner expansion under try_cap."""
-    import fanops.fanops_hashtags as fh
-    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 2)            # hiphop + cotag only; remesure must not steal
-    monkeypatch.setattr(fh, "_SCRAPE_COTAG_ENQUEUE_CAP", 5)
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "2")            # hiphop + cotag only; remesure must not steal
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "5")
     cfg = Config(root=tmp_path); _persona(cfg)
     # Pre-seed a STALE non-anchor so remesure would eat the try_cap if cotags append at the end.
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1304,9 +1303,8 @@ def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
 
 def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):
     """MOL-696: LoginRequired must stop the pass — not burn try_cap spinning refusals."""
-    import fanops.fanops_hashtags as fh
     from instagrapi.exceptions import LoginRequired
-    monkeypatch.setattr(fh, "_SCRAPE_TRY_CAP", 40)
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "40")
     cfg = Config(root=tmp_path); _persona(cfg)
     client = _FakeClient({}, refuse=LoginRequired("login_required"))
     out = refresh_store(cfg, scrape_client=client)

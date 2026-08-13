@@ -373,17 +373,17 @@
     "fanops.accounts": [
       {
         "call": "_file_lock",
-        "line": 422
+        "line": 421
       }
     ],
     "fanops.fanops_hashtags": [
       {
         "call": "fcntl.flock",
-        "line": 542
+        "line": 531
       },
       {
         "call": "fcntl.flock",
-        "line": 548
+        "line": 537
       }
     ],
     "fanops.ledger": [

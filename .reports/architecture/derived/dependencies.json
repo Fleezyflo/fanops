@@ -116,8 +116,7 @@
         "fanops.config",
         "fanops.controlio",
         "fanops.errors",
-        "fanops.models",
-        "fanops.settings"
+        "fanops.models"
       ],
       "lazy": [
         "fanops.bands",
@@ -2254,7 +2253,7 @@
     "fanops.responder": 3,
     "fanops.router": 3,
     "fanops.secret_provider": 2,
-    "fanops.settings": 3,
+    "fanops.settings": 2,
     "fanops.signals": 2,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 2,
@@ -2302,7 +2301,7 @@
   "fan_out_compile": {
     "fanops": 0,
     "fanops._fwrun": 1,
-    "fanops.accounts": 6,
+    "fanops.accounts": 5,
     "fanops.adjust": 5,
     "fanops.agentstep": 4,
     "fanops.artifacts": 5,
@@ -3668,7 +3667,7 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 585,
+    "compile_edges_G1": 584,
     "lazy_edges": 363,
     "lazy_edges_lateral": 41,
     "lazy_edges_strictly_upward": 72,

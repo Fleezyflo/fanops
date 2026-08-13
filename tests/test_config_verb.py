@@ -31,8 +31,10 @@ def test_config_row_studio_settable_flag(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     resp = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_RESPONDER")
     whisper = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_WHISPER_MODEL")
-    assert resp["studio"] is True
+    transport = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_LLM_TRANSPORT")
+    assert resp["studio"] is False
     assert whisper["studio"] is False
+    assert transport["studio"] is True
 
 
 def test_format_config_report_header(tmp_path, monkeypatch):
@@ -41,6 +43,7 @@ def test_format_config_report_header(tmp_path, monkeypatch):
     lines = out.splitlines()
     assert lines[0] == "fanops config"
     assert "STUDIO" in lines[1]
+    assert "DEPRECATED" in lines[1]
 
 
 def test_config_row_shows_keychain_source_for_keyring_secret(tmp_path, monkeypatch):
@@ -85,3 +88,21 @@ def test_config_keychain_source_wins_over_stale_os_environ(tmp_path, monkeypatch
     cfg = Config(root=tmp_path)
     row = next(r for r in config_rows(cfg) if r["name"] == "POSTIZ_API_KEY")
     assert row["source"] == "keychain"
+
+
+def test_config_row_marks_responder_and_anthropic_deprecated_non_studio(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    rows = {r["name"]: r for r in config_rows(Config(root=tmp_path))}
+    for name in ("FANOPS_RESPONDER", "ANTHROPIC_API_KEY"):
+        assert rows[name]["studio"] is False
+        assert rows[name]["deprecated"] is True
+
+
+def test_config_row_infra_keys_non_studio_with_kind(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    rows = {r["name"]: r for r in config_rows(Config(root=tmp_path))}
+    assert rows["FANOPS_ROOT"]["kind"] == "bootstrap" and rows["FANOPS_ROOT"]["studio"] is False
+    assert rows["FANOPS_POSTIZ_ONDEMAND"]["kind"] == "bootstrap" and rows["FANOPS_POSTIZ_ONDEMAND"]["studio"] is False
+    assert rows["FANOPS_STUDIO_GENERATION"]["kind"] == "process" and rows["FANOPS_STUDIO_GENERATION"]["studio"] is False
+    assert rows["META_GRAPH_TOKEN"]["dynamic"] is True
+    assert rows["FANOPS_IG_SCRAPE_PASSWORD"]["dynamic"] is True

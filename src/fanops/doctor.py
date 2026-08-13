@@ -334,8 +334,7 @@ def _doctor_notes(cfg: Config) -> list[str]:
                          "(expected — nothing auto-publishes)")
     except Exception as e:
         logging.getLogger("fanops.doctor").debug("approval-backlog note failed: %s", e)
-    # FANOPS_POSTIZ_ONDEMAND is a bootstrap-only path override (read directly, not a Settings field). If it
-    # is set but points at a missing script, note it — a `fanops up` bring-up concern, not a publish gate.
+    # FANOPS_POSTIZ_ONDEMAND is a registered bootstrap key; missing-script note is bring-up, not a publish gate.
     import os
     from pathlib import Path
     ond = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()

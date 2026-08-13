@@ -5,13 +5,16 @@ A projection of [CODEMAPS/system-lens-map.md](CODEMAPS/system-lens-map.md) §1.2
 each row with a verified `config.py` read-line). Read that for the read-site line numbers; read THIS for the
 operator/dev overview. Each var is either **Studio-settable** (Go-Live tab via `golive._dual_write`, which
 writes both `.env` and `os.environ`) or **`.env`/shell-ONLY** (no UI). `Set` column: **S** = Studio-settable,
-`.env` = shell-only. Defaults are the CODE defaults. (Absolute var counts are intentionally omitted — a
+**.env** = shell-only product knob, **shell** = bootstrap (not an operator `.env` row), **process** = daemon-written
+(never operator), **deprecated** = vestigial (not Studio-settable). Defaults are the CODE defaults. (Absolute var counts are intentionally omitted — a
 hardcoded total rots; the `FANOPS_*` name-set here is instead enforced against the code by `ARCH-003`.)
 
 ## Bootstrap (process environment only)
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_ROOT` | cwd | MohFlow-FanOps tree root; locates `.env`. **Shell/export only — never a `.env` key** (circular). | shell |
+| `FANOPS_POSTIZ_ONDEMAND` | `$HOME/postiz-selfhost/postiz-ondemand.sh` | Path override for `fanops up` Postiz on-demand script. | shell |
+| `FANOPS_STUDIO_GENERATION` | (daemon) | Written by `daemon.install_studio` into the Studio plist; Studio reads at import. Never set in `.env`. | process |
 
 Because `FANOPS_ROOT` is shell-only, an interactive shell that never exported it silently roots at `cwd` — a different ledger than the daemon (pinned via its plist `WorkingDirectory`). Any `fanops` CLI command now prints a one-line `WARN:` to stderr when it falls back to `cwd` while an installed daemon is pinned elsewhere (`daemon.root_divergence`); `fanops daemon status` also shows both roots. Export `FANOPS_ROOT` (or `cd` to the workspace) to silence it.
 
@@ -36,18 +39,13 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `R2_BUCKET` | None | R2 bucket for mirrored clips | .env |
 | `FANOPS_ZERNIO_MAX_UPLOAD_MB` | 4 | Zernio TikTok upload preflight cap | .env |
 
-Path override (not a `Settings` field — read directly, like `postiz_lifecycle`'s script path): set
-**`FANOPS_POSTIZ_ONDEMAND`** to point `fanops up` at a non-default Postiz on-demand script. Default:
-`$HOME/postiz-selfhost/postiz-ondemand.sh`. `fanops up` shells out to `<script> ensure` for its
-Docker+Postiz plane (see the bring-up brief `docs/design/briefs/16-one-step-bring-up.md`).
-
 ## LLM gates (the AI switch + models)
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_RESPONDER` | `llm` | Gates are answered ONLY by the LLM — leave unset or set `llm`; ANY other value is a hard refuse (`doctor`/preflight fail). The `manual` no-op responder was retired. | .env |
+| `FANOPS_RESPONDER` | `llm` | Vestigial validate-or-refuse — leave unset or set `llm`; any other value is a hard refuse (`doctor`/preflight). Not Studio-settable. | deprecated |
 | `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | S |
 | `FANOPS_LLM_MODEL` | per-gate | Force ONE model across all gates | .env |
-| `ANTHROPIC_API_KEY` | None | VESTIGIAL — responder uses the `claude` subscription; not required | .env |
+| `ANTHROPIC_API_KEY` | None | Vestigial — responder uses the `claude` subscription; do not set | deprecated |
 
 ## Pipeline: ingest / transcribe / signals / framing
 | Var | Default | Effect | Set |
@@ -122,7 +120,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE` | 40 | Max NEW co-tags enqueued to measure per Layer A scrape pass | .env |
 | `FANOPS_HASHTAG_SCRAPE_PARALLEL` | 1 | Tags per Layer A wave. Layer A is single-client and serialized (`client_lock`) since MOL-698 — the session-clone fan-out that made this concurrent on the wire earned an account lock, and instagrapi is not thread-safe. Raising it groups tags into a wave; it does NOT emit concurrent requests | .env |
 | `FANOPS_HASHTAG_SCRAPE_DELAY` | `1,3` | instagrapi `delay_range` for Layer A: `"lo,hi"` seconds of jitter between private-API calls. `0` disables pacing. The runtime falls back to `1,3` on anything unparseable/negative/inverted (never drops pacing mid-run), but the SAME shared parser makes `fanops doctor`/`Settings.strict_validate` FAIL LOUD on it (`config.parse_scrape_delay`) | .env |
-| `META_GRAPH_TOKEN` | None | Meta Graph token for IG insights / media verification (write-only). Not used by hashtag Layer A refresh (deferred Graph hashtag path) | .env |
+| `META_GRAPH_TOKEN` | None | Meta Graph token for IG insights / media verification (write-only). Not used by hashtag Layer A refresh (deferred Graph hashtag path) | S |
 | `META_GRAPH_TOKEN__<SLUG>` | falls back to global | Per-handle Graph token (dynamic key, write-only) | S |
 | `META_IG_USER_ID` | None | IG Business account id (insights / deferred Graph hashtag helpers; set into accounts.json) | .env |
 | `META_GRAPH_URL` | `https://graph.facebook.com/v21.0` | Graph base (overridable) | .env |
@@ -141,16 +139,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_SHOW_EXTRAS` | off | Show Footage + Stitches in the Studio Library rail group (U13); default OFF hides the power-user extras | .env |
 | `FANOPS_AUTO_ADOPT` | on | Daemon code-drift self-heal: the keeper kickstarts the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). A registered `BoolEnv` — off-words disable, a typo keeps the default ON (was a raw `!= "0"` read where `false`/`off` stayed ON) | .env |
 
-`FANOPS_POSTIZ_ONDEMAND` (above) is the one remaining path override read directly (not a `Settings` field); when it
-is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a
-`fanops up` bring-up concern, not a publish gate).
-
-**`FANOPS_STUDIO_GENERATION`** is **written by the daemon, never by an operator** — do not set it in `.env`.
-`daemon.install_studio` stamps a fresh token into the Studio LaunchAgent plist's `EnvironmentVariables`; Studio
-reads it once at import (`studio.app`) and reports it on `/_fingerprint`. After a redeploy the daemon compares
-the served generation against the plist's, which is how it distinguishes a genuinely NEW resident from a
-survivor of the old one still answering the port. Raw `os.environ.get`, not a `Settings` field — prose, not the
-table.
+When `FANOPS_POSTIZ_ONDEMAND` is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a `fanops up` bring-up concern, not a publish gate).
 
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without

@@ -70,6 +70,8 @@ _STAGE = {
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
+_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
+_VALID_RESPONDERS = frozenset({"llm"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
 _LIVE_BACKENDS = frozenset({"postiz", "zernio"})
@@ -131,12 +133,14 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
     return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
 def resolve_llm_transport(raw: str | None = None) -> str:
-    """LLM CLI transport: claude (default) or cursor-agent headless. Unknown values warn + fall back."""
+    """LLM CLI transport: claude (default) or cursor-agent headless. Unknown values warn + fall back.
+    Runtime-lenient; Settings field validators / strict_validate refuse the same set loudly."""
     v = (raw if raw is not None else os.getenv("FANOPS_LLM_TRANSPORT") or "").strip().lower()
     if not v:
         return "claude"
-    if v not in {"claude", "cursor"}:
-        _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: claude, cursor", v)
+    if v not in _VALID_LLM_TRANSPORTS:
+        _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: %s",
+                     v, ", ".join(sorted(_VALID_LLM_TRANSPORTS)))
         return "claude"
     return v
 
@@ -174,12 +178,28 @@ def env_bool(raw: str | None, *, default: bool) -> bool:
     return default if parsed is None else parsed
 
 
+def resolve_responder_mode(raw: str | None) -> str:
+    """FANOPS_RESPONDER: empty/unset or a member of `_VALID_RESPONDERS` -> that mode ('llm' today);
+    anything else is a HARD REFUSE. Config.responder_mode and Settings.responder_mode both call this.
+    Doctor still refuses a typo at Settings field-validate / strict_validate; runtime refuses on
+    property read — same rule, two boundaries, neither silently falls back."""
+    v = (raw or "").strip().lower()
+    if not v:
+        return "llm"
+    if v in _VALID_RESPONDERS:
+        return v
+    raise ValueError(f"unrecognized FANOPS_RESPONDER={v!r}; the only valid value is 'llm' (or leave it unset)")
+
+
 # The hashtag Layer A scrape knobs are declared ONCE here so the RUNTIME read path
 # (ig_hashtag_scrape / fanops_hashtags) and the STRICT boundary (Settings.strict_validate -> doctor)
 # apply the SAME rule to the SAME env var — the field on `Settings` used to be a cosmetic copy that
 # validated a value the pass never actually read through. A malformed knob now fails LOUD at the
 # doctor boundary while the unattended run keeps its documented default (fail-open-with-breadcrumb).
 _SCRAPE_DELAY_DEFAULT = (1.0, 3.0)   # instagrapi delay_range seconds (MOL-698); the pacing that survives a typo
+_SCRAPE_TRY_CAP_DEFAULT = 25
+_SCRAPE_COTAG_ENQUEUE_DEFAULT = 40
+_SCRAPE_PARALLEL_DEFAULT = 1
 
 
 def parse_scrape_delay(raw: str | None) -> list[float] | None:
@@ -509,6 +529,46 @@ class Config:
         return resolve_secret("FANOPS_IG_SCRAPE_PASSWORD", env_val)
 
     @property
+    def hashtag_scrape_delay(self) -> list[float] | None:
+        # FANOPS_HASHTAG_SCRAPE_DELAY → instagrapi delay_range. Runtime fail-open: malformed keeps
+        # default pacing (doctor raises via parse_scrape_delay / Settings.strict_validate).
+        try:
+            return parse_scrape_delay(os.getenv("FANOPS_HASHTAG_SCRAPE_DELAY"))
+        except ValueError as e:
+            _log.warning("ignoring FANOPS_HASHTAG_SCRAPE_DELAY (%s); keeping default pacing %s",
+                         e, list(_SCRAPE_DELAY_DEFAULT))
+            return list(_SCRAPE_DELAY_DEFAULT)
+
+    @property
+    def hashtag_scrape_try_cap(self) -> int:
+        try:
+            return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP"),
+                                    default=_SCRAPE_TRY_CAP_DEFAULT, floor=1)
+        except ValueError:
+            return _SCRAPE_TRY_CAP_DEFAULT
+
+    @property
+    def hashtag_scrape_cotag_enqueue(self) -> int:
+        try:
+            return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE"),
+                                    default=_SCRAPE_COTAG_ENQUEUE_DEFAULT, floor=0)
+        except ValueError:
+            return _SCRAPE_COTAG_ENQUEUE_DEFAULT
+
+    @property
+    def hashtag_scrape_parallel(self) -> int:
+        try:
+            return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL"),
+                                    default=_SCRAPE_PARALLEL_DEFAULT, floor=1)
+        except ValueError:
+            return _SCRAPE_PARALLEL_DEFAULT
+
+    @property
+    def auto_adopt(self) -> bool:
+        # Daemon code-drift self-heal (daemon.ensure). DEFAULT ON; off-words disable; typo fail-open ON.
+        return env_bool(os.getenv("FANOPS_AUTO_ADOPT"), default=True)
+
+    @property
     def meta_graph_url(self) -> str:
         # Meta Graph base (overridable for tests/self-host). Default the current stable Graph version.
         v = (os.getenv("META_GRAPH_URL") or "").strip()
@@ -570,15 +630,9 @@ class Config:
 
     @property
     def responder_mode(self) -> str:
-        # Gates are answered ONLY by the LLM (the manual responder was retired). FANOPS_RESPONDER is now
-        # a vestigial validate-or-REFUSE switch, not a controllable choice: empty/unset OR the literal
-        # 'llm' resolve to 'llm'; ANYTHING ELSE is a HARD REFUSE (ValueError), never a silent fall-back.
-        # A typo used to warn->manual and quietly stop answering gates; there is no manual mode to fall
-        # back to, so a bad value must fail loudly (doctor + preflight surface it non-zero) instead.
-        v = (os.getenv("FANOPS_RESPONDER") or "").strip().lower()
-        if v in ("", "llm"):
-            return "llm"
-        raise ValueError(f"unrecognized FANOPS_RESPONDER={v!r}; the only valid value is 'llm' (or leave it unset)")
+        # Gates are answered ONLY by the LLM. FANOPS_RESPONDER is vestigial validate-or-REFUSE
+        # (empty/'llm' -> 'llm'; anything else HARD REFUSE). Shared helper — Settings cannot drift.
+        return resolve_responder_mode(os.getenv("FANOPS_RESPONDER"))
 
     @property
     def llm_transport(self) -> str:
@@ -588,6 +642,13 @@ class Config:
     def llm_cli_binary(self) -> str:
         return "cursor-agent" if self.llm_transport == "cursor" else "claude"
 
+    @property
+    def llm_model(self) -> str | None:
+        # FANOPS_LLM_MODEL global override (full id or alias). None/blank → per-gate llm_model_for /
+        # cursor AUTO. Sole door for this key; claude_json_meta must not getenv it.
+        g = os.getenv("FANOPS_LLM_MODEL")
+        return g.strip() if g and g.strip() else None
+
     def llm_model_for(self, kind: str) -> str:
         # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
         # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gate — hashtags-only
@@ -596,9 +657,9 @@ class Config:
         # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
         # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
         # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
-        g = os.getenv("FANOPS_LLM_MODEL")
-        if g and g.strip():
-            return g.strip()
+        g = self.llm_model
+        if g:
+            return g
         return _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
 
     @property

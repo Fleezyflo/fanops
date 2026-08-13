@@ -44,6 +44,7 @@ def test_llm_model_per_gate_defaults(monkeypatch, tmp_path):
     # only) stays mechanical -> sonnet.
     monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
     c = Config(root=tmp_path)
+    assert c.llm_model is None                                  # no override → cursor AUTO / per-gate
     assert c.llm_model_for("moments") == "opus"                 # Phase 1: vision hook author
     assert c.llm_model_for("captions") == "sonnet"
     assert c.llm_model_for("unknown_kind") == "sonnet"          # default-safe for any new gate
@@ -52,6 +53,7 @@ def test_llm_model_global_override_forces_all_gates(monkeypatch, tmp_path):
     # FANOPS_LLM_MODEL forces ONE model for EVERY gate — operator escape hatch / a FULL id for repro.
     monkeypatch.setenv("FANOPS_LLM_MODEL", "claude-opus-4-x")
     c = Config(root=tmp_path)
+    assert c.llm_model == "claude-opus-4-x"
     assert c.llm_model_for("moments") == "claude-opus-4-x"      # creative gate forced
     assert c.llm_model_for("captions") == "claude-opus-4-x"     # mechanical gate forced up
 
@@ -687,6 +689,25 @@ def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path)
             settings_mod._validate_bool_word(bad)
 
 
+def test_config_and_settings_share_one_leaf_ownership():
+    """WP1: one _VALID_BACKENDS (Config + Settings + accounts), one responder helper, one LLM-transport
+    set, scrape parsers already single. Identity — a re-declaration in settings would fail `is`."""
+    from fanops import accounts as accounts_mod
+    from fanops import settings as settings_mod
+    from fanops.config import (
+        _VALID_BACKENDS, _VALID_LLM_TRANSPORTS, _VALID_RESPONDERS,
+        parse_scrape_cap, parse_scrape_delay, resolve_llm_transport, resolve_responder_mode,
+    )
+    assert settings_mod._VALID_BACKENDS is _VALID_BACKENDS
+    assert accounts_mod._VALID_BACKENDS is _VALID_BACKENDS
+    assert settings_mod._VALID_LLM_TRANSPORTS is _VALID_LLM_TRANSPORTS
+    assert settings_mod._VALID_RESPONDERS is _VALID_RESPONDERS
+    assert settings_mod.resolve_responder_mode is resolve_responder_mode
+    assert settings_mod.resolve_llm_transport is resolve_llm_transport
+    assert settings_mod.parse_scrape_delay is parse_scrape_delay
+    assert settings_mod.parse_scrape_cap is parse_scrape_cap
+
+
 @pytest.mark.parametrize("raw", (None, "", "   ", " x "))
 def test_ig_scrape_user_config_settings_agree(monkeypatch, tmp_path, raw):
     """MOL-828: doctor (Settings) and runtime (Config) agree on FANOPS_IG_SCRAPE_USER blank/pad/unset."""
@@ -771,9 +792,9 @@ def test_scrape_try_cap_noninteger_raises_at_settings_but_runtime_fails_open(mon
     assert fanops_hashtags._scrape_try_cap() == fanops_hashtags._SCRAPE_TRY_CAP
 
 
-def test_auto_adopt_is_registered_boolenv(monkeypatch):
+def test_auto_adopt_is_registered_boolenv(monkeypatch, tmp_path):
     """FANOPS_AUTO_ADOPT is a first-class BoolEnv now (not a raw os.getenv typo-stays-ON read): a garbage
-    word fails the strict boundary, and a real off-word validates — the daemon reads it via env_bool so
+    word fails the strict boundary, and a real off-word validates — the daemon reads cfg.auto_adopt so
     "false"/"off" actually turns the drift self-adopt OFF (the old `!= "0"` treated them as ON)."""
     from pydantic import ValidationError
     from fanops.settings import Settings, BOOL_ENV_FIELDS
@@ -783,10 +804,72 @@ def test_auto_adopt_is_registered_boolenv(monkeypatch):
     with pytest.raises(ValidationError) as ei:
         _validate_settings()
     assert "FANOPS_AUTO_ADOPT" in str(ei.value)
+    assert Config(root=tmp_path).auto_adopt is True            # runtime fail-open ON
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "false")
     Settings()  # must not raise
+    assert Config(root=tmp_path).auto_adopt is False
     assert env_bool("false", default=True) is False
     assert env_bool("off", default=True) is False
+
+
+def test_layer_a_daemon_llm_product_flags_go_through_config():
+    """WP2: Layer A / daemon / llm must not getenv product knobs that Config now owns.
+    Dynamic FANOPS_IG_SCRAPE_PASSWORD_<SLUG> stays on os.environ membership (arch extractor)."""
+    import inspect
+    from fanops import fanops_hashtags as fh
+    from fanops import ig_hashtag_scrape as igs
+    from fanops.daemon import ensure
+    from fanops.llm import claude_json_meta
+    delay_src = inspect.getsource(igs._scrape_delay_range)
+    assert "hashtag_scrape_delay" in delay_src
+    assert "os.getenv" not in delay_src
+    pw_src = inspect.getsource(igs.scrape_password_for)
+    assert "ig_scrape_password" in pw_src
+    assert 'os.getenv("FANOPS_IG_SCRAPE_PASSWORD")' not in pw_src
+    assert "os.environ" in pw_src                              # SLUG keys stay dynamic
+    for fn, prop in (
+        (fh._scrape_try_cap, "hashtag_scrape_try_cap"),
+        (fh._scrape_cotag_enqueue_cap, "hashtag_scrape_cotag_enqueue"),
+        (fh._scrape_parallel, "hashtag_scrape_parallel"),
+    ):
+        src = inspect.getsource(fn)
+        assert prop in src and "os.getenv" not in src
+    ensure_src = inspect.getsource(ensure)
+    assert "cfg.auto_adopt" in ensure_src
+    assert 'os.getenv("FANOPS_AUTO_ADOPT")' not in ensure_src
+    llm_src = inspect.getsource(claude_json_meta)
+    assert "llm_model" in llm_src
+    assert 'os.getenv("FANOPS_LLM_MODEL")' not in llm_src
+
+
+def test_config_scrape_knobs_runtime_fail_open(monkeypatch, tmp_path, caplog):
+    """Config is the runtime door: documented defaults, env override, fail-open on junk (doctor still raises)."""
+    import logging
+    from fanops.config import _SCRAPE_COTAG_ENQUEUE_DEFAULT, _SCRAPE_DELAY_DEFAULT, _SCRAPE_TRY_CAP_DEFAULT
+    c = Config(root=tmp_path)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", raising=False)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", raising=False)
+    monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", raising=False)
+    monkeypatch.delenv("FANOPS_AUTO_ADOPT", raising=False)
+    assert c.hashtag_scrape_delay == list(_SCRAPE_DELAY_DEFAULT)
+    assert c.hashtag_scrape_try_cap == _SCRAPE_TRY_CAP_DEFAULT
+    assert c.hashtag_scrape_cotag_enqueue == _SCRAPE_COTAG_ENQUEUE_DEFAULT
+    assert c.hashtag_scrape_parallel == 1
+    assert c.auto_adopt is True
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "2,5")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "50")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE", "7")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_PARALLEL", "3")
+    assert c.hashtag_scrape_delay == [2.0, 5.0]
+    assert c.hashtag_scrape_try_cap == 50
+    assert c.hashtag_scrape_cotag_enqueue == 7
+    assert c.hashtag_scrape_parallel == 3
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "5,2")
+    with caplog.at_level(logging.WARNING):
+        assert c.hashtag_scrape_delay == list(_SCRAPE_DELAY_DEFAULT)
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "notanint")
+    assert c.hashtag_scrape_try_cap == _SCRAPE_TRY_CAP_DEFAULT
 
 
 def test_llm_transport_is_studio_settable():
@@ -795,3 +878,11 @@ def test_llm_transport_is_studio_settable():
     plain str (Wave 3.5 alignment)."""
     from fanops.settings import STUDIO_SETTABLE
     assert "FANOPS_LLM_TRANSPORT" in STUDIO_SETTABLE
+
+
+def test_responder_and_anthropic_are_deprecated_not_studio():
+    from fanops.settings import DEPRECATED, STUDIO_SETTABLE
+    assert "FANOPS_RESPONDER" in DEPRECATED
+    assert "ANTHROPIC_API_KEY" in DEPRECATED
+    assert "FANOPS_RESPONDER" not in STUDIO_SETTABLE
+    assert "ANTHROPIC_API_KEY" not in STUDIO_SETTABLE

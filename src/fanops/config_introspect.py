@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from fanops.config import Config
 from fanops.secret_provider import get_secret, is_secret_env_key
-from fanops.settings import STUDIO_SETTABLE, Settings, _enriched_env
+from fanops.settings import DEPRECATED, EnvVar, STUDIO_SETTABLE, Settings, _enriched_env
 
 # Studio-settable via the Go-Live tab (_dual_write) — mirrors docs/CONFIG.md §Set=S. This used to be a
 # hand-kept frozenset of fourteen names beside the fourteen Settings fields it named; STUDIO_SETTABLE is
@@ -68,7 +68,8 @@ def _validation_error_rows(exc: ValidationError) -> list[dict]:
         loc = err.get("loc", ())
         name = str(loc[0]) if loc else "?"
         rows.append({"name": name, "type": "error", "default": "", "effective": err.get("msg", ""),
-                     "source": "validation", "studio": False, "validation_error": True})
+                     "source": "validation", "studio": False, "deprecated": False, "kind": "env",
+                     "dynamic": False, "validation_error": True})
     return rows
 
 
@@ -84,6 +85,7 @@ def config_rows(cfg: Config) -> list[dict]:
     for name, field in Settings.model_fields.items():
         default = field.get_default(call_default_factory=True)
         effective = getattr(s, name)
+        meta = next((m for m in field.metadata if isinstance(m, EnvVar)), None)
         rows.append({
             "name": name,
             "type": _field_type_name(field),
@@ -91,6 +93,9 @@ def config_rows(cfg: Config) -> list[dict]:
             "effective": _display_value(name, effective),
             "source": _source_layer(name, cfg, dotenv_keys=dotenv_keys),
             "studio": name in STUDIO_SETTABLE,
+            "deprecated": name in DEPRECATED,
+            "kind": meta.kind if meta else "env",
+            "dynamic": bool(meta and meta.dynamic),
         })
     return rows
 
@@ -101,8 +106,9 @@ def config_has_validation_errors(cfg: Config) -> bool:
 
 def format_config_report(cfg: Config) -> str:
     rows = config_rows(cfg)
-    lines = ["fanops config", f"{'NAME':<36} {'TYPE':<12} {'DEFAULT':<14} {'EFFECTIVE':<14} {'SOURCE':<12} STUDIO"]
+    lines = ["fanops config", f"{'NAME':<36} {'TYPE':<12} {'DEFAULT':<14} {'EFFECTIVE':<14} {'SOURCE':<12} {'STUDIO':<7} DEPRECATED"]
     for r in rows:
         studio = "yes" if r["studio"] else "no"
-        lines.append(f"{r['name']:<36} {r['type']:<12} {r['default']:<14} {r['effective']:<14} {r['source']:<12} {studio}")
+        deprecated = "yes" if r.get("deprecated") else "no"
+        lines.append(f"{r['name']:<36} {r['type']:<12} {r['default']:<14} {r['effective']:<14} {r['source']:<12} {studio:<7} {deprecated}")
     return "\n".join(lines)

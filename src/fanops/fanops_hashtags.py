@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from fanops.config import Config, parse_scrape_cap
+from fanops.config import Config, _SCRAPE_COTAG_ENQUEUE_DEFAULT, _SCRAPE_TRY_CAP_DEFAULT
 from fanops.log import get_logger
 from fanops.hashtags import (METRIC_FIELD, RECORD_NUM_FIELDS, _norm, _metric, _num,
                              load_measurements, ranked_tags)
@@ -41,38 +41,27 @@ _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N
 _CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
-# stamp last_complete_pass. Tests may monkeypatch these module attrs; env overrides win when set.
+# stamp last_complete_pass. Caps come from Config (env overrides); tests set FANOPS_HASHTAG_SCRAPE_*.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
 # local governor (~40 request-units/day). Due-tiered queue (MOL-855) means the cap need not clear every
 # cached tag each pass — only unmeasured anchors + aged volume + ≥30d remesure + co-tag headroom.
 # MOL-858 nests budget+freeze under accounts[user].
-_SCRAPE_TRY_CAP = 25
 _SCRAPE_DAY_BUDGET = 40        # request-units per UTC day per scrape account (accounts[user].used)
-_SCRAPE_COTAG_ENQUEUE_CAP = 40
-_SCRAPE_PARALLEL = 1  # FANOPS_HASHTAG_SCRAPE_PARALLEL read retained; fetch sequential (MOL-855/912)
+_SCRAPE_TRY_CAP = _SCRAPE_TRY_CAP_DEFAULT
+_SCRAPE_COTAG_ENQUEUE_CAP = _SCRAPE_COTAG_ENQUEUE_DEFAULT
+# FANOPS_HASHTAG_SCRAPE_PARALLEL read retained via cfg; fetch sequential (MOL-855/912).
 
 
 def _scrape_parallel() -> int:
-    # Shared rule (config.parse_scrape_cap) — the SAME parse/clamp Settings validates; the module
-    # constant stays the default so tests can monkeypatch it and env still wins when set. Non-int -> default.
-    try:
-        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_PARALLEL"), default=_SCRAPE_PARALLEL, floor=1)
-    except ValueError:
-        return _SCRAPE_PARALLEL
+    return Config().hashtag_scrape_parallel
 
 
 def _scrape_try_cap() -> int:
-    try:
-        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP"), default=_SCRAPE_TRY_CAP, floor=1)
-    except ValueError:
-        return _SCRAPE_TRY_CAP
+    return Config().hashtag_scrape_try_cap
 
 
 def _scrape_cotag_enqueue_cap() -> int:
-    try:
-        return parse_scrape_cap(os.getenv("FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE"), default=_SCRAPE_COTAG_ENQUEUE_CAP, floor=0)
-    except ValueError:
-        return _SCRAPE_COTAG_ENQUEUE_CAP
+    return Config().hashtag_scrape_cotag_enqueue
 
 
 def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
