@@ -1240,7 +1240,7 @@ class Config:
 
     @property
     def postiz_compose_dir(self) -> str | None:
-        # Where the Postiz docker-compose stack lives (health.ensure_up). Blank -> conventional path.
+        # Where the Postiz docker-compose stack lives (postiz_lifecycle.ensure_up). Blank -> conventional path.
         v = os.getenv("FANOPS_POSTIZ_COMPOSE_DIR")
         return v.strip() if v and v.strip() else None
 
