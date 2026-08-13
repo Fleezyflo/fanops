@@ -1,7 +1,6 @@
-"""Issue 1 — live dependency health + best-effort bring-up, so launching the system launches everything
-and a down dependency is VISIBLE immediately (not discovered later via a buried downstream error).
-subprocess/HTTP are mocked; these prove the health verdicts + the bring-up DECISIONS (which deps it
-would start), never a real Docker/Postiz."""
+"""Issue 1 — live dependency health, so a down dependency is VISIBLE immediately
+(not discovered later via a buried downstream error).
+subprocess/HTTP are mocked; these prove the health verdicts, never a real Docker/Postiz."""
 import types
 from pathlib import Path
 from fanops.config import Config
@@ -143,47 +142,6 @@ def test_compose_dir_env_override_missing_returns_none(tmp_path, monkeypatch):
     assert health._postiz_compose_dir(cfg) is None
 
 
-# ---------------------------------------------------------------- ensure_up bring-up plan ----
-def test_ensure_up_brings_up_postiz_when_down(tmp_path, monkeypatch):
-    compose = tmp_path / "compose"; compose.mkdir()
-    cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api",
-               FANOPS_POSTIZ_COMPOSE_DIR=str(compose))
-    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
-    run = _Run({"docker info": 0})                       # docker UP
-    monkeypatch.setattr(health.subprocess, "run", run)
-    monkeypatch.setattr(health.time, "sleep", lambda s: None)
-    monkeypatch.setattr(health, "postiz_health", lambda c: health.DepHealth("postiz", False, "down"))
-    health.ensure_up(cfg)
-    j = run.joined()
-    assert any("compose" in x and "up" in x and str(compose) in x for x in j)   # brought Postiz up
-    assert not any("open" in x and "Docker" in x for x in j)                    # docker already up -> no launch
-
-
-def test_ensure_up_starts_docker_when_daemon_down(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
-    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
-    run = _Run({"docker info": 1})                       # docker stays DOWN
-    monkeypatch.setattr(health.subprocess, "run", run)
-    monkeypatch.setattr(health.time, "sleep", lambda s: None)
-    monkeypatch.setattr(health, "postiz_health", lambda c: health.DepHealth("postiz", True, "up"))
-    health.ensure_up(cfg)
-    assert any("open" in x and "Docker" in x for x in run.joined())             # attempted to launch Docker
-
-
-def test_ensure_up_noop_when_all_up(tmp_path, monkeypatch):
-    cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
-    monkeypatch.setattr(health, "refresh_runtime_snapshots", lambda c: None)  # writer side-effect; this test owns bring-up only
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/" + (n or "x"))
-    run = _Run({"docker info": 0})                       # docker UP
-    monkeypatch.setattr(health.subprocess, "run", run)
-    monkeypatch.setattr(health, "postiz_health", lambda c: health.DepHealth("postiz", True, "up"))
-    health.ensure_up(cfg)
-    assert not any("open" in x for x in run.joined())                          # nothing to start
-    assert not any("compose" in x and "up" in x for x in run.joined())
-
-
 def test_read_snapshots_missing_are_missing(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     for sr in (health.read_dep_snapshot(cfg), health.read_daemon_strip_snapshot(cfg),
@@ -227,3 +185,48 @@ def test_ancient_checked_at_is_stale_not_fresh(tmp_path, monkeypatch):
     sr = health.read_strip_metrics(cfg)
     assert sr.freshness is health.SnapshotFreshness.STALE
     assert isinstance(sr.data, dict)
+
+
+def test_refresh_runtime_snapshots_is_named_strip_writer():
+    """CPDP-WP4: strip writer role is health.refresh_runtime_snapshots (FunctionDef exists).
+    Callers that MAY REMAIN (do not retarget): studio.app_routes_golive.do_golive_health; cli --loop."""
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "health.py").read_text())
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    assert "refresh_runtime_snapshots" in names
+
+
+def test_snapshot_readers_never_call_refresh_write_or_probe():
+    """CPDP-WP4: named snapshot readers must not Call refresh_*/write_json_atomic/postiz_health_probe."""
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "src" / "fanops"
+    targets = (
+        ("health.py", "_read_snapshot"),
+        ("health.py", "read_dep_snapshot"),
+        ("health.py", "read_daemon_strip_snapshot"),
+        ("health.py", "read_strip_metrics"),
+        ("health_model.py", "snapshot_postiz_probe"),
+        ("health_model.py", "snapshot_daemon_status"),
+        ("health_model.py", "deps_from_snapshot"),
+        ("health_model.py", "strip_metrics_freshness_check"),
+        ("studio/views_common.py", "postiz_health_for_banner"),
+    )
+    banned = {
+        "refresh_runtime_snapshots", "refresh_dep_snapshot", "refresh_daemon_strip_snapshot",
+        "refresh_strip_metrics", "write_json_atomic", "postiz_health_probe",
+    }
+    hits = []
+    for rel, fname in targets:
+        tree = ast.parse((root / rel).read_text())
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == fname), None)
+        assert fn is not None, f"missing FunctionDef {rel}:{fname}"
+        for sub in ast.walk(fn):
+            if not isinstance(sub, ast.Call):
+                continue
+            f = sub.func
+            cname = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+            if cname in banned:
+                hits.append(f"{rel}:{fname}->{cname}")
+    assert hits == [], f"snapshot readers must not call writers/probes: {hits}"

@@ -681,15 +681,7 @@
     "fanops.health": [
       {
         "call": "subprocess.run",
-        "line": 43
-      },
-      {
-        "call": "subprocess.run",
-        "line": 70
-      },
-      {
-        "call": "subprocess.run",
-        "line": 82
+        "line": 40
       }
     ],
     "fanops.health_model": [
@@ -802,6 +794,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 37
   }
 }

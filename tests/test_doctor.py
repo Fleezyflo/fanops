@@ -636,8 +636,8 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
     assert "secret-password" not in row["hint"]
 
 
-def test_doctor_hashtag_scrape_probe_freezes_and_retries_peer(tmp_path, monkeypatch):
-    """Probe Challenge on preferred user arms cooldown; peer open+probe → PASS; accounts not empty."""
+def test_doctor_hashtag_scrape_probe_reports_without_freeze(tmp_path, monkeypatch):
+    """MOL-879: probe Challenge on preferred → FAIL; one open; no cooldown write."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.fanops_hashtags import _load_cooldown_blob
@@ -663,17 +663,17 @@ def test_doctor_hashtag_scrape_probe_freezes_and_retries_peer(tmp_path, monkeypa
             raise ChallengeRequired("challenge_required")
         return ("1", 1.0)
     row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert opens["n"] == 2
-    rec = _load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}
-    assert rec.get("reason") == "checkpoint"
+    assert row["ok"] is False
+    assert row["hint"] == "@mark: challenge_required"
+    assert opens["n"] == 1
+    assert not (cfg.control / ".hashtag_scrape_cooldown.json").exists()
+    assert not (_load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}).get("reason")
 
 
 def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, monkeypatch):
-    """All peers fail probe → FAIL hint names @user; cooldown armed; no scrape-login prescription."""
+    """All peers fail probe → FAIL hint names @user; no scrape-login prescription."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.fanops_hashtags import _load_cooldown_blob
     from fanops.ig_hashtag_scrape import scrape_session_path
     from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "only")
@@ -691,7 +691,25 @@ def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, m
     assert row["ok"] is False
     assert row["hint"] == "@only: challenge_required"
     assert "scrape-login" not in row["hint"]
-    assert (_load_cooldown_blob(cfg).get("accounts", {}).get("only") or {}).get("reason") == "checkpoint"
+
+
+def test_doctor_ast_never_references_persist_or_freeze():
+    """CPDP-WP4: doctor.py must not Name/ImportFrom/alias `_persist_cooldown` or `_freeze_for`."""
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "doctor.py").read_text())
+    banned = {"_persist_cooldown", "_freeze_for"}
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and n.id in banned:
+            hits.append(n.id)
+        elif isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                if a.name in banned or (a.asname or "") in banned:
+                    hits.append(a.asname or a.name)
+        elif isinstance(n, ast.alias) and (n.name in banned or (n.asname or "") in banned):
+            hits.append(n.asname or n.name)
+    assert hits == [], f"doctor must not reference persist/freeze: {hits}"
 
 
 # ---- Wave 4: doctor operational sensors (WARN unless fatal) + honesty guards ----

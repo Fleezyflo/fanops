@@ -112,51 +112,32 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
     if not any_scrape_session(cfg):
         return None  # N/A — credentials without session is setup incompleteness
-    # Multi-account: platform stop on the preferred user must arm cooldown (same ledger Layer A
-    # uses) then retry open_client once so a healthy peer can PASS. ScrapeUnavailable on the first
-    # open stays the setup failure; after a platform fail, a later ScrapeUnavailable means peers
-    # are exhausted — report the platform text, not a scrape-login prescription (MOL-879).
     opener = open_client
     if opener is None:
         from fanops.ig_hashtag_scrape import open_client as opener
     probe = probe_resolve
     if probe is None:
         from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _freeze_for, _persist_cooldown
-    now = datetime.now(timezone.utc)
-    last_user, last_exc = "", None
     try:
-        for _ in range(2):
-            user = ""
-            try:
-                client = opener(cfg)
-            except ScrapeUnavailable:
-                if last_exc is not None:
-                    break
-                raise
-            except Exception as e:                          # noqa: BLE001 — open raised platform error
-                if decide("observability", 0) is EscalationPosture.degrade:
-                    last_exc = e
-                    break
-                raise
-            user = getattr(client, "_fanops_scrape_user", "") or ""
-            try:
-                probe(client, "#hiphop")
-                return _check(lbl, True, "")
-            except ScrapeUnavailable:
-                raise
-            except Exception as e:                          # noqa: BLE001 — probe platform error
-                if decide("observability", 0) is EscalationPosture.degrade:
-                    last_user, last_exc = user, e
-                    if not user:
-                        break
-                    reason, delay_s = _freeze_for(e)
-                    _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
-                    continue
-                raise
-        return _check(lbl, False,
-                      f"@{last_user}: {last_exc}" if last_user else str(last_exc))
+        try:
+            client = opener(cfg)
+        except ScrapeUnavailable:
+            raise
+        except Exception as e:                          # noqa: BLE001 — open raised platform error
+            if decide("observability", 0) is EscalationPosture.degrade:
+                return _check(lbl, False, str(e))
+            raise
+        user = getattr(client, "_fanops_scrape_user", "") or ""
+        try:
+            probe(client, "#hiphop")
+            return _check(lbl, True, "")
+        except ScrapeUnavailable:
+            raise
+        except Exception as e:                          # noqa: BLE001 — probe platform error
+            if decide("observability", 0) is EscalationPosture.degrade:
+                return _check(lbl, False,
+                              f"@{user}: {e}" if user else str(e))
+            raise
     except ScrapeUnavailable as e:
         return _check(lbl, False, f"{e} — run `fanops hashtags scrape-login`")
 
