@@ -41,19 +41,27 @@ def wait_for_gate(cfg: Config, led, *, kind: str, key: str) -> str:
     return f"wait={state}:{kind}:{key} (attempt {n}/{ATTEMPT_CEILING})"
 
 
+def _gate_opened_epoch(req) -> float:
+    """Logical open time (epoch seconds) from request `opened_at`. Missing/unreadable → 0 (unknown).
+    Never uses st_mtime — rewrite age must survive write_request re-seeds."""
+    try:
+        oa = json.loads(req.read_text()).get("opened_at")
+        if oa:
+            from fanops.timeutil import parse_iso
+            return parse_iso(oa).timestamp()
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return 0.0
+
+
 def _pending_gates(cfg: Config) -> list[tuple[float, str, str]]:
-    """Every pending gate as (mtime, kind, key), oldest first. ONE scan across all gate kinds — the
-    single place the request dir is globbed. Callers that need the same list per source should build a
-    PendingIndex once (below) and thread it, not call this per source."""
+    """Every pending gate as (opened_at_epoch, kind, key), oldest first. ONE scan across all gate kinds —
+    the single place the request dir is globbed. Age is the request's opened_at stamp, not file mtime."""
     out: list[tuple[float, str, str]] = []
     for kind in GATE_KINDS:
         for key in pending(cfg, kind=kind):
             req = request_path(cfg, kind, key)
-            try:
-                mtime = req.stat().st_mtime
-            except OSError:
-                mtime = 0.0
-            out.append((mtime, kind, key))
+            out.append((_gate_opened_epoch(req), kind, key))
     out.sort()
     return out
 
@@ -62,7 +70,7 @@ def _pending_gates(cfg: Config) -> list[tuple[float, str, str]]:
 class PendingIndex:
     """A ONE-scan projection of the pending gates, so a full status render is O(files) not O(sources).
 
-    `ordered` is every pending gate (mtime, kind, key) oldest-first (identical to `_pending_gates`).
+    `ordered` is every pending gate (opened_at_epoch, kind, key) oldest-first (identical to `_pending_gates`).
     `by_source` maps each owning source id -> its own gates, oldest-first — so `source_wait_line` and
     `_source_has_pending_gate` become dict lookups instead of re-globbing the request dir per source.
     Gates whose owner can't be resolved (gate_source_id -> None) are omitted from `by_source` (they were
@@ -74,10 +82,10 @@ class PendingIndex:
     def build(cls, cfg: Config, led) -> "PendingIndex":
         ordered = _pending_gates(cfg)
         by_source: dict[str, list[tuple[float, str, str]]] = {}
-        for mtime, kind, key in ordered:
+        for opened, kind, key in ordered:
             sid = gate_source_id(led, kind, key)
             if sid is not None:
-                by_source.setdefault(sid, []).append((mtime, kind, key))
+                by_source.setdefault(sid, []).append((opened, kind, key))
         return cls(ordered=ordered, by_source=by_source)
 
 

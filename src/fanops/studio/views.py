@@ -752,7 +752,8 @@ def _post_live_today(p, now: datetime) -> bool:
 
 def _half_live_state(cfg: Config) -> tuple[bool, str]:
     """D15: FANOPS_LIVE=1 but nothing routes live (typo'd FANOPS_POSTER, no live per-channel backend).
-    Shared by build_system_strip + golive_status so every LIVE surface reads the same truth. Fail-open."""
+    Shared by build_system_strip + golive_status so every LIVE surface reads the same truth.
+    Compute failure → not solid LIVE (surface as half-live unknown)."""
     from fanops.log import get_logger
     try:
         if cfg.is_live and not cfg.live_route_exists:
@@ -762,21 +763,30 @@ def _half_live_state(cfg: Config) -> tuple[bool, str]:
                             "channel to a provider with creds, or flip back to dryrun.")
     except Exception as exc:
         get_logger(cfg)("half_live", "-", "half_live_error", err=str(exc)[:160])
+        return True, (f"could not confirm live route ({str(exc)[:120]}) — not treating as solid LIVE")
     return False, ""
 
 
 def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
+    from fanops.health import SnapshotFreshness, read_strip_metrics
+    strip_metrics_unknown = False
     try:
-        from fanops.health import read_strip_metrics
-        m = read_strip_metrics(cfg) or {}
-        blocked = int(m.get("blocked_gates") or 0)
-        recoverable = int(m.get("recoverable_sources") or 0)
-        errored_first_id = m.get("errored_first_id")
+        sr = read_strip_metrics(cfg)
+        if sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict):
+            m = sr.data
+            blocked = int(m.get("blocked_gates") or 0)
+            recoverable = int(m.get("recoverable_sources") or 0)
+            errored_first_id = m.get("errored_first_id")
+        else:
+            # Missing/stale/unreadable → unknown, never calm zero
+            strip_metrics_unknown = True
+            blocked = None; recoverable = 0; errored_first_id = None
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
-        blocked = 0; recoverable = 0; errored_first_id = None
+        strip_metrics_unknown = True
+        blocked = None; recoverable = 0; errored_first_id = None
     failed = 0
     try:
         failed = sum(1 for p in led_for_request(cfg).posts.values() if p.state is PostState.failed)
@@ -810,6 +820,7 @@ def build_system_strip(cfg: Config) -> dict:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = {"show": False}
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
+            "strip_metrics_unknown": strip_metrics_unknown,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
             "errored_sources": errored, "errored_first_id": errored_first_id,
             "half_live": half_live, "half_live_hint": half_live_hint,
@@ -1043,14 +1054,15 @@ def daemon_health(cfg: Config) -> Optional[dict]:
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
-    from fanops.health import read_daemon_strip_snapshot
+    from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
     from fanops.health_model import heartbeat_stale
     from fanops import pipeline
     from fanops.pipeline_run import run_status_line
-    snap = read_daemon_strip_snapshot(cfg)
-    if snap is None:
-        return None
-    out = dict(snap)
+    sr = read_daemon_strip_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return {"verdict": "unknown", "installed": False, "loaded": False,
+                "hint": f"daemon strip snapshot {sr.freshness.value}"}
+    out = dict(sr.data)
     out["pending_gates"] = None
     with fail_open("studio.views.daemon_health_strip.pending_gates"):
         out["pending_gates"] = pipeline.pending_gate_count(cfg)

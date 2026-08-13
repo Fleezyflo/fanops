@@ -345,8 +345,7 @@ class Config:
         across active accounts via Accounts.live_ready_channels (M3), so a live deployment with
         per-channel routing (IG via postiz + TikTok via zernio + legacy FANOPS_POSTER=dryrun
         bridge) returns 'postiz, zernio' — not 'dryrun'. Not-live -> 'dryrun'; live + no resolved
-        channel yet -> 'live'. Fail-open: any accounts read error degrades to 'live' (the is_live
-        truth is shown separately by callers).
+        channel yet -> 'live'. Accounts read failure -> 'unknown' (never confident 'live').
 
         This is the canonical replacement for `cfg.poster_backend` at any callsite that means
         'what's actually publishing'. The legacy global stays for the narrow case of .env
@@ -359,10 +358,8 @@ class Config:
             provs = sorted({p for _, _, p in Accounts.load(self).live_ready_channels()})
             return ", ".join(provs) if provs else "live"
         except Exception as e:
-            # Fail-open label (the is_live truth is shown separately) — but log the degradation so a
-            # corrupt registry showing a confident 'live' label is at least traceable, not silent.
-            _log.warning("accounts read failed in effective_publish_mode (%s); degrading label to 'live'", e)
-            return "live"
+            _log.warning("accounts read failed in effective_publish_mode (%s); degrading label to 'unknown'", e)
+            return "unknown"
 
     def auth_key_name_for(self, backend: str) -> str:
         """The .env var name for `backend`'s API key — used by the FATAL auth-failure path to tell

@@ -164,13 +164,14 @@ def register_golive_routes(app, cfg):
 
     @app.get("/golive/health")
     def do_golive_health():
-        from fanops.health import read_dep_snapshot, refresh_runtime_snapshots
+        from fanops.health import SnapshotFreshness, read_dep_snapshot, refresh_runtime_snapshots
         from fanops.health_model import DepHealth
         from fanops.studio import views_common
         compact = request.args.get("compact")
         if request.args.get("refresh") == "1" and not compact:
             refresh_runtime_snapshots(cfg)
-        snap = read_dep_snapshot(cfg)
+        sr = read_dep_snapshot(cfg)
+        snap = sr.data if (sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict)) else None
         health = []
         for d in ((snap.get("deps") if isinstance(snap, dict) else None) or []):
             if not isinstance(d, dict):

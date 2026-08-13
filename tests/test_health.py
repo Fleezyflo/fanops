@@ -184,11 +184,12 @@ def test_ensure_up_noop_when_all_up(tmp_path, monkeypatch):
     assert not any("compose" in x and "up" in x for x in run.joined())
 
 
-def test_read_snapshots_missing_are_none(tmp_path, monkeypatch):
+def test_read_snapshots_missing_are_missing(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
-    assert health.read_dep_snapshot(cfg) is None
-    assert health.read_daemon_strip_snapshot(cfg) is None
-    assert health.read_strip_metrics(cfg) is None
+    for sr in (health.read_dep_snapshot(cfg), health.read_daemon_strip_snapshot(cfg),
+               health.read_strip_metrics(cfg)):
+        assert sr.freshness is health.SnapshotFreshness.MISSING
+        assert sr.data is None
 
 
 def test_refresh_runtime_snapshots_writes_three_json_files(tmp_path, monkeypatch):
@@ -205,7 +206,24 @@ def test_refresh_runtime_snapshots_writes_three_json_files(tmp_path, monkeypatch
     assert cfg.deps_health_path.exists()
     assert cfg.daemon_strip_path.exists()
     assert cfg.strip_metrics_path.exists()
-    assert health.read_dep_snapshot(cfg) is not None
-    assert health.read_daemon_strip_snapshot(cfg) is not None
-    assert health.read_strip_metrics(cfg) is not None
+    for sr in (health.read_dep_snapshot(cfg), health.read_daemon_strip_snapshot(cfg),
+               health.read_strip_metrics(cfg)):
+        assert sr.freshness is health.SnapshotFreshness.FRESH
+        assert isinstance(sr.data, dict)
 
+
+
+def test_ancient_checked_at_is_stale_not_fresh(tmp_path, monkeypatch):
+    """Anti-regression B: ancient checked_at → STALE; consumers must not treat as calm truth."""
+    import json
+    cfg = _cfg(tmp_path, monkeypatch)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.strip_metrics_path.write_text(json.dumps({
+        "checked_at": "2020-01-01T00:00:00Z",
+        "blocked_gates": 0,
+        "recoverable_sources": 0,
+        "errored_first_id": None,
+    }))
+    sr = health.read_strip_metrics(cfg)
+    assert sr.freshness is health.SnapshotFreshness.STALE
+    assert isinstance(sr.data, dict)

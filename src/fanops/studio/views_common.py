@@ -327,16 +327,17 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
     """D13b read-model for the Studio Postiz-down banner. Returns {show, danger, status, hint}. Snapshot-only
     (deps_health.json); no network. `danger` is True ONLY when the postiz row is unhealthy AND at least one
     due postiz-routed post is waiting — a reaper-idle stack with nothing to publish is muted idle, not a stall.
-    `show` is True for danger OR the muted idle hint when a channel routes to postiz and the row is down. No
-    banner when healthy, snapshot missing, no postiz row, or no postiz channel. Fail-open: any error ->
-    {show: False} (must never block a page). `now` is unused (kept so callers that pass now= don't TypeError)."""
+    `show` is True for danger OR muted idle OR unknown freshness when a channel routes to postiz.
+    Missing/stale/unreadable snapshot → show unknown (never silent hide). `now` unused (caller compat)."""
     if not _any_channel_routes_to_postiz(cfg):
         return {"show": False, "danger": False, "status": None, "hint": ""}
     try:
-        from fanops.health import read_dep_snapshot
-        snap = read_dep_snapshot(cfg)
-        if not isinstance(snap, dict):
-            return {"show": False, "danger": False, "status": None, "hint": ""}
+        from fanops.health import SnapshotFreshness, read_dep_snapshot
+        sr = read_dep_snapshot(cfg)
+        if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+            return {"show": True, "danger": False, "status": None,
+                    "hint": f"Postiz health unknown (snapshot {sr.freshness.value})"}
+        snap = sr.data
         row = next((d for d in (snap.get("deps") or [])
                     if isinstance(d, dict) and d.get("name") == "postiz"), None)
         if row is None:
@@ -363,8 +364,8 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
                          "health check is nginx-only and can lie; check `docker logs postiz` (see "
                          "docs/POSTIZ_OPS.md).")}
     except Exception as e:
-        _log.warning("postiz banner snapshot read failed (suppressing banner): %s", e)
-        return {"show": False, "danger": False, "status": None, "hint": ""}
+        _log.warning("postiz banner snapshot read failed (showing unknown): %s", e)
+        return {"show": True, "danger": False, "status": None, "hint": "Postiz health unknown (read failed)"}
 
 
 def _postiz_local_autostart(cfg: Config) -> bool:

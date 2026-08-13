@@ -204,14 +204,13 @@ def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, ca
     assert any("account" in r.getMessage().lower() for r in caplog.records)
 
 def test_effective_publish_mode_logs_on_accounts_error(monkeypatch, tmp_path, caplog):
-    # The publish-mode LABEL fail-opens to 'live' when accounts can't be read — silently, so a corrupt
-    # registry showed a confident 'live' with no hint the read failed. Keep the fail-open label, log the lie.
+    # Accounts read failure → 'unknown' (never confident 'live').
     monkeypatch.setenv("FANOPS_LIVE", "1")
     def boom(cfg): raise RuntimeError("corrupt")
     monkeypatch.setattr("fanops.accounts.Accounts.load", boom)
     with caplog.at_level(logging.WARNING):
         mode = Config(root=tmp_path).effective_publish_mode()
-    assert mode == "live"                                       # fail-open label preserved
+    assert mode == "unknown"
     assert any("account" in r.getMessage().lower() for r in caplog.records)
 
 def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
