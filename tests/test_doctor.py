@@ -714,16 +714,15 @@ def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypat
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
     """If the live-route coherence check cannot be COMPUTED (route read raises), half-live must not present
-    a silent green. is_live stays True, the check keeps ok=True (not-half-live, unconfirmed) but carries a
-    WARN saying the live route was NOT actually confirmed — the Wave 2b breadcrumb, surfaced not hidden."""
+    solid LIVE — ok=False with a hint that LIVE was not confirmed."""
     monkeypatch.setenv("FANOPS_LIVE", "1")
     def _boom(self):
         raise RuntimeError("route read hiccup")
     monkeypatch.setattr(type(Config(root=tmp_path)), "live_route_exists", property(_boom))
     rep = doctor.doctor_report(Config(root=tmp_path))
     lr = _by_label(rep, "live route exists")
-    assert lr is not None and lr["ok"] is True
-    assert lr.get("warn") is True and "not confirmed" in lr.get("warn_hint", "").lower()
+    assert lr is not None and lr["ok"] is False
+    assert "not confirmed" in (lr.get("hint") or "").lower()
 
 
 def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):

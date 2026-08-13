@@ -131,22 +131,19 @@ def test_account_arg_logs_on_resolve_error(tmp_path, monkeypatch, caplog):
     assert any(r.name == "fanops.studio.app" for r in caplog.records)
 
 
-# ── 8. doctor.doctor_report half_live — except -> half_live = False (cfg in scope) ──
+# ── 8. doctor.doctor_report half_live — except -> not solid LIVE (ok=False) ──
 def test_doctor_half_live_logs_on_route_error(tmp_path, monkeypatch):
     from fanops import doctor
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = _cfg(tmp_path)
 
-    # force is_live True, live_route_exists raising
     monkeypatch.setattr(type(cfg), "live_route_exists",
                         property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
     rep = doctor.doctor_report(cfg)
-    # fallback: half_live=False -> the "live route exists" check passes (ok=True) despite the raise
     labels = {c["label"]: c for c in rep["checks"]}
     route_check = next((c for k, c in labels.items() if "live route exists" in k), None)
-    assert route_check is not None and route_check["ok"] is True    # fallback unchanged (half_live=False)
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "half_live" in log_text or "doctor" in log_text
+    assert route_check is not None and route_check["ok"] is False
+    assert "not confirmed" in (route_check.get("hint") or "").lower()
 
 
 # ── 9. studio/views.build_system_strip postiz_down — except -> {"show": False} (cfg in scope) ──

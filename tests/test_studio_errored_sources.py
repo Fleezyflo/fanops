@@ -25,9 +25,11 @@ def _add_errored(cfg, sid="src_1", *, reason="TimeoutExpired: ffmpeg ... timed o
 # ── system strip: errored-source count ──
 
 def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.strip_metrics_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "blocked_gates": blocked_gates,
         "recoverable_sources": recoverable_sources,
         "errored_first_id": errored_first_id,

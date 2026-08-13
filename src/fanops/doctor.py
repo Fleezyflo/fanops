@@ -375,12 +375,12 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     #    pending gate is normal transient work the responder is clearing, so it is not surfaced.
     try:
         from fanops import pipeline_status, daemon
-        gates = pipeline_status._pending_gates(cfg)              # (mtime, kind, key) oldest-first
+        gates = pipeline_status._pending_gates(cfg)              # (opened_at_epoch, kind, key) oldest-first
         if gates:
-            oldest_mtime = gates[0][0]
-            age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_mtime) if oldest_mtime else 0.0
+            oldest_opened = gates[0][0]
+            age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_opened) if oldest_opened else 0.0
             interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
-            if oldest_mtime and age_s > _GATE_STALE_TICKS * interval:
+            if oldest_opened and age_s > _GATE_STALE_TICKS * interval:
                 out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
                             "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
                                          f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
@@ -543,22 +543,22 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         half_live = cfg.is_live and not cfg.live_route_exists
     except Exception as exc:
         if decide("operator", 0) is EscalationPosture.nonzero:
-            half_live = False
+            half_live = True                                   # compute failure → not solid LIVE
             half_live_err = str(exc)[:160]
         else:
             raise
     if cfg.is_live:
-        c = _check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
-                   "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
-                   "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
-                   "`fanops` back to dryrun. Every publish stays stuck in `queued` until then.")
-        if half_live_err and c["ok"]:
-            # The coherence check could not be COMPUTED. Half-live must never fail-open to a silent green:
-            # surface a WARN so the operator knows the live route was NOT actually confirmed here.
-            c["warn"] = True
-            c["warn_hint"] = (f"could not compute the live-route coherence check ({half_live_err}) — treated "
-                              "as not-half-live but NOT confirmed; re-run `fanops doctor` and check accounts.json")
-        checks.append(c)
+        if half_live_err:
+            checks.append(_check(
+                "live route exists (FANOPS_LIVE=1 actually publishes)", False,
+                f"could not compute live-route coherence ({half_live_err}) — not confirmed LIVE; "
+                "re-run `fanops doctor` and check accounts.json"))
+        else:
+            checks.append(_check(
+                "live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
+                "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
+                "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
+                "`fanops` back to dryrun. Every publish stays stuck in `queued` until then."))
 
     # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
     # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-

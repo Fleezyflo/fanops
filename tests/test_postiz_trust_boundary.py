@@ -55,9 +55,11 @@ def _seed(cfg, accounts):
 
 
 def _seed_deps(cfg, deps):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.deps_health_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "deps": deps,
     }))
 
@@ -356,3 +358,31 @@ def test_doctor_does_not_flag_genuine_live(tmp_path, monkeypatch):
     rep = doctor_report(cfg)
     coh = [c for c in rep["checks"] if "live" in c["label"].lower() and "route" in c["label"].lower()]
     assert coh and coh[0]["ok"] is True                          # genuine live passes the coherence check
+
+
+def test_half_live_compute_failure_is_not_solid_live(tmp_path, monkeypatch):
+    """Anti-regression C companion: live_route_exists boom → half_live True (not solid LIVE)."""
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setattr(type(cfg), "live_route_exists",
+                        property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
+    half, hint = views._half_live_state(cfg)
+    assert half is True
+    assert "not treating as solid LIVE" in hint
+
+
+def test_postiz_banner_unknown_on_stale_snapshot(tmp_path, monkeypatch, mocker):
+    """Ancient deps snapshot must show unknown, never silent hide, when a channel routes to postiz."""
+    import json
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": "2020-01-01T00:00:00Z",
+        "deps": [{"name": "postiz", "ok": True, "detail": "seeded", "status_code": 200}],
+    }))
+    banner = views_common.postiz_health_for_banner(cfg)
+    assert banner["show"] is True
+    assert "unknown" in banner["hint"].lower()

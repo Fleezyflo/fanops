@@ -137,9 +137,11 @@ def test_lift_still_301(tmp_path):
 
 # ---- Add & run blocked-gates badge ----
 def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.strip_metrics_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "blocked_gates": blocked_gates,
         "recoverable_sources": recoverable_sources,
         "errored_first_id": errored_first_id,
@@ -148,10 +150,22 @@ def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_
 
 def test_badge_absent_when_no_blocked_gates(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    # missing snapshot -> 0 is OK (strip is snapshot-only for blocked_gates)
+    # fresh snapshot with zero blocked gates -> no badge (NOT missing-snapshot calm-zero)
+    _seed_strip_metrics(cfg, blocked_gates=0)
     assert views.build_system_strip(cfg)["blocked_gates"] == 0
+    assert views.build_system_strip(cfg)["strip_metrics_unknown"] is False
     html = _client(cfg).get("/").data.decode()
-    assert 'data-testid="rail-badge"' not in html      # no chip when nothing is blocked
+    assert 'data-testid="rail-badge"' not in html
+    assert "gate metrics unknown" not in html
+
+
+def test_missing_strip_metrics_is_unknown_not_calm_zero(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    strip = views.build_system_strip(cfg)
+    assert strip["strip_metrics_unknown"] is True
+    assert strip["blocked_gates"] is None
+    html = _client(cfg).get("/").data.decode()
+    assert "gate metrics unknown" in html
 
 
 def test_badge_present_with_count_when_gates_blocked(tmp_path):

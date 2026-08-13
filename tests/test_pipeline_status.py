@@ -117,3 +117,39 @@ def test_source_backlog_shows_artifact_summary(tmp_path):
     bl = source_backlog(Ledger.load(cfg), cfg)
     row = next(r for r in bl.rows if r.id == "src_e")
     assert row.artifacts == "transcribe+signals"
+
+
+def test_gate_opened_at_survives_write_request_rewrites(tmp_path):
+    """Anti-regression A: N write_request rewrites preserve opened_at; age is not request mtime."""
+    import json, os, time
+    from fanops.agentstep import request_path, write_request
+    from fanops.pipeline_status import _pending_gates
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1"})
+    req = request_path(cfg, kind="moments", key="s1")
+    first = json.loads(req.read_text())["opened_at"]
+    assert first
+    # Force mtime into the future so mtime-as-age would look fresh while stamp stays old.
+    os.utime(req, (time.time() + 10_000, time.time() + 10_000))
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1", "n": 2})
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1", "n": 3})
+    data = json.loads(req.read_text())
+    assert data["opened_at"] == first
+    gates = _pending_gates(cfg)
+    assert gates and gates[0][1:] == ("moments", "s1")
+    # Age epoch matches stamp, not inflated mtime.
+    from fanops.timeutil import parse_iso
+    assert abs(gates[0][0] - parse_iso(first).timestamp()) < 1.0
+
+
+def test_pending_gates_never_uses_st_mtime_as_age(tmp_path):
+    """rg-guard companion: _pending_gates ages from opened_at only (legacy file without stamp → 0)."""
+    import json
+    from fanops.agentstep import request_path, _ensure_dir
+    from fanops.pipeline_status import _pending_gates
+    cfg = Config(root=tmp_path)
+    _ensure_dir(cfg)
+    req = request_path(cfg, kind="moments", key="legacy")
+    req.write_text(json.dumps({"request_id": "rid", "source_id": "legacy"}))
+    gates = _pending_gates(cfg)
+    assert gates == [(0.0, "moments", "legacy")]
