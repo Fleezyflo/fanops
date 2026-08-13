@@ -681,15 +681,15 @@
     "fanops.health": [
       {
         "call": "subprocess.run",
-        "line": 28
+        "line": 43
       },
       {
         "call": "subprocess.run",
-        "line": 60
+        "line": 70
       },
       {
         "call": "subprocess.run",
-        "line": 73
+        "line": 82
       }
     ],
     "fanops.health_model": [
