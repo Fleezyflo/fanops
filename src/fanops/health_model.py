@@ -1,4 +1,6 @@
-# src/fanops/health_model.py — MOL-298/MOL-965: ONE typed health owner; severity is the public contract
+# src/fanops/health_model.py — MOL-298/MOL-965: single constructor (build_health_report);
+# primary operator channel = fanops doctor; Studio/metrics = projectors; /healthz = process-only.
+# Severity is the public check contract (not ok+warn soft-lies).
 from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
@@ -587,7 +589,10 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
                         probe_policy: Literal["live", "observe"] = "live",
                         daemon_status=None) -> HealthReport:
 
-    """THE health owner — composes doctor checks, deps, field-shape, bounded live confirm.
+    """Sole machine-health constructor — doctor checks, deps, field-shape, bounded live confirm.
+
+    Operator surfaces project from this report (or thin doctor_report.as_dict); they must not
+    assemble a parallel verdict. /healthz and fanops up are not consumers of this constructor.
 
     probe_policy:
       - 'live' (default): real network/launchd probes — doctor / CLI / Go-Live readiness.
