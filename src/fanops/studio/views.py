@@ -750,14 +750,6 @@ def _post_live_today(p, now: datetime) -> bool:
     return False
 
 
-def _half_live_state(cfg: Config) -> tuple[bool, str]:
-    """Compat shim — THE compute lives in health_model.half_live_state (MOL-965 WP2)."""
-    from fanops.health_model import half_live_state
-    hl = half_live_state(cfg)
-    return hl.is_half_live, hl.hint
-
-
-
 def _postiz_down_on_helper_raise(cfg: Config) -> dict:
     """Outer except for postiz_health_for_banner: show unknown if a channel routes to postiz OR the
     route-check failed; hide only when we can prove no channel routes to postiz. Lives here so we
@@ -824,9 +816,14 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    from fanops.health_model import half_live_state
-    hl = half_live_state(cfg)
-    half_live, half_live_hint = hl.is_half_live, hl.hint
+    # Half-live from ONE HealthReport projector — never re-probe half_live_state here (MOL-965 WP2-fix).
+    try:
+        from fanops.health_model import build_health_report, project_strip_health
+        strip_h = project_strip_health(build_health_report(cfg))
+        half_live, half_live_hint = strip_h["half_live"], strip_h["half_live_hint"]
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
+        half_live, half_live_hint = True, "readiness unavailable — not confirmed LIVE"
     # D13b: Postiz-down banner — snapshot-only (deps_health.json).
     # Helper raise → unknown when a channel routes to postiz OR the route-check itself failed; else hide.
     try:
@@ -1458,8 +1455,10 @@ def golive_status(cfg: Config) -> GoLiveStatus:
     except Exception as exc:                          # invariant: the Go-Live tab must never 500 (ecc:python-review)
         from fanops.log import get_logger             # ECC fix #5: log why readiness is unavailable
         get_logger(cfg)("golive", "-", "doctor_error", err=str(exc)[:160])
+        # Never fail-open to calm LIVE-looking half_live=False (MOL-965 WP2-fix).
         ready = {"checks": [], "notes": ["readiness check unavailable"],
-                 "half_live": False, "half_live_hint": ""}
+                 "half_live": True,
+                 "half_live_hint": "readiness unavailable — not confirmed LIVE"}
     from fanops.validation_gate import learning_validated
     from fanops.doctor import setup_state, setup_next_action
     from fanops.pipeline_run import paused as _paused
