@@ -147,7 +147,9 @@
         "fanops.ids",
         "fanops.log"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.timeutil"
+      ],
       "optional": [],
       "typing": []
     },
@@ -312,6 +314,7 @@
         "fanops.pipeline",
         "fanops.pipeline_run",
         "fanops.pipeline_status",
+        "fanops.postiz_lifecycle",
         "fanops.recaption",
         "fanops.reconcile",
         "fanops.reframe",
@@ -666,6 +669,7 @@
         "fanops.daemon",
         "fanops.doctor",
         "fanops.errors",
+        "fanops.escalation",
         "fanops.health",
         "fanops.learn_doctor",
         "fanops.ledger",
@@ -748,6 +752,7 @@
         "fanops.doctor"
       ],
       "lazy": [
+        "fanops.health_model",
         "fanops.studio.golive"
       ],
       "optional": [],
@@ -1119,7 +1124,8 @@
       ],
       "lazy": [
         "fanops.artifacts",
-        "fanops.log"
+        "fanops.log",
+        "fanops.timeutil"
       ],
       "optional": [],
       "typing": []
@@ -2456,7 +2462,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 248,
+  "lazy_downward_count": 252,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2987,6 +2993,14 @@
       "same_scc": false,
       "to": "fanops.personas",
       "to_level": 4
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.escalation",
+      "to_level": 3
     },
     {
       "from": "fanops.health_model",
@@ -3694,10 +3708,10 @@
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 591,
-    "lazy_edges": 362,
+    "lazy_edges": 367,
     "lazy_edges_lateral": 42,
-    "lazy_edges_strictly_upward": 72,
-    "lazy_edges_to_equal_or_higher_level": 114,
+    "lazy_edges_strictly_upward": 73,
+    "lazy_edges_to_equal_or_higher_level": 115,
     "modules": 138,
     "optional_edges": 0,
     "typing_only_edges": 7

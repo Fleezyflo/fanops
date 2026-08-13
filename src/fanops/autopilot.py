@@ -95,6 +95,7 @@ def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dic
         "backend": cfg.effective_publish_mode(),
         "checks": report["checks"],
         "notes": report["notes"],
+        "deps": report.get("deps") or [],
         "daemon": daemon_res,
         "daemon_note": daemon_note,
     }

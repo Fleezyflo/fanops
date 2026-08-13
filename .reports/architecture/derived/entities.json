@@ -94,6 +94,31 @@
         "name": "StrategyState"
       }
     ],
+    "fanops.health": [
+      {
+        "line": 24,
+        "members": [
+          "FRESH",
+          "MISSING",
+          "STALE",
+          "UNREADABLE"
+        ],
+        "name": "SnapshotFreshness"
+      }
+    ],
+    "fanops.health_model": [
+      {
+        "line": 20,
+        "members": [
+          "FAIL",
+          "INFO",
+          "OK",
+          "UNKNOWN",
+          "WARN"
+        ],
+        "name": "Severity"
+      }
+    ],
     "fanops.models": [
       {
         "line": 61,

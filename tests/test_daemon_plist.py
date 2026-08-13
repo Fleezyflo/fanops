@@ -104,7 +104,7 @@ def test_install_bootstraps_idempotently(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", run)
     cfg = Config(root=tmp_path)
 
-    res = daemon.install(cfg, interval=600, responder="inherit")
+    res = daemon.install(cfg, interval=600)
 
     assert not (cfg.control / "fanops-run.sh").exists()
     assert daemon.plist_path().exists()

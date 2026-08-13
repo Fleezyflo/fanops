@@ -118,3 +118,16 @@ def test_spine_highlights_the_review_tab(tmp_path):
     html = _client(Config(root=tmp_path)).get("/review").data.decode()
     assert 'data-spine' in html and 'data-here="review"' in html
     assert 'aria-current="step"' in html                 # the active stage marks aria-current on its <a> (WCAG 4.1.2)
+
+def test_spine_unknown_metrics_never_calm_zero_badge():
+    # MOL-963 R2a: strip_metrics_unknown → blocked_gates None, Make danger, gates CTA — never 0.
+    spine = views.build_spine(counts=_counts(sources=2, awaiting=4), has_accounts=True, here=None,
+                              blocked_gates=None, strip_metrics_unknown=True)
+    assert spine.blocked_gates is None
+    assert spine.strip_metrics_unknown is True
+    by = {s.key: s for s in spine.stages}
+    assert by["make"].severity == "danger"
+    assert spine.next_endpoint == "gates"
+    assert "unknown" in spine.next_label.lower()
+    # Must not prefer Review CTA while metrics are unknown (would hide the honesty signal).
+    assert spine.next_endpoint != "review"

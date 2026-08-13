@@ -117,3 +117,73 @@ def test_source_backlog_shows_artifact_summary(tmp_path):
     bl = source_backlog(Ledger.load(cfg), cfg)
     row = next(r for r in bl.rows if r.id == "src_e")
     assert row.artifacts == "transcribe+signals"
+
+
+def test_gate_opened_at_survives_write_request_rewrites(tmp_path):
+    """Anti-regression A: N write_request rewrites preserve opened_at; age is not request mtime."""
+    import json, os, time
+    from fanops.agentstep import request_path, write_request
+    from fanops.pipeline_status import _pending_gates
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1"})
+    req = request_path(cfg, kind="moments", key="s1")
+    first = json.loads(req.read_text())["opened_at"]
+    assert first
+    # Force mtime into the future so mtime-as-age would look fresh while stamp stays old.
+    os.utime(req, (time.time() + 10_000, time.time() + 10_000))
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1", "n": 2})
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1", "n": 3})
+    data = json.loads(req.read_text())
+    assert data["opened_at"] == first
+    gates = _pending_gates(cfg)
+    assert gates and gates[0][1:] == ("moments", "s1")
+    # Age epoch matches stamp, not inflated mtime.
+    from fanops.timeutil import parse_iso
+    assert abs(gates[0][0] - parse_iso(first).timestamp()) < 1.0
+
+
+def test_pending_gates_missing_opened_at_is_unknown_not_zero(tmp_path):
+    """R1b: legacy file without stamp → None (unknown age), never 0.0 / mtime."""
+    import json
+    from fanops.agentstep import request_path, _ensure_dir
+    from fanops.pipeline_status import _pending_gates, _gate_opened_epoch
+    cfg = Config(root=tmp_path)
+    _ensure_dir(cfg)
+    req = request_path(cfg, kind="moments", key="legacy")
+    req.write_text(json.dumps({"request_id": "rid", "source_id": "legacy"}))
+    assert _gate_opened_epoch(req) is None
+    gates = _pending_gates(cfg)
+    assert gates == [(None, "moments", "legacy")]
+
+
+def test_write_request_corrupt_prior_does_not_remint_now(tmp_path):
+    """R1a: prior request exists but JSON/opened_at unreadable → ancient stamp, never fail_open remint now."""
+    import json
+    from fanops.agentstep import request_path, write_request, _ANCIENT_OPENED_AT
+    from fanops.pipeline_status import _gate_opened_epoch
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path)
+    req = request_path(cfg, kind="moments", key="torn")
+    req.parent.mkdir(parents=True, exist_ok=True)
+    req.write_text("{ not valid json")
+    write_request(cfg, kind="moments", key="torn", payload={"source_id": "torn", "n": 1})
+    write_request(cfg, kind="moments", key="torn", payload={"source_id": "torn", "n": 2})
+    data = json.loads(req.read_text())
+    assert data["opened_at"] == _ANCIENT_OPENED_AT
+    epoch = _gate_opened_epoch(req)
+    assert epoch is not None and abs(epoch - parse_iso(_ANCIENT_OPENED_AT).timestamp()) < 1.0
+    # Age must be old — never a fresh "now" remint after the corrupt prior.
+    import time
+    assert time.time() - epoch > 86400 * 365  # older than a year
+
+
+def test_write_request_missing_stamp_on_prior_writes_ancient(tmp_path):
+    """R1a companion: prior exists with readable JSON but no opened_at → ancient, not now."""
+    import json
+    from fanops.agentstep import request_path, write_request, _ANCIENT_OPENED_AT, _ensure_dir
+    cfg = Config(root=tmp_path)
+    _ensure_dir(cfg)
+    req = request_path(cfg, kind="moments", key="legacy")
+    req.write_text(json.dumps({"request_id": "rid", "source_id": "legacy"}))
+    write_request(cfg, kind="moments", key="legacy", payload={"source_id": "legacy"})
+    assert json.loads(req.read_text())["opened_at"] == _ANCIENT_OPENED_AT

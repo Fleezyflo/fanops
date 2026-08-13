@@ -48,13 +48,32 @@ def latest_request_id(cfg: Config, kind: str, key: str) -> str | None:
         get_logger(cfg)("agent_io", key, "corrupt_request", kind=kind, err=str(e)[:120])
         return None
 
+# Fail-closed stamp when a prior request exists but opened_at is missing/unreadable — age stays OLD,
+# never reminted to "now" (that escape hatch made torn rewrites look fresh forever).
+_ANCIENT_OPENED_AT = "1970-01-01T00:00:00Z"
+
+
 def write_request(cfg: Config, *, kind: str, key: str, payload: dict) -> str:
     _ensure_dir(cfg)                           # create the request dir at WRITE time (readers never mkdir)
     p = request_path(cfg, kind, key)
+    # Preserve opened_at across rewrites — request mtime is NOT gate age (a re-seed must not reset staleness).
+    # Mint now ONLY when no prior file. Prior exists but stamp unreadable/missing → ancient (fail-closed).
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
+    if p.exists():
+        opened_at = None
+        try:
+            opened_at = json.loads(p.read_text()).get("opened_at")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            opened_at = None
+        if not opened_at:
+            opened_at = _ANCIENT_OPENED_AT
+    else:
+        opened_at = iso_z(datetime.now(timezone.utc))
     # New id whenever the request is (re)written — old responses become stale.
     prev = latest_request_id(cfg, kind, key) or "0"
     rid = _hash(kind, key, prev, json.dumps(payload, sort_keys=True, default=str))
-    payload = {**payload, "request_id": rid}
+    payload = {**payload, "request_id": rid, "opened_at": opened_at}
     # ATOMIC write (temp + os.replace, the ledger._save_unlocked pattern): the old plain write_text
     # left a concurrent reader exposed to a torn request — safe ONLY by the implicit "all writers
     # hold the ledger flock" invariant. os.replace makes the swap-in atomic regardless, so a reader

@@ -25,9 +25,11 @@ def _add_errored(cfg, sid="src_1", *, reason="TimeoutExpired: ffmpeg ... timed o
 # ── system strip: errored-source count ──
 
 def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.strip_metrics_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "blocked_gates": blocked_gates,
         "recoverable_sources": recoverable_sources,
         "errored_first_id": errored_first_id,
@@ -146,3 +148,13 @@ def test_run_resume_route_recovers_and_rerenders(tmp_path, monkeypatch):
     # the shared helper ran: source is now transcribed, transcript preserved
     s = Ledger.load(cfg).sources["src_1"]
     assert s.state is SourceState.transcribed and s.transcript
+
+def test_strip_errored_falls_through_to_ledger_when_metrics_unknown(tmp_path, monkeypatch):
+    # MOL-963 R2b: metrics unknown zeros recoverable from snapshot — ledger must still surface errored.
+    cfg = _cfg(tmp_path, monkeypatch)
+    _add_errored(cfg, "src_err")
+    # No strip_metrics snapshot → strip_metrics_unknown, recoverable=0 from the unknown branch.
+    strip = views.build_system_strip(cfg)
+    assert strip["strip_metrics_unknown"] is True
+    assert strip["recoverable_sources"] == 0
+    assert strip["errored_sources"] >= 1  # ledger fallthrough, not quiet

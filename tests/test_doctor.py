@@ -272,13 +272,13 @@ def test_doctor_warns_on_expiring_meta_token(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     now = time.time()
 
-    # (a) FAR FUTURE (90 days) -> ok, no warn, no fail.
+    # (a) FAR FUTURE (90 days) -> Severity.OK.
     c = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now + 90 * 86400))))
-    assert c is not None and c["ok"] is True and not c.get("warn")
+    assert c is not None and c["ok"] is True and c.get("severity") == "ok"
 
-    # (b) INSIDE the lead window (<=10 days; use 5 days) -> WARN (ok stays True so it never blocks, warn set).
+    # (b) INSIDE the lead window (<=10 days; use 5 days) -> Severity.WARN (non-blocking).
     c2 = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now + 5 * 86400))))
-    assert c2 is not None and c2.get("warn") is True and "expir" in (c2["hint"] + c2.get("warn_hint", "")).lower()
+    assert c2 is not None and c2.get("severity") == "warn" and "expir" in (c2.get("hint") or "").lower()
 
     # (c) EXPIRED (past) -> FAIL.
     c3 = _tokencheck(doctor.doctor_report(cfg, get=_debug_token_getter(int(now - 86400))))
@@ -533,21 +533,21 @@ def _fake_launchctl_daemon(**spec):
 
 # --- Hashtag Layer A scrape session (instagrapi) ---
 def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
+    """MOL-965: soft setup incompleteness is N/A (omitted) — never ok=True pretend PASS."""
     from fanops import doctor
     from fanops.config import Config
     monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     rep = doctor.doctor_report(cfg)
-    row = next(c for c in rep["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row["ok"] is True  # soft-ok: refresh still aborts; health stays green in dryrun
-    assert "scrape-login" in row["hint"] and "FANOPS_IG_SCRAPE_USER" in row["hint"]
+    assert not any("hashtag Layer A scrape" in c["label"] for c in rep["checks"])
+    assert doctor._hashtag_scrape_check(cfg) is None
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    # Credentials alone (no session file) stay soft-ok — setup-in-progress, not a dead session.
+    # Credentials alone (no session file) still N/A — setup-in-progress, not a green PASS.
     rep2 = doctor.doctor_report(Config(root=tmp_path))
-    row2 = next(c for c in rep2["checks"] if "hashtag Layer A scrape" in c["label"])
-    assert row2["ok"] is True and "scrape-login" in row2["hint"]
+    assert not any("hashtag Layer A scrape" in c["label"] for c in rep2["checks"])
+    assert doctor._hashtag_scrape_check(Config(root=tmp_path)) is None
 
 
 
@@ -636,8 +636,8 @@ def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeyp
     assert "secret-password" not in row["hint"]
 
 
-def test_doctor_hashtag_scrape_probe_freezes_and_retries_peer(tmp_path, monkeypatch):
-    """Probe Challenge on preferred user arms cooldown; peer open+probe → PASS; accounts not empty."""
+def test_doctor_hashtag_scrape_probe_reports_without_freeze(tmp_path, monkeypatch):
+    """MOL-879: probe Challenge on preferred → FAIL; one open; no cooldown write."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.fanops_hashtags import _load_cooldown_blob
@@ -663,17 +663,17 @@ def test_doctor_hashtag_scrape_probe_freezes_and_retries_peer(tmp_path, monkeypa
             raise ChallengeRequired("challenge_required")
         return ("1", 1.0)
     row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert opens["n"] == 2
-    rec = _load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}
-    assert rec.get("reason") == "checkpoint"
+    assert row["ok"] is False
+    assert row["hint"] == "@mark: challenge_required"
+    assert opens["n"] == 1
+    assert not (cfg.control / ".hashtag_scrape_cooldown.json").exists()
+    assert not (_load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}).get("reason")
 
 
 def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, monkeypatch):
-    """All peers fail probe → FAIL hint names @user; cooldown armed; no scrape-login prescription."""
+    """All peers fail probe → FAIL hint names @user; no scrape-login prescription."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.fanops_hashtags import _load_cooldown_blob
     from fanops.ig_hashtag_scrape import scrape_session_path
     from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "only")
@@ -691,7 +691,25 @@ def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, m
     assert row["ok"] is False
     assert row["hint"] == "@only: challenge_required"
     assert "scrape-login" not in row["hint"]
-    assert (_load_cooldown_blob(cfg).get("accounts", {}).get("only") or {}).get("reason") == "checkpoint"
+
+
+def test_doctor_ast_never_references_persist_or_freeze():
+    """CPDP-WP4: doctor.py must not Name/ImportFrom/alias `_persist_cooldown` or `_freeze_for`."""
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "doctor.py").read_text())
+    banned = {"_persist_cooldown", "_freeze_for"}
+    hits = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and n.id in banned:
+            hits.append(n.id)
+        elif isinstance(n, ast.ImportFrom):
+            for a in n.names:
+                if a.name in banned or (a.asname or "") in banned:
+                    hits.append(a.asname or a.name)
+        elif isinstance(n, ast.alias) and (n.name in banned or (n.asname or "") in banned):
+            hits.append(n.asname or n.name)
+    assert hits == [], f"doctor must not reference persist/freeze: {hits}"
 
 
 # ---- Wave 4: doctor operational sensors (WARN unless fatal) + honesty guards ----
@@ -701,34 +719,32 @@ def _by_label(rep, needle):
 
 
 def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
-    """PATH ok != authenticated. When the LLM CLI binary is present, the check stays PASS (ok=True, it
-    never blocks setup) but rides a WARN making explicit that PATH presence is NOT proof of login — the
-    only honest thing to say without burning a real gate call."""
+    """PATH ok != authenticated. When the LLM CLI binary is present, severity=WARN (non-blocking)
+    makes explicit that PATH is NOT proof of login — never a silent authenticated PASS."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = _by_label(rep, "on PATH")
-    assert cli is not None and cli["ok"] is True
-    assert cli.get("warn") is True and "NOT proof" in cli.get("warn_hint", "")
+    cli = next((c for c in rep["checks"] if "on PATH" in c["label"] and "NOT proof" in (c.get("hint") or "")), None)
+    assert cli is not None and cli["ok"] is True and cli.get("severity") == "warn"
+    assert "NOT proof" in cli.get("hint", "")
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
     """If the live-route coherence check cannot be COMPUTED (route read raises), half-live must not present
-    a silent green. is_live stays True, the check keeps ok=True (not-half-live, unconfirmed) but carries a
-    WARN saying the live route was NOT actually confirmed — the Wave 2b breadcrumb, surfaced not hidden."""
+    solid LIVE — ok=False with a hint that LIVE was not confirmed."""
     monkeypatch.setenv("FANOPS_LIVE", "1")
     def _boom(self):
         raise RuntimeError("route read hiccup")
     monkeypatch.setattr(type(Config(root=tmp_path)), "live_route_exists", property(_boom))
     rep = doctor.doctor_report(Config(root=tmp_path))
     lr = _by_label(rep, "live route exists")
-    assert lr is not None and lr["ok"] is True
-    assert lr.get("warn") is True and "not confirmed" in lr.get("warn_hint", "").lower()
+    assert lr is not None and lr["ok"] is False
+    assert "not confirmed" in (lr.get("hint") or "").lower()
 
 
 def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):
-    """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as progress-blocking
-    sensors (ok=False + warn) so report_is_healthy / doctor exit are NONZERO (MOL-960)."""
+    """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as
+    Severity.FAIL so report_is_healthy / doctor exit are NONZERO (MOL-960/MOL-965)."""
     from fanops import pipeline_status
     from fanops.pipeline_status import SourceBacklog
     cfg = Config(root=tmp_path)
@@ -741,15 +757,15 @@ def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeyp
     monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
     checks = doctor._operational_sensor_checks(cfg)
     labels = {c["label"]: c for c in checks}
-    assert labels["no sources awaiting gate answers"]["warn"] is True
-    assert labels["no degraded/errored sources"]["warn"] is True
-    assert labels["no parked machine re-opens"]["warn"] is True
+    assert labels["no sources awaiting gate answers"]["severity"] == "fail"
+    assert labels["no degraded/errored sources"]["severity"] == "fail"
+    assert labels["no parked machine re-opens"]["severity"] == "fail"
     assert all(c["ok"] is False for c in checks)             # progress-blocking → unhealthy
 
 
 def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
-    """A pending agent-gate older than _GATE_STALE_TICKS ticks is progress-blocking (ok=False + warn);
-    a fresh gate would not surface. MOL-960: doctor exit must not stay green on a stuck responder."""
+    """A pending agent-gate older than _GATE_STALE_TICKS ticks is Severity.FAIL (progress-blocking);
+    a fresh gate would not surface. MOL-960/MOL-965: doctor exit must not stay green on a stuck responder."""
     from datetime import datetime, timezone
     from fanops import pipeline_status, daemon
     cfg = Config(root=tmp_path)
@@ -759,7 +775,20 @@ def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.ledger.Ledger.load",
                         classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
-    assert gate is not None and gate["ok"] is False and gate.get("warn") is True
+    assert gate is not None and gate["ok"] is False and gate.get("severity") == "fail"
+
+
+def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
+    """R1b: missing opened_at → None epoch → Severity.UNKNOWN 'gate age unknown' (not silent green)."""
+    from fanops import pipeline_status, daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(None, "moments", "legacy")])
+    monkeypatch.setattr(daemon, "installed_interval", lambda c: 600)
+    monkeypatch.setattr("fanops.ledger.Ledger.load",
+                        classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
+    gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
+    assert gate is not None and gate["ok"] is False and gate.get("severity") == "unknown"
+    assert "gate age unknown" in (gate.get("hint") or "")
 
 
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):

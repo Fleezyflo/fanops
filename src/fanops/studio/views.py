@@ -133,7 +133,7 @@ class HomeStatus:                      # Face 2: the GET / status-home read-mode
     mode: str
     is_live: bool
     counts: dict                       # {sources, batches(int|None on fail-open), awaiting, scheduled, posted}
-    accounts: list[GoLiveAccount]      # via the shared golive_accounts helper (NEVER golive_status -> no doctor_report on /)
+    accounts: list[GoLiveAccount]      # via the shared golive_accounts helper (NEVER golive_status -> no build_health_report on /)
     by_account: dict                   # Face 2 fu (D2): per-account post counts for #home-metrics (on-disk facts, never lift)
 
 
@@ -750,33 +750,48 @@ def _post_live_today(p, now: datetime) -> bool:
     return False
 
 
-def _half_live_state(cfg: Config) -> tuple[bool, str]:
-    """D15: FANOPS_LIVE=1 but nothing routes live (typo'd FANOPS_POSTER, no live per-channel backend).
-    Shared by build_system_strip + golive_status so every LIVE surface reads the same truth. Fail-open."""
-    from fanops.log import get_logger
+def _postiz_down_on_helper_raise(cfg: Config) -> dict:
+    """Outer except for postiz_health_for_banner: show unknown if a channel routes to postiz OR the
+    route-check failed; hide only when we can prove no channel routes to postiz. Lives here so we
+    never re-touch publish-hot views_common for a strip-only raise shield (MOL-963 R2d)."""
+    unknown = {"show": True, "danger": False, "status": None,
+               "hint": "Postiz health unknown (read failed)"}
     try:
-        if cfg.is_live and not cfg.live_route_exists:
-            raw = cfg.poster_backend_raw or "(unset)"
-            return True, (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
-                            "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
-                            "channel to a provider with creds, or flip back to dryrun.")
+        from fanops.accounts import load_accounts_safe
+        accounts, err = load_accounts_safe(cfg)
+        if err:
+            return {**unknown, "hint": "Postiz health unknown (route check failed)"}
+        for a in accounts.active():
+            for plat in a.platforms:
+                if accounts.effective_provider(a.handle, plat) == "postiz":
+                    return unknown
+        return {"show": False, "danger": False, "status": None, "hint": ""}
     except Exception as exc:
-        get_logger(cfg)("half_live", "-", "half_live_error", err=str(exc)[:160])
-    return False, ""
+        from fanops.log import get_logger
+        get_logger(cfg)("system_strip", "-", "postiz_route_check_error", err=str(exc)[:160])
+        return {**unknown, "hint": "Postiz health unknown (route check failed)"}
 
 
 def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
+    from fanops.health import SnapshotFreshness, read_strip_metrics
+    strip_metrics_unknown = False
     try:
-        from fanops.health import read_strip_metrics
-        m = read_strip_metrics(cfg) or {}
-        blocked = int(m.get("blocked_gates") or 0)
-        recoverable = int(m.get("recoverable_sources") or 0)
-        errored_first_id = m.get("errored_first_id")
+        sr = read_strip_metrics(cfg)
+        if sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict):
+            m = sr.data
+            blocked = int(m.get("blocked_gates") or 0)
+            recoverable = int(m.get("recoverable_sources") or 0)
+            errored_first_id = m.get("errored_first_id")
+        else:
+            # Missing/stale/unreadable → unknown, never calm zero
+            strip_metrics_unknown = True
+            blocked = None; recoverable = 0; errored_first_id = None
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
-        blocked = 0; recoverable = 0; errored_first_id = None
+        strip_metrics_unknown = True
+        blocked = None; recoverable = 0; errored_first_id = None
     failed = 0
     try:
         failed = sum(1 for p in led_for_request(cfg).posts.values() if p.state is PostState.failed)
@@ -801,15 +816,27 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    half_live, half_live_hint = _half_live_state(cfg)
-    # D13b: Postiz-down banner — snapshot-only (deps_health.json); fail-open to not-shown so a
-    # missing/unreadable snapshot never blocks the page.
+    # Half-live + strip freshness from ONE HealthReport projector (MOL-965 WP2/WP3).
+    # Constructor freshness is authoritative — never healthy/green beside strip_metrics_unknown.
+    try:
+        from fanops.health_model import build_health_report, project_strip_health
+        strip_h = project_strip_health(build_health_report(cfg, probe_policy="observe"))
+        half_live, half_live_hint = strip_h["half_live"], strip_h["half_live_hint"]
+        if strip_h.get("strip_metrics_unknown"):
+            strip_metrics_unknown = True
+            blocked = None
+    except Exception as exc:
+        get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
+        half_live, half_live_hint = True, "readiness unavailable — not confirmed LIVE"
+    # D13b: Postiz-down banner — snapshot-only (deps_health.json).
+    # Helper raise → unknown when a channel routes to postiz OR the route-check itself failed; else hide.
     try:
         postiz_down = views_common.postiz_health_for_banner(cfg)
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
-        postiz_down = {"show": False}
+        postiz_down = _postiz_down_on_helper_raise(cfg)
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
+            "strip_metrics_unknown": strip_metrics_unknown,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
             "errored_sources": errored, "errored_first_id": errored_first_id,
             "half_live": half_live, "half_live_hint": half_live_hint,
@@ -968,10 +995,10 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
 
 def home_status(cfg: Config) -> HomeStatus:
     """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
-    shared golive_accounts helper — NEVER golive_status, which also runs doctor_report on every load) +
+    shared golive_accounts helper — NEVER golive_status, which also runs build_health_report on every load) +
     headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger -> zeroed counts +
     batches=None + empty by_account, never a 500."""
-    accounts = golive_accounts(cfg)                   # once-bound, already fail-open (no doctor_report on /)
+    accounts = golive_accounts(cfg)                   # once-bound, already fail-open (no build_health_report on /)
     mode = _publish_mode_label(cfg)                    # provider-aware (M3); 'dryrun' when not live
     try:
         from collections import Counter
@@ -1034,7 +1061,8 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         siblings = daemon.sibling_agents_status()
         from fanops.pipeline_run import run_status_line
         out = {**rep, "interval": interval,
-               "pending_gates": pending_gates, "siblings": siblings}
+               "pending_gates": pending_gates, "siblings": siblings,
+               "responder": daemon.resolve_responder(cfg)}
         run_line = run_status_line(cfg)
         if run_line != "run=idle":
             out["run_line"] = run_line
@@ -1043,30 +1071,22 @@ def daemon_health(cfg: Config) -> Optional[dict]:
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
-    from fanops.health import read_daemon_strip_snapshot
-    from fanops.health_model import heartbeat_stale
+    """Home daemon partial — snapshot + heartbeat overlay via health_model.project_daemon_strip."""
+    from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
+    from fanops.health_model import heartbeat_stale, project_daemon_strip
     from fanops import pipeline
     from fanops.pipeline_run import run_status_line
-    snap = read_daemon_strip_snapshot(cfg)
-    if snap is None:
-        return None
-    out = dict(snap)
-    out["pending_gates"] = None
+    sr = read_daemon_strip_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return {"verdict": "unknown", "installed": False, "loaded": False,
+                "hint": f"daemon strip snapshot {sr.freshness.value}"}
+    pending_gates = None
     with fail_open("studio.views.daemon_health_strip.pending_gates"):
-        out["pending_gates"] = pipeline.pending_gate_count(cfg)
-    age, stale, iv = heartbeat_stale(cfg, interval=out.get("interval") or 600)
-    out["heartbeat_age_s"] = age
-    if out.get("loaded"):
-        if age is None:
-            out["verdict"] = "loaded but no heartbeat yet"
-        elif stale:
-            out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
-        else:
-            out["verdict"] = "alive"
+        pending_gates = pipeline.pending_gate_count(cfg)
+    age, stale, _iv = heartbeat_stale(cfg, interval=sr.data.get("interval") or 600)
     run_line = run_status_line(cfg)
-    if run_line != "run=idle":
-        out["run_line"] = run_line
-    return out
+    return project_daemon_strip(
+        sr.data, age=age, stale=stale, pending_gates=pending_gates, run_line=run_line)
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:
@@ -1229,7 +1249,8 @@ class WorkflowSpine:                    # the whole through-line: the ordered pa
     next_endpoint: Optional[str]       # where it points; None == "caught up", no CTA
     here: Optional[str]                # the current stage key (from the active tab), else None
     inflight: int = 0                  # needs_reconcile + submitting (Schedule severity)
-    blocked_gates: int = 0             # pending agent gates (Make severity dot)
+    blocked_gates: Optional[int] = 0   # pending agent gates; None == metrics unknown (never calm-zero)
+    strip_metrics_unknown: bool = False
     next_params: dict = field(default_factory=dict)  # extra url_for kwargs for the next CTA
 
 
@@ -1238,17 +1259,24 @@ _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
 
 
 def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
-                inflight: int = 0, blocked_gates: int = 0, next_params: Optional[dict] = None) -> WorkflowSpine:
+                inflight: int = 0, blocked_gates: Optional[int] = 0,
+                strip_metrics_unknown: bool = False,
+                next_params: Optional[dict] = None) -> WorkflowSpine:
     """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. Stage badges carry
-    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule)."""
+    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule).
+    strip_metrics_unknown → Make danger + gates CTA; blocked_gates stays None (never int-cast to 0)."""
     src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
     queued = int(counts.get("scheduled", 0)); posted = int(counts.get("posted", 0))
     failed = int(counts.get("failed", 0)); live_trackable = int(counts.get("live_trackable", 0))
-    inflight = int(inflight); blocked_gates = int(blocked_gates)
+    inflight = int(inflight)
+    if strip_metrics_unknown:
+        blocked_gates = None
+    else:
+        blocked_gates = int(blocked_gates or 0)
     done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": live_trackable > 0}
     sched_count = queued + inflight
     nums = {"make": src, "review": awaiting, "schedule": sched_count, "posted": live_trackable}
-    sev = {"make": "danger" if blocked_gates else None,
+    sev = {"make": "danger" if (strip_metrics_unknown or blocked_gates) else None,
            "review": "warn" if awaiting > 20 else None,
            "schedule": "info" if inflight else None,
            "posted": "danger" if failed else None}
@@ -1258,6 +1286,7 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
               for k, lbl, ep in _SPINE_ORDER]
     if not has_accounts:               n = ("Connect an account to begin", "golive_view")
     elif src == 0:                     n = ("Add footage to get started", "run_panel")
+    elif strip_metrics_unknown:        n = ("Gate metrics unknown — open processing decisions", "gates")
     elif blocked_gates:                n = (f"Answer {blocked_gates} processing decision{'s' if blocked_gates != 1 else ''}", "gates")
     elif awaiting > 0:                 n = (f"Review {awaiting} clip{'s' if awaiting != 1 else ''}", "review")
     elif queued > 0 or inflight:       n = (f"Schedule {queued} post{'s' if queued != 1 else ''}" + (f" · {inflight} in flight" if inflight else ""), "schedule")
@@ -1265,7 +1294,9 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
     elif live_trackable > 0:           n = ("You're all caught up", None)
     else:                              n = ("Run a pass in Make", "run_panel")
     return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here,
-                         inflight=inflight, blocked_gates=blocked_gates, next_params=next_params or {})
+                         inflight=inflight, blocked_gates=blocked_gates,
+                         strip_metrics_unknown=strip_metrics_unknown,
+                         next_params=next_params or {})
 
 
 def _blocker_priority(msg: str) -> int:
@@ -1413,38 +1444,41 @@ def onboarding_account_cards(cfg: Config) -> list[AccountOnboardingCard]:
 def golive_status(cfg: Config) -> GoLiveStatus:
     """Lock-free read-model for the Go-Live tab: the publish mode (dryrun/live), whether Postiz is
     configured (postiz_url is shown — it is NON-secret; key_set is a BOOL only, the key itself is never
-    exposed), the ACTIVE accounts to map, and the doctor readiness checks/notes.
+    exposed), the ACTIVE accounts to map, and doctor readiness via health_model projectors (MOL-965 WP2).
 
     Accounts are listed PER-CHANNEL: each active handle carries one GoLiveChannel per platform, because a
     handle's Instagram and TikTok are DIFFERENT Postiz integrations (M1). Each channel's integration_id is
     the effective current id — the per-platform integrations[platform], else the shared account_id
     fallback, else "" (unmapped). Tolerates a malformed accounts.json (falls back to an empty list) so the
-    tab never 500s."""
-    from fanops.doctor import doctor_report
+    tab never 500s. Readiness checks/notes/half-live come from build_health_report → project_golive_readiness
+    (no second doctor assembly, no parallel half-live compute)."""
+    from fanops.health_model import build_health_report, project_golive_readiness
     accts = golive_accounts(cfg)                      # shared helper (single source of truth for the accounts read-model)
     try:
-        report = doctor_report(cfg)
+        ready = project_golive_readiness(build_health_report(cfg))
     except Exception as exc:                          # invariant: the Go-Live tab must never 500 (ecc:python-review)
         from fanops.log import get_logger             # ECC fix #5: log why readiness is unavailable
         get_logger(cfg)("golive", "-", "doctor_error", err=str(exc)[:160])
-        report = {"checks": [], "notes": ["readiness check unavailable"]}
+        # Never fail-open to calm LIVE-looking half_live=False (MOL-965 WP2-fix).
+        ready = {"checks": [], "notes": ["readiness check unavailable"],
+                 "half_live": True,
+                 "half_live_hint": "readiness unavailable — not confirmed LIVE"}
     from fanops.validation_gate import learning_validated
     from fanops.doctor import setup_state, setup_next_action
     from fanops.pipeline_run import paused as _paused
-    half_live, half_live_hint = _half_live_state(cfg)
     chans = channel_readiness(cfg)
     return GoLiveStatus(
         mode=_publish_mode_label(cfg),               # provider-aware (M3); 'dryrun' when not live
         is_live=cfg.is_live,
-        half_live=half_live, half_live_hint=half_live_hint,
+        half_live=ready["half_live"], half_live_hint=ready["half_live_hint"],
         postiz_url=cfg.postiz_url,                    # non-secret; shown so the operator can confirm config
         key_set=cfg.postiz_api_key is not None,       # BOOL only — the API key value is NEVER exposed
         zernio_key_set=cfg.zernio_api_key is not None,  # Zernio slice 4: BOOL only (connect-block state)
         accounts=accts,
         channels=chans, next_blocker=_next_blocker(chans),
         account_cards=onboarding_account_cards(cfg),   # U12: account-centric cards (display re-projection of channels)
-        checks=report["checks"],
-        notes=report["notes"],
+        checks=ready["checks"],
+        notes=ready["notes"],
         learning_validated=learning_validated(cfg),    # M3: shows whether the loop is unfrozen (cutover done)
         account_casting=cfg.account_casting,           # per-account moment casting toggle state (persona diff)
         clip_profile=cfg.clip_profile,                 # clip-length band (talk/song)

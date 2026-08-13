@@ -55,11 +55,7 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 437
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1256
+        "line": 441
       },
       {
         "call": "Ledger.transaction",
@@ -67,11 +63,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1281
+        "line": 1282
       },
       {
         "call": "Ledger.transaction",
-        "line": 1513
+        "line": 1294
       },
       {
         "call": "Ledger.transaction",
@@ -79,23 +75,27 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1613
+        "line": 1539
       },
       {
         "call": "Ledger.transaction",
-        "line": 1621
+        "line": 1626
       },
       {
         "call": "Ledger.transaction",
-        "line": 1646
+        "line": 1634
       },
       {
         "call": "Ledger.transaction",
-        "line": 1653
+        "line": 1659
       },
       {
         "call": "Ledger.transaction",
-        "line": 1662
+        "line": 1666
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1675
       }
     ],
     "fanops.ledger_wipe": [
@@ -171,11 +171,11 @@
     "fanops.responder": [
       {
         "call": "Ledger.transaction",
-        "line": 184
+        "line": 186
       },
       {
         "call": "Ledger.transaction",
-        "line": 201
+        "line": 203
       }
     ],
     "fanops.studio.actions": [
@@ -479,7 +479,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1465
+        "line": 1478
       }
     ],
     "fanops.post.compress": [
@@ -499,7 +499,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 170
+        "line": 385
       }
     ],
     "fanops.post.metrics": [
@@ -572,7 +572,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1497
+        "line": 1510
       }
     ],
     "fanops.post.compress": [
@@ -681,21 +681,13 @@
     "fanops.health": [
       {
         "call": "subprocess.run",
-        "line": 28
-      },
-      {
-        "call": "subprocess.run",
-        "line": 60
-      },
-      {
-        "call": "subprocess.run",
-        "line": 73
+        "line": 40
       }
     ],
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 130
+        "line": 345
       }
     ],
     "fanops.ingest": [
@@ -802,6 +794,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 37
   }
 }

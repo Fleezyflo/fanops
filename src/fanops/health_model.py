@@ -1,19 +1,87 @@
-# src/fanops/health_model.py — MOL-298: ONE typed health owner; doctor/health/learn_doctor are views
+# src/fanops/health_model.py — MOL-298/MOL-965: single constructor (build_health_report);
+# primary operator channel = fanops doctor; Studio/metrics = projectors; /healthz = process-only.
+# Severity is the public check contract (not ok+warn soft-lies).
 from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from enum import Enum
+from typing import Literal, NamedTuple
 
 from fanops.config import Config
 
 _log = logging.getLogger("fanops.health")
 
+# Locked check labels — projectors match these; doctor emits them (MOL-965 WP2/WP3).
+HALF_LIVE_CHECK_LABEL = "live route exists (FANOPS_LIVE=1 actually publishes)"
+DAEMON_CHECK_LABEL_NEEDLE = "publish daemon alive"
+STRIP_METRICS_CHECK_LABEL = "strip metrics snapshot fresh"
 
-class DepHealth(NamedTuple):
-    """One runtime dependency's live verdict (docker / postiz / zernio)."""
+
+class Severity(str, Enum):
+    """Locked machine-health severity (MOL-965 WP1). Exit / healthy read this — not ok+warn soft-lies."""
+    OK = "ok"
+    INFO = "info"
+    WARN = "warn"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
+# Rank for aggregation. UNKNOWN shares FAIL rank (required-signal unknown → unhealthy).
+_SEV_RANK = {
+    Severity.OK: 0,
+    Severity.INFO: 1,
+    Severity.WARN: 2,
+    Severity.FAIL: 3,
+    Severity.UNKNOWN: 3,
+}
+
+
+@dataclass(frozen=True)
+class DepHealth:
+    """One runtime dependency's live verdict (docker / postiz / zernio). Severity is mandatory."""
     name: str
     ok: bool
     detail: str
+    severity: Severity = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        sev = self.severity
+        if sev is None:
+            object.__setattr__(self, "severity", Severity.OK if self.ok else Severity.FAIL)
+        elif not isinstance(sev, Severity):
+            object.__setattr__(self, "severity", Severity(sev))
+
+    def as_dict(self) -> dict:
+        """Plain-dict form for JSON / doctor_report — never leak raw DepHealth to consumers."""
+        return {"name": self.name, "ok": self.ok, "detail": self.detail,
+                "severity": self.severity.value}
+
+
+def check_severity(check: dict) -> Severity:
+    """Read severity from a check dict. Production checks always carry it via doctor._check."""
+    raw = check.get("severity")
+    if raw is not None:
+        return raw if isinstance(raw, Severity) else Severity(raw)
+    # Legacy hand-built test dicts only — derive; do not invent a parallel warn channel.
+    if not check.get("ok", True):
+        return Severity.FAIL
+    if check.get("warn"):
+        return Severity.WARN
+    return Severity.OK
+
+
+def overall_severity(report: "HealthReport") -> Severity:
+    """Worst severity across checks + deps. WARN means non-blocking by construction (blocking → FAIL)."""
+    worst = Severity.OK
+    for c in report.checks:
+        sev = check_severity(c)
+        if _SEV_RANK[sev] > _SEV_RANK[worst]:
+            worst = sev
+    for d in report.deps:
+        sev = d.severity if isinstance(d.severity, Severity) else Severity(d.severity)
+        if _SEV_RANK[sev] > _SEV_RANK[worst]:
+            worst = sev
+    return worst
 
 
 @dataclass
@@ -25,10 +93,10 @@ class HealthReport:
     field_shape: dict | None = None
 
     def as_dict(self) -> dict:
-        """Backward-compatible dict (doctor_report consumers)."""
+        """Backward-compatible dict (doctor_report consumers). Deps are plain dicts (JSON-safe)."""
         out: dict = {"checks": self.checks, "notes": self.notes}
         if self.deps:
-            out["deps"] = self.deps
+            out["deps"] = [d.as_dict() for d in self.deps]
         if self.field_shape is not None:
             out["field_shape"] = self.field_shape
         return out
@@ -37,9 +105,10 @@ class HealthReport:
         """Machine-readable JSON payload (MOL-299): healthy flag + serializable deps."""
         return {
             "healthy": report_is_healthy(self),
+            "severity": overall_severity(self).value,
             "checks": self.checks,
             "notes": self.notes,
-            "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail} for d in self.deps],
+            "deps": [d.as_dict() for d in self.deps],
             "field_shape": self.field_shape,
         }
 
@@ -89,12 +158,7 @@ def render_prometheus_metrics(cfg: Config) -> str:
         degraded = True
     try:
         rep = build_health_report(cfg, led=led)
-        for d in rep.deps:
-            lines.append(_prom_gauge("fanops_dep_up", 1 if d.ok else 0, {"dep": d.name}))
-        age, stale, _iv = heartbeat_stale(cfg)
-        if age is not None:
-            lines.append(_prom_gauge("fanops_daemon_heartbeat_age_seconds", age))
-        lines.append(_prom_gauge("fanops_daemon_heartbeat_stale", 1 if stale else 0))
+        lines.extend(project_prometheus_health(rep, heartbeat=heartbeat_stale(cfg)))
     except Exception as exc:
         _log.warning("health read failed in /metrics (%s); degrading health gauges", exc)
         degraded = True
@@ -113,12 +177,163 @@ def render_prometheus_metrics(cfg: Config) -> str:
 
 
 def report_is_healthy(report: HealthReport) -> bool:
-    """Exit-code truth: any failed check or down dep -> unhealthy."""
-    if any(not c.get("ok", True) for c in report.checks):
-        return False
-    if any(not d.ok for d in report.deps):
-        return False
-    return True
+    """Exit-code truth (MOL-965): healthy iff overall severity ∈ {OK, INFO, WARN}.
+
+    WARN is non-blocking by construction — progress-blocking sensors emit FAIL (MOL-960).
+    UNKNOWN on required signals ranks with FAIL → unhealthy. Never maps UNKNOWN → healthy.
+    """
+    return overall_severity(report) in (Severity.OK, Severity.INFO, Severity.WARN)
+
+
+# ── MOL-965 WP2: one half-live compute + pure projectors of HealthReport ──────────────
+
+
+class HalfLiveState(NamedTuple):
+    """FANOPS_LIVE=1 but nothing routes live (or compute failed → not solid LIVE)."""
+    is_half_live: bool
+    hint: str
+    compute_error: str | None = None
+
+
+def half_live_state(cfg: Config) -> HalfLiveState:
+    """THE half-live compute — doctor check assembly + strip/Go-Live share this (MOL-965 WP2).
+
+    Never fails open to solid LIVE on compute error. Escalation posture decides raise vs surface.
+    """
+    try:
+        if not cfg.is_live:
+            return HalfLiveState(False, "", None)
+        if cfg.live_route_exists:
+            return HalfLiveState(False, "", None)
+        raw = cfg.poster_backend_raw or "(unset)"
+        hint = (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
+                "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
+                "channel to a provider with creds, or flip back to dryrun.")
+        return HalfLiveState(True, hint, None)
+    except Exception as exc:
+        from fanops.escalation import EscalationPosture, decide
+        err = str(exc)[:160]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            return HalfLiveState(
+                True,
+                f"could not compute live-route coherence ({err}) — not confirmed LIVE; "
+                f"not treating as solid LIVE",
+                err,
+            )
+        raise
+
+
+def project_half_live(report: HealthReport) -> tuple[bool, str]:
+    """Pure: half-live badge from the live-route check in HealthReport (no re-probe)."""
+    for c in report.checks:
+        if c.get("label") == HALF_LIVE_CHECK_LABEL or "live route exists" in (c.get("label") or ""):
+            if check_severity(c) in (Severity.FAIL, Severity.UNKNOWN) or not c.get("ok", True):
+                return True, c.get("hint") or ""
+            return False, ""
+    return False, ""
+
+
+def project_daemon_slice(report: HealthReport) -> dict | None:
+    """Pure: pump/daemon check slice from HealthReport."""
+    for c in report.checks:
+        if DAEMON_CHECK_LABEL_NEEDLE in (c.get("label") or ""):
+            return {
+                "label": c["label"],
+                "ok": bool(c.get("ok", True)),
+                "severity": check_severity(c).value,
+                "hint": c.get("hint") or "",
+            }
+    return None
+
+
+def project_golive_readiness(report: HealthReport) -> dict:
+    """Pure: Go-Live readiness fields from one HealthReport (no second doctor assembly)."""
+    half, hint = project_half_live(report)
+    return {
+        "checks": report.checks,
+        "notes": report.notes,
+        "half_live": half,
+        "half_live_hint": hint,
+        "severity": overall_severity(report),
+        "healthy": report_is_healthy(report),
+        "deps": report.deps,
+        "daemon_slice": project_daemon_slice(report),
+    }
+
+
+def project_strip_health(report: HealthReport) -> dict:
+    """Pure: Home-strip health badges from HealthReport (incl. strip-metrics freshness)."""
+    half, hint = project_half_live(report)
+    strip_unknown = any(
+        c.get("label") == STRIP_METRICS_CHECK_LABEL and check_severity(c) is Severity.UNKNOWN
+        for c in report.checks
+    )
+    return {
+        "half_live": half,
+        "half_live_hint": hint,
+        "severity": overall_severity(report).value,
+        "healthy": report_is_healthy(report),
+        "daemon_slice": project_daemon_slice(report),
+        "strip_metrics_unknown": strip_unknown,
+    }
+
+
+def project_daemon_strip(
+    snap: dict,
+    *,
+    age: float | None,
+    stale: bool,
+    pending_gates=None,
+    run_line: str | None = None,
+) -> dict:
+    """Pure: Home daemon partial from snapshot + heartbeat overlay (no re-probe of launchd)."""
+    out = dict(snap)
+    out["pending_gates"] = pending_gates
+    out["heartbeat_age_s"] = age
+    if out.get("loaded"):
+        if age is None:
+            out["verdict"] = "loaded but no heartbeat yet"
+        elif stale:
+            out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
+        else:
+            out["verdict"] = "alive"
+    if run_line and run_line != "run=idle":
+        out["run_line"] = run_line
+    return out
+
+
+def project_deps_from_rows(rows: list) -> list[DepHealth]:
+    """Pure: snapshot / report dep rows → DepHealth list for Go-Live pills."""
+    out: list[DepHealth] = []
+    for d in rows or []:
+        if isinstance(d, DepHealth):
+            out.append(d)
+            continue
+        if not isinstance(d, dict):
+            continue
+        out.append(DepHealth(
+            name=d.get("name") or "",
+            ok=bool(d.get("ok")),
+            detail=d.get("detail") or "",
+            severity=d.get("severity"),
+        ))
+    return out
+
+
+def project_prometheus_health(
+    report: HealthReport,
+    *,
+    heartbeat: tuple[float | None, bool, int],
+) -> list[str]:
+    """Pure: Prometheus gauge lines from HealthReport + shared heartbeat_stale triple."""
+    lines: list[str] = []
+    for d in report.deps:
+        lines.append(_prom_gauge("fanops_dep_up", 1 if d.ok else 0, {"dep": d.name}))
+    age, stale, _iv = heartbeat
+    if age is not None:
+        lines.append(_prom_gauge("fanops_daemon_heartbeat_age_seconds", age))
+    lines.append(_prom_gauge("fanops_daemon_heartbeat_stale", 1 if stale else 0))
+    return lines
 
 
 def _docker_dep() -> DepHealth:
@@ -204,8 +419,12 @@ def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
         hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
     if not hint:
         hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
-    return {"label": "Postiz backend reachable (real /integrations probe, not the nginx health-check)",
-            "ok": healthy, "hint": "" if healthy else hint}
+    from fanops.doctor import _check
+    lbl = "Postiz backend reachable (real /integrations probe, not the nginx health-check)"
+    # Observe snapshot miss/stale/missing-row → UNKNOWN (required), never FAIL-as-if-probe-proved-down.
+    if (not healthy) and "snapshot" in hint.lower():
+        return _check(lbl, severity="unknown", hint=hint)
+    return _check(lbl, healthy, hint)
 
 
 def daemon_liveness_check(cfg: Config) -> dict:
@@ -295,22 +514,114 @@ def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
             return None
         res = confirm_post_live(cfg, p, reported_username=p.account, get=get)
         ok = bool(res.get("confirmed"))
-        return {"label": "recent publish still live on platform (bounded sample)", "ok": ok,
-                "hint": "" if ok else "the most recent published post could not be confirmed live — check platform / creds"}
+        from fanops.doctor import _check
+        return _check(
+            "recent publish still live on platform (bounded sample)", ok,
+            "" if ok else "the most recent published post could not be confirmed live — check platform / creds")
     except Exception as exc:
         _log.warning("_bounded_live_confirm_check: live confirm failed (%s)", exc)
         return None
 
 
+
+def snapshot_postiz_probe(cfg: Config):
+    """Observe-mode Postiz probe: deps_health.json only — never calls postiz_health_probe."""
+    from fanops.health import SnapshotFreshness, read_dep_snapshot
+    from fanops.post.postiz import PostizHealth
+    sr = read_dep_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return PostizHealth(False, None, f"Postiz health unknown (snapshot {sr.freshness.value})")
+    for d in sr.data.get("deps") or []:
+        if (d.get("name") or "") != "postiz":
+            continue
+        ok = bool(d.get("ok"))
+        code = d.get("status_code")
+        detail = d.get("detail") or ""
+        if ok:
+            return PostizHealth(True, 200 if code is None else code, "")
+        return PostizHealth(False, code, detail or "Postiz unhealthy (snapshot)")
+    # Configured-but-missing-from-snapshot → unknown, not silent skip-green
+    if cfg.backend_has_creds("postiz"):
+        return PostizHealth(False, None, "Postiz missing from dep snapshot")
+    return PostizHealth(True, None, "skipped (not configured)")
+
+
+def snapshot_daemon_status(cfg: Config, interval: int) -> dict:
+    """Observe-mode launchd status: daemon strip snapshot only — never daemon.status()."""
+    from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
+    sr = read_daemon_strip_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        # snapshot_freshness marker → doctor emits Severity.UNKNOWN (not "no heartbeat" FAIL).
+        return {"installed": False, "loaded": False, "verdict": f"snapshot {sr.freshness.value}",
+                "snapshot_freshness": sr.freshness.value,
+                "heartbeat_age_s": None, "interval": interval}
+    out = dict(sr.data)
+    out.setdefault("interval", interval)
+    out["snapshot_freshness"] = SnapshotFreshness.FRESH.value
+    return out
+
+
+def deps_from_snapshot(cfg: Config) -> list[DepHealth]:
+    """Observe-mode deps: project deps_health.json — no live docker/postiz/zernio probes."""
+    from fanops.health import SnapshotFreshness, read_dep_snapshot
+    sr = read_dep_snapshot(cfg)
+    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        return [DepHealth("deps", False, f"deps unknown (snapshot {sr.freshness.value})",
+                          severity=Severity.UNKNOWN)]
+    return project_deps_from_rows(sr.data.get("deps") or [])
+
+
+def strip_metrics_freshness_check(cfg: Config) -> dict:
+    """Required strip-metrics signal: non-FRESH → UNKNOWN (never calm zeros via healthy report)."""
+    from fanops.doctor import _check
+    from fanops.health import SnapshotFreshness, read_strip_metrics
+    sr = read_strip_metrics(cfg)
+    if sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict):
+        return _check(STRIP_METRICS_CHECK_LABEL, True)
+    return _check(
+        STRIP_METRICS_CHECK_LABEL, severity="unknown",
+        hint=f"strip metrics snapshot {sr.freshness.value}",
+    )
+
+
 def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None,
-                        led=None, list_posts=None, live_get=None) -> HealthReport:
-    """THE health owner — composes doctor checks, deps, field-shape, bounded live confirm."""
+                        led=None, list_posts=None, live_get=None,
+                        probe_policy: Literal["live", "observe"] = "live",
+                        daemon_status=None) -> HealthReport:
+
+    """Sole machine-health constructor — doctor checks, deps, field-shape, bounded live confirm.
+
+    Operator surfaces project from this report (or thin doctor_report.as_dict); they must not
+    assemble a parallel verdict. /healthz and fanops up are not consumers of this constructor.
+
+    probe_policy:
+      - 'live' (default): real network/launchd probes — doctor / CLI / Go-Live readiness.
+      - 'observe': snapshot + local cfg only — Studio Home strip / CP observe (MOL-965 WP2-fix2).
+        Defaults postiz_probe→snapshot_postiz_probe, daemon_status→snapshot_daemon_status,
+        deps→deps_from_snapshot; strip metrics freshness check (WP3); skips Meta token
+        network + bounded live confirm.
+    Explicit injectables always win over policy defaults.
+    """
     from fanops.doctor import _assemble_doctor_checks, _doctor_notes
-    checks = _assemble_doctor_checks(cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth)
-    live_chk = _bounded_live_confirm_check(cfg, get=live_get or get)
-    if live_chk is not None:
-        checks.append(live_chk)
+    if probe_policy == "observe":
+        if postiz_probe is None:
+            postiz_probe = snapshot_postiz_probe
+        if daemon_status is None:
+            daemon_status = snapshot_daemon_status
+    checks = _assemble_doctor_checks(
+        cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth,
+        daemon_status=daemon_status, probe_policy=probe_policy)
+    if probe_policy != "observe":
+        live_chk = _bounded_live_confirm_check(cfg, get=live_get or get)
+        if live_chk is not None:
+            checks.append(live_chk)
     notes = _doctor_notes(cfg)
-    deps = dep_health_list(cfg, postiz_probe=postiz_probe)
-    fshape = build_field_shape(cfg, led=led, list_posts=list_posts)
+    if probe_policy == "observe":
+        deps = deps_from_snapshot(cfg)
+        fshape = None  # no live Postiz list_posts on observe
+        # WP3: strip metrics TTL is a required observe signal — UNKNOWN → unhealthy.
+        checks.append(strip_metrics_freshness_check(cfg))
+    else:
+        deps = dep_health_list(cfg, postiz_probe=postiz_probe)
+        fshape = build_field_shape(cfg, led=led, list_posts=list_posts)
     return HealthReport(checks=checks, notes=notes, deps=deps, field_shape=fshape)

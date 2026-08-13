@@ -40,13 +40,14 @@ After the first run: upload → prepare → review/approve → schedule (if need
 
 | Command | Purpose |
 |---------|---------|
-| `fanops doctor` | Read-only health / readiness screen |
-| `fanops studio` | Local web UI (localhost:8787) |
+| `fanops doctor` | **Primary** machine-health / readiness screen |
+| `fanops studio` | Local web UI (localhost:8787) — strip/Go-Live project doctor |
 | `fanops run` | One pipeline pass (ingest → clip → crosspost → publish due) |
-| `fanops status` | Ledger counts |
+| `fanops status` | Ledger backlog counts (not a third healthy definition) |
 | `fanops daemon` | Hands-off launchd driver (macOS) |
 
 Full CLI surface: `fanops --help`. Environment variables and defaults: [docs/CONFIG.md](docs/CONFIG.md).
+Machine-health channels: [docs/MACHINE_HEALTH.md](docs/MACHINE_HEALTH.md) (`/healthz` = process-only).
 
 ## Docs map
 
@@ -55,6 +56,7 @@ Full CLI surface: `fanops --help`. Environment variables and defaults: [docs/CON
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | First end-to-end run (canonical operator script) |
 | [docs/GOLIVE.md](docs/GOLIVE.md) | Publishing paths and safety |
 | [docs/POSTIZ_SETUP.md](docs/POSTIZ_SETUP.md) | Stand up Postiz |
+| [docs/MACHINE_HEALTH.md](docs/MACHINE_HEALTH.md) | Primary = doctor; projections; `/healthz` process-only |
 | [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) | What actually enforces each rule |
 | [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | Craft guidance (not a gate) |
 

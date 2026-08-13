@@ -141,6 +141,10 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 
 When `FANOPS_POSTIZ_ONDEMAND` is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a `fanops up` bring-up concern, not a publish gate).
 
+**Machine health:** primary operator channel is `fanops doctor` over `build_health_report`. Studio Home /
+Go-Live / `/metrics` are projections of that report. `/healthz` is process liveness only; `fanops up`
+is bring-up, not machine-healthy. Channel registry + CI ratchets: [MACHINE_HEALTH.md](MACHINE_HEALTH.md).
+
 **Coverage note:** every trust-gate numeric and every Phase-2 reach-loop bias kill switch is `.env`/shell-only —
 an operator-only (Studio-only) deployment cannot turn on the bias actuators or tune their thresholds without
 shell access. This is by design (system-lens-map Finding 2).

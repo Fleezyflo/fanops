@@ -131,22 +131,19 @@ def test_account_arg_logs_on_resolve_error(tmp_path, monkeypatch, caplog):
     assert any(r.name == "fanops.studio.app" for r in caplog.records)
 
 
-# ── 8. doctor.doctor_report half_live — except -> half_live = False (cfg in scope) ──
+# ── 8. doctor.doctor_report half_live — except -> not solid LIVE (ok=False) ──
 def test_doctor_half_live_logs_on_route_error(tmp_path, monkeypatch):
     from fanops import doctor
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = _cfg(tmp_path)
 
-    # force is_live True, live_route_exists raising
     monkeypatch.setattr(type(cfg), "live_route_exists",
                         property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
     rep = doctor.doctor_report(cfg)
-    # fallback: half_live=False -> the "live route exists" check passes (ok=True) despite the raise
     labels = {c["label"]: c for c in rep["checks"]}
     route_check = next((c for k, c in labels.items() if "live route exists" in k), None)
-    assert route_check is not None and route_check["ok"] is True    # fallback unchanged (half_live=False)
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "half_live" in log_text or "doctor" in log_text
+    assert route_check is not None and route_check["ok"] is False
+    assert "not confirmed" in (route_check.get("hint") or "").lower()
 
 
 # ── 9. studio/views.build_system_strip postiz_down — except -> {"show": False} (cfg in scope) ──
@@ -156,7 +153,7 @@ def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
     monkeypatch.setattr(views_common, "postiz_health_for_banner",
                         lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
     strip = views.build_system_strip(cfg)
-    assert strip["postiz_down"] == {"show": False}                 # fallback unchanged
+    assert strip["postiz_down"]["show"] is False                   # no postiz routes → still hide
     log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "postiz_down" in log_text
 
@@ -176,3 +173,19 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
         result = views_results.lineage_stats(rows)
     assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
     assert any(r.name == "fanops.studio.views_results" for r in caplog.records)
+
+
+def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):
+    # MOL-963 R2d: helper raise + channel routes to postiz → show unknown, never silent hide.
+    import json
+    from fanops.studio import views, views_common
+    cfg = _cfg(tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}]}))
+    monkeypatch.setattr(views_common, "postiz_health_for_banner",
+                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
+    strip = views.build_system_strip(cfg)
+    assert strip["postiz_down"]["show"] is True
+    assert "unknown" in (strip["postiz_down"].get("hint") or "").lower()

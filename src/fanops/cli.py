@@ -327,15 +327,22 @@ def cmd_publish_queue(cfg: Config) -> int:
 
 def cmd_health(cfg: Config, args=None) -> int:
     """MOL-299: dependency health from the unified model — human text or --json."""
-    from fanops.health_model import build_health_report, report_is_healthy
+    from fanops.health_model import build_health_report, report_is_healthy, check_severity, Severity, overall_severity
     rep = build_health_report(cfg)
     if args is not None and getattr(args, "json", False):
         print(json.dumps(rep.to_json_dict(), indent=2))
     else:
         print("fanops health")
         for d in rep.deps:
-            mark = "ok" if d.ok else "DOWN"
+            mark = "ok" if d.severity is Severity.OK else d.severity.value.upper()
             print(f"  [{mark}] {d.name}: {d.detail}")
+        bad = [c for c in rep.checks if check_severity(c) in (Severity.FAIL, Severity.UNKNOWN)]
+        if bad:
+            print(f"  checks: {len(bad)} FAIL/UNKNOWN — run `fanops doctor` or `fanops health --json`")
+            for c in bad[:5]:
+                print(f"    [{check_severity(c).value.upper()}] {c['label']}")
+        elif overall_severity(rep) is Severity.WARN:
+            print("  checks: WARN (non-blocking) — see `fanops doctor` for detail")
         for n in rep.notes:
             print(f"  - {n}")
     return 0 if report_is_healthy(rep) else 1
@@ -360,19 +367,16 @@ def cmd_doctor(cfg: Config, args=None) -> int:
         print(json.dumps(rep.to_json_dict(), indent=2))
         return 0 if report_is_healthy(rep) else 1
     print("fanops doctor")
+    from fanops.health_model import check_severity, Severity
+    _MARK = {Severity.OK: "PASS", Severity.INFO: "INFO", Severity.WARN: "WARN",
+             Severity.FAIL: "FAIL", Severity.UNKNOWN: "FAIL"}
     for c in rep.checks:
-        # A WARN-tier check keeps ok=True (never a failure) but rides warn/warn_hint — render it as [WARN]
-        # so an operational backlog / unconfirmed state is not a silent false-green PASS. FAIL shows its
-        # hint; a plain PASS (no warn) shows nothing.
-        if c["ok"] and c.get("warn"):
-            mark = "WARN"
-        else:
-            mark = "PASS" if c["ok"] else "FAIL"
+        # Severity is the public contract (MOL-965) — render from check_severity, not ok+warn soft-lie.
+        sev = check_severity(c)
+        mark = _MARK[sev]
         line = f"  [{mark}] {c['label']}"
-        if not c["ok"]:
+        if sev is not Severity.OK and c.get("hint"):
             line += f"  -> {c['hint']}"
-        elif c.get("warn") and c.get("warn_hint"):
-            line += f"  -> {c['warn_hint']}"
         print(line)
     for d in rep.deps:
         mark = "ok" if d.ok else "DOWN"
@@ -846,15 +850,24 @@ def cmd_autopilot(cfg: Config, args) -> int:
         print(f"  daemon    -> loaded ({d['interval']}s cadence, survives logout, restarts on crash)   check: fanops daemon status")
     else:
         print(f"  daemon    -> not installed ({res['daemon_note']})")
-    failed = [c for c in res["checks"] if not c["ok"]]
-    if failed:
+    from fanops.health_model import HealthReport, DepHealth, report_is_healthy, check_severity, Severity
+    deps_raw = res.get("deps") or []
+    deps = [d if isinstance(d, DepHealth) else DepHealth(d["name"], d["ok"], d.get("detail") or "",
+                                                         severity=d.get("severity"))
+            for d in deps_raw]
+    rep = HealthReport(checks=res["checks"], notes=res.get("notes") or [], deps=deps)
+    unhealthy = [c for c in res["checks"]
+                 if check_severity(c) in (Severity.FAIL, Severity.UNKNOWN)]
+    if unhealthy:
         print("  still needs a human:")
-        for c in failed:
+        for c in unhealthy:
             print(f"    [ ] {c['label']}  -> {c['hint']}")
+    elif not report_is_healthy(rep):
+        print("  readiness -> unhealthy (dependency / severity)")
     else:
         print("  readiness -> all checks pass")
     print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand")
-    return 0
+    return 0 if report_is_healthy(rep) else 1
 
 def _http_url(s: str) -> str:
     """argparse type for `pull url` (stage-4 audit): the url is handed to yt-dlp verbatim, so
@@ -1726,11 +1739,9 @@ def _dispatch(cfg: Config, args) -> int:
             print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
             return 2
         from fanops.studio.app import create_app
-        from fanops.health import ensure_up, system_health
-        # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
-        # start (Docker daemon, Postiz compose) BEFORE serving — so nothing sits silently off (Issue 1).
-        for line in ensure_up(cfg):
-            print(f"  {line}")
+        from fanops import postiz_lifecycle
+        from fanops.health import system_health
+        postiz_lifecycle.ensure_up(cfg)
         app = create_app(cfg)
         print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
         for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried

@@ -282,13 +282,15 @@ def test_golive_status_tolerates_malformed_accounts(tmp_path, monkeypatch):
     assert st.accounts == [] and st.mode == "dryrun"
 
 def test_golive_status_tolerates_doctor_failure(tmp_path, monkeypatch):
-    # invariant: the Go-Live tab must never 500 — a raising doctor_report falls back to an empty report
+    # invariant: the Go-Live tab must never 500 — a raising build_health_report falls back without inventing LIVE
     cfg = _clean(monkeypatch, tmp_path)
-    import fanops.doctor as doctor
-    monkeypatch.setattr(doctor, "doctor_report", lambda c: (_ for _ in ()).throw(RuntimeError("doctor broke")))
+    import fanops.health_model as hm
+    monkeypatch.setattr(hm, "build_health_report", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("doctor broke")))
     from fanops.studio import views
     st = views.golive_status(cfg)                              # must not raise
     assert st.checks == [] and st.mode == "dryrun"
+    assert st.half_live is True                                # never fail-open to calm LIVE (MOL-965 WP2-fix)
+    assert "not confirmed LIVE" in st.half_live_hint
 
 def test_golive_status_never_exposes_key(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
