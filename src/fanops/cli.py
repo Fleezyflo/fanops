@@ -1739,11 +1739,9 @@ def _dispatch(cfg: Config, args) -> int:
             print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
             return 2
         from fanops.studio.app import create_app
-        from fanops.health import ensure_up, system_health
-        # Launch the WHOLE system, not just the UI: bring up any down dependency the system knows how to
-        # start (Docker daemon, Postiz compose) BEFORE serving — so nothing sits silently off (Issue 1).
-        for line in ensure_up(cfg):
-            print(f"  {line}")
+        from fanops import postiz_lifecycle
+        from fanops.health import system_health
+        postiz_lifecycle.ensure_up(cfg)
         app = create_app(cfg)
         print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
         for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried

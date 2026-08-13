@@ -1,9 +1,11 @@
-"""`fanops doctor` (Phase 3b) — a READ-ONLY first-run health screen. Composes the guards that
-already exist (Accounts.validate, the cutover-safety preflight, toolchain presence) into ONE
-operator view: PASS/FAIL per item with the exact next action, plus informational notes. It performs
-NOTHING — it cannot create platform accounts or obtain a poster API key (the irreducibly-manual setup
-steps), so usability for a brand-new operator is capped here by reality, not code; doctor just makes
-'what's left' legible instead of buried in the source."""
+"""`fanops doctor` (Phase 3b) — observe-only first-run health screen (`cp.observe`).
+
+Composes existing guards (Accounts.validate, cutover-safety preflight, toolchain presence) into ONE
+operator view: PASS/FAIL per item with the exact next action, plus informational notes. Does not
+create platform accounts or obtain poster API keys. Scrape probe (`_hashtag_scrape_check`) reports
+only — it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
+writes live in `learn_doctor` (`assay.dangerous`), not in this module.
+"""
 from __future__ import annotations
 import logging
 import shutil
@@ -112,51 +114,32 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
     if not any_scrape_session(cfg):
         return None  # N/A — credentials without session is setup incompleteness
-    # Multi-account: platform stop on the preferred user must arm cooldown (same ledger Layer A
-    # uses) then retry open_client once so a healthy peer can PASS. ScrapeUnavailable on the first
-    # open stays the setup failure; after a platform fail, a later ScrapeUnavailable means peers
-    # are exhausted — report the platform text, not a scrape-login prescription (MOL-879).
     opener = open_client
     if opener is None:
         from fanops.ig_hashtag_scrape import open_client as opener
     probe = probe_resolve
     if probe is None:
         from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _freeze_for, _persist_cooldown
-    now = datetime.now(timezone.utc)
-    last_user, last_exc = "", None
     try:
-        for _ in range(2):
-            user = ""
-            try:
-                client = opener(cfg)
-            except ScrapeUnavailable:
-                if last_exc is not None:
-                    break
-                raise
-            except Exception as e:                          # noqa: BLE001 — open raised platform error
-                if decide("observability", 0) is EscalationPosture.degrade:
-                    last_exc = e
-                    break
-                raise
-            user = getattr(client, "_fanops_scrape_user", "") or ""
-            try:
-                probe(client, "#hiphop")
-                return _check(lbl, True, "")
-            except ScrapeUnavailable:
-                raise
-            except Exception as e:                          # noqa: BLE001 — probe platform error
-                if decide("observability", 0) is EscalationPosture.degrade:
-                    last_user, last_exc = user, e
-                    if not user:
-                        break
-                    reason, delay_s = _freeze_for(e)
-                    _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
-                    continue
-                raise
-        return _check(lbl, False,
-                      f"@{last_user}: {last_exc}" if last_user else str(last_exc))
+        try:
+            client = opener(cfg)
+        except ScrapeUnavailable:
+            raise
+        except Exception as e:                          # noqa: BLE001 — open raised platform error
+            if decide("observability", 0) is EscalationPosture.degrade:
+                return _check(lbl, False, str(e))
+            raise
+        user = getattr(client, "_fanops_scrape_user", "") or ""
+        try:
+            probe(client, "#hiphop")
+            return _check(lbl, True, "")
+        except ScrapeUnavailable:
+            raise
+        except Exception as e:                          # noqa: BLE001 — probe platform error
+            if decide("observability", 0) is EscalationPosture.degrade:
+                return _check(lbl, False,
+                              f"@{user}: {e}" if user else str(e))
+            raise
     except ScrapeUnavailable as e:
         return _check(lbl, False, f"{e} — run `fanops hashtags scrape-login`")
 

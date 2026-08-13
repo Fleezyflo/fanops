@@ -52,3 +52,17 @@ def test_ensure_up_is_inert_in_tests(monkeypatch):
     pl.ensure_up(_cfg("postiz"))          # must not raise, must not call subprocess
     pl.ensure_up(_cfg("dryrun"))
     assert called["n"] == 0
+
+
+def test_ensure_up_functiondef_only_in_postiz_lifecycle():
+    """CPDP-WP4: sole FunctionDef ensure_up under src/fanops is postiz_lifecycle.ensure_up."""
+    import ast
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[1] / "src" / "fanops"
+    found = []
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for n in ast.walk(tree):
+            if isinstance(n, ast.FunctionDef) and n.name == "ensure_up":
+                found.append(f"{path.stem}.ensure_up")
+    assert set(found) == {"postiz_lifecycle.ensure_up"}

@@ -775,7 +775,7 @@ def test_studio_managed_path_runs_without_reloader(tmp_path, monkeypatch, mocker
     fake_app = mocker.Mock()
     create_app = mocker.Mock(return_value=fake_app)
     mocker.patch("fanops.studio.app.create_app", create_app)
-    mocker.patch("fanops.health.ensure_up", return_value=[])
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     mocker.patch("fanops.health.system_health", return_value=[])
     mocker.patch.object(cli, "_studio_port_busy", return_value=False)
 
@@ -803,7 +803,7 @@ def test_studio_dev_reload_path_enables_reloader(tmp_path, monkeypatch, mocker):
     import fanops.cli as cli
     fake_app = mocker.Mock()
     mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
-    mocker.patch("fanops.health.ensure_up", return_value=[])
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     mocker.patch("fanops.health.system_health", return_value=[])
     mocker.patch.object(cli, "_studio_port_busy", return_value=False)
 
@@ -847,7 +847,7 @@ def test_studio_managed_guard_uses_liveness_not_launchd(
     monkeypatch.setattr(_sys, "platform", "darwin")
     fake_app = mocker.Mock()
     mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
-    mocker.patch("fanops.health.ensure_up", return_value=[])
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     mocker.patch("fanops.health.system_health", return_value=[])
     mocker.patch.object(
         cli.daemon,
