@@ -1327,6 +1327,8 @@ def test_vision_finalizer_yields_valid_moment_decision(mocker):
     def fake(cmd, **kw):
         return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
     run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
+    from fanops import llm as _llm
+    mocker.patch("fanops.responder.claude_json_meta", _llm.claude_json_meta)  # undo hermetic autouse; exercise real finalizer
     out = _default_claude_model("moments", {"source_id": "src_1", "duration": 60.0,
                                             "frames": ["/f/a.jpg", "/f/b.jpg"],
                                             "transcript": [{"start": 10, "end": 28, "text": "bar"}],

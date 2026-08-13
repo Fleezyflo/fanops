@@ -707,8 +707,8 @@ def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypat
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = _by_label(rep, "on PATH")
-    assert cli is not None and cli["ok"] is True
+    cli = next((c for c in rep["checks"] if c.get("warn") and "NOT proof" in (c.get("warn_hint") or "")), None)
+    assert cli is not None and cli["ok"] is True and "on PATH" in cli["label"]
     assert cli.get("warn") is True and "NOT proof" in cli.get("warn_hint", "")
 
 

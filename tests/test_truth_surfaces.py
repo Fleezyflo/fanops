@@ -3,7 +3,8 @@ import fcntl
 import json
 import os
 import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, SourceState, Moment, MomentState, Clip, ClipState,
@@ -65,7 +66,7 @@ def _seed_due_postiz_post(cfg, *, when="2020-01-01T12:00:00Z"):
 def _seed_postiz_down_snapshot(cfg, *, status_code=502):
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.deps_health_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "deps": [
             {"name": "docker", "ok": True, "detail": "daemon up", "status_code": None},
             {"name": "postiz", "ok": False, "detail": "unreachable", "status_code": status_code},
