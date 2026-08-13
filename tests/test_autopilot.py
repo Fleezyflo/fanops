@@ -145,15 +145,42 @@ def test_autopilot_reports_dryrun_and_no_blotato_requirement(tmp_path, monkeypat
 
 # ── CLI wiring ──────────────────────────────────────────────────────────────────────────────
 
-def test_main_autopilot_returns_0(tmp_path, monkeypatch, capsys):
+def test_main_autopilot_nonzero_when_fixture_unhealthy(tmp_path, monkeypatch, capsys):
+    # MOL-965 WP1: exit honesty — incomplete tmp fixture → report_is_healthy false → nonzero.
+    # Soft-lie "always 0" retired; healthy-path 0 covered by constructing a healthy report below.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops.cli import main
-    assert main(["autopilot", "--no-daemon"]) == 0         # --no-daemon -> host-independent (no launchctl)
+    assert main(["autopilot", "--no-daemon"]) == 1         # --no-daemon -> host-independent (no launchctl)
     out = capsys.readouterr().out
     assert "llm" in out
     env = tmp_path / ".env"
     assert (not env.exists()) or "FANOPS_RESPONDER" not in env.read_text()   # autopilot writes no responder
+
+
+def test_main_autopilot_returns_0_when_healthy(tmp_path, monkeypatch, capsys):
+    # Construct a healthy autopilot result so exit-0 path stays covered under severity honesty.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
+    from fanops import autopilot
+    from fanops.doctor import _check
+    from fanops.health_model import DepHealth
+    monkeypatch.setattr(
+        autopilot,
+        "autopilot",
+        lambda cfg, interval, install_daemon=True: {
+            "responder": "llm",
+            "backend": "dryrun",
+            "checks": [_check("ok", True)],
+            "notes": [],
+            "deps": [DepHealth("docker", True, "up")],
+            "daemon": None,
+            "daemon_note": "skipped",
+        },
+    )
+    from fanops.cli import main
+    assert main(["autopilot", "--no-daemon"]) == 0
+    assert "llm" in capsys.readouterr().out
 
 
 def test_main_autopilot_bad_responder_exits_2(tmp_path, monkeypatch, capsys):

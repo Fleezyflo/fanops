@@ -15,8 +15,23 @@ from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
 
 
-def _check(label: str, ok: bool, hint: str = "") -> dict:
-    return {"label": label, "ok": bool(ok), "hint": "" if ok else hint}
+def _check(label: str, ok: bool = True, hint: str = "", *, severity: str | None = None) -> dict:
+    """Construct a doctor check. Severity is the public contract; ok is derived for migration.
+
+    Severity is imported call-time so doctor→health_model stays lazy (layer DAG / ARCH-007).
+    Callers may pass a severity string ("warn"/"fail"/…) or a Severity enum member.
+    """
+    from fanops.health_model import Severity
+    if severity is None:
+        sev = Severity.OK if ok else Severity.FAIL
+    elif isinstance(severity, Severity):
+        sev = severity
+    else:
+        sev = Severity(severity)
+    derived_ok = sev not in (Severity.FAIL, Severity.UNKNOWN)
+    # hint carries FAIL/UNKNOWN/WARN/INFO prose; OK keeps empty hint
+    out_hint = "" if sev is Severity.OK else hint
+    return {"label": label, "ok": derived_ok, "severity": sev.value, "hint": out_hint}
 
 
 def _env_settings_check(cfg: Config) -> dict:
@@ -82,23 +97,21 @@ _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days 
 
 
 
-def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) -> dict:
-    """Hashtag Layer A needs a LIVE instagrapi scrape session that can RESOLVE a tag. Missing setup
-    stays soft-ok (refresh still aborts); a session file that fails login OR whose hashtag_info
+def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) -> dict | None:
+    """Hashtag Layer A needs a LIVE instagrapi scrape session that can RESOLVE a tag.
+
+    Soft setup incompleteness (not configured / no session yet) is N/A — omit the check
+    (MOL-965: never ok=True pretend PASS). A session that fails login OR whose hashtag_info
     returns login_required fails LOUD (MOL-687 / MOL-696). Never echoes password or session contents.
-    Multi-account (MOL-857): soft-ok when no listed user has a session yet; probe via open_client
-    (first usable user) when any session exists.
-    `open_client` / `probe_resolve` are injectable so tests never hit Instagram."""
+    Multi-account (MOL-857): omit when no listed user has a session yet; probe via open_client
+    when any session exists. `open_client` / `probe_resolve` injectable so tests never hit Instagram."""
     from fanops.ig_hashtag_scrape import (ScrapeUnavailable, any_scrape_session, scrape_configured)
     lbl = "hashtag Layer A scrape session live (instagrapi)"
     if not scrape_configured(cfg):
-        return {"label": lbl, "ok": True,
-                "hint": "not configured — set FANOPS_IG_SCRAPE_USER (+ password or session), "
-                        "install [igscrape], then `fanops hashtags scrape-login`"}
+        return None  # N/A — setup incomplete, not a green PASS
     # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
     if not any_scrape_session(cfg):
-        return {"label": lbl, "ok": True,
-                "hint": "credentials set but no session file — run `fanops hashtags scrape-login`"}
+        return None  # N/A — credentials without session is setup incompleteness
     # Multi-account: platform stop on the preferred user must arm cooldown (same ledger Layer A
     # uses) then retry open_client once so a healthy peer can PASS. ScrapeUnavailable on the first
     # open stays the setup failure; after a platform fail, a later ScrapeUnavailable means peers
@@ -151,7 +164,7 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
     check is simply N/A then — never a false alarm). Introspects EVERY distinct resolvable token (global +
     per-handle) via meta_graph.debug_token_expiry: an expired OR unintrospectable (FAIL-CLOSED) token -> ok=False;
-    a token inside the _META_TOKEN_LEAD_DAYS window -> ok=True + warn=True (surface, never block). The token value
+    a token inside the _META_TOKEN_LEAD_DAYS window -> Severity.WARN (surface, never block). The token value
     is NEVER read into the label/hint (only the handle label + the human expiry date). Fail-open around the
     enumeration so a torn accounts.json can't crash the report (resolvable_meta_tokens already degrades to global)."""
     from datetime import datetime, timezone
@@ -186,14 +199,13 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
                 "per-handle META_GRAPH_TOKEN__<SLUG>) via the Studio Go-Live tab; see docs/META_CREDS_OPS.md. "
                 "Postiz keeps publishing on its own OAuth while Graph verification + metrics go dark.")
         return _check(lbl, False, hint)
-    c = _check(lbl, True, "")
     if soon:
         def _fmt(e): return datetime.fromtimestamp(e, tz=timezone.utc).date().isoformat()
         who = ", ".join(f"{h} (expires {_fmt(e)})" for h, e in sorted(soon, key=lambda x: x[1]))
-        c["warn"] = True
-        c["warn_hint"] = ("Meta token expiring within %d days: %s — rotate it now (docs/META_CREDS_OPS.md) "
-                          "before Graph verification + metrics go dark." % (_META_TOKEN_LEAD_DAYS, who))
-    return c
+        hint = ("Meta token expiring within %d days: %s — rotate it now (docs/META_CREDS_OPS.md) "
+                "before Graph verification + metrics go dark." % (_META_TOKEN_LEAD_DAYS, who))
+        return _check(lbl, severity="warn", hint=hint)
+    return _check(lbl, True, "")
 
 
 def _postiz_reach_check(cfg: Config, *, probe=None):
@@ -229,7 +241,7 @@ _DAEMON_DEFAULT_INTERVAL_S = 600                           # fallback tick inter
 _GATE_STALE_TICKS = 3                                      # a pending agent-gate older than this many ticks is WARN-worthy (responder may be stuck)
 
 
-def _daemon_liveness_check(cfg: Config) -> dict:
+def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     """T12: (dict) 'the publish pump is alive AND the queue is draining'. TWO fail conditions:
       (a) the last `fanops run` heartbeat in run.log is older than _DAEMON_STALE_TICKS install intervals
           (dead/stopped/crashing pump) — OR the signal is ABSENT (never ran) -> FAIL CLOSED (unknown != alive);
@@ -239,17 +251,30 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     real liveness signal, not a proxy. The past-due gate reuses timeutil.is_due_or_past, the SAME <=now check
     publish_due fires on, so 'past-due here' == 'should have published already'. A grace window (2 intervals)
     keeps a just-due post from a false backlog flag. Ledger read is fail-open: an unreadable ledger degrades the
-    backlog half to 'unknown' (surfaced in the hint) while the heartbeat half still governs -> never a crash."""
+    backlog half to 'unknown' (surfaced in the hint) while the heartbeat half still governs -> never a crash.
+
+    `status_reader(cfg, interval) -> dict` injects launchd status (default: daemon.status). Observe-mode
+    passes a snapshot reader so CP Home never re-probes launchctl (MOL-965 WP2-fix2)."""
     from datetime import datetime, timezone
     from fanops import daemon
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
     lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
     st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
+    reader = status_reader or (lambda c, iv: daemon.status(c, interval=iv))
     try:
-        st = daemon.status(cfg, interval=interval)
+        st = reader(cfg, interval)
     except Exception:
         with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
             raise
+    # Observe snapshot miss/stale → UNKNOWN (required), not "no heartbeat" FAIL lie (MOL-965 WP3).
+    snap_fr = st.get("snapshot_freshness")
+    if snap_fr and snap_fr != "fresh":
+        return _check(lbl, severity="unknown",
+                      hint=f"daemon status unknown (snapshot {snap_fr})")
+    verd = st.get("verdict") or ""
+    if isinstance(verd, str) and verd.startswith("snapshot "):
+        return _check(lbl, severity="unknown",
+                      hint=f"daemon status unknown ({verd})")
     if st.get("installed") and not st.get("loaded"):
         return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
     if st.get("exec_fail"):
@@ -363,15 +388,15 @@ def _doctor_notes(cfg: Config) -> list[str]:
 
 
 def _operational_sensor_checks(cfg: Config) -> list[dict]:
-    """Operational sensors for live backlog. Progress-blocking classes (stale gates, sources awaiting
-    answers, degraded/errored sources, parked re-opens) set ok=False so report_is_healthy / doctor exit
-    are NONZERO (MOL-960). Optional Layer A scrape cooldown stays warn-only (ok=True). Sensor read
-    failures decide(operator)→NONZERO with an unhealthy check (never empty→false-healthy). No mutation."""
+    """Operational sensors for live backlog. Progress-blocking classes emit Severity.FAIL so
+    report_is_healthy / doctor exit are NONZERO (MOL-960/MOL-965). Optional Layer A scrape cooldown
+    is Severity.WARN (non-blocking). Sensor read failures → Severity.UNKNOWN (required → unhealthy).
+    No mutation. Severity is set at construction via _check — not a post-hoc ok+warn soft-lie."""
     from datetime import datetime, timezone
     log = logging.getLogger("fanops.doctor")
     out: list[dict] = []
 
-    # 1. pending agent-gates — unknown age (missing opened_at) is NOT clean silence: WARN first.
+    # 1. pending agent-gates — unknown age (missing opened_at) is NOT clean silence: FAIL (required unknown).
     #    Known age: surface only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
     #    pending gate is normal transient work the responder is clearing, so it is not surfaced.
     try:
@@ -382,21 +407,27 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
             if oldest_opened is None:
                 n_unknown = sum(1 for g in gates if g[0] is None)
-                out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
-                            "warn_hint": f"gate age unknown — {n_unknown} pending agent gate(s) missing readable "
-                                         f"opened_at; cannot prove freshness (not clean silence)"})
+                out.append(_check(
+                    "no stale agent gates (responder answering)",
+                    severity="unknown",
+                    hint=f"gate age unknown — {n_unknown} pending agent gate(s) missing readable "
+                         f"opened_at; cannot prove freshness (not clean silence)"))
             else:
                 age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_opened)
                 if age_s > _GATE_STALE_TICKS * interval:
-                    out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
-                                "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
-                                             f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
-                                             f"stuck; check `fanops status` and that the daemon gates loop is running"})
+                    out.append(_check(
+                        "no stale agent gates (responder answering)",
+                        severity="fail",
+                        hint=f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
+                             f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
+                             f"stuck; check `fanops status` and that the daemon gates loop is running"))
     except Exception as e:
         if decide("operator", 0) is EscalationPosture.nonzero:
-            out.append({"label": "pending-gate sensor readable", "ok": False, "warn": True,
-                        "warn_hint": f"pending-gate sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
-                                     f"doctor cannot prove agent gates are clear"})
+            out.append(_check(
+                "pending-gate sensor readable",
+                severity="unknown",
+                hint=f"pending-gate sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
+                     f"doctor cannot prove agent gates are clear"))
         else:
             raise
 
@@ -407,27 +438,35 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
         led = Ledger.load(cfg)
         bl = source_backlog(led, cfg)
         if bl.blocked_on_gates:
-            out.append({"label": "no sources awaiting gate answers", "ok": False, "warn": True,
-                        "warn_hint": f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in "
-                                     f"Studio Gates or run `fanops status`"})
+            out.append(_check(
+                "no sources awaiting gate answers",
+                severity="fail",
+                hint=f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in "
+                     f"Studio Gates or run `fanops status`"))
         if bl.recoverable:
-            out.append({"label": "no degraded/errored sources", "ok": False, "warn": True,
-                        "warn_hint": f"{bl.recoverable} source(s) in error/moments-empty — Resume/Reset in "
-                                     f"Studio Make or run `fanops status`"})
+            out.append(_check(
+                "no degraded/errored sources",
+                severity="fail",
+                hint=f"{bl.recoverable} source(s) in error/moments-empty — Resume/Reset in "
+                     f"Studio Make or run `fanops status`"))
         parked = sum(1 for src in led.sources.values() if src.meta.get("pending_reopen"))
         if parked:
-            out.append({"label": "no parked machine re-opens", "ok": False, "warn": True,
-                        "warn_hint": f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
-                                     f"release them in Studio Make"})
+            out.append(_check(
+                "no parked machine re-opens",
+                severity="fail",
+                hint=f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
+                     f"release them in Studio Make"))
     except Exception as e:
         if decide("operator", 0) is EscalationPosture.nonzero:
-            out.append({"label": "source backlog sensor readable", "ok": False, "warn": True,
-                        "warn_hint": f"backlog sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
-                                     f"doctor cannot prove sources are unblocked"})
+            out.append(_check(
+                "source backlog sensor readable",
+                severity="unknown",
+                hint=f"backlog sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
+                     f"doctor cannot prove sources are unblocked"))
         else:
             raise
 
-    # 5. hashtag-scrape cooldown — optional enrichment plane; WARN only (ok stays True). Surface WHY Layer A
+    # 5. hashtag-scrape cooldown — optional enrichment; Severity.WARN (non-blocking). Surface WHY Layer A
     #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains.
     try:
         from fanops.fanops_hashtags import _read_active_cooldown, _OUTAGE_REMEDY
@@ -436,8 +475,10 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             reason = cool.get("reason") or "cooldown"
             remedy = _OUTAGE_REMEDY.get(reason, "wait for the cooldown to clear")
             until = cool.get("until") or "?"
-            out.append({"label": "hashtag Layer A not in cooldown", "ok": True, "warn": True,
-                        "warn_hint": f"scrape frozen ({reason}) until {until} — {remedy}"})
+            out.append(_check(
+                "hashtag Layer A not in cooldown",
+                severity="warn",
+                hint=f"scrape frozen ({reason}) until {until} — {remedy}"))
     except Exception:
         with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
             raise
@@ -445,8 +486,12 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     return out
 
 
-def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None) -> list[dict]:
-    """Setup gate checks only (deps/field-shape composed by health_model.build_health_report)."""
+def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None,
+                            daemon_status=None, probe_policy: str = "live") -> list[dict]:
+    """Setup gate checks only (deps/field-shape composed by health_model.build_health_report).
+
+    probe_policy='observe': skip live Meta token network; postiz/zernio/daemon use injectables
+    (caller supplies snapshot readers). probe_policy='live' (default): real probes."""
     checks: list[dict] = []
     checks.append(_env_settings_check(cfg))
     # 1. media toolchain (host-dependent — informational pass/fail, the operator installs what's red)
@@ -475,17 +520,17 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
             if cli_bin == "cursor-agent"
             else "install Claude Code + run `claude login` (uses your subscription, no API key)")
-    cli_check = _check(f"{cli_bin} on PATH", shutil.which(cli_bin) is not None, hint)
-    if cli_check["ok"]:
-        # PATH presence is NOT proof of an authenticated login, and there is no cheap, non-mutating auth
-        # probe (a real check would burn a gate call). Surface the gap as a WARN rather than a false-green
-        # PASS: an expired login only reveals itself when a gate fails at run time (ok stays True — this
-        # never blocks setup, it just refuses to claim more than "on PATH").
+    # PATH presence is NOT proof of login; no cheap non-mutating auth probe. When present, emit
+    # Severity.WARN (non-blocking) so we never claim a silent authenticated PASS.
+    if shutil.which(cli_bin) is not None:
         login_cmd = "cursor-agent login" if cli_bin == "cursor-agent" else "claude login"
-        cli_check["warn"] = True
-        cli_check["warn_hint"] = (f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
-                                  f"start failing with auth errors, run `{login_cmd}`")
-    checks.append(cli_check)
+        checks.append(_check(
+            f"{cli_bin} on PATH",
+            severity="warn",
+            hint=(f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
+                  f"start failing with auth errors, run `{login_cmd}`")))
+    else:
+        checks.append(_check(f"{cli_bin} on PATH", False, hint))
     if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
         # Absolute transport: cursor cannot run vision gates — operator must flip the ONE switch.
         checks.append(_check("LLM transport can run vision gates", False,
@@ -541,31 +586,17 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         else:                         hint = ""
         checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
-    # D15: live-route COHERENCE. FANOPS_LIVE=1 (is_live) but nothing actually routes live — a typo'd
-    # FANOPS_POSTER (W4 -> dryrun) with no live per-channel backend — is the HALF-LIVE state: the banner
-    # would say LIVE while every publish halts in `queued`. Flag it LOUD with the fix. A not-live config or
-    # a genuinely-live one (any live route) passes. Guarded so a bad accounts.json can't crash the report.
-    half_live_err = None
-    try:
-        half_live = cfg.is_live and not cfg.live_route_exists
-    except Exception as exc:
-        if decide("operator", 0) is EscalationPosture.nonzero:
-            half_live = True                                   # compute failure → not solid LIVE
-            half_live_err = str(exc)[:160]
-        else:
-            raise
+    # D15: live-route COHERENCE via health_model.half_live_state — ONE compute for doctor + UI (MOL-965 WP2).
+    from fanops.health_model import HALF_LIVE_CHECK_LABEL, half_live_state
+    hl = half_live_state(cfg)
     if cfg.is_live:
-        if half_live_err:
-            checks.append(_check(
-                "live route exists (FANOPS_LIVE=1 actually publishes)", False,
-                f"could not compute live-route coherence ({half_live_err}) — not confirmed LIVE; "
-                "re-run `fanops doctor` and check accounts.json"))
-        else:
-            checks.append(_check(
-                "live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
+        # Always emit the check from half_live_state — same hint strip/Go-Live project.
+        checks.append(_check(
+            HALF_LIVE_CHECK_LABEL, not hl.is_half_live,
+            hl.hint or (
                 "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
                 "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
-                "`fanops` back to dryrun. Every publish stays stuck in `queued` until then."))
+                "`fanops` back to dryrun. Every publish stays stuck in `queued` until then.")))
 
     # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
     # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-
@@ -585,18 +616,16 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     ig_ok, ig_hint = _ig_user_id_check(cfg)
     checks.append(_check("active IG accounts have their OWN ig_user_id (no shared/borrowed Meta id)", ig_ok, ig_hint))
 
-    # Hashtag Layer A scrape session (instagrapi) — refresh aborts without it; no Graph fallback.
-    checks.append(_hashtag_scrape_check(cfg))
+    # Hashtag Layer A scrape session (instagrapi) — omit when setup incomplete (N/A, not green PASS).
+    htag = _hashtag_scrape_check(cfg)
+    if htag is not None:
+        checks.append(htag)
 
-    # T9: Meta token expiry preflight. When the Graph token (or a per-handle token) lapses, Postiz keeps
-    # publishing via its OWN OAuth while Graph verification + metrics silently die -> a repeat of this incident
-    # on a KNOWN date (~2026-08-18). Introspect each distinct resolvable token via debug_token: FAIL on an
-    # expired one, WARN inside a 10-day lead window (ok stays True so it never blocks a run, warn surfaces it),
-    # FAIL CLOSED on an unreadable introspection. The token VALUE is never echoed (only the handle + a date).
-    # `get` is injected so tests never hit the network; None -> the real requests.get inside meta_graph.
-    tcheck = _meta_token_expiry_check(cfg, get=get)
-    if tcheck is not None:
-        checks.append(tcheck)
+    # T9: Meta token expiry — live network only. Observe-mode skips (CP uses snapshots; no Graph re-probe).
+    if probe_policy != "observe":
+        tcheck = _meta_token_expiry_check(cfg, get=get)
+        if tcheck is not None:
+            checks.append(tcheck)
 
     # T10: REAL backend reachability on the publish path (the operator-confirms-health step, as code). Postiz's
     # docker health-check is nginx-only and LIES while the Node backend crash-loops (mastra_ai_spans) — the real
@@ -604,10 +633,14 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # check is applicable ONLY when that backend has creds (else it is N/A — never a false alarm on a single-
     # backend deployment), FAILS CLOSED on a down/unauthorized/erroring probe, and NEVER echoes a key. The
     # probes are injected so tests never hit the network; None -> the real client.
+    # Observe: caller must inject snapshot probes (build_health_report does); never default to live.
     pcheck = _postiz_reach_check(cfg, probe=postiz_probe)
     if pcheck is not None:
         checks.append(pcheck)
-    zcheck = _zernio_reach_check(cfg, auth=zernio_auth)
+    if probe_policy == "observe" and zernio_auth is None:
+        zcheck = None  # no live Zernio on observe unless injectable supplied
+    else:
+        zcheck = _zernio_reach_check(cfg, auth=zernio_auth)
     if zcheck is not None:
         checks.append(zcheck)
 
@@ -618,7 +651,8 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # is REAL, not a proxy: daemon._heartbeat_age_s reads the `heartbeat` line `fanops run` writes to run.log
     # every completed tick (a live clock -> a frozen age means the cron is dead / the tick crashes before the
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
-    dchk = _daemon_liveness_check(cfg)
+    # Observe: status_reader from snapshot (no daemon.status / launchctl).
+    dchk = _daemon_liveness_check(cfg, status_reader=daemon_status)
     checks.append(dchk)
     # Operational sensors: progress-blocking backlog → ok=False (doctor exit NONZERO); Layer A cooldown
     # stays warn-only. See _operational_sensor_checks.

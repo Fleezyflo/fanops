@@ -1,7 +1,7 @@
 # src/fanops/init_flow.py — MOL-303: thin orchestrator reusing doctor checks + golive setters
 from __future__ import annotations
 from fanops.config import Config
-from fanops.doctor import doctor_report, setup_state, setup_next_action, _brief_ok
+from fanops.doctor import setup_state, setup_next_action, _brief_ok
 
 _CONTEXT_TEMPLATE = """# Brand brief (context.md)
 # Edit this file — it steers every moment and caption decision.
@@ -37,10 +37,12 @@ def run_init(cfg: Config, *, postiz_url: str = "", postiz_key: str = "",
         from fanops.studio.golive import discover_channels
         res = discover_channels(cfg)
         steps.append(f"discover_channels: {'ok' if res.ok else res.error}")
-    report = doctor_report(cfg)
-    failed = [c for c in report["checks"] if not c["ok"]]
+    from fanops.health_model import build_health_report, report_is_healthy, check_severity, Severity
+    hm = build_health_report(cfg)
+    failed = [c for c in hm.checks if check_severity(c) in (Severity.FAIL, Severity.UNKNOWN)]
+    # doctor_clean tracks the same severity predicate as cmd_doctor / cmd_health / cmd_autopilot
     result = {"state": setup_state(cfg), "next": setup_next_action(cfg), "steps": steps,
-              "failed_checks": len(failed), "doctor_clean": not failed}
+              "failed_checks": len(failed), "doctor_clean": report_is_healthy(hm)}
     if go_live:
         from fanops.studio.golive import go_live
         gl = go_live(cfg, confirmed=True)

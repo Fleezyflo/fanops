@@ -52,6 +52,12 @@ captured.
 - **`tests/test_post_state_census_ratchet.py`** (MOL-815) — binary AST gate: zero
   `Counter(… .state …)` over `led.posts` / `posts.values()` outside `ledger.py`. Negative control
   plants that Counter and asserts the finder fires. Removal condition: permanent by policy.
+- **`tests/test_machine_health_channel_ratchet.py`** (MOL-965 WP4) — closed-world CALLER AST +
+  soft-lie ban: every `FunctionDef` that Calls `build_health_report` / `doctor_report` must be in
+  `_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS` (file allowlist is secondary, not a Band-Aid);
+  `cmd_status` / `cmd_up` / `/healthz` must not call the constructor; Studio may not import
+  `doctor_report`; `ok`+`warn` check dicts without `severity` cannot grow. Operator contract:
+  [docs/MACHINE_HEALTH.md](MACHINE_HEALTH.md).
 
 ## Deployed-state probes — the plane no static check can reach
 `python -m tools.ci deployed [--require-live]`, in the `reconcile` job (weekly + `workflow_dispatch`).
@@ -190,7 +196,10 @@ from "passed silently" would rebuild the blind spot it exists to close.
   MOL-842) and `fanops purge` / `ledger_wipe.execute_purge` (day+origin scoped; MOL-758) are both
   sanctioned — neither delegates to the other (transaction ownership + granularity).
 - **Origin-backfill deletion (MOL-808):** the one-shot `machine_inferred` reconstruction engine, CLI verb, and Studio provenance panel are gone after the amplify-descended purge left them with zero addressable rows. `display_origin` / `UNLABELLED_DISPLAY` remain in `models.py` for Review cards; Jul-13 `unknown` rows are operator corpus, not this migration.
-- **Doctor:** `src/fanops/doctor.py` — fail-closed operator setup checks (`fanops doctor`/`status`).
+- **Doctor / machine health:** `health_model.build_health_report` is the sole constructor;
+  primary channel `fanops doctor` (`cli.cmd_doctor`); Studio strip/Go-Live/metrics project from it.
+  `/healthz` is process-only; `fanops status` is backlog, not a third healthy.
+  See [docs/MACHINE_HEALTH.md](MACHINE_HEALTH.md); CI: `tests/test_machine_health_channel_ratchet.py`.
 - The live `FANOPS_*` toggles (`src/fanops/settings.py`) — reference: `docs/CONFIG.md`, `docs/FLAGS.md`.
 
 ## Tombstone — deleted 2026-07; do not restore as authority
