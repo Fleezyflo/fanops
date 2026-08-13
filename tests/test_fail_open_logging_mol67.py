@@ -173,3 +173,19 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
         result = views_results.lineage_stats(rows)
     assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
     assert any(r.name == "fanops.studio.views_results" for r in caplog.records)
+
+
+def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):
+    # MOL-963 R2d: helper raise + channel routes to postiz → show unknown, never silent hide.
+    import json
+    from fanops.studio import views, views_common
+    cfg = _cfg(tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}]}))
+    monkeypatch.setattr(views_common, "postiz_health_for_banner",
+                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
+    strip = views.build_system_strip(cfg)
+    assert strip["postiz_down"]["show"] is True
+    assert "unknown" in (strip["postiz_down"].get("hint") or "").lower()

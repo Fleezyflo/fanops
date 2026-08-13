@@ -49,9 +49,11 @@ def _chan(cid, name, platform):
 
 
 def _seed_deps(cfg, rows):
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.deps_health_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "deps": [{"name": d[0], "ok": d[1], "detail": d[2], "status_code": d[3] if len(d) > 3 else None}
                  for d in rows],
     }))
@@ -202,3 +204,22 @@ def test_golive_health_refresh_writes_snapshots(tmp_path, monkeypatch, mocker):
     r = _client(cfg).get("/golive/health?refresh=1")
     assert r.status_code == 200
     spy.assert_called_once()
+
+
+# ---- MOL-963 R2e: non-FRESH dep snapshot must not read as all-deps-fine ----
+def test_golive_health_non_fresh_shows_deps_unknown(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    # Missing snapshot → non-FRESH → one unknown presentation, not empty pills.
+    r = _client(cfg).get("/golive/health")
+    assert r.status_code == 200
+    body = r.data.decode()
+    assert "deps unknown" in body.lower()
+    assert "Dependencies unknown" in body
+    assert "Dependency down" not in body  # unknown ≠ confirmed down
+
+
+def test_golive_health_compact_non_fresh_shows_unknown_pill(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
+    body = _client(cfg).get("/golive/health?compact=1").data.decode()
+    assert "deps?" in body
+    assert "health-pill warn" in body
