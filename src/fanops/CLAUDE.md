@@ -49,9 +49,10 @@
   default AND logs first. When adding one, log first. New degradable fail-open code uses `errors.fail_open`; silent
   `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. On the unattended progress spine
   (responder / signals / cli / doctor / pipeline_status / escalation), breadcrumb alone is not enough —
-  `tests/test_escalation_spine_ratchet.py` requires decide / fail_open / raise (log-only fails). Name a posture
-  via `fanops.escalation` and burn shared attempts through that module's sole `ATTEMPT_CEILING`. MOL-67 site
-  tests remain behavioral guards for already-fixed read helpers.
+  `tests/test_escalation_spine_ratchet.py` requires decide / escaping raise / honest fail_open (wrapping real
+  work or sole-body degrade). `with fail_open: raise` then continue is theatre and fails the ratchet. Name a
+  posture via `fanops.escalation` and burn shared attempts through that module's sole `ATTEMPT_CEILING`. MOL-67
+  site tests remain behavioral guards for already-fixed read helpers.
   The genuinely-swallowed sites are inventoried in `anomalies.md`.
 - **Atomic control-file writes** route through `controlio.write_json_atomic` / `write_text_atomic` /
   `write_bytes_atomic` (mkstemp same-dir + os.replace); ffmpeg/mpeg temps keep their own `.part` suffix (MOL-78).

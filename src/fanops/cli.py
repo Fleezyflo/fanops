@@ -9,6 +9,7 @@ import fanops
 from fanops.config import Config
 from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError, fail_open
+from fanops.escalation import EscalationPosture, decide
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import ClipState, PostState, ErrorKind
@@ -261,12 +262,12 @@ def cmd_verify_live(cfg: Config) -> int:
     targets = [p for p in led.posts.values() if p.state in (PostState.published, PostState.analyzed)]
     confirmed = 0
     for p in targets:
+        res = {"confirmed": False, "owner": None}                          # §2.6 read-path default
         try:
             res = confirm_post_live(cfg, p, reported_username=p.account)   # best-effort username for the TikTok gate
         except Exception:
-            with fail_open("cli.verify_live confirm degrade:"):
+            with fail_open("cli.verify_live confirm degrade:"):            # sole-body named degrade
                 raise
-            res = {"confirmed": False, "owner": None}                      # read path never crashes on one post
         if res.get("confirmed"): confirmed += 1
         print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
     print(f"verify-live: {confirmed}/{len(targets)} confirmed live (read-only; ledger untouched)")
@@ -1213,10 +1214,12 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
                 get_responder(cfg).answer_pending(cfg)
                 s = advance(cfg, base_time=base_time)
             except Exception as e:
-                with fail_open("cli._run_once converge halt nonzero:"):
-                    raise
+                # Progress spine: converge fault → NONZERO (None → cmd_run exit 1; loop skips tick).
+                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                return None
+                if decide("toolchain_run", 0) is EscalationPosture.nonzero:
+                    return None
+                raise
             # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
             # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
             if not any(s["awaiting"].values()):
@@ -1773,9 +1776,13 @@ def _dispatch(cfg: Config, args) -> int:
                 except RunBusyError as e:
                     print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
                 except Exception as e:
-                    with fail_open("cli.cmd_run loop tick halt degrade:"):
-                        raise
+                    # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
+                    get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
                     print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                    if decide("transient", 1) is EscalationPosture.refuse:
+                        pass
+                    else:
+                        return 1
                 time.sleep(interval)
         try:
             if (s := _cmd_run_pass(cfg, args.base_time)) is None:
