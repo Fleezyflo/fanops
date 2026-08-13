@@ -171,19 +171,26 @@ def register_golive_routes(app, cfg):
         if request.args.get("refresh") == "1" and not compact:
             refresh_runtime_snapshots(cfg)
         sr = read_dep_snapshot(cfg)
-        snap = sr.data if (sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict)) else None
+        deps_unknown = None
         health = []
-        for d in ((snap.get("deps") if isinstance(snap, dict) else None) or []):
-            if not isinstance(d, dict):
-                continue
-            health.append(DepHealth(name=d.get("name") or "", ok=bool(d.get("ok")),
-                                    detail=d.get("detail") or ""))
+        if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+            # Non-FRESH must not render empty pills (reads as all-deps-fine). One unknown row.
+            deps_unknown = f"deps unknown (snapshot {sr.freshness.value})"
+            health = [DepHealth(name="deps", ok=False, detail=deps_unknown)]
+        else:
+            for d in (sr.data.get("deps") or []):
+                if not isinstance(d, dict):
+                    continue
+                health.append(DepHealth(name=d.get("name") or "", ok=bool(d.get("ok")),
+                                        detail=d.get("detail") or ""))
         postiz_hint = views_common.postiz_autostart_hint(cfg)
-        blocking_deps = [d for d in health if not d.ok and not (d.name == "postiz" and postiz_hint.get("parked"))]
+        # Unknown ≠ confirmed down — no "Dependency down" banner for snapshot miss/stale.
+        blocking_deps = ([] if deps_unknown else
+                         [d for d in health if not d.ok and not (d.name == "postiz" and postiz_hint.get("parked"))])
         if compact:
-            return render_template("_health_pills.html", health=health)
+            return render_template("_health_pills.html", health=health, deps_unknown=deps_unknown)
         return render_template("_golive_health.html", health=health, postiz_hint=postiz_hint,
-                               blocking_deps=blocking_deps)
+                               blocking_deps=blocking_deps, deps_unknown=deps_unknown)
 
     @app.get("/golive/connect")
     def golive_connect():

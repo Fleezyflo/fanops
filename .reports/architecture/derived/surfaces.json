@@ -458,7 +458,7 @@
     {
       "decorator": "app.get",
       "handler": "index",
-      "line": 419,
+      "line": 420,
       "methods": [
         "GET"
       ],
@@ -469,7 +469,7 @@
     {
       "decorator": "app.get",
       "handler": "fingerprint",
-      "line": 398,
+      "line": 399,
       "methods": [
         "GET"
       ],
@@ -480,7 +480,7 @@
     {
       "decorator": "app.get",
       "handler": "candidates",
-      "line": 492,
+      "line": 493,
       "methods": [
         "GET"
       ],
@@ -491,7 +491,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_candidate",
-      "line": 497,
+      "line": 498,
       "methods": [
         "POST"
       ],
@@ -546,7 +546,7 @@
     {
       "decorator": "app.get",
       "handler": "clip_thumb",
-      "line": 634,
+      "line": 635,
       "methods": [
         "GET"
       ],
@@ -557,7 +557,7 @@
     {
       "decorator": "app.get",
       "handler": "clip_media",
-      "line": 582,
+      "line": 583,
       "methods": [
         "GET"
       ],
@@ -568,7 +568,7 @@
     {
       "decorator": "app.get",
       "handler": "gates",
-      "line": 543,
+      "line": 544,
       "methods": [
         "GET"
       ],
@@ -579,7 +579,7 @@
     {
       "decorator": "app.post",
       "handler": "do_answer_gate",
-      "line": 549,
+      "line": 550,
       "methods": [
         "POST"
       ],
@@ -590,7 +590,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_gate",
-      "line": 561,
+      "line": 562,
       "methods": [
         "POST"
       ],
@@ -689,7 +689,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 194,
+      "line": 201,
       "methods": [
         "GET"
       ],
@@ -755,7 +755,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 189,
+      "line": 196,
       "methods": [
         "GET"
       ],
@@ -799,7 +799,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 233,
+      "line": 240,
       "methods": [
         "POST"
       ],
@@ -854,7 +854,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 199,
+      "line": 206,
       "methods": [
         "GET"
       ],
@@ -865,7 +865,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 226,
+      "line": 233,
       "methods": [
         "POST"
       ],
@@ -887,7 +887,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 204,
+      "line": 211,
       "methods": [
         "POST"
       ],
@@ -942,7 +942,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 237,
+      "line": 244,
       "methods": [
         "POST"
       ],
@@ -975,7 +975,7 @@
     {
       "decorator": "app.get",
       "handler": "healthz",
-      "line": 392,
+      "line": 393,
       "methods": [
         "GET"
       ],
@@ -986,7 +986,7 @@
     {
       "decorator": "app.get",
       "handler": "home_daemon_health",
-      "line": 450,
+      "line": 451,
       "methods": [
         "GET"
       ],
@@ -997,7 +997,7 @@
     {
       "decorator": "app.get",
       "handler": "home_gallery",
-      "line": 428,
+      "line": 429,
       "methods": [
         "GET"
       ],
@@ -1008,7 +1008,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_pull_metrics",
-      "line": 434,
+      "line": 435,
       "methods": [
         "POST"
       ],
@@ -1019,7 +1019,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_reconcile",
-      "line": 438,
+      "line": 439,
       "methods": [
         "POST"
       ],
@@ -1030,7 +1030,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_retry_oversize",
-      "line": 446,
+      "line": 447,
       "methods": [
         "POST"
       ],
@@ -1041,7 +1041,7 @@
     {
       "decorator": "app.post",
       "handler": "do_home_retry_rate_limit",
-      "line": 442,
+      "line": 443,
       "methods": [
         "POST"
       ],
@@ -1052,7 +1052,7 @@
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 608,
+      "line": 609,
       "methods": [
         "GET"
       ],
@@ -1063,7 +1063,7 @@
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 608,
+      "line": 609,
       "methods": [
         "GET"
       ],
@@ -1195,7 +1195,7 @@
     {
       "decorator": "app.get",
       "handler": "media_preview",
-      "line": 574,
+      "line": 575,
       "methods": [
         "GET"
       ],
@@ -1206,7 +1206,7 @@
     {
       "decorator": "app.get",
       "handler": "media",
-      "line": 567,
+      "line": 568,
       "methods": [
         "GET"
       ],
@@ -1217,7 +1217,7 @@
     {
       "decorator": "app.get",
       "handler": "metrics",
-      "line": 412,
+      "line": 413,
       "methods": [
         "GET"
       ],
@@ -1525,7 +1525,7 @@
     {
       "decorator": "app.get",
       "handler": "publish_panel",
-      "line": 510,
+      "line": 511,
       "methods": [
         "GET"
       ],
@@ -1536,7 +1536,7 @@
     {
       "decorator": "app.post",
       "handler": "do_publish_now",
-      "line": 529,
+      "line": 530,
       "methods": [
         "POST"
       ],
@@ -1547,7 +1547,7 @@
     {
       "decorator": "app.post",
       "handler": "do_mark_posted",
-      "line": 524,
+      "line": 525,
       "methods": [
         "POST"
       ],
@@ -1569,7 +1569,7 @@
     {
       "decorator": "app.get",
       "handler": "reconcile_strip_partial",
-      "line": 537,
+      "line": 538,
       "methods": [
         "GET"
       ],
@@ -1635,7 +1635,7 @@
     {
       "decorator": "app.get",
       "handler": "review_thumb",
-      "line": 501,
+      "line": 502,
       "methods": [
         "GET"
       ],
@@ -2009,7 +2009,7 @@
     {
       "decorator": "app.get",
       "handler": "source_media",
-      "line": 593,
+      "line": 594,
       "methods": [
         "GET"
       ],
@@ -2020,7 +2020,7 @@
     {
       "decorator": "app.get",
       "handler": "stitches",
-      "line": 469,
+      "line": 470,
       "methods": [
         "GET"
       ],
@@ -2031,7 +2031,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_stitches",
-      "line": 479,
+      "line": 480,
       "methods": [
         "POST"
       ],
@@ -2042,7 +2042,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_stitches",
-      "line": 483,
+      "line": 484,
       "methods": [
         "POST"
       ],
@@ -2053,7 +2053,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_stitches",
-      "line": 487,
+      "line": 488,
       "methods": [
         "POST"
       ],
@@ -2064,7 +2064,7 @@
     {
       "decorator": "app.get",
       "handler": "thumb_clip",
-      "line": 629,
+      "line": 630,
       "methods": [
         "GET"
       ],
@@ -2075,7 +2075,7 @@
     {
       "decorator": "app.get",
       "handler": "thumb_source",
-      "line": 624,
+      "line": 625,
       "methods": [
         "GET"
       ],

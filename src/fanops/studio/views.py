@@ -767,6 +767,29 @@ def _half_live_state(cfg: Config) -> tuple[bool, str]:
     return False, ""
 
 
+
+def _postiz_down_on_helper_raise(cfg: Config) -> dict:
+    """Outer except for postiz_health_for_banner: show unknown if a channel routes to postiz OR the
+    route-check failed; hide only when we can prove no channel routes to postiz. Lives here so we
+    never re-touch publish-hot views_common for a strip-only raise shield (MOL-963 R2d)."""
+    unknown = {"show": True, "danger": False, "status": None,
+               "hint": "Postiz health unknown (read failed)"}
+    try:
+        from fanops.accounts import load_accounts_safe
+        accounts, err = load_accounts_safe(cfg)
+        if err:
+            return {**unknown, "hint": "Postiz health unknown (route check failed)"}
+        for a in accounts.active():
+            for plat in a.platforms:
+                if accounts.effective_provider(a.handle, plat) == "postiz":
+                    return unknown
+        return {"show": False, "danger": False, "status": None, "hint": ""}
+    except Exception as exc:
+        from fanops.log import get_logger
+        get_logger(cfg)("system_strip", "-", "postiz_route_check_error", err=str(exc)[:160])
+        return {**unknown, "hint": "Postiz health unknown (route check failed)"}
+
+
 def build_system_strip(cfg: Config) -> dict:
     """Global system strip read-model: LIVE/DRYRUN mode + blocked gate count + failed-post alert. Health dots lazy-load via htmx."""
     from fanops.log import get_logger                     # a strip sub-read failure is RECORDED, never a silently-zeroed badge
@@ -812,13 +835,13 @@ def build_system_strip(cfg: Config) -> dict:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
     half_live, half_live_hint = _half_live_state(cfg)
-    # D13b: Postiz-down banner — snapshot-only (deps_health.json); fail-open to not-shown so a
-    # missing/unreadable snapshot never blocks the page.
+    # D13b: Postiz-down banner — snapshot-only (deps_health.json).
+    # Helper raise → unknown when a channel routes to postiz OR the route-check itself failed; else hide.
     try:
         postiz_down = views_common.postiz_health_for_banner(cfg)
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
-        postiz_down = {"show": False}
+        postiz_down = _postiz_down_on_helper_raise(cfg)
     return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
             "strip_metrics_unknown": strip_metrics_unknown,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
@@ -1242,7 +1265,8 @@ class WorkflowSpine:                    # the whole through-line: the ordered pa
     next_endpoint: Optional[str]       # where it points; None == "caught up", no CTA
     here: Optional[str]                # the current stage key (from the active tab), else None
     inflight: int = 0                  # needs_reconcile + submitting (Schedule severity)
-    blocked_gates: int = 0             # pending agent gates (Make severity dot)
+    blocked_gates: Optional[int] = 0   # pending agent gates; None == metrics unknown (never calm-zero)
+    strip_metrics_unknown: bool = False
     next_params: dict = field(default_factory=dict)  # extra url_for kwargs for the next CTA
 
 
@@ -1251,17 +1275,24 @@ _SPINE_ORDER = (("make", "Make", "run_panel"), ("review", "Review", "review"),
 
 
 def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
-                inflight: int = 0, blocked_gates: int = 0, next_params: Optional[dict] = None) -> WorkflowSpine:
+                inflight: int = 0, blocked_gates: Optional[int] = 0,
+                strip_metrics_unknown: bool = False,
+                next_params: Optional[dict] = None) -> WorkflowSpine:
     """Pure: turn the Home counts into the Make→Review→Schedule→Posted stepper. Stage badges carry
-    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule)."""
+    severity when blocked (Make), awaiting>20 (Review), or inflight>0 (Schedule).
+    strip_metrics_unknown → Make danger + gates CTA; blocked_gates stays None (never int-cast to 0)."""
     src = int(counts.get("sources", 0)); awaiting = int(counts.get("awaiting", 0))
     queued = int(counts.get("scheduled", 0)); posted = int(counts.get("posted", 0))
     failed = int(counts.get("failed", 0)); live_trackable = int(counts.get("live_trackable", 0))
-    inflight = int(inflight); blocked_gates = int(blocked_gates)
+    inflight = int(inflight)
+    if strip_metrics_unknown:
+        blocked_gates = None
+    else:
+        blocked_gates = int(blocked_gates or 0)
     done = {"make": src > 0, "review": awaiting == 0 and (queued > 0 or posted > 0), "schedule": posted > 0, "posted": live_trackable > 0}
     sched_count = queued + inflight
     nums = {"make": src, "review": awaiting, "schedule": sched_count, "posted": live_trackable}
-    sev = {"make": "danger" if blocked_gates else None,
+    sev = {"make": "danger" if (strip_metrics_unknown or blocked_gates) else None,
            "review": "warn" if awaiting > 20 else None,
            "schedule": "info" if inflight else None,
            "posted": "danger" if failed else None}
@@ -1271,6 +1302,7 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
               for k, lbl, ep in _SPINE_ORDER]
     if not has_accounts:               n = ("Connect an account to begin", "golive_view")
     elif src == 0:                     n = ("Add footage to get started", "run_panel")
+    elif strip_metrics_unknown:        n = ("Gate metrics unknown — open processing decisions", "gates")
     elif blocked_gates:                n = (f"Answer {blocked_gates} processing decision{'s' if blocked_gates != 1 else ''}", "gates")
     elif awaiting > 0:                 n = (f"Review {awaiting} clip{'s' if awaiting != 1 else ''}", "review")
     elif queued > 0 or inflight:       n = (f"Schedule {queued} post{'s' if queued != 1 else ''}" + (f" · {inflight} in flight" if inflight else ""), "schedule")
@@ -1278,7 +1310,9 @@ def build_spine(*, counts: dict, has_accounts: bool, here: Optional[str],
     elif live_trackable > 0:           n = ("You're all caught up", None)
     else:                              n = ("Run a pass in Make", "run_panel")
     return WorkflowSpine(stages=stages, next_label=n[0], next_endpoint=n[1], here=here,
-                         inflight=inflight, blocked_gates=blocked_gates, next_params=next_params or {})
+                         inflight=inflight, blocked_gates=blocked_gates,
+                         strip_metrics_unknown=strip_metrics_unknown,
+                         next_params=next_params or {})
 
 
 def _blocker_priority(msg: str) -> int:

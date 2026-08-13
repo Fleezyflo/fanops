@@ -148,3 +148,13 @@ def test_run_resume_route_recovers_and_rerenders(tmp_path, monkeypatch):
     # the shared helper ran: source is now transcribed, transcript preserved
     s = Ledger.load(cfg).sources["src_1"]
     assert s.state is SourceState.transcribed and s.transcript
+
+def test_strip_errored_falls_through_to_ledger_when_metrics_unknown(tmp_path, monkeypatch):
+    # MOL-963 R2b: metrics unknown zeros recoverable from snapshot — ledger must still surface errored.
+    cfg = _cfg(tmp_path, monkeypatch)
+    _add_errored(cfg, "src_err")
+    # No strip_metrics snapshot → strip_metrics_unknown, recoverable=0 from the unknown branch.
+    strip = views.build_system_strip(cfg)
+    assert strip["strip_metrics_unknown"] is True
+    assert strip["recoverable_sources"] == 0
+    assert strip["errored_sources"] >= 1  # ledger fallthrough, not quiet

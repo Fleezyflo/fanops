@@ -135,8 +135,10 @@ def test_home_no_contradictory_postiz_wording(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg.control.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg.deps_health_path.write_text(json.dumps({
-        "checked_at": "2026-01-01T00:00:00Z",
+        "checked_at": iso_z(datetime.now(timezone.utc)),
         "deps": [
             {"name": "docker", "ok": True, "detail": "up", "status_code": None},
             {"name": "postiz", "ok": False, "detail": "down", "status_code": 502},

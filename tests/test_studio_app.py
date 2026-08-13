@@ -115,6 +115,18 @@ def test_daemon_health_off_is_optin_not_fault(tmp_path, monkeypatch):
     assert "optional" in html.lower() and "off" in html.lower()  # honest opt-in framing
     assert "claude" in html.lower()                              # discloses the recurring-LLM cost
 
+def test_daemon_health_unknown_is_warn_not_optin(tmp_path, monkeypatch):
+    # MOL-963 R2c: snapshot unknown must WARN, never fall into "off (optional)".
+    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    import fanops.studio.views as V
+    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "unknown", "installed": False,
+                        "loaded": False, "hint": "daemon strip snapshot missing"})
+    html = _client(cfg).get("/home/daemon-health").data.decode()
+    assert 'data-daemon-warn="unknown"' in html
+    assert "Daemon health unknown" in html
+    assert "optional" not in html.lower()
+    assert "off (optional)" not in html.lower()
+
 def test_home_daemon_health_does_not_call_daemon_status(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     spy = mocker.patch("fanops.daemon.status")

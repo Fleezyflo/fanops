@@ -1,9 +1,14 @@
-{# Pipeline-driver liveness — 3 honest states: quiet OK, neutral OPT-IN (off is optional, NOT a fault),
-   and a loud WARN reserved for the ONE genuine fault (installed but not firing). #}
+{# Pipeline-driver liveness — quiet OK, WARN (unknown / unloaded / not firing), neutral OPT-IN (off is optional).
+   Snapshot unknown must NEVER reuse the off/opt-in arm (calm lie). #}
 {% if daemon %}
 {% if daemon.verdict == "alive" %}
 <p class="meta daemon-ok">Hands-off processing running{% if daemon.heartbeat_age_s is not none %} · last tick {{ daemon.heartbeat_age_s|int }}s ago{% endif %}{% if daemon.run_line %} · {{ daemon.run_line }}{% endif %}
   {%- if daemon.pending_gates is not none %} · {{ daemon.pending_gates }} gate{{ '' if daemon.pending_gates == 1 else 's' }} pending{% if daemon.pending_gates == 0 %} (idle — no <code>claude</code>){% else %} (<code>claude</code> runs only to answer these){% endif %}{% endif %} — <a href="{{ url_for('run_panel') }}">Make tab</a></p>
+{% elif daemon.verdict == "unknown" %}
+{# Snapshot missing/stale/unreadable — WARN, never "off (optional)". #}
+<div class="banner warn" data-daemon-warn="unknown" role="alert">
+  Daemon health unknown — snapshot missing/stale{% if daemon.hint %} ({{ daemon.hint }}){% endif %}.
+</div>
 {% elif daemon.installed and not daemon.loaded %}
 {# READINESS ALARM — plist on disk but launchctl unloaded (the 24h-silent-death case). Loud, not opt-in. #}
 <div class="banner warn" data-daemon-warn="{{ daemon.verdict }}" role="alert">

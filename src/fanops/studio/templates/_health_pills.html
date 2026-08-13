@@ -1,1 +1,2 @@
-{% for d in health %}<span class="health-pill {{ 'ok' if d.ok else 'err' }}" title="{{ d.detail }}">{{ d.name }}</span>{% endfor %}
+{% if deps_unknown %}<span class="health-pill warn" title="{{ deps_unknown }}">deps?</span>
+{% else %}{% for d in health %}<span class="health-pill {{ 'ok' if d.ok else 'err' }}" title="{{ d.detail }}">{{ d.name }}</span>{% endfor %}{% endif %}

@@ -168,6 +168,25 @@ def test_missing_strip_metrics_is_unknown_not_calm_zero(tmp_path):
     assert "gate metrics unknown" in html
 
 
+def test_missing_strip_metrics_spine_not_calm_zero(tmp_path):
+    # MOL-963 R2a: missing metrics → spine blocked_gates is None (not int 0) via inject path.
+    cfg = Config(root=tmp_path); _seed(cfg)
+    from fanops.studio import views
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    with app.test_request_context("/"):
+        # Trigger both injectors the way a real request does.
+        strip = views.build_system_strip(cfg)
+        spine = views.build_spine(counts={"sources": 1, "awaiting": 0, "scheduled": 0, "posted": 0,
+                                          "failed": 0, "live_trackable": 0},
+                                  has_accounts=True, here="make",
+                                  blocked_gates=strip.get("blocked_gates"),
+                                  strip_metrics_unknown=bool(strip.get("strip_metrics_unknown")))
+    assert strip["strip_metrics_unknown"] is True
+    assert spine.blocked_gates is None
+    assert spine.strip_metrics_unknown is True
+
+
 def test_badge_present_with_count_when_gates_blocked(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     _seed_strip_metrics(cfg, blocked_gates=3)

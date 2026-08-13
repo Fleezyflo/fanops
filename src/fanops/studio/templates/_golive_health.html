@@ -5,13 +5,14 @@
    (Tier-1), naming the down dep(s), so "postiz unreachable" while LIVE is the first thing the eye lands on. #}
 {# S10 — parked local Postiz (reaper-idle, zero due postiz posts) is expected cold state: muted hint only,
    NOT the "cannot ship" dep-alert. Real stalls (due postiz posts waiting) still block. #}
-{% if blocking_deps %}<p class="dep-alert" role="alert"><strong>Dependency down</strong> — {{ blocking_deps | map(attribute='name') | join(', ') }} unreachable while publishing is configured LIVE. Reviewed posts cannot ship until it recovers.</p>{% endif %}
+{% if deps_unknown %}<p class="dep-alert" role="alert"><strong>Dependencies unknown</strong> — {{ deps_unknown }}</p>
+{% elif blocking_deps %}<p class="dep-alert" role="alert"><strong>Dependency down</strong> — {{ blocking_deps | map(attribute='name') | join(', ') }} unreachable while publishing is configured LIVE. Reviewed posts cannot ship until it recovers.</p>{% endif %}
 {% if postiz_hint and postiz_hint.parked and postiz_hint.hint %}<p class="muted postiz-parked-hint">{{ postiz_hint.hint }}</p>{% endif %}
 <p class="muted"><strong>System dependencies</strong> — live (auto-started on publish when local; nothing sits silently off).</p>
 <button type="button" hx-get="{{ url_for('do_golive_health', refresh=1) }}"
   hx-target="closest .deps-live" hx-swap="innerHTML">Refresh deps</button>
 <ul class="checks deps">
   {% for d in health %}
-    <li class="{% if d.ok %}ok{% elif d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked{% else %}err{% endif %}">{{ '●' if d.ok else ('◐' if d.name == 'postiz' and postiz_hint and postiz_hint.parked else '○') }} {{ d.name }} — {% if d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked (idle; {{ postiz_hint.hint }}){% else %}{{ d.detail }}{% endif %}</li>
+    <li class="{% if d.ok %}ok{% elif deps_unknown %}warn{% elif d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked{% else %}err{% endif %}">{{ '●' if d.ok else ('◐' if d.name == 'postiz' and postiz_hint and postiz_hint.parked else '○') }} {{ d.name }} — {% if d.name == 'postiz' and postiz_hint and postiz_hint.parked %}parked (idle; {{ postiz_hint.hint }}){% else %}{{ d.detail }}{% endif %}</li>
   {% endfor %}
 </ul>

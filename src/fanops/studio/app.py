@@ -385,7 +385,8 @@ def create_app(cfg: Config) -> Flask:
             np = {"delivery": "inflight"}
         return {"spine": views.build_spine(counts=st.counts, has_accounts=bool(st.accounts), here=here,
                                             inflight=st.counts.get("inflight", 0),
-                                            blocked_gates=(0 if strip.get("strip_metrics_unknown") else (strip.get("blocked_gates") or 0)),  # spine needs int; strip owns unknown alert
+                                            blocked_gates=strip.get("blocked_gates"),
+                                            strip_metrics_unknown=bool(strip.get("strip_metrics_unknown")),
                                             next_params=np)}
 
     @app.get("/healthz")

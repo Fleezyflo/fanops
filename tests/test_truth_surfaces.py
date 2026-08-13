@@ -4,7 +4,6 @@ import json
 import os
 import pytest
 from datetime import datetime, timedelta, timezone
-from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, SourceState, Moment, MomentState, Clip, ClipState,
@@ -64,6 +63,7 @@ def _seed_due_postiz_post(cfg, *, when="2020-01-01T12:00:00Z"):
 
 
 def _seed_postiz_down_snapshot(cfg, *, status_code=502):
+    from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.deps_health_path.write_text(json.dumps({
         "checked_at": iso_z(datetime.now(timezone.utc)),
