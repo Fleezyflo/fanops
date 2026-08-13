@@ -2,7 +2,9 @@
 """CI AST/registry so multi-channel soft-green cannot return.
 
 Gates (product brief Enforcement):
-1. Allowed operator health surfaces — new CLI/UI callers of build_health_report / doctor_report fail.
+1. Closed-world CALLER gate — every FunctionDef that Calls build_health_report / doctor_report
+   must be named in `_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS` (new cmd_foo in cli.py fails until listed).
+   File allowlist alone is not enough — it is a secondary net, not the root control.
 2. Soft-lie check shape — ok+warn dict keys without severity cannot grow (baseline shrink-only).
 3. Single constructor — Studio must not import doctor_report; doctor_report stays a thin wrapper;
    build_health_report / doctor_report FunctionDefs stay in their owner modules.
@@ -17,21 +19,37 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src" / "fanops"
 
+_CONSTRUCTOR_CALL_NAMES = frozenset({"build_health_report", "doctor_report"})
+
 # ---------------------------------------------------------------------------
-# 1) Registry — files that may call the machine-health constructor / thin wrapper.
-#    Adding a new CLI/UI health printer means adding a NEW file here AND justifying it
-#    in docs/MACHINE_HEALTH.md. This is the channel inventory, not a violator Band-Aid.
+# 1) Closed-world CALLER registry — root enforcement.
+#    Any FunctionDef/AsyncFunctionDef under src/fanops whose body Calls
+#    build_health_report / doctor_report must appear here. New cmd_foo → CI fail.
+#    Do NOT "fix" by only widening _ALLOWED_HEALTH_CONSTRUCTOR_FILES.
 # ---------------------------------------------------------------------------
-_ALLOWED_HEALTH_CONSTRUCTOR_FILES = frozenset({
-    "src/fanops/health_model.py",   # build_health_report owner + prometheus self-call
-    "src/fanops/doctor.py",         # doctor_report → build_health_report only
-    "src/fanops/cli.py",            # cmd_doctor / cmd_health (primary + alias)
-    "src/fanops/init_flow.py",      # readiness exit shares report_is_healthy
-    "src/fanops/autopilot.py",      # readiness via thin doctor_report
-    "src/fanops/studio/views.py",   # strip / golive / daemon projectors
+_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS = frozenset({
+    ("src/fanops/cli.py", "cmd_doctor"),                     # PRIMARY
+    ("src/fanops/cli.py", "cmd_health"),                     # alias — same report + exit
+    ("src/fanops/doctor.py", "doctor_report"),               # thin as_dict wrapper
+    ("src/fanops/health_model.py", "render_prometheus_metrics"),
+    ("src/fanops/init_flow.py", "run_init"),
+    ("src/fanops/autopilot.py", "autopilot"),                # via doctor_report
+    ("src/fanops/studio/views.py", "build_system_strip"),
+    ("src/fanops/studio/views.py", "golive_status"),
 })
 
-# Operator-facing surfaces (symbol inventory). Process-only / bring-up named separately.
+# Secondary net: files that may contain the callers above (shrink when files vanish).
+# Never widen this as a Band-Aid for an unlisted FunctionDef — list the caller instead.
+_ALLOWED_HEALTH_CONSTRUCTOR_FILES = frozenset({
+    "src/fanops/health_model.py",   # render_prometheus_metrics
+    "src/fanops/doctor.py",         # doctor_report → build_health_report only
+    "src/fanops/cli.py",            # cmd_doctor / cmd_health
+    "src/fanops/init_flow.py",      # run_init
+    "src/fanops/autopilot.py",      # autopilot via doctor_report
+    "src/fanops/studio/views.py",   # strip / golive projectors
+})
+
+# Operator-facing surfaces (symbol inventory — may include non-callers / indirect exits).
 _ALLOWED_OPERATOR_HEALTH_SURFACES = frozenset({
     ("src/fanops/cli.py", "cmd_doctor"),          # PRIMARY
     ("src/fanops/cli.py", "cmd_health"),          # alias / deps focus — same exit
@@ -76,17 +94,34 @@ def _dict_str_keys(node: ast.Dict) -> set[str]:
     return keys
 
 
-def _scan_constructor_call_files() -> set[str]:
-    """Files under src/fanops that Call build_health_report or doctor_report."""
-    out: set[str] = set()
+def _fn_body_calls_constructor(fn: ast.AST) -> bool:
+    """True if fn's own body Calls a constructor (nested FunctionDef/ClassDef scanned separately)."""
+    stack = list(getattr(fn, "body", []))
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(n, ast.Call) and _call_name(n.func) in _CONSTRUCTOR_CALL_NAMES:
+            return True
+        stack.extend(ast.iter_child_nodes(n))
+    return False
+
+
+def _scan_constructor_callers() -> set[tuple[str, str]]:
+    """(relpath, FunctionDef.name) under src/fanops whose body Calls build_health_report/doctor_report."""
+    out: set[tuple[str, str]] = set()
     for path in sorted(_SRC.rglob("*.py")):
         rel = path.relative_to(_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Call) and _call_name(n.func) in ("build_health_report", "doctor_report"):
-                out.add(rel)
-                break
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _fn_body_calls_constructor(node):
+                out.add((rel, node.name))
     return out
+
+
+def _scan_constructor_call_files() -> set[str]:
+    """Files under src/fanops that Call build_health_report or doctor_report."""
+    return {rel for rel, _ in _scan_constructor_callers()}
 
 
 def _soft_lie_ok_warn_counts() -> dict[str, int]:
@@ -151,7 +186,7 @@ def _function_def_owners(name: str) -> list[tuple[str, int]]:
 
 def _doctor_report_is_thin_wrapper() -> bool:
     """doctor_report must only call build_health_report (no parallel assembly)."""
-    path = _ROOT / "src/fanops/doctor.py"
+    path = _ROOT / "src" / "fanops" / "doctor.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "doctor_report":
@@ -160,25 +195,31 @@ def _doctor_report_is_thin_wrapper() -> bool:
     return False
 
 
-def _healthz_calls_machine_health() -> bool:
-    """/healthz must stay process-only — no build_health_report / doctor_report."""
-    path = _ROOT / "src/fanops/studio/app.py"
+def _named_fn_calls_constructor(rel: str, name: str) -> bool:
+    """Whether a named FunctionDef in rel Calls build_health_report / doctor_report."""
+    path = _ROOT / rel
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "healthz":
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call) and _call_name(sub.func) in (
-                    "build_health_report", "doctor_report", "report_is_healthy",
-                ):
-                    return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            if _fn_body_calls_constructor(node):
+                return True
     return False
+
+
+def _healthz_calls_machine_health() -> bool:
+    """/healthz must stay process-only — no build_health_report / doctor_report."""
+    return _named_fn_calls_constructor("src/fanops/studio/app.py", "healthz")
 
 
 def _surface_symbols_exist() -> list[str]:
     """Registry rows must name real functions (prevents dead-inventory folklore)."""
     missing: list[str] = []
     by_file: dict[str, set[str]] = {}
-    for rel, sym in _ALLOWED_OPERATOR_HEALTH_SURFACES | _NON_MACHINE_HEALTH_SURFACES:
+    for rel, sym in (
+        _ALLOWED_OPERATOR_HEALTH_SURFACES
+        | _NON_MACHINE_HEALTH_SURFACES
+        | _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS
+    ):
         by_file.setdefault(rel, set()).add(sym)
     for rel, syms in by_file.items():
         path = _ROOT / rel
@@ -193,18 +234,48 @@ def _surface_symbols_exist() -> list[str]:
     return missing
 
 
+def test_health_constructor_callers_are_closed_world():
+    """Root gate: new FunctionDef calling build_health_report/doctor_report fails until listed."""
+    actual = _scan_constructor_callers()
+    new_callers = sorted(actual - _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS)
+    assert new_callers == [], (
+        "new machine-health constructor caller(s) outside closed-world registry — "
+        "add to _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS + docs/MACHINE_HEALTH.md only if intentional: "
+        + ", ".join(f"{p}:{s}" for p, s in new_callers)
+    )
+    vanished = sorted(_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS - actual)
+    assert vanished == [], (
+        "allowlisted constructor caller(s) no longer Call build_health_report/doctor_report — "
+        "shrink _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS: "
+        + ", ".join(f"{p}:{s}" for p, s in vanished)
+    )
+
+
 def test_health_constructor_call_sites_stay_on_allowlist():
+    """Secondary file net — do not widen as Band-Aid for an unlisted FunctionDef."""
     actual = _scan_constructor_call_files()
     new_files = sorted(actual - _ALLOWED_HEALTH_CONSTRUCTOR_FILES)
     assert new_files == [], (
-        "new machine-health constructor call site(s) outside channel registry — "
-        "add to _ALLOWED_HEALTH_CONSTRUCTOR_FILES + docs/MACHINE_HEALTH.md only if intentional: "
-        + ", ".join(new_files)
+        "new machine-health constructor call site(s) outside file registry — "
+        "prefer listing the FunctionDef in _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS; "
+        "only then add the file if needed: " + ", ".join(new_files)
     )
     vanished = sorted(_ALLOWED_HEALTH_CONSTRUCTOR_FILES - actual)
     assert vanished == [], (
         "allowlisted health constructor file(s) no longer call build_health_report/doctor_report — "
         "shrink the registry: " + ", ".join(vanished)
+    )
+
+
+def test_non_machine_health_surfaces_do_not_call_constructor():
+    """cmd_status / cmd_up / healthz must not Call build_health_report / doctor_report."""
+    offenders = [
+        f"{rel}:{sym}"
+        for rel, sym in sorted(_NON_MACHINE_HEALTH_SURFACES)
+        if _named_fn_calls_constructor(rel, sym)
+    ]
+    assert offenders == [], (
+        "non-machine-health surface(s) must not call the constructor: " + ", ".join(offenders)
     )
 
 
@@ -256,6 +327,22 @@ def test_healthz_is_process_only():
 def test_operator_health_surface_registry_symbols_exist():
     missing = _surface_symbols_exist()
     assert missing == [], f"channel registry names missing symbols: {missing}"
+
+
+def test_closed_world_caller_gate_detects_unlisted_cmd_foo():
+    """Negative control: unlisted FunctionDef calling build_health_report must trip the finder."""
+    tree = ast.parse(
+        "def cmd_foo(cfg):\n"
+        "    return build_health_report(cfg)\n"
+        "def cmd_status(cfg):\n"
+        "    return 0\n"
+    )
+    found = {
+        n.name for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and _fn_body_calls_constructor(n)
+    }
+    assert found == {"cmd_foo"}
+    assert "cmd_status" not in found
 
 
 def test_soft_lie_shape_is_rejected_by_detector():

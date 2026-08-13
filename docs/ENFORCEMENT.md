@@ -52,10 +52,12 @@ captured.
 - **`tests/test_post_state_census_ratchet.py`** (MOL-815) — binary AST gate: zero
   `Counter(… .state …)` over `led.posts` / `posts.values()` outside `ledger.py`. Negative control
   plants that Counter and asserts the finder fires. Removal condition: permanent by policy.
-- **`tests/test_machine_health_channel_ratchet.py`** (MOL-965 WP4) — channel registry + soft-lie
-  ban: allowlisted callers of `build_health_report` / `doctor_report`; Studio may not import
-  `doctor_report`; `ok`+`warn` check dicts without `severity` cannot grow; `/healthz` stays
-  process-only. Operator contract: [docs/MACHINE_HEALTH.md](MACHINE_HEALTH.md).
+- **`tests/test_machine_health_channel_ratchet.py`** (MOL-965 WP4) — closed-world CALLER AST +
+  soft-lie ban: every `FunctionDef` that Calls `build_health_report` / `doctor_report` must be in
+  `_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS` (file allowlist is secondary, not a Band-Aid);
+  `cmd_status` / `cmd_up` / `/healthz` must not call the constructor; Studio may not import
+  `doctor_report`; `ok`+`warn` check dicts without `severity` cannot grow. Operator contract:
+  [docs/MACHINE_HEALTH.md](MACHINE_HEALTH.md).
 
 ## Deployed-state probes — the plane no static check can reach
 `python -m tools.ci deployed [--require-live]`, in the `reconcile` job (weekly + `workflow_dispatch`).

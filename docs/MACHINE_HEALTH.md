@@ -16,9 +16,10 @@ FanOps has **one machine-health constructor** and **one primary operator channel
 
 **CI ratchets (MOL-965 WP4):**
 
-- `_ALLOWED_HEALTH_CONSTRUCTOR_FILES` — new callers of `build_health_report` / `doctor_report` fail CI
-- Soft-lie baseline (`ok`+`warn` dict keys) — shrink-only
+- `_ALLOWED_HEALTH_CONSTRUCTOR_CALLERS` — **closed-world** AST: every `FunctionDef`/`AsyncFunctionDef` under `src/fanops` whose body Calls `build_health_report` / `doctor_report` must be listed. A new `cmd_foo` in `cli.py` fails CI until added here (and documented). File allowlist alone is not sufficient.
+- `_ALLOWED_HEALTH_CONSTRUCTOR_FILES` — secondary net on files that contain those callers; shrink-only; do not widen as a Band-Aid for an unlisted function.
+- Soft-lie baseline (`ok`+`warn` dict keys) — shrink-only / empty
 - Studio must not import `doctor_report`; `doctor_report` remains a thin wrapper over `build_health_report`
-- `/healthz` must not call the machine-health constructor
+- `/healthz`, `cmd_up`, and `cmd_status` must not call the machine-health constructor
 
 `doctor_report` is a compatibility view (`as_dict()`), not a second health owner.
