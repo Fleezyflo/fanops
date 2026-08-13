@@ -9,9 +9,10 @@ from fanops.config import Config
 
 _log = logging.getLogger("fanops.health")
 
-# Locked check labels — projectors match these; doctor emits them (MOL-965 WP2).
+# Locked check labels — projectors match these; doctor emits them (MOL-965 WP2/WP3).
 HALF_LIVE_CHECK_LABEL = "live route exists (FANOPS_LIVE=1 actually publishes)"
 DAEMON_CHECK_LABEL_NEEDLE = "publish daemon alive"
+STRIP_METRICS_CHECK_LABEL = "strip metrics snapshot fresh"
 
 
 class Severity(str, Enum):
@@ -259,14 +260,19 @@ def project_golive_readiness(report: HealthReport) -> dict:
 
 
 def project_strip_health(report: HealthReport) -> dict:
-    """Pure: Home-strip health badges from HealthReport."""
+    """Pure: Home-strip health badges from HealthReport (incl. strip-metrics freshness)."""
     half, hint = project_half_live(report)
+    strip_unknown = any(
+        c.get("label") == STRIP_METRICS_CHECK_LABEL and check_severity(c) is Severity.UNKNOWN
+        for c in report.checks
+    )
     return {
         "half_live": half,
         "half_live_hint": hint,
         "severity": overall_severity(report).value,
         "healthy": report_is_healthy(report),
         "daemon_slice": project_daemon_slice(report),
+        "strip_metrics_unknown": strip_unknown,
     }
 
 
@@ -412,9 +418,11 @@ def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
     if not hint:
         hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
     from fanops.doctor import _check
-    return _check(
-        "Postiz backend reachable (real /integrations probe, not the nginx health-check)",
-        healthy, hint)
+    lbl = "Postiz backend reachable (real /integrations probe, not the nginx health-check)"
+    # Observe snapshot miss/stale/missing-row → UNKNOWN (required), never FAIL-as-if-probe-proved-down.
+    if (not healthy) and "snapshot" in hint.lower():
+        return _check(lbl, severity="unknown", hint=hint)
+    return _check(lbl, healthy, hint)
 
 
 def daemon_liveness_check(cfg: Config) -> dict:
@@ -541,10 +549,13 @@ def snapshot_daemon_status(cfg: Config, interval: int) -> dict:
     from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
     sr = read_daemon_strip_snapshot(cfg)
     if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+        # snapshot_freshness marker → doctor emits Severity.UNKNOWN (not "no heartbeat" FAIL).
         return {"installed": False, "loaded": False, "verdict": f"snapshot {sr.freshness.value}",
+                "snapshot_freshness": sr.freshness.value,
                 "heartbeat_age_s": None, "interval": interval}
     out = dict(sr.data)
     out.setdefault("interval", interval)
+    out["snapshot_freshness"] = SnapshotFreshness.FRESH.value
     return out
 
 
@@ -558,6 +569,19 @@ def deps_from_snapshot(cfg: Config) -> list[DepHealth]:
     return project_deps_from_rows(sr.data.get("deps") or [])
 
 
+def strip_metrics_freshness_check(cfg: Config) -> dict:
+    """Required strip-metrics signal: non-FRESH → UNKNOWN (never calm zeros via healthy report)."""
+    from fanops.doctor import _check
+    from fanops.health import SnapshotFreshness, read_strip_metrics
+    sr = read_strip_metrics(cfg)
+    if sr.freshness is SnapshotFreshness.FRESH and isinstance(sr.data, dict):
+        return _check(STRIP_METRICS_CHECK_LABEL, True)
+    return _check(
+        STRIP_METRICS_CHECK_LABEL, severity="unknown",
+        hint=f"strip metrics snapshot {sr.freshness.value}",
+    )
+
+
 def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth=None,
                         led=None, list_posts=None, live_get=None,
                         probe_policy: Literal["live", "observe"] = "live",
@@ -569,7 +593,8 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
       - 'live' (default): real network/launchd probes — doctor / CLI / Go-Live readiness.
       - 'observe': snapshot + local cfg only — Studio Home strip / CP observe (MOL-965 WP2-fix2).
         Defaults postiz_probe→snapshot_postiz_probe, daemon_status→snapshot_daemon_status,
-        deps→deps_from_snapshot; skips Meta token network + bounded live confirm.
+        deps→deps_from_snapshot; strip metrics freshness check (WP3); skips Meta token
+        network + bounded live confirm.
     Explicit injectables always win over policy defaults.
     """
     from fanops.doctor import _assemble_doctor_checks, _doctor_notes
@@ -589,6 +614,8 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
     if probe_policy == "observe":
         deps = deps_from_snapshot(cfg)
         fshape = None  # no live Postiz list_posts on observe
+        # WP3: strip metrics TTL is a required observe signal — UNKNOWN → unhealthy.
+        checks.append(strip_metrics_freshness_check(cfg))
     else:
         deps = dep_health_list(cfg, postiz_probe=postiz_probe)
         fshape = build_field_shape(cfg, led=led, list_posts=list_posts)

@@ -816,11 +816,15 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    # Half-live from ONE HealthReport projector — observe policy: no live postiz/daemon re-probe (MOL-965 WP2-fix2).
+    # Half-live + strip freshness from ONE HealthReport projector (MOL-965 WP2/WP3).
+    # Constructor freshness is authoritative — never healthy/green beside strip_metrics_unknown.
     try:
         from fanops.health_model import build_health_report, project_strip_health
         strip_h = project_strip_health(build_health_report(cfg, probe_policy="observe"))
         half_live, half_live_hint = strip_h["half_live"], strip_h["half_live_hint"]
+        if strip_h.get("strip_metrics_unknown"):
+            strip_metrics_unknown = True
+            blocked = None
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
         half_live, half_live_hint = True, "readiness unavailable — not confirmed LIVE"

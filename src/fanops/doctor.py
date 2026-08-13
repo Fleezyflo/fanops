@@ -266,6 +266,15 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     except Exception:
         with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
             raise
+    # Observe snapshot miss/stale → UNKNOWN (required), not "no heartbeat" FAIL lie (MOL-965 WP3).
+    snap_fr = st.get("snapshot_freshness")
+    if snap_fr and snap_fr != "fresh":
+        return _check(lbl, severity="unknown",
+                      hint=f"daemon status unknown (snapshot {snap_fr})")
+    verd = st.get("verdict") or ""
+    if isinstance(verd, str) and verd.startswith("snapshot "):
+        return _check(lbl, severity="unknown",
+                      hint=f"daemon status unknown ({verd})")
     if st.get("installed") and not st.get("loaded"):
         return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
     if st.get("exec_fail"):
