@@ -81,6 +81,7 @@
       "modules": [
         "agentstep",
         "autopilot",
+        "escalation",
         "llm",
         "prompts",
         "responder"

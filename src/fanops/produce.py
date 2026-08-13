@@ -95,7 +95,7 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     try:
         led = Ledger.load(cfg)
     except Exception as e:
-        get_logger(cfg)("produce", source_id, "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS this source's production -> error, not warn (alerting keys on error)
+        log("produce", source_id, "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS this source's production -> error, not warn (alerting keys on error)
         return SourceResult(source_id, str(e)[:120])
     s = led.sources.get(source_id)
     if s is None or s.origin_kind == "third_party":
@@ -142,7 +142,7 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
     try:
         led = Ledger.load(cfg)
     except Exception as e:
-        get_logger(cfg)("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
+        log("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
         return
     ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]
     if ids:

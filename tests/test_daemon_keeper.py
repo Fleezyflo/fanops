@@ -94,7 +94,7 @@ def test_install_installs_keeper_plist_and_loads(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     uid = os.getuid()
 
-    res = daemon.install(cfg, interval=600, responder="inherit")
+    res = daemon.install(cfg, interval=600)
 
     kp = daemon.keeper_plist_path()
     assert kp.exists()

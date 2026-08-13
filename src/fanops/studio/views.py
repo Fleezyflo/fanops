@@ -1068,7 +1068,8 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         siblings = daemon.sibling_agents_status()
         from fanops.pipeline_run import run_status_line
         out = {**rep, "interval": interval,
-               "pending_gates": pending_gates, "siblings": siblings}
+               "pending_gates": pending_gates, "siblings": siblings,
+               "responder": daemon.resolve_responder(cfg)}
         run_line = run_status_line(cfg)
         if run_line != "run=idle":
             out["run_line"] = run_line
