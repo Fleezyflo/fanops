@@ -35,6 +35,7 @@
     "fanops.discover",
     "fanops.doctor",
     "fanops.errors",
+    "fanops.escalation",
     "fanops.fanops_account_stats",
     "fanops.fanops_hashtags",
     "fanops.frames",
@@ -145,7 +146,7 @@
     "fanops.vocals"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -181,6 +182,7 @@
     "fanops.discover": "S05_ingestion",
     "fanops.doctor": "S18_health_diag",
     "fanops.errors": "S01_foundation",
+    "fanops.escalation": null,
     "fanops.fanops_account_stats": "S13_reconcile_metrics",
     "fanops.fanops_hashtags": "S10_caption_hashtag",
     "fanops.frames": "S01_foundation",
@@ -293,8 +295,10 @@
   "totals": {
     "assigned": 137,
     "ghosts": 0,
-    "modules": 137,
-    "unassigned": 0
+    "modules": 138,
+    "unassigned": 1
   },
-  "unassigned_modules": []
+  "unassigned_modules": [
+    "fanops.escalation"
+  ]
 }
