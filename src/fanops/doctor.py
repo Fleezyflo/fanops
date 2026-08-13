@@ -11,6 +11,8 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
+from fanops.errors import fail_open
+from fanops.escalation import EscalationPosture, decide
 
 
 def _check(label: str, ok: bool, hint: str = "") -> dict:
@@ -52,8 +54,10 @@ def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
     try:
         active_ig = [a for a in Accounts.load(cfg).active() if Platform.instagram in a.platforms]
     except Exception as e:                                # corrupt/unreadable accounts.json -> fail CLOSED (unknown != pass)
-        logging.getLogger("fanops.doctor").debug("ig_user_id accounts read failed: %s", e)
-        return False, f"accounts.json unreadable -- cannot verify per-account ig_user_id ({str(e)[:120]}); fix it in the Studio Go-Live tab"
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            logging.getLogger("fanops.doctor").debug("ig_user_id accounts read failed: %s", e)
+            return False, f"accounts.json unreadable -- cannot verify per-account ig_user_id ({str(e)[:120]}); fix it in the Studio Go-Live tab"
+        raise
     own = {a.handle: ((a.ig_user_id or "").strip() or None) for a in active_ig}
     borrowers = [h for h, i in own.items() if i is None]
     borrow_bad = borrowers if len(active_ig) >= 2 else []   # a lone active IG on the global is fine; borrow only harms once >=2 share one id
@@ -107,7 +111,6 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
         from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import _freeze_for, _persist_cooldown
-    from fanops.log import get_logger
     now = datetime.now(timezone.utc)
     last_user, last_exc = "", None
     try:
@@ -120,9 +123,10 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
                     break
                 raise
             except Exception as e:                          # noqa: BLE001 — open raised platform error
-                last_exc = e
-                get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed", err=str(e))
-                break
+                if decide("observability", 0) is EscalationPosture.degrade:
+                    last_exc = e
+                    break
+                raise
             user = getattr(client, "_fanops_scrape_user", "") or ""
             try:
                 probe(client, "#hiphop")
@@ -130,13 +134,14 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
             except ScrapeUnavailable:
                 raise
             except Exception as e:                          # noqa: BLE001 — probe platform error
-                last_user, last_exc = user, e
-                get_logger(cfg)("doctor", "-", "hashtag_scrape_probe_failed",
-                                err=str(e), user=user[:40])
-                if not user:
-                    break
-                reason, delay_s = _freeze_for(e)
-                _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
+                if decide("observability", 0) is EscalationPosture.degrade:
+                    last_user, last_exc = user, e
+                    if not user:
+                        break
+                    reason, delay_s = _freeze_for(e)
+                    _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
+                    continue
+                raise
         return _check(lbl, False,
                       f"@{last_user}: {last_exc}" if last_user else str(last_exc))
     except ScrapeUnavailable as e:
@@ -153,9 +158,12 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
     from fanops.meta_graph import resolvable_meta_tokens, debug_token_expiry
     try:
         toks = resolvable_meta_tokens(cfg)
-    except Exception as exc:
-        logging.getLogger("fanops.doctor").debug("meta token enumeration failed: %s", exc)
-        toks = []                                        # never crash the report over enumeration
+    except Exception as e:
+        if decide("observability", 0) is EscalationPosture.degrade:
+            logging.getLogger("fanops.doctor").debug("meta token enumeration failed: %s", e)
+            toks = []                                    # never crash the report over enumeration
+        else:
+            raise
     if not toks:
         return None                                      # no Meta token to introspect -> check N/A
     now = int(datetime.now(timezone.utc).timestamp())
@@ -210,8 +218,10 @@ def _zernio_reach_check(cfg: Config, *, auth=None):
     except ZernioAuthError:
         return _check(lbl, False, "Zernio rejected the API key (401) — check ZERNIO_API_KEY (Studio Go-Live); see docs/POSTIZ_OPS.md.")
     except Exception as e:
-        logging.getLogger("fanops.doctor").debug("zernio reach probe failed: %s", e)
-        return _check(lbl, False, f"Zernio probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md.")
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            logging.getLogger("fanops.doctor").debug("zernio reach probe failed: %s", e)
+            return _check(lbl, False, f"Zernio probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md.")
+        raise
 
 
 _DAEMON_STALE_TICKS = 3                                    # heartbeat older than this many install intervals == dead pump (mirrors daemon.status)
@@ -234,23 +244,25 @@ def _daemon_liveness_check(cfg: Config) -> dict:
     from fanops import daemon
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
     lbl = "publish daemon alive + queue draining (heartbeat + past-due backlog)"
+    st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
     try:
         st = daemon.status(cfg, interval=interval)
-    except Exception as exc:
-        logging.getLogger("fanops.doctor").debug("daemon status read failed: %s", exc)
-        st = {"installed": False, "loaded": False, "verdict": "unknown", "heartbeat_age_s": None}
+    except Exception:
+        with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
+            raise
     if st.get("installed") and not st.get("loaded"):
         return _check(lbl, False, f"{st['verdict']} — reload with `fanops daemon install` then `fanops daemon status`")
     if st.get("exec_fail"):
         target = st["exec_fail"].get("target", "fanops")
         return _check(lbl, False, f"daemon cannot exec fanops ({target}) — fix the venv/symlink, then `fanops daemon install`")
+    age = None                                            # a read hiccup -> treat as no signal (fail-closed)
     try:
         age = st.get("heartbeat_age_s")
         if age is None:
             age = daemon._heartbeat_age_s(cfg)
-    except Exception as exc:
-        logging.getLogger("fanops.doctor").debug("daemon heartbeat age read failed: %s", exc)
-        age = None                                        # a read hiccup -> treat as no signal (fail-closed)
+    except Exception:
+        with fail_open("doctor.daemon heartbeat age read degrade:", log=logging.getLogger("fanops.doctor").debug):
+            raise
     # (b) past-due backlog — fail-open ledger read
     now = datetime.now(timezone.utc)
     backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
@@ -270,8 +282,11 @@ def _daemon_liveness_check(cfg: Config) -> dict:
             if due_age > grace:
                 backlog_n += 1; oldest_h = max(oldest_h, due_age / 3600.0)
     except Exception as e:
-        backlog_unknown = True
-        logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
+        if decide("observability", 0) is EscalationPosture.degrade:
+            logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
+            backlog_unknown = True
+        else:
+            raise
     # (a) heartbeat staleness / absence — mid-pass stage overrides stale heartbeat (shared with daemon.status)
     from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
     alive_mid, progress_line, snap = daemon_progress(cfg)
@@ -333,7 +348,10 @@ def _doctor_notes(cfg: Config) -> list[str]:
             notes.append(f"approval backlog: {aw} post(s) awaiting your approval in Review "
                          "(expected — nothing auto-publishes)")
     except Exception as e:
-        logging.getLogger("fanops.doctor").debug("approval-backlog note failed: %s", e)
+        if decide("observability", 0) is EscalationPosture.degrade:
+            notes.append(f"approval backlog: could not read ({type(e).__name__})")
+        else:
+            raise
     # FANOPS_POSTIZ_ONDEMAND is a registered bootstrap key; missing-script note is bring-up, not a publish gate.
     import os
     from pathlib import Path
@@ -347,8 +365,8 @@ def _doctor_notes(cfg: Config) -> list[str]:
 def _operational_sensor_checks(cfg: Config) -> list[dict]:
     """Operational sensors for live backlog. Progress-blocking classes (stale gates, sources awaiting
     answers, degraded/errored sources, parked re-opens) set ok=False so report_is_healthy / doctor exit
-    are NONZERO (MOL-960). Optional Layer A scrape cooldown stays warn-only (ok=True). Fail-open: any
-    read error logs a breadcrumb and drops that one sensor. No auto-approve, no mutation — pure reads."""
+    are NONZERO (MOL-960). Optional Layer A scrape cooldown stays warn-only (ok=True). Sensor read
+    failures decide(operator)→NONZERO with an unhealthy check (never empty→false-healthy). No mutation."""
     from datetime import datetime, timezone
     log = logging.getLogger("fanops.doctor")
     out: list[dict] = []
@@ -368,7 +386,12 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                                          f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
                                          f"stuck; check `fanops status` and that the daemon gates loop is running"})
     except Exception as e:
-        log.debug("pending-gate sensor failed: %s", e)
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            out.append({"label": "pending-gate sensor readable", "ok": False, "warn": True,
+                        "warn_hint": f"pending-gate sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
+                                     f"doctor cannot prove agent gates are clear"})
+        else:
+            raise
 
     # 2-4. ledger-derived backlog: sources awaiting a gate answer, degraded/errored sources, parked re-opens.
     try:
@@ -390,7 +413,12 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                         "warn_hint": f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
                                      f"release them in Studio Make"})
     except Exception as e:
-        log.debug("backlog sensor failed: %s", e)
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            out.append({"label": "source backlog sensor readable", "ok": False, "warn": True,
+                        "warn_hint": f"backlog sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
+                                     f"doctor cannot prove sources are unblocked"})
+        else:
+            raise
 
     # 5. hashtag-scrape cooldown — optional enrichment plane; WARN only (ok stays True). Surface WHY Layer A
     #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains.
@@ -403,8 +431,9 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             until = cool.get("until") or "?"
             out.append({"label": "hashtag Layer A not in cooldown", "ok": True, "warn": True,
                         "warn_hint": f"scrape frozen ({reason}) until {until} — {remedy}"})
-    except Exception as e:
-        log.debug("scrape-cooldown sensor failed: %s", e)
+    except Exception:
+        with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
+            raise
 
     return out
 
@@ -468,8 +497,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     try:
         problems = Accounts.load(cfg).validate()
     except Exception as e:                                # malformed accounts.json -> a check failure, not a crash
-        logging.getLogger("fanops.doctor").debug("accounts.json validate failed: %s", e)
-        problems = [str(e)[:160]]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            logging.getLogger("fanops.doctor").debug("accounts.json validate failed: %s", e)
+            problems = [str(e)[:160]]
+        else:
+            raise
     checks.append(_check("accounts.json valid (every active channel mapped to an id)", not problems,
                          "; ".join(problems) + " — add accounts + map each channel in the Studio Go-Live tab"))
     # personas.json valid — same MOL-79 surface as accounts: per-row skips promote via validate(),
@@ -477,8 +509,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     try:
         persona_problems = Personas.load(cfg).validate()
     except Exception as e:
-        logging.getLogger("fanops.doctor").debug("personas.json validate failed: %s", e)
-        persona_problems = [str(e)[:160]]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            logging.getLogger("fanops.doctor").debug("personas.json validate failed: %s", e)
+            persona_problems = [str(e)[:160]]
+        else:
+            raise
     checks.append(_check("personas.json valid (malformed rows skipped loud)", not persona_problems,
                          "; ".join(persona_problems) + " — fix the row in personas.json"))
     # ECC fix #14: read cutover state ONCE here and reuse in BOTH the postiz branch and the notes
@@ -507,10 +542,11 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     try:
         half_live = cfg.is_live and not cfg.live_route_exists
     except Exception as exc:
-        from fanops.log import get_logger     # a route-read hiccup: record it, and DO NOT present a silent healthy pass
-        get_logger(cfg)("doctor", "-", "half_live_error", err=str(exc)[:160])
-        half_live = False
-        half_live_err = str(exc)[:160]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            half_live = False
+            half_live_err = str(exc)[:160]
+        else:
+            raise
     if cfg.is_live:
         c = _check("live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
                    "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
@@ -638,8 +674,10 @@ def _accounts_problems(cfg: Config) -> list[str]:
     try:
         return Accounts.load(cfg).validate()
     except Exception as e:
-        logging.getLogger("fanops.doctor").debug("accounts problems read failed: %s", e)
-        return [str(e)[:160]]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            logging.getLogger("fanops.doctor").debug("accounts problems read failed: %s", e)
+            return [str(e)[:160]]
+        raise
 
 
 def setup_state(cfg: Config) -> str:
@@ -650,9 +688,12 @@ def setup_state(cfg: Config) -> str:
         return SetupState.CONFIGURED
     try:
         ready = bool(Accounts.load(cfg).live_ready_channels())
-    except Exception as exc:
-        logging.getLogger("fanops.doctor").debug("setup_state live_ready read failed: %s", exc)
-        ready = False
+    except Exception as e:
+        if decide("observability", 0) is EscalationPosture.degrade:
+            logging.getLogger("fanops.doctor").debug("setup_state live_ready read failed: %s", e)
+            ready = False
+        else:
+            raise
     if not ready:
         return SetupState.CONNECTED
     if not learning_validated(cfg):

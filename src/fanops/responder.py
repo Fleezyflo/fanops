@@ -6,7 +6,6 @@ the output, and writes the response. Each request is QUARANTINED (one bad gate l
 never halts the others — mirrors advance()'s per-unit quarantine). Gates are answered ONLY by the LLM:
 get_responder() always returns the WORKING llm responder (the no-op ManualResponder was retired)."""
 from __future__ import annotations
-import contextlib
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,7 +19,7 @@ from fanops.escalation import (
     ATTEMPT_CEILING as _GATE_DETERMINISTIC_MAX,
 )
 from fanops.gate_keys import gate_source_id as _gate_source_id
-from fanops.errors import ToolchainMissingError
+from fanops.errors import ToolchainMissingError, fail_open
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError, LlmToolchainError
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
@@ -180,7 +179,8 @@ class LlmResponder:
             return
         from fanops.ledger import Ledger
         saved = False
-        try:
+        # Secondary write after TERMINATE posture — fail_open protects ledger I/O only (policy §2.6).
+        with fail_open(f"responder.{kind}:{key} terminate secondary write degrade:"):
             with Ledger.transaction(cfg) as led:
                 sid = _gate_source_id(led, kind, key)
                 src = led.sources.get(sid) if sid else None
@@ -188,9 +188,6 @@ class LlmResponder:
                     led.set_source_state(sid, SourceState.error, error_reason=(
                         f"agent gate {kind} failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX}): {reason}"[:200]))
                     saved = True
-        except Exception as e:
-            with contextlib.suppress(Exception):
-                get_logger(cfg)("responder", f"{kind}:{key}", "terminate_failed", err=str(e)[:120])
         if saved:
             discard_gate(cfg, kind, key)      # H07: terminal moments gate must not linger pending
 
@@ -199,15 +196,13 @@ class LlmResponder:
         it stalls (master principle: no silent degradation). Best-effort + a breadcrumb; the gate stays pending
         (operator can shrink the source / re-request) but is now diagnosable."""
         from fanops.ledger import Ledger
-        try:
+        # Secondary write after REFUSE/degrade stamp — fail_open protects ledger I/O only (policy §2.6).
+        with fail_open(f"responder.{kind}:{key} mark_degraded secondary write degrade:"):
             with Ledger.transaction(cfg) as led:
                 sid = _gate_source_id(led, kind, key)
                 src = led.sources.get(sid) if sid else None
                 if src is not None:
                     led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
-        except Exception as e:              # best-effort: a load/save failure must not crash the responder pass
-            with contextlib.suppress(Exception):
-                get_logger(cfg)("responder", f"{kind}:{key}", "mark_degraded_failed", err=str(e)[:120])
 
     def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """Back-compat shim: wraps _mark_gate_degraded with the legacy context-limit prefix."""
