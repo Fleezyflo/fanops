@@ -4,7 +4,6 @@ import json
 import os
 import pytest
 from datetime import datetime, timedelta, timezone
-from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, SourceState, Moment, MomentState, Clip, ClipState,
