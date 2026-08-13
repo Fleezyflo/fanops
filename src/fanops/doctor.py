@@ -13,17 +13,25 @@ from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
 from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
-from fanops.health_model import Severity
 
 
-def _check(label: str, ok: bool = True, hint: str = "", *, severity: Severity | None = None) -> dict:
-    """Construct a doctor check. Severity is the public contract; ok is derived for migration."""
+def _check(label: str, ok: bool = True, hint: str = "", *, severity: str | None = None) -> dict:
+    """Construct a doctor check. Severity is the public contract; ok is derived for migration.
+
+    Severity is imported call-time so doctor→health_model stays lazy (layer DAG / ARCH-007).
+    Callers may pass a severity string ("warn"/"fail"/…) or a Severity enum member.
+    """
+    from fanops.health_model import Severity
     if severity is None:
-        severity = Severity.OK if ok else Severity.FAIL
-    derived_ok = severity not in (Severity.FAIL, Severity.UNKNOWN)
+        sev = Severity.OK if ok else Severity.FAIL
+    elif isinstance(severity, Severity):
+        sev = severity
+    else:
+        sev = Severity(severity)
+    derived_ok = sev not in (Severity.FAIL, Severity.UNKNOWN)
     # hint carries FAIL/UNKNOWN/WARN/INFO prose; OK keeps empty hint
-    out_hint = "" if severity is Severity.OK else hint
-    return {"label": label, "ok": derived_ok, "severity": severity.value, "hint": out_hint}
+    out_hint = "" if sev is Severity.OK else hint
+    return {"label": label, "ok": derived_ok, "severity": sev.value, "hint": out_hint}
 
 
 def _env_settings_check(cfg: Config) -> dict:
@@ -196,7 +204,7 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
         who = ", ".join(f"{h} (expires {_fmt(e)})" for h, e in sorted(soon, key=lambda x: x[1]))
         hint = ("Meta token expiring within %d days: %s — rotate it now (docs/META_CREDS_OPS.md) "
                 "before Graph verification + metrics go dark." % (_META_TOKEN_LEAD_DAYS, who))
-        return _check(lbl, severity=Severity.WARN, hint=hint)
+        return _check(lbl, severity="warn", hint=hint)
     return _check(lbl, True, "")
 
 
@@ -388,7 +396,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                 n_unknown = sum(1 for g in gates if g[0] is None)
                 out.append(_check(
                     "no stale agent gates (responder answering)",
-                    severity=Severity.UNKNOWN,
+                    severity="unknown",
                     hint=f"gate age unknown — {n_unknown} pending agent gate(s) missing readable "
                          f"opened_at; cannot prove freshness (not clean silence)"))
             else:
@@ -396,7 +404,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                 if age_s > _GATE_STALE_TICKS * interval:
                     out.append(_check(
                         "no stale agent gates (responder answering)",
-                        severity=Severity.FAIL,
+                        severity="fail",
                         hint=f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
                              f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
                              f"stuck; check `fanops status` and that the daemon gates loop is running"))
@@ -404,7 +412,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
         if decide("operator", 0) is EscalationPosture.nonzero:
             out.append(_check(
                 "pending-gate sensor readable",
-                severity=Severity.UNKNOWN,
+                severity="unknown",
                 hint=f"pending-gate sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
                      f"doctor cannot prove agent gates are clear"))
         else:
@@ -419,27 +427,27 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
         if bl.blocked_on_gates:
             out.append(_check(
                 "no sources awaiting gate answers",
-                severity=Severity.FAIL,
+                severity="fail",
                 hint=f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in "
                      f"Studio Gates or run `fanops status`"))
         if bl.recoverable:
             out.append(_check(
                 "no degraded/errored sources",
-                severity=Severity.FAIL,
+                severity="fail",
                 hint=f"{bl.recoverable} source(s) in error/moments-empty — Resume/Reset in "
                      f"Studio Make or run `fanops status`"))
         parked = sum(1 for src in led.sources.values() if src.meta.get("pending_reopen"))
         if parked:
             out.append(_check(
                 "no parked machine re-opens",
-                severity=Severity.FAIL,
+                severity="fail",
                 hint=f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
                      f"release them in Studio Make"))
     except Exception as e:
         if decide("operator", 0) is EscalationPosture.nonzero:
             out.append(_check(
                 "source backlog sensor readable",
-                severity=Severity.UNKNOWN,
+                severity="unknown",
                 hint=f"backlog sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
                      f"doctor cannot prove sources are unblocked"))
         else:
@@ -456,7 +464,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             until = cool.get("until") or "?"
             out.append(_check(
                 "hashtag Layer A not in cooldown",
-                severity=Severity.WARN,
+                severity="warn",
                 hint=f"scrape frozen ({reason}) until {until} — {remedy}"))
     except Exception:
         with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
@@ -501,7 +509,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         login_cmd = "cursor-agent login" if cli_bin == "cursor-agent" else "claude login"
         checks.append(_check(
             f"{cli_bin} on PATH",
-            severity=Severity.WARN,
+            severity="warn",
             hint=(f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
                   f"start failing with auth errors, run `{login_cmd}`")))
     else:

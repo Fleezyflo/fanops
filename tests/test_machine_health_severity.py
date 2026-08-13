@@ -162,3 +162,18 @@ def test_to_json_dict_includes_severity():
 def test_check_severity_helper():
     assert check_severity({"severity": "fail", "ok": False}) is Severity.FAIL
     assert check_severity({"ok": True, "warn": True}) is Severity.WARN  # legacy derive only
+
+
+def test_as_dict_deps_are_json_safe():
+    """doctor_report / as_dict must never embed raw DepHealth (json.dumps TypeError)."""
+    import json
+    rep = HealthReport(
+        checks=[_check("x", True)],
+        notes=[],
+        deps=[DepHealth("docker", True, "up")],
+    )
+    payload = rep.as_dict()
+    assert isinstance(payload["deps"][0], dict)
+    assert payload["deps"][0]["severity"] == "ok"
+    json.dumps(payload)  # must not raise
+

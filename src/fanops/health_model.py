@@ -43,6 +43,11 @@ class DepHealth:
         elif not isinstance(sev, Severity):
             object.__setattr__(self, "severity", Severity(sev))
 
+    def as_dict(self) -> dict:
+        """Plain-dict form for JSON / doctor_report — never leak raw DepHealth to consumers."""
+        return {"name": self.name, "ok": self.ok, "detail": self.detail,
+                "severity": self.severity.value}
+
 
 def check_severity(check: dict) -> Severity:
     """Read severity from a check dict. Production checks always carry it via doctor._check."""
@@ -80,10 +85,10 @@ class HealthReport:
     field_shape: dict | None = None
 
     def as_dict(self) -> dict:
-        """Backward-compatible dict (doctor_report consumers)."""
+        """Backward-compatible dict (doctor_report consumers). Deps are plain dicts (JSON-safe)."""
         out: dict = {"checks": self.checks, "notes": self.notes}
         if self.deps:
-            out["deps"] = self.deps
+            out["deps"] = [d.as_dict() for d in self.deps]
         if self.field_shape is not None:
             out["field_shape"] = self.field_shape
         return out
@@ -95,8 +100,7 @@ class HealthReport:
             "severity": overall_severity(self).value,
             "checks": self.checks,
             "notes": self.notes,
-            "deps": [{"name": d.name, "ok": d.ok, "detail": d.detail, "severity": d.severity.value}
-                     for d in self.deps],
+            "deps": [d.as_dict() for d in self.deps],
             "field_shape": self.field_shape,
         }
 
@@ -261,9 +265,10 @@ def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
         hint = f"Postiz probe error ({str(e)[:120]}); see docs/POSTIZ_OPS.md."
     if not hint:
         hint = "Postiz backend unreachable — its health-check is nginx-only and can lie; see docs/POSTIZ_OPS.md."
-    sev = Severity.OK if healthy else Severity.FAIL
-    return {"label": "Postiz backend reachable (real /integrations probe, not the nginx health-check)",
-            "ok": healthy, "severity": sev.value, "hint": "" if healthy else hint}
+    from fanops.doctor import _check
+    return _check(
+        "Postiz backend reachable (real /integrations probe, not the nginx health-check)",
+        healthy, hint)
 
 
 def daemon_liveness_check(cfg: Config) -> dict:
@@ -353,10 +358,10 @@ def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
             return None
         res = confirm_post_live(cfg, p, reported_username=p.account, get=get)
         ok = bool(res.get("confirmed"))
-        sev = Severity.OK if ok else Severity.FAIL
-        return {"label": "recent publish still live on platform (bounded sample)", "ok": ok,
-                "severity": sev.value,
-                "hint": "" if ok else "the most recent published post could not be confirmed live — check platform / creds"}
+        from fanops.doctor import _check
+        return _check(
+            "recent publish still live on platform (bounded sample)", ok,
+            "" if ok else "the most recent published post could not be confirmed live — check platform / creds")
     except Exception as exc:
         _log.warning("_bounded_live_confirm_check: live confirm failed (%s)", exc)
         return None
