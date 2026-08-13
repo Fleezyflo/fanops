@@ -1219,9 +1219,8 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
             if not any(s["awaiting"].values()):
                 break
-    # B2: if the loop ended with gates still awaiting, say so LOUDLY (a stuck responder used to
-    # exhaust the iterations and fall through silently). Exit stays 0 — a stuck gate is not a
-    # crash; the distinct stderr line + run.log event is what monitoring greps.
+    # B2 / MOL-960: gates still awaiting after converge → LOUD stderr + run.log; cmd_run maps this
+    # to exit 1 (intentional pause keeps awaiting={} so exit stays 0).
     if (note := _gates_blocked_note(s)):
         print(note, file=sys.stderr)
         get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
@@ -1774,7 +1773,9 @@ def _dispatch(cfg: Config, args) -> int:
             print(str(e), file=sys.stderr); return 1
         # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
         # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
-        _heartbeat(cfg, s); print(s); return 0
+        _heartbeat(cfg, s); print(s)
+        # MOL-960: stuck gates after converge → NONZERO; pause / clean converge → 0.
+        return 1 if _gates_blocked_note(s) else 0
     return 1
 
 if __name__ == "__main__":
