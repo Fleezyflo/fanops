@@ -1,9 +1,11 @@
-"""`fanops doctor` (Phase 3b) — a READ-ONLY first-run health screen. Composes the guards that
-already exist (Accounts.validate, the cutover-safety preflight, toolchain presence) into ONE
-operator view: PASS/FAIL per item with the exact next action, plus informational notes. It performs
-NOTHING — it cannot create platform accounts or obtain a poster API key (the irreducibly-manual setup
-steps), so usability for a brand-new operator is capped here by reality, not code; doctor just makes
-'what's left' legible instead of buried in the source."""
+"""`fanops doctor` (Phase 3b) — observe-only first-run health screen (`cp.observe`).
+
+Composes existing guards (Accounts.validate, cutover-safety preflight, toolchain presence) into ONE
+operator view: PASS/FAIL per item with the exact next action, plus informational notes. Does not
+create platform accounts or obtain poster API keys. Scrape probe (`_hashtag_scrape_check`) reports
+only — it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
+writes live in `learn_doctor` (`assay.dangerous`), not in this module.
+"""
 from __future__ import annotations
 import logging
 import shutil

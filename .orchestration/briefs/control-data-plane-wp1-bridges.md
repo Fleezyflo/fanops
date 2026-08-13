@@ -4,7 +4,7 @@
 
 Tags: `cp.config` · `cp.process` · `cp.observe` · `dp.execute` · `infra.lifecycle` · `assay.dangerous`.
 
-**OPEN seams (not CLOSED):** observe-mutate `doctor._hashtag_scrape_check` → `_persist_cooldown` (CPDP-03 OPEN until WP2; not a 7th tag); snapshot-write dual writers via `health.refresh_runtime_snapshots` (CPDP-02 OPEN); dual `ensure_up` bodies (CPDP-05 OPEN; WP3).
+**Post-WP2/WP3:** CPDP-03 CLOSED (doctor no persist/freeze); CPDP-05 CLOSED (sole `postiz_lifecycle.ensure_up`). Still OPEN: CPDP-02 write-on-read callers of `health.refresh_runtime_snapshots` (`do_golive_health`, `cli --loop`).
 
 ## Named bridges
 
@@ -17,12 +17,11 @@ Tags: `cp.config` · `cp.process` · `cp.observe` · `dp.execute` · `infra.life
 | `cli.cmd_cutover` | `assay.dangerous` | live assay |
 | `studio.golive.validate_learning` | `assay.dangerous` | live assay |
 | `learn_doctor.cmd_learn_doctor` | `assay.dangerous` | sidecar write |
-| `health.ensure_up` | `infra.lifecycle` | dual body OPEN; WP3 |
-| `postiz_lifecycle.ensure_up` | `infra.lifecycle` | dual body OPEN; WP3 |
+| `postiz_lifecycle.ensure_up` | `infra.lifecycle` | sole bring-up policy (WP3 CLOSED) |
 | `cli.cmd_doctor` | `cp.observe` | primary |
-| `doctor._hashtag_scrape_check` → `_persist_cooldown` | `cp.observe` | mutate-under-observe; CPDP-03 OPEN until WP2; not a 7th tag |
+| `doctor._hashtag_scrape_check` | `cp.observe` | report-only; CPDP-03 CLOSED |
 | `studio.app_routes_golive.do_golive_health` `/golive/health` | `cp.observe` | write-on-read via `health.refresh_runtime_snapshots` |
-| `health.refresh_runtime_snapshots` | (seam) | snapshot strip writer (`deps_health.json` / `daemon_strip.json` / `strip_metrics.json`); also `health.ensure_up` + `cli` `--loop` (WP0); dual writers OPEN CPDP-02 |
+| `health.refresh_runtime_snapshots` | (seam) | named strip writer; callers `do_golive_health` + `cli --loop` (CPDP-02 PARTIAL) |
 
 ## Remaining verbs (same six tags)
 
@@ -35,4 +34,4 @@ Tags: `cp.config` · `cp.process` · `cp.observe` · `dp.execute` · `infra.life
 | `infra.lifecycle` | `cli.cmd_up` |
 | `assay.dangerous` | cutover *; `validate_learning`; learn_doctor; canary * |
 
-No `planes.py` / `ownership.py` / tests. WP2 doctor freeze and WP3 collapse `ensure_up` are out of scope.
+No `planes.py` / `ownership.py`. WP2/WP3 product land is on this branch; this file is the bridge catalog.

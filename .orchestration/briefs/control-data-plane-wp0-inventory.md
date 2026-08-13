@@ -63,3 +63,17 @@ This WP freezes inventory only — **zero** src/tests edits; no mutation of `hea
 | `rg -n 'def ensure_up' src/fanops/{health,postiz_lifecycle}.py` | 0 (2 defs) |
 | `rg -n '_persist_cooldown' src/fanops/doctor.py` | 0 (import + call) |
 | `rg -n 'os.getenv(' src/fanops --glob '!config.py' --glob '!settings.py'` | 0 (doctor/daemon + scrape comment) |
+
+## Post-land update (WP2–WP5 on this branch)
+
+| ID | Now | Evidence |
+|---|---|---|
+| CPDP-03 | **CLOSED** | `doctor._hashtag_scrape_check` no longer calls `_persist_cooldown` / `_freeze_for` |
+| CPDP-05 | **CLOSED** | sole `FunctionDef ensure_up` = `postiz_lifecycle.ensure_up`; `health.ensure_up` deleted |
+| CPDP-06 | **PARTIAL** | publish still *requests* `postiz_lifecycle.ensure_up` (intentional thin call, not second policy) |
+| CPDP-11 | **CLOSED** | C8 purged; doctor/`learn_doctor` plane tags accurate |
+| CPDP-14 | **CLOSED** | AST ratchets in `test_doctor` / `test_health` / `test_postiz_lifecycle` |
+| CPDP-02 | **PARTIAL** | strip writer named; `/golive/health` + `cli --loop` still write-on-read callers |
+| CPDP-04 | **OPEN** | `learn_doctor` sidecar write remains (`assay.dangerous`) |
+
+`refresh_runtime_snapshots` callers now: `do_golive_health`, `cli` `--loop` only (no `health.ensure_up`).
