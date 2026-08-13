@@ -569,31 +569,17 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         else:                         hint = ""
         checks.append(_check("Postiz learning ready (key + channels mapped + cutover validated)", ready, hint))
 
-    # D15: live-route COHERENCE. FANOPS_LIVE=1 (is_live) but nothing actually routes live — a typo'd
-    # FANOPS_POSTER (W4 -> dryrun) with no live per-channel backend — is the HALF-LIVE state: the banner
-    # would say LIVE while every publish halts in `queued`. Flag it LOUD with the fix. A not-live config or
-    # a genuinely-live one (any live route) passes. Guarded so a bad accounts.json can't crash the report.
-    half_live_err = None
-    try:
-        half_live = cfg.is_live and not cfg.live_route_exists
-    except Exception as exc:
-        if decide("operator", 0) is EscalationPosture.nonzero:
-            half_live = True                                   # compute failure → not solid LIVE
-            half_live_err = str(exc)[:160]
-        else:
-            raise
+    # D15: live-route COHERENCE via health_model.half_live_state — ONE compute for doctor + UI (MOL-965 WP2).
+    from fanops.health_model import HALF_LIVE_CHECK_LABEL, half_live_state
+    hl = half_live_state(cfg)
     if cfg.is_live:
-        if half_live_err:
-            checks.append(_check(
-                "live route exists (FANOPS_LIVE=1 actually publishes)", False,
-                f"could not compute live-route coherence ({half_live_err}) — not confirmed LIVE; "
-                "re-run `fanops doctor` and check accounts.json"))
-        else:
-            checks.append(_check(
-                "live route exists (FANOPS_LIVE=1 actually publishes)", not half_live,
+        # Always emit the check from half_live_state — same hint strip/Go-Live project.
+        checks.append(_check(
+            HALF_LIVE_CHECK_LABEL, not hl.is_half_live,
+            hl.hint or (
                 "LIVE flag set but nothing routes live — FANOPS_POSTER is a legacy bridge, not "
                 "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
-                "`fanops` back to dryrun. Every publish stays stuck in `queued` until then."))
+                "`fanops` back to dryrun. Every publish stays stuck in `queued` until then.")))
 
     # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
     # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-

@@ -668,6 +668,7 @@
         "fanops.daemon",
         "fanops.doctor",
         "fanops.errors",
+        "fanops.escalation",
         "fanops.health",
         "fanops.learn_doctor",
         "fanops.ledger",
@@ -2997,6 +2998,14 @@
       "from_level": 1,
       "jump": 2,
       "same_scc": false,
+      "to": "fanops.escalation",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
       "to": "fanops.meta_graph",
       "to_level": 3
     },
@@ -3698,10 +3707,10 @@
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 591,
-    "lazy_edges": 365,
+    "lazy_edges": 366,
     "lazy_edges_lateral": 42,
-    "lazy_edges_strictly_upward": 72,
-    "lazy_edges_to_equal_or_higher_level": 114,
+    "lazy_edges_strictly_upward": 73,
+    "lazy_edges_to_equal_or_higher_level": 115,
     "modules": 138,
     "optional_edges": 0,
     "typing_only_edges": 7

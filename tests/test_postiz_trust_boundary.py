@@ -366,9 +366,11 @@ def test_half_live_compute_failure_is_not_solid_live(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setattr(type(cfg), "live_route_exists",
                         property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
-    half, hint = views._half_live_state(cfg)
-    assert half is True
-    assert "not treating as solid LIVE" in hint
+    from fanops.health_model import half_live_state
+    hl = half_live_state(cfg)
+    assert hl.is_half_live is True
+    assert "not treating as solid LIVE" in hl.hint
+    assert "not confirmed" in hl.hint.lower()
 
 
 def test_postiz_banner_unknown_on_stale_snapshot(tmp_path, monkeypatch, mocker):

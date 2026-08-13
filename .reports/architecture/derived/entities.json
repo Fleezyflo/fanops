@@ -108,7 +108,7 @@
     ],
     "fanops.health_model": [
       {
-        "line": 12,
+        "line": 17,
         "members": [
           "FAIL",
           "INFO",

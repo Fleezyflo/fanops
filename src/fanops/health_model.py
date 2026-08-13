@@ -3,10 +3,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import NamedTuple
 
 from fanops.config import Config
 
 _log = logging.getLogger("fanops.health")
+
+# Locked check labels — projectors match these; doctor emits them (MOL-965 WP2).
+HALF_LIVE_CHECK_LABEL = "live route exists (FANOPS_LIVE=1 actually publishes)"
+DAEMON_CHECK_LABEL_NEEDLE = "publish daemon alive"
 
 
 class Severity(str, Enum):
@@ -150,12 +155,7 @@ def render_prometheus_metrics(cfg: Config) -> str:
         degraded = True
     try:
         rep = build_health_report(cfg, led=led)
-        for d in rep.deps:
-            lines.append(_prom_gauge("fanops_dep_up", 1 if d.ok else 0, {"dep": d.name}))
-        age, stale, _iv = heartbeat_stale(cfg)
-        if age is not None:
-            lines.append(_prom_gauge("fanops_daemon_heartbeat_age_seconds", age))
-        lines.append(_prom_gauge("fanops_daemon_heartbeat_stale", 1 if stale else 0))
+        lines.extend(project_prometheus_health(rep, heartbeat=heartbeat_stale(cfg)))
     except Exception as exc:
         _log.warning("health read failed in /metrics (%s); degrading health gauges", exc)
         degraded = True
@@ -180,6 +180,152 @@ def report_is_healthy(report: HealthReport) -> bool:
     UNKNOWN on required signals ranks with FAIL → unhealthy. Never maps UNKNOWN → healthy.
     """
     return overall_severity(report) in (Severity.OK, Severity.INFO, Severity.WARN)
+
+
+# ── MOL-965 WP2: one half-live compute + pure projectors of HealthReport ──────────────
+
+
+class HalfLiveState(NamedTuple):
+    """FANOPS_LIVE=1 but nothing routes live (or compute failed → not solid LIVE)."""
+    is_half_live: bool
+    hint: str
+    compute_error: str | None = None
+
+
+def half_live_state(cfg: Config) -> HalfLiveState:
+    """THE half-live compute — doctor check assembly + strip/Go-Live share this (MOL-965 WP2).
+
+    Never fails open to solid LIVE on compute error. Escalation posture decides raise vs surface.
+    """
+    try:
+        if not cfg.is_live:
+            return HalfLiveState(False, "", None)
+        if cfg.live_route_exists:
+            return HalfLiveState(False, "", None)
+        raw = cfg.poster_backend_raw or "(unset)"
+        hint = (f"LIVE flag is set but nothing routes live — FANOPS_POSTER={raw} is ignored "
+                "(it's a legacy bridge, not the switch). Check .env / the Go-Live tab: route a "
+                "channel to a provider with creds, or flip back to dryrun.")
+        return HalfLiveState(True, hint, None)
+    except Exception as exc:
+        from fanops.escalation import EscalationPosture, decide
+        err = str(exc)[:160]
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            return HalfLiveState(
+                True,
+                f"could not compute live-route coherence ({err}) — not confirmed LIVE; "
+                f"not treating as solid LIVE",
+                err,
+            )
+        raise
+
+
+def project_half_live(report: HealthReport) -> tuple[bool, str]:
+    """Pure: half-live badge from the live-route check in HealthReport (no re-probe)."""
+    for c in report.checks:
+        if c.get("label") == HALF_LIVE_CHECK_LABEL or "live route exists" in (c.get("label") or ""):
+            if check_severity(c) in (Severity.FAIL, Severity.UNKNOWN) or not c.get("ok", True):
+                return True, c.get("hint") or ""
+            return False, ""
+    return False, ""
+
+
+def project_daemon_slice(report: HealthReport) -> dict | None:
+    """Pure: pump/daemon check slice from HealthReport."""
+    for c in report.checks:
+        if DAEMON_CHECK_LABEL_NEEDLE in (c.get("label") or ""):
+            return {
+                "label": c["label"],
+                "ok": bool(c.get("ok", True)),
+                "severity": check_severity(c).value,
+                "hint": c.get("hint") or "",
+            }
+    return None
+
+
+def project_golive_readiness(report: HealthReport) -> dict:
+    """Pure: Go-Live readiness fields from one HealthReport (no second doctor assembly)."""
+    half, hint = project_half_live(report)
+    return {
+        "checks": report.checks,
+        "notes": report.notes,
+        "half_live": half,
+        "half_live_hint": hint,
+        "severity": overall_severity(report),
+        "healthy": report_is_healthy(report),
+        "deps": report.deps,
+        "daemon_slice": project_daemon_slice(report),
+    }
+
+
+def project_strip_health(report: HealthReport) -> dict:
+    """Pure: Home-strip health badges from HealthReport."""
+    half, hint = project_half_live(report)
+    return {
+        "half_live": half,
+        "half_live_hint": hint,
+        "severity": overall_severity(report).value,
+        "healthy": report_is_healthy(report),
+        "daemon_slice": project_daemon_slice(report),
+    }
+
+
+def project_daemon_strip(
+    snap: dict,
+    *,
+    age: float | None,
+    stale: bool,
+    pending_gates=None,
+    run_line: str | None = None,
+) -> dict:
+    """Pure: Home daemon partial from snapshot + heartbeat overlay (no re-probe of launchd)."""
+    out = dict(snap)
+    out["pending_gates"] = pending_gates
+    out["heartbeat_age_s"] = age
+    if out.get("loaded"):
+        if age is None:
+            out["verdict"] = "loaded but no heartbeat yet"
+        elif stale:
+            out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
+        else:
+            out["verdict"] = "alive"
+    if run_line and run_line != "run=idle":
+        out["run_line"] = run_line
+    return out
+
+
+def project_deps_from_rows(rows: list) -> list[DepHealth]:
+    """Pure: snapshot / report dep rows → DepHealth list for Go-Live pills."""
+    out: list[DepHealth] = []
+    for d in rows or []:
+        if isinstance(d, DepHealth):
+            out.append(d)
+            continue
+        if not isinstance(d, dict):
+            continue
+        out.append(DepHealth(
+            name=d.get("name") or "",
+            ok=bool(d.get("ok")),
+            detail=d.get("detail") or "",
+            severity=d.get("severity"),
+        ))
+    return out
+
+
+def project_prometheus_health(
+    report: HealthReport,
+    *,
+    heartbeat: tuple[float | None, bool, int],
+) -> list[str]:
+    """Pure: Prometheus gauge lines from HealthReport + shared heartbeat_stale triple."""
+    lines: list[str] = []
+    for d in report.deps:
+        lines.append(_prom_gauge("fanops_dep_up", 1 if d.ok else 0, {"dep": d.name}))
+    age, stale, _iv = heartbeat
+    if age is not None:
+        lines.append(_prom_gauge("fanops_daemon_heartbeat_age_seconds", age))
+    lines.append(_prom_gauge("fanops_daemon_heartbeat_stale", 1 if stale else 0))
+    return lines
 
 
 def _docker_dep() -> DepHealth:

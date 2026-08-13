@@ -689,7 +689,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 201,
+      "line": 196,
       "methods": [
         "GET"
       ],
@@ -755,7 +755,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 196,
+      "line": 191,
       "methods": [
         "GET"
       ],
@@ -799,7 +799,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 240,
+      "line": 235,
       "methods": [
         "POST"
       ],
@@ -854,7 +854,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 206,
+      "line": 201,
       "methods": [
         "GET"
       ],
@@ -865,7 +865,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 233,
+      "line": 228,
       "methods": [
         "POST"
       ],
@@ -887,7 +887,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 211,
+      "line": 206,
       "methods": [
         "POST"
       ],
@@ -942,7 +942,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 244,
+      "line": 239,
       "methods": [
         "POST"
       ],
