@@ -189,12 +189,30 @@ def test_ancient_checked_at_is_stale_not_fresh(tmp_path, monkeypatch):
 
 def test_refresh_runtime_snapshots_is_named_strip_writer():
     """CPDP-WP4: strip writer role is health.refresh_runtime_snapshots (FunctionDef exists).
-    Callers that MAY REMAIN (do not retarget): studio.app_routes_golive.do_golive_health; cli --loop."""
+    Sole Call site: cli --loop (observe/GET paths must not Call it)."""
     import ast
     from pathlib import Path
     tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "health.py").read_text())
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     assert "refresh_runtime_snapshots" in names
+
+
+def test_only_cli_calls_refresh_runtime_snapshots():
+    """CPDP-02: the only src/fanops Call of refresh_runtime_snapshots is cli.py (pump)."""
+    import ast
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "src" / "fanops"
+    hits = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            cname = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+            if cname == "refresh_runtime_snapshots":
+                hits.append(str(path.relative_to(root)))
+    assert set(hits) == {"cli.py"}, hits
 
 
 def test_snapshot_readers_never_call_refresh_write_or_probe():
@@ -212,6 +230,7 @@ def test_snapshot_readers_never_call_refresh_write_or_probe():
         ("health_model.py", "deps_from_snapshot"),
         ("health_model.py", "strip_metrics_freshness_check"),
         ("studio/views_common.py", "postiz_health_for_banner"),
+        ("studio/app_routes_golive.py", "do_golive_health"),
     )
     banned = {
         "refresh_runtime_snapshots", "refresh_dep_snapshot", "refresh_daemon_strip_snapshot",
