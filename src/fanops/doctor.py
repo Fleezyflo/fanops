@@ -345,17 +345,15 @@ def _doctor_notes(cfg: Config) -> list[str]:
 
 
 def _operational_sensor_checks(cfg: Config) -> list[dict]:
-    """WARN-tier operational sensors. These are NORMAL running states, not setup gaps, so every one keeps
-    ok=True (never flips the doctor exit code, never blocks go-live) and rides the `warn`/`warn_hint`
-    channel. They surface a live backlog the operator would otherwise not see: a stale pending agent-gate,
-    sources awaiting a gate answer, degraded/errored sources, parked machine re-opens, and an active
-    hashtag-scrape cooldown (with the honest reason + remedy). Fail-open: any read error logs a breadcrumb
-    and drops that one sensor rather than crashing the report. No auto-approve, no mutation — pure reads."""
+    """Operational sensors for live backlog. Progress-blocking classes (stale gates, sources awaiting
+    answers, degraded/errored sources, parked re-opens) set ok=False so report_is_healthy / doctor exit
+    are NONZERO (MOL-960). Optional Layer A scrape cooldown stays warn-only (ok=True). Fail-open: any
+    read error logs a breadcrumb and drops that one sensor. No auto-approve, no mutation — pure reads."""
     from datetime import datetime, timezone
     log = logging.getLogger("fanops.doctor")
     out: list[dict] = []
 
-    # 1. pending agent-gates — WARN only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
+    # 1. pending agent-gates — surface only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
     #    pending gate is normal transient work the responder is clearing, so it is not surfaced.
     try:
         from fanops import pipeline_status, daemon
@@ -365,7 +363,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_mtime) if oldest_mtime else 0.0
             interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
             if oldest_mtime and age_s > _GATE_STALE_TICKS * interval:
-                out.append({"label": "no stale agent gates (responder answering)", "ok": True, "warn": True,
+                out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
                             "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
                                          f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
                                          f"stuck; check `fanops status` and that the daemon gates loop is running"})
@@ -379,24 +377,23 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
         led = Ledger.load(cfg)
         bl = source_backlog(led, cfg)
         if bl.blocked_on_gates:
-            out.append({"label": "no sources awaiting gate answers", "ok": True, "warn": True,
+            out.append({"label": "no sources awaiting gate answers", "ok": False, "warn": True,
                         "warn_hint": f"{bl.blocked_on_gates} source(s) awaiting gate answer(s) — answer in "
                                      f"Studio Gates or run `fanops status`"})
         if bl.recoverable:
-            out.append({"label": "no degraded/errored sources", "ok": True, "warn": True,
+            out.append({"label": "no degraded/errored sources", "ok": False, "warn": True,
                         "warn_hint": f"{bl.recoverable} source(s) in error/moments-empty — Resume/Reset in "
                                      f"Studio Make or run `fanops status`"})
         parked = sum(1 for src in led.sources.values() if src.meta.get("pending_reopen"))
         if parked:
-            out.append({"label": "no parked machine re-opens", "ok": True, "warn": True,
+            out.append({"label": "no parked machine re-opens", "ok": False, "warn": True,
                         "warn_hint": f"{parked} source(s) hold a parked amplify re-open (FANOPS_QUEUE_GATE) — "
                                      f"release them in Studio Make"})
     except Exception as e:
         log.debug("backlog sensor failed: %s", e)
 
-    # 5. hashtag-scrape cooldown — surface WHY Layer A is frozen (login_required / checkpoint / throttle /
-    #    budget) with the honest remedy from _OUTAGE_REMEDY. Read-only (reads the cooldown blob); WARN only
-    #    when NO healthy peer remains (scrape is actually blocked, not one account merely resting).
+    # 5. hashtag-scrape cooldown — optional enrichment plane; WARN only (ok stays True). Surface WHY Layer A
+    #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains.
     try:
         from fanops.fanops_hashtags import _read_active_cooldown, _OUTAGE_REMEDY
         cool = _read_active_cooldown(cfg, datetime.now(timezone.utc))
@@ -580,9 +577,8 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # heartbeat). The past-due gate mirrors the pump's own due-check (timeutil.is_due_or_past).
     dchk = _daemon_liveness_check(cfg)
     checks.append(dchk)
-    # Operational WARN-tier sensors (never FAIL — normal running states, not setup gaps): stale pending
-    # gates, sources awaiting a gate answer, degraded/errored sources, parked machine re-opens, hashtag
-    # scrape cooldown. These make a live backlog legible without blocking the exit code or go-live.
+    # Operational sensors: progress-blocking backlog → ok=False (doctor exit NONZERO); Layer A cooldown
+    # stays warn-only. See _operational_sensor_checks.
     checks.extend(_operational_sensor_checks(cfg))
     checks.extend(_sibling_launchd_checks())
     schk = _studio_resident_check()

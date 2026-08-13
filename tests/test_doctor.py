@@ -727,8 +727,8 @@ def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypat
 
 
 def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):
-    """blocked_on_gates, degraded/errored sources, and parked machine re-opens each surface as a WARN-tier
-    sensor — visible without blocking (ok stays True on every one, never a FAIL)."""
+    """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as progress-blocking
+    sensors (ok=False + warn) so report_is_healthy / doctor exit are NONZERO (MOL-960)."""
     from fanops import pipeline_status
     from fanops.pipeline_status import SourceBacklog
     cfg = Config(root=tmp_path)
@@ -744,12 +744,12 @@ def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeyp
     assert labels["no sources awaiting gate answers"]["warn"] is True
     assert labels["no degraded/errored sources"]["warn"] is True
     assert labels["no parked machine re-opens"]["warn"] is True
-    assert all(c["ok"] is True for c in checks)              # operational sensors NEVER FAIL
+    assert all(c["ok"] is False for c in checks)             # progress-blocking → unhealthy
 
 
 def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
-    """A pending agent-gate older than _GATE_STALE_TICKS ticks WARNs (the LLM responder may be stuck); a
-    fresh gate would not. Still ok=True — a backlog is not a setup failure."""
+    """A pending agent-gate older than _GATE_STALE_TICKS ticks is progress-blocking (ok=False + warn);
+    a fresh gate would not surface. MOL-960: doctor exit must not stay green on a stuck responder."""
     from datetime import datetime, timezone
     from fanops import pipeline_status, daemon
     cfg = Config(root=tmp_path)
@@ -759,7 +759,7 @@ def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.ledger.Ledger.load",
                         classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
-    assert gate is not None and gate["ok"] is True and gate.get("warn") is True
+    assert gate is not None and gate["ok"] is False and gate.get("warn") is True
 
 
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):

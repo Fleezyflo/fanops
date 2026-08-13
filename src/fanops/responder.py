@@ -14,7 +14,11 @@ from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
-from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, bump_attempts, discard_gate
+from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, discard_gate
+from fanops.escalation import (
+    EscalationPosture, decide, record_attempt, clear_attempts as esc_clear_attempts,
+    ATTEMPT_CEILING as _GATE_DETERMINISTIC_MAX,
+)
 from fanops.gate_keys import gate_source_id as _gate_source_id
 from fanops.errors import ToolchainMissingError
 from fanops.llm import claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError, LlmToolchainError
@@ -50,7 +54,6 @@ def screen_model_text(obj):
 _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
 _VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
-_GATE_DETERMINISTIC_MAX = 3   # MOL-235: after N same-gate deterministic failures, escalate source to error
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
@@ -120,9 +123,10 @@ class LlmResponder:
             write_response(cfg, kind, key, obj.model_dump_json(indent=2))   # ATOMIC (audit): no torn-read window for a concurrent reader
             clear_attempts(cfg, kind, key)    # MOL-236: success resets the per-gate attempt counter
             return True
-        except LlmContextLimitError as e:   # AGENT-2: a too-big payload is a LABELLED degraded state, never an
-            log("responder", f"{kind}:{key}", "context_limit", err=str(e)[:160])   # infinite-pending wedge
-            self._mark_context_limit(cfg, kind, key, str(e)[:160])
+        except LlmContextLimitError as e:   # MOL-960: context-limit burns shared attempts (not infinite-pending)
+            log("responder", f"{kind}:{key}", "context_limit", err=str(e)[:160])
+            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} over context limit: {str(e)[:160]}", log,
+                                       failure_class="context_limit")
             return False
         except ValidationError as e:        # present-but-invalid: log "invalid", gate stays pending
             log("responder", f"{kind}:{key}", "invalid", err=str(e)[:160])
@@ -133,19 +137,20 @@ class LlmResponder:
         except (LlmToolchainError, ToolchainMissingError) as e:
             log("responder", f"{kind}:{key}", "toolchain_error", err=str(e)[:160])
             self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} toolchain error: {str(e)[:160]}", log)
-        except Exception as e:              # transient model/CLI failure: log, leave pending
+        except Exception as e:              # MOL-960: repeated generic failures burn the same attempt ceiling
             get_logger(cfg)("responder", f"{kind}:{key}", "error", err=str(e)[:160])
+            self._on_deterministic_fail(cfg, kind, key, f"agent gate {kind} error: {str(e)[:160]}", log,
+                                       failure_class="generic")
         return False
 
-    def _on_deterministic_fail(self, cfg: Config, kind: str, key: str, reason: str, log) -> None:
-        """MOL-235: stamp degraded AND burn the per-gate deterministic-attempt ceiling. On the Nth failure,
-        promote the owning source to SourceState.error so a permanently-broken gate lands in status/digest
-        instead of retrying forever. Transient failures never reach here."""
+    def _on_deterministic_fail(self, cfg: Config, kind: str, key: str, reason: str, log,
+                               *, failure_class: str = "deterministic") -> None:
+        """Stamp degraded AND burn shared attempts via fanops.escalation. At ceiling → terminal matrix."""
         self._mark_gate_degraded(cfg, kind, key, reason)
-        n = bump_attempts(cfg, kind, key)
-        if n >= _GATE_DETERMINISTIC_MAX:
+        n = record_attempt(cfg, kind, key)
+        if decide(failure_class, n) is EscalationPosture.terminate:
             self._terminate_gate_source(cfg, kind, key, reason)
-            clear_attempts(cfg, kind, key)
+            esc_clear_attempts(cfg, kind, key)
 
     def _terminate_gate_source(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """MOL-235 ceiling: moments gate -> SourceState.error (fail-closed). Enrichment gates
