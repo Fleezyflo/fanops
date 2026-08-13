@@ -94,6 +94,18 @@
         "name": "StrategyState"
       }
     ],
+    "fanops.health": [
+      {
+        "line": 27,
+        "members": [
+          "FRESH",
+          "MISSING",
+          "STALE",
+          "UNREADABLE"
+        ],
+        "name": "SnapshotFreshness"
+      }
+    ],
     "fanops.models": [
       {
         "line": 61,

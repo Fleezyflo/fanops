@@ -171,11 +171,11 @@
     "fanops.responder": [
       {
         "call": "Ledger.transaction",
-        "line": 184
+        "line": 186
       },
       {
         "call": "Ledger.transaction",
-        "line": 201
+        "line": 203
       }
     ],
     "fanops.studio.actions": [
@@ -681,15 +681,15 @@
     "fanops.health": [
       {
         "call": "subprocess.run",
-        "line": 28
+        "line": 43
       },
       {
         "call": "subprocess.run",
-        "line": 60
+        "line": 70
       },
       {
         "call": "subprocess.run",
-        "line": 73
+        "line": 82
       }
     ],
     "fanops.health_model": [

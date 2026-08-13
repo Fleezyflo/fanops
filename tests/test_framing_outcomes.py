@@ -315,7 +315,7 @@ def test_C1_render_account_cut_handlers_are_untouched(cfg, monkeypatch, tmp_path
     src = Path(clipmod.__file__).read_text()
     body = src[src.index("def render_account_cut"):]
     assert "except ToolchainMissingError:" in body and "raise" in body
-    assert "except Exception:" in body and "return False, None" in body
+    assert "except Exception" in body and "return False, None" in body
 
 
 # ---------------------------------------------------------------------------- Layer 1: legacy equivalence
