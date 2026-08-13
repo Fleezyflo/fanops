@@ -16,7 +16,7 @@ hardcoded total rots; the `FANOPS_*` name-set here is instead enforced against t
 | `FANOPS_POSTIZ_ONDEMAND` | `$HOME/postiz-selfhost/postiz-ondemand.sh` | Path override for `fanops up` Postiz on-demand script. | shell |
 | `FANOPS_STUDIO_GENERATION` | (daemon) | Written by `daemon.install_studio` into the Studio plist; Studio reads at import. Never set in `.env`. | process |
 
-Because `FANOPS_ROOT` is shell-only, an interactive shell that never exported it silently roots at `cwd` — a different ledger than the daemon (pinned via its plist `WorkingDirectory`). Any `fanops` CLI command now prints a one-line `WARN:` to stderr when it falls back to `cwd` while an installed daemon is pinned elsewhere (`daemon.root_divergence`); `fanops daemon status` also shows both roots. Export `FANOPS_ROOT` (or `cd` to the workspace) to silence it.
+Because `FANOPS_ROOT` is shell-only, an interactive shell that never exported it silently roots at `cwd` — a different ledger than the daemon (pinned via its plist `WorkingDirectory`). Any `fanops` CLI command other than `fanops daemon status` exits 2 with an `ERROR:` on stderr when it falls back to `cwd` while an installed daemon is pinned elsewhere (`daemon.root_divergence`); `daemon status` still runs and shows both roots. Export `FANOPS_ROOT` (or `cd` to the workspace) to clear it.
 
 Hand-editing `.env` while a long-lived process runs requires restart; Studio go-live/autopilot dual-writes (`os.environ` + `.env`) remain live without restart.
 

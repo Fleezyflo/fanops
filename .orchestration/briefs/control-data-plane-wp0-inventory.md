@@ -18,7 +18,7 @@
 | CPDP-05 | **CLOSED** | Sole `def ensure_up` = `postiz_lifecycle.ensure_up` (`#972`) |
 | CPDP-06 | **KEEP** | Publish/reconcile/studio still *call* `ensure_up` — intentional on-demand local stack |
 | CPDP-07 | **OPEN** | Studio CP→DP verbs (`kick_prepare`, ingest/prepare/advance/pull, `publish_now`, `validate_learning`) — catalogued, not ownership-fixed |
-| CPDP-08 | **OPEN** | `daemon.root_divergence`; `FANOPS_ROOT` shell-only |
+| CPDP-08 | **CLOSED** | `cli.main` fail-closed on `root_divergence` (exit 2) except `daemon status`; `FANOPS_ROOT` shell-only unchanged |
 | CPDP-09 | **OPEN** | Studio Go-Live dual-write vs daemon per-tick dotenv / one-shot CLI |
 | CPDP-10 | **OPEN** | `health_model.daemon_liveness_check` ↔ `doctor._daemon_liveness_check` alias/dual path |
 | CPDP-11 | **CLOSED** | C8 folklore purged (`#972`) |
