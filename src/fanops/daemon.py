@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib, json, logging, os, plistlib, re, shutil, socket, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
-from fanops.config import Config, env_bool
+from fanops.config import Config
 from fanops.errors import ToolchainMissingError
 
 _log = logging.getLogger(__name__)
@@ -362,9 +362,9 @@ def ensure(cfg: Config) -> dict:
     # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
     # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
     # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
-    # env_bool (default ON): off-words ("0"/"false"/"no"/"off") disable; a typo keeps the default ON
+    # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
-    if env_bool(os.getenv("FANOPS_AUTO_ADOPT"), default=True):
+    if cfg.auto_adopt:
         from fanops.errors import fail_open
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on

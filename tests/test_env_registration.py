@@ -15,7 +15,7 @@ from pydantic import ValidationError
 import tests.conftest as conftest_mod
 from fanops import config_introspect
 from fanops.settings import (BOOL_ENV_FIELDS, BoolEnv, BoolFlag, EnvVar, OPERATOR_FLAGS,
-                             STUDIO_SETTABLE, Settings, env_registry)
+                             DEPRECATED, STUDIO_SETTABLE, Settings, env_registry)
 from fanops.studio import golive
 from fanops.studio.actions import ActionResult
 
@@ -91,7 +91,9 @@ def test_negative_control_the_config_surface_has_no_row_for_the_unregistered_nam
 # ── each consumer IS the projection (not a copy that happens to agree today) ───────────────────────
 def test_config_introspect_reads_the_derived_set_not_a_local_copy():
     assert config_introspect.STUDIO_SETTABLE is STUDIO_SETTABLE
+    assert config_introspect.DEPRECATED is DEPRECATED
     assert not hasattr(config_introspect, "_STUDIO_SETTABLE")
+    assert not hasattr(config_introspect, "_DEPRECATED")
 
 
 def test_config_rows_studio_column_is_the_derived_set(tmp_path):
@@ -180,5 +182,27 @@ def test_every_operator_flag_is_a_registered_bool_and_studio_settable():
 def test_the_marker_defaults_to_registering_nothing():
     """`EnvVar()` opts INTO nothing: a field that carries the marker but sets no facts is not a bool,
     not studio-settable, not an operator flag. Widening is always an explicit act."""
-    assert EnvVar() == EnvVar(bool_word=False, studio=False, operator_flag=False)
+    assert EnvVar() == EnvVar(bool_word=False, studio=False, operator_flag=False,
+                             deprecated=False, kind="env", dynamic=False)
     assert BoolEnv is not BoolFlag
+
+
+def test_vestigials_are_deprecated_non_studio():
+    assert {"FANOPS_RESPONDER", "ANTHROPIC_API_KEY"} <= DEPRECATED
+    assert "FANOPS_RESPONDER" not in STUDIO_SETTABLE
+    assert "ANTHROPIC_API_KEY" not in STUDIO_SETTABLE
+
+
+def test_infra_keys_are_registered_bootstrap_or_process():
+    reg = env_registry()
+    assert reg["FANOPS_ROOT"].kind == "bootstrap"
+    assert reg["FANOPS_POSTIZ_ONDEMAND"].kind == "bootstrap"
+    assert reg["FANOPS_STUDIO_GENERATION"].kind == "process"
+    assert {"FANOPS_ROOT", "FANOPS_POSTIZ_ONDEMAND", "FANOPS_STUDIO_GENERATION"}.isdisjoint(STUDIO_SETTABLE)
+
+
+def test_secret_dynamic_families_are_marked_on_the_parent():
+    reg = env_registry()
+    assert reg["META_GRAPH_TOKEN"].dynamic and reg["META_GRAPH_TOKEN"].studio
+    assert reg["FANOPS_IG_SCRAPE_PASSWORD"].dynamic
+    assert not reg["FANOPS_IG_SCRAPE_PASSWORD"].studio

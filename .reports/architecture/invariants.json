@@ -109,12 +109,12 @@
     },
     {
       "id": "INV-05",
-      "claim": "Settings is a typed env boundary constructed per Config()",
-      "source": "settings.py:1, settings.py:142",
-      "verdict": "FALSE",
+      "claim": "Config is the live getenv facade; Settings is doctor / fanops config strict evaluation of the same declarations",
+      "source": "settings.py Settings docstring, config.py Config",
+      "verdict": "VERIFIED",
       "class": "documentation_error",
-      "evidence": ["config.py:144", "settings.py:374", "doctor.py:27", "config_introspect.py:11", "accounts.py:13"],
-      "note": "Config.__init__ never constructs a Settings. All 74 os.getenv calls in config.py read the env directly, uncached, per access. Settings.runtime_load — whose docstring makes the claim — has ZERO callers. Settings' only consumers: doctor (strict validation), config_introspect (docs), accounts (a constant import).",
+      "evidence": ["config.py", "settings.py", "doctor.py", "config_introspect.py"],
+      "note": "Config.__init__ never constructs a Settings. Config properties read os.getenv directly, uncached, per access. No construction handoff. Settings consumers: doctor (strict validation), config_introspect (docs).",
       "no_runtime_conflict": "There is no precedence to adjudicate, because there is no runtime handoff.",
       "real_hazard": "Two hand-maintained parsers for one env surface; _VALID_BACKENDS defined twice (config.py:72 and settings.py:18); FANOPS_ROOT read by Config but absent from Settings (so invisible to config_introspect).",
       "executed_divergence": {

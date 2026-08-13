@@ -1,34 +1,19 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
-import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fanops.config import Config, parse_scrape_delay, _SCRAPE_DELAY_DEFAULT
+from fanops.config import Config
 from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
 from fanops.log import get_logger
-
-_log = logging.getLogger("fanops.ig_hashtag_scrape")
 
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
 
 
 def _scrape_delay_range():
-    """The pacing instagrapi sleeps BETWEEN private-API calls, as `[lo, hi]` seconds — or None for no
-    pacing at all. Unset before MOL-698, so a pass fired back-to-back at ~2.4 req/s from a single
-    account; that emission profile is what earned the 2026-07-29 `challenge_required`.
-    FANOPS_HASHTAG_SCRAPE_DELAY takes a `"lo,hi"` pair; `"0"` opts out entirely (fakes / tests).
-    Parsing is the SHARED `config.parse_scrape_delay` — the SAME rule Settings.strict_validate runs, so
-    doctor fails loud on a malformed value; here it is caught and the default pacing is kept, because a
-    fat-fingered env var must never remove the pacing or break Layer A (fail-open with a breadcrumb)."""
-    raw = os.getenv("FANOPS_HASHTAG_SCRAPE_DELAY")
-    try:
-        return parse_scrape_delay(raw)
-    except ValueError as e:
-        _log.warning("ignoring FANOPS_HASHTAG_SCRAPE_DELAY (%s); keeping default pacing %s",
-                     e, list(_SCRAPE_DELAY_DEFAULT))
-        return list(_SCRAPE_DELAY_DEFAULT)
+    """instagrapi delay_range via Config.hashtag_scrape_delay (sole getenv door; runtime fail-open)."""
+    return Config().hashtag_scrape_delay
 
 
 class ScrapeUnavailable(Exception):
@@ -73,9 +58,7 @@ def scrape_password_for(user: str) -> str | None:
     specific = resolve_secret(specific_key, raw.strip() if raw and raw.strip() else None)
     if specific:
         return specific
-    shared = os.getenv("FANOPS_IG_SCRAPE_PASSWORD")
-    return resolve_secret("FANOPS_IG_SCRAPE_PASSWORD",
-                          shared.strip() if shared and shared.strip() else None)
+    return Config().ig_scrape_password
 
 
 def scrape_user_usable(cfg: Config, user: str) -> bool:

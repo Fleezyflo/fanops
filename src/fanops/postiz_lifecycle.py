@@ -7,7 +7,7 @@ instead of holding RAM 24/7.
 
 Safe by construction — ensure_up() does NOTHING unless ALL hold:
   * not running under pytest (never shell docker during the test suite),
-  * FANOPS_POSTIZ_AUTOSTART != '0' (operator kill-switch),
+  * cfg.postiz_autostart (env_bool on FANOPS_POSTIZ_AUTOSTART; default ON, off-words disable),
   * the active poster backend is 'postiz',
   * POSTIZ_URL points at a LOCAL stack (localhost/127.0.0.1) — a hosted/remote Postiz is
     not ours to start,

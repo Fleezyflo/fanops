@@ -23,7 +23,7 @@ is the accepted cost of riding the existing login instead of an API key. The cro
 therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
 Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
-import json, logging, os, random, re, subprocess, time
+import json, logging, random, re, subprocess, time
 from fanops.errors import ToolchainMissingError
 
 logger = logging.getLogger("fanops.llm")
@@ -211,7 +211,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     claude — never shell `claude` behind their back (that was the captions-vs-moments split).
     Cursor uses its OWN auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the
     per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
-    from fanops.config import resolve_llm_transport
+    from fanops.config import Config, resolve_llm_transport
     if isinstance(schema, dict):
         schema = _claude_strict_schema(schema)           # root: strip draft-2020-12 keywords CLI strict rejects
     transport = resolve_llm_transport()
@@ -220,7 +220,7 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             raise ToolchainMissingError(
                 "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
                 "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
-        forced = (os.getenv("FANOPS_LLM_MODEL") or "").strip() or None   # AUTO unless the operator forces one
+        forced = Config().llm_model   # AUTO unless FANOPS_LLM_MODEL forces one
         return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
     return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
 

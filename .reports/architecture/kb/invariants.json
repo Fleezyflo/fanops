@@ -130,9 +130,9 @@
    "verdict": "UNFINISHED (not dead, not orphaned). Dormant behind FANOPS_INTRO_TEASE (DEFAULT OFF). With the flag ON, unanswerable request files accumulate FOREVER and are invisible to the status view.",
    "confidence": "CERTAIN"},
 
-  {"id": "INV-05", "doc_claim": "'Settings is a typed env boundary constructed per Config()'.",
-   "reality": "*** FALSE. Config.__init__ NEVER constructs a Settings. *** Settings.runtime_load has ZERO callers. All of Config's os.getenv calls read the env DIRECTLY, uncached, per access.",
-   "consequence": "There is NO runtime precedence conflict, because there is NO runtime handoff. The hazard is MAINTENANCE: two hand-maintained parsers for one env surface, and _VALID_BACKENDS defined TWICE.",
+  {"id": "INV-05", "doc_claim": "Config is the live getenv facade; Settings is doctor / fanops config strict evaluation of the same declarations.",
+   "reality": "*** VERIFIED. Config.__init__ NEVER constructs a Settings. *** Config properties read os.getenv DIRECTLY, uncached, per access. No construction handoff.",
+   "consequence": "There is NO runtime precedence conflict, because there is NO runtime handoff. Dual policy (runtime lenient / doctor strict) is intentional.",
    "confidence": "CERTAIN"},
 
   {"id": "INV-07", "doc_claim": "'00_control/ledger.lock is vestigial'.",

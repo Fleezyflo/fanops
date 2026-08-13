@@ -1,4 +1,4 @@
-# src/fanops/settings.py — MOL-292: typed env boundary (constructed per Config(), never import-cached)
+# src/fanops/settings.py — MOL-292: typed env boundary (doctor / fanops config strict; Config is the live getenv façade)
 from __future__ import annotations
 import logging
 import math
@@ -14,13 +14,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # about what "on" means without either side being wrong on its own terms. The dependency runs THIS way
 # because config.py is stdlib-only (30 ms to import) while this module pulls pydantic (a further
 # 143 ms); the ~50 modules that import config must not pay that for a four-word frozenset.
-from fanops.config import bool_word, env_bool, parse_scrape_cap, parse_scrape_delay
+from fanops.config import (
+    bool_word, env_bool, parse_scrape_cap, parse_scrape_delay,
+    _VALID_BACKENDS, _VALID_LLM_TRANSPORTS, _VALID_RESPONDERS,
+    resolve_llm_transport, resolve_responder_mode,
+)
 
 _log = logging.getLogger("fanops.settings")
 
-_VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_RESPONDERS = frozenset({"llm"})
-_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _STRIP_STR_FIELDS = (
     "FANOPS_POSTER", "FANOPS_LIVE", "FANOPS_RESPONDER", "FANOPS_LLM_TRANSPORT", "FANOPS_LLM_MODEL", "FANOPS_ARTIST_NAME",
@@ -70,6 +71,9 @@ class EnvVar:
     operator_flag: bool = False # `golive.set_flag` may dual-write it -> OPERATOR_FLAGS. Deliberately FALSE
                                 # for FANOPS_LIVE: go_live is its ONLY setter (confirm-gated, golive
                                 # invariant #2), so the generic toggle must never reach it.
+    deprecated: bool = False    # vestigial; not Studio-settable -> DEPRECATED
+    kind: str = "env"           # env | bootstrap | process — bootstrap/process are not operator .env rows
+    dynamic: bool = False       # parent of a slug-suffixed family (META_GRAPH_TOKEN__*, FANOPS_IG_SCRAPE_PASSWORD_*)
 
 
 BoolEnv = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word=True)]
@@ -77,6 +81,10 @@ BoolFlag = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word
 LiveSwitch = Annotated[str, BeforeValidator(_validate_bool_word), EnvVar(bool_word=True, studio=True)]
 StudioStr = Annotated[str, EnvVar(studio=True)]
 StudioOpt = Annotated[str | None, EnvVar(studio=True)]
+DeprecatedStr = Annotated[str, EnvVar(deprecated=True)]
+DeprecatedOpt = Annotated[str | None, EnvVar(deprecated=True)]
+BootstrapOpt = Annotated[str | None, EnvVar(kind="bootstrap")]
+ProcessOpt = Annotated[str | None, EnvVar(kind="process")]
 
 
 def _validate_poster(v: object) -> str:
@@ -170,12 +178,12 @@ def _parse_float(v: object, default: float) -> float:
 class Settings(BaseSettings):
     """Every FANOPS_* / credential env key with explicit type + default, and — via the `EnvVar` marker
     each field's annotation carries — THE single registration point for the var: `BOOL_ENV_FIELDS`,
-    `STUDIO_SETTABLE` and `OPERATOR_FLAGS` are derived from these declarations, never restated.
-    Built fresh per Config() after load_dotenv(override=True) so go-live dual-writes are visible on
-    the next Config()."""
+    `STUDIO_SETTABLE`, `OPERATOR_FLAGS` and `DEPRECATED` are derived from these declarations, never restated.
+    Config is the live getenv façade (re-read per access). Settings is doctor / `fanops config`
+    strict evaluation of the same declarations. There is no construction handoff between them."""
     model_config = SettingsConfigDict(extra="ignore")
 
-    ANTHROPIC_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: DeprecatedOpt = None
     FANOPS_POSTER: str = ""
     FANOPS_LIVE: LiveSwitch = ""
     POSTIZ_URL: StudioOpt = None
@@ -187,7 +195,7 @@ class Settings(BaseSettings):
     R2_BUCKET: str | None = None
     ZERNIO_API_URL: str = ""
     ZERNIO_API_KEY: StudioOpt = None
-    META_GRAPH_TOKEN: StudioOpt = None
+    META_GRAPH_TOKEN: Annotated[str | None, EnvVar(studio=True, dynamic=True)] = None
     META_IG_USER_ID: str | None = None
     META_GRAPH_URL: str = ""
     FANOPS_CORPUS_TARGET: int = 80
@@ -197,9 +205,9 @@ class Settings(BaseSettings):
     FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
     # Comma-separated usernames OK (MOL-857); _opt_str strips edges, keeps commas.
     FANOPS_IG_SCRAPE_USER: str | None = None
-    FANOPS_IG_SCRAPE_PASSWORD: str | None = None
+    FANOPS_IG_SCRAPE_PASSWORD: Annotated[str | None, EnvVar(dynamic=True)] = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: BoolEnv = ""
-    FANOPS_RESPONDER: StudioStr = ""
+    FANOPS_RESPONDER: DeprecatedStr = ""
     FANOPS_LLM_TRANSPORT: StudioStr = ""
     FANOPS_LLM_MODEL: str = ""
     FANOPS_ARTIST_NAME: str = ""
@@ -253,12 +261,16 @@ class Settings(BaseSettings):
     FANOPS_POSTIZ_COMPOSE_DIR: str | None = None
     FANOPS_AUTO_ADOPT: BoolEnv = ""
     XDG_CACHE_HOME: str | None = None
+    FANOPS_ROOT: BootstrapOpt = None
+    FANOPS_POSTIZ_ONDEMAND: BootstrapOpt = None
+    FANOPS_STUDIO_GENERATION: ProcessOpt = None
 
     @field_validator("ANTHROPIC_API_KEY", "POSTIZ_URL", "POSTIZ_API_KEY", "FANOPS_MEDIA_PUBLIC_BASE",
                      "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
                      "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "META_IG_USER_ID",
                      "FANOPS_IG_SCRAPE_USER", "FANOPS_IG_SCRAPE_PASSWORD", "FANOPS_POSTIZ_COMPOSE_DIR",
-                     "XDG_CACHE_HOME", mode="before")
+                     "XDG_CACHE_HOME", "FANOPS_ROOT", "FANOPS_POSTIZ_ONDEMAND", "FANOPS_STUDIO_GENERATION",
+                     mode="before")
     @classmethod
     def _opt_str(cls, v): return _strip_opt(v)
 
@@ -408,22 +420,14 @@ class Settings(BaseSettings):
         return v  # type: ignore[return-value]
 
     def responder_mode(self) -> str:
-        # Gates are answered ONLY by the LLM (the manual responder was retired). Empty/unset OR the
-        # literal 'llm' resolve to 'llm'; ANYTHING ELSE is a HARD REFUSE (ValueError) — never the old
-        # silent warn->manual (there is no manual mode to fall back to). Mirrors Config.responder_mode;
-        # the FANOPS_RESPONDER field validator already refuses a bad value at construction.
-        v = (self.FANOPS_RESPONDER or "").strip().lower()
-        if v in ("", "llm"):
-            return "llm"
-        raise ValueError(f"unrecognized FANOPS_RESPONDER={v!r}; the only valid value is 'llm' (or leave it unset)")
+        # Same helper as Config.responder_mode. Field validators / strict_validate still refuse a
+        # typo at construction (doctor-strict); this method is the shared resolution rule.
+        return resolve_responder_mode(self.FANOPS_RESPONDER)
 
     def llm_transport(self) -> str:
-        v = (self.FANOPS_LLM_TRANSPORT or "").strip().lower()
-        if not v: return "claude"
-        if v not in _VALID_LLM_TRANSPORTS:
-            _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: claude, cursor", v)
-            return "claude"
-        return v
+        # Runtime-lenient helper (warn+claude). Doctor-strict path is _validate_llm_transport /
+        # _strict_validate_llm_transport against the same _VALID_LLM_TRANSPORTS.
+        return resolve_llm_transport(self.FANOPS_LLM_TRANSPORT)
 
     def opt_on(self, raw: str, *, default: bool) -> bool:
         # Delegates to the shared parser. The local copy this replaced read an UNRECOGNIZED word as
@@ -469,7 +473,7 @@ def _project(pred, registry: dict[str, EnvVar]) -> tuple[str, ...]:
     return tuple(n for n, m in registry.items() if pred(m))
 
 
-# The three derived surfaces. Each was a hand-maintained literal in a different module; each is now a
+# The derived surfaces. Each was a hand-maintained literal in a different module; each is now a
 # projection of the field declarations above, so a newly registered var lands in all of them at once
 # and a removed one leaves all of them at once. Order is declaration order (every consumer treats
 # them as sets; only `strict_validate`'s loop iterates, and it is order-independent).
@@ -477,6 +481,7 @@ _REGISTRY = env_registry()
 BOOL_ENV_FIELDS = _project(lambda m: m.bool_word, _REGISTRY)      # settings: strict_validate's bool-word pass
 STUDIO_SETTABLE = frozenset(_project(lambda m: m.studio, _REGISTRY))       # config_introspect: the STUDIO column
 OPERATOR_FLAGS = frozenset(_project(lambda m: m.operator_flag, _REGISTRY)) # golive.set_flag: what it may dual-write
+DEPRECATED = frozenset(_project(lambda m: m.deprecated, _REGISTRY))       # config_introspect: the DEPRECATED column
 
 
 def _strict_field(name: str, fn, v: object) -> str:

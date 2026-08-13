@@ -197,7 +197,7 @@ Module constants: `_SIL_END`, `_SCD` (regexes), `_SIDECAR_V=3`, `_MAX_PEAKS=400`
 
 - `_is_local(url) -> bool` — `"localhost" in url or "127.0.0.1" in url`. Pure. Called by `_should_autostart`.
 - `_backend_is_postiz(cfg) -> bool` — true if `cfg.poster_backend == "postiz"`, OR (M3 fix) if the system `is_live` and ANY account's `live_ready_channels()` resolves to a `postiz` provider (tracks actual per-channel providers, not the legacy global). Wrapped in a bare `except Exception: return False`. Called by `_should_autostart`.
-- `_should_autostart(cfg) -> bool` — the full autostart gate: not under pytest, `FANOPS_POSTIZ_AUTOSTART != '0'`, backend is postiz, `POSTIZ_URL` is local, the on-demand script exists AND `docker` is on PATH. Pure/read-only. Called by `ensure_up`.
+- `_should_autostart(cfg) -> bool` — the full autostart gate: not under pytest, `cfg.postiz_autostart` (env_bool, default ON), backend is postiz, `POSTIZ_URL` is local, the on-demand script exists AND `docker` is on PATH. Pure/read-only. Called by `ensure_up`.
 - `ensure_up(cfg) -> None` — **shells `bash postiz-ondemand.sh ensure`** with a 150s timeout, no-op unless `_should_autostart`. Any exception is caught and written to stderr (fail-open — a still-down Postiz surfaces normally through the poster's own connection error). Called by `post/run.py:publish_due` (line 351, only when `due` is non-empty) and `post/run.py:publish_post` (line 389, always, on the operator's explicit "Publish now" click).
 
 ### post/\_\_init\_\_.py — Poster protocol + factory dispatch

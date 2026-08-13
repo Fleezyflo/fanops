@@ -3608,7 +3608,7 @@
     "name": "FANOPS_AUTO_ADOPT",
     "file": "src/fanops/daemon.py",
     "line": 319,
-    "note": "default '1' via os.getenv(..., '1') != '0'"
+    "note": "Config.auto_adopt via env_bool (default ON; off-words disable)"
    }
   ],
   "default_off_only_onwords_enable": [
@@ -4883,7 +4883,7 @@
    {
     "id": "FIND-009",
     "class": "doc_drift",
-    "summary": "Settings is never constructed by Config. Settings.runtime_load has ZERO callers. Config reads os.getenv directly (74 calls, uncached). No runtime precedence conflict because there is no runtime handoff.",
+    "summary": "Settings is never constructed by Config. Config reads os.getenv directly (uncached). Dual plane: Config live getenv facade; Settings doctor / fanops config strict. No runtime precedence conflict because there is no runtime handoff.",
     "evidence": [
      "src/fanops/config.py:144",
      "src/fanops/settings.py:374",

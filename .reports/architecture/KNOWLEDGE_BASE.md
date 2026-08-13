@@ -48,9 +48,9 @@ ledger key space.
 **Purpose.** The env boundary.
 **Owns.** The environment-variable surface (declared in [`kb/configuration.json`](kb/configuration.json)). All secrets (keyring-first).
 **The runtime owner is `Config`, exclusively** — every property is an `os.getenv` evaluated **per access**,
-uncached. **`Settings` never feeds it**: `Settings.runtime_load` has **zero callers** (`INV-05`). `Settings` is
-a *doctor-only strict validator* + a docs surface. Runtime is lenient; doctor is strict. **The split is
-intentional, not drift.**
+uncached. **`Settings` never feeds it** (`INV-05`): Config is the live getenv façade; Settings is doctor /
+`fanops config` strict evaluation of the same declarations. There is no construction handoff. Runtime is
+lenient; doctor is strict. **The split is intentional, not drift.**
 **Secrets contract.** **Reads fail OPEN; writes fail CLOSED.** `set_secret` writes, then **reads it back**, and
 raises if the value does not round-trip — load-bearing, because the caller then scrubs the plaintext `.env`
 fallback on success.
