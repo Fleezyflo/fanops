@@ -371,20 +371,27 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     log = logging.getLogger("fanops.doctor")
     out: list[dict] = []
 
-    # 1. pending agent-gates — surface only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
+    # 1. pending agent-gates — unknown age (missing opened_at) is NOT clean silence: WARN first.
+    #    Known age: surface only when the OLDEST has aged past _GATE_STALE_TICKS ticks. A fresh
     #    pending gate is normal transient work the responder is clearing, so it is not surfaced.
     try:
         from fanops import pipeline_status, daemon
-        gates = pipeline_status._pending_gates(cfg)              # (opened_at_epoch, kind, key) oldest-first
+        gates = pipeline_status._pending_gates(cfg)  # (opened_at_epoch|None, kind, key); unknown age first
         if gates:
             oldest_opened = gates[0][0]
-            age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_opened) if oldest_opened else 0.0
             interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
-            if oldest_opened and age_s > _GATE_STALE_TICKS * interval:
+            if oldest_opened is None:
+                n_unknown = sum(1 for g in gates if g[0] is None)
                 out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
-                            "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
-                                         f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
-                                         f"stuck; check `fanops status` and that the daemon gates loop is running"})
+                            "warn_hint": f"gate age unknown — {n_unknown} pending agent gate(s) missing readable "
+                                         f"opened_at; cannot prove freshness (not clean silence)"})
+            else:
+                age_s = max(0.0, datetime.now(timezone.utc).timestamp() - oldest_opened)
+                if age_s > _GATE_STALE_TICKS * interval:
+                    out.append({"label": "no stale agent gates (responder answering)", "ok": False, "warn": True,
+                                "warn_hint": f"{len(gates)} pending agent gate(s); oldest ~{int(age_s // 60)}m old "
+                                             f"(> {_GATE_STALE_TICKS}x the {interval}s tick) — the LLM responder may be "
+                                             f"stuck; check `fanops status` and that the daemon gates loop is running"})
     except Exception as e:
         if decide("operator", 0) is EscalationPosture.nonzero:
             out.append({"label": "pending-gate sensor readable", "ok": False, "warn": True,

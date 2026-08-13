@@ -761,6 +761,19 @@ def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
     assert gate is not None and gate["ok"] is False and gate.get("warn") is True
 
 
+def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
+    """R1b: missing opened_at → None epoch → WARN 'gate age unknown' (not silent green / not-clean)."""
+    from fanops import pipeline_status, daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(None, "moments", "legacy")])
+    monkeypatch.setattr(daemon, "installed_interval", lambda c: 600)
+    monkeypatch.setattr("fanops.ledger.Ledger.load",
+                        classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
+    gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
+    assert gate is not None and gate["ok"] is False and gate.get("warn") is True
+    assert "gate age unknown" in (gate.get("warn_hint") or "")
+
+
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
     """Approval backlog is EXPECTED (nothing auto-publishes) — it appears as an INFO note, never as a
     warn-tier check, because the human Review gate is deliberately kept."""
