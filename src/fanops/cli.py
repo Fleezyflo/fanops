@@ -1062,10 +1062,13 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(cfg.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
     from fanops import daemon as _daemon             # local: avoid widening cli's module-top import surface
     _pinned = _daemon.root_divergence(cfg)
-    if _pinned is not None:                          # this process would touch a DIFFERENT ledger than the daemon
-        print(f"WARN: FanOps is operating on {cfg.root} (root fell back to cwd) but the installed daemon "
+    if _pinned is not None:                          # cwd fallback ≠ daemon WorkingDirectory (FANOPS_ROOT shell-only by design)
+        print(f"ERROR: FanOps is operating on {cfg.root} (root fell back to cwd) but the installed daemon "
               f"is pinned to {_pinned} -- export FANOPS_ROOT={_pinned} or cd there so this command reads "
               f"the same ledger.", file=sys.stderr)
+        # Fail-closed for every verb except daemon status (the one surface that prints both roots).
+        if not (args.cmd == "daemon" and getattr(args, "dae_cmd", None) == "status"):
+            return 2
 
     try:
         return _dispatch(cfg, args)

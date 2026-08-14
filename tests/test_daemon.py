@@ -711,3 +711,27 @@ def test_root_divergence_no_daemon_is_silent(tmp_path, monkeypatch):
     monkeypatch.chdir(other)
     assert daemon.installed_root() is None
     assert daemon.root_divergence(Config()) is None     # cwd fallback but no daemon installed -> no false alarm
+
+
+def test_cli_root_divergence_refuses_except_daemon_status(tmp_path, monkeypatch, mocker, capsys):
+    """CPDP-08: wrong-root unattended/CP verbs exit 2; daemon status is the diagnose allowlist."""
+    from fanops.cli import main
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pinned = tmp_path / "pinned"; other = tmp_path / "repo"
+    pinned.mkdir(); other.mkdir()
+    _write_pinned_plist(pinned)
+    monkeypatch.delenv("FANOPS_ROOT", raising=False)
+    monkeypatch.chdir(other)
+    assert main(["run"]) == 2
+    assert main(["doctor"]) == 2
+    err = capsys.readouterr().err
+    assert "ERROR:" in err and str(pinned.resolve()) in err
+    mocker.patch.object(daemon, "status", return_value={
+        "installed": True, "loaded": False, "pid": None, "last_exit": None,
+        "heartbeat_age_s": None, "last_success_age_s": None, "verdict": "not installed",
+        "pass_verdict": "no completed pass yet", "exec_fail": None, "run_line": None,
+        "root": str(other.resolve()), "daemon_root": str(pinned.resolve()),
+    })
+    assert main(["daemon", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "DIFFERS" in out

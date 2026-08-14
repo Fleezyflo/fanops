@@ -8,14 +8,14 @@
 
 ## Order (locked)
 
-| # | Root | Product brief | Status (2026-08-13) |
-|---|------|---------------|---------------------|
-| **1** | Config truth plane | [config-truth-plane.md](config-truth-plane.md) | **Deferred** — next if not already on `main` |
-| **2** | Fail-open escalation | [fail-open-escalation-policy.md](fail-open-escalation-policy.md) | **Partial on main** (MOL-960/961 spine); finish per policy DoD |
+| # | Root | Product brief | Status (main `b8788be8`) |
+|---|------|---------------|--------------------------|
+| **1** | Config truth plane | [config-truth-plane.md](config-truth-plane.md) | **LANDED** (`#962`) |
+| **2** | Fail-open escalation | [fail-open-escalation-policy.md](fail-open-escalation-policy.md) | **Partial** (MOL-960/961 spine); finish per policy DoD |
 | **3** | Derived-signal primitives | [derived-signal-primitives.md](derived-signal-primitives.md) | **Partial** → [derived-signal-close-1-2.md](derived-signal-close-1-2.md) |
-| **4** | Machine-health contract | [machine-health-contract.md](machine-health-contract.md) | **Deferred** — blocked on #3 close-out |
-| **5** | Control vs data plane | [control-data-plane-untangle.md](control-data-plane-untangle.md) | **Deferred** — after #4 |
-| **6** | Honesty ratchets | [honesty-ratchet-contract.md](honesty-ratchet-contract.md) | **Deferred** — last; needs #2+#4 symbols |
+| **4** | Machine-health contract | [machine-health-contract.md](machine-health-contract.md) | **LANDED** (`#971`) |
+| **5** | Control vs data plane | [control-data-plane-untangle.md](control-data-plane-untangle.md) | **Mostly landed** (`#972`–`#975`); leftovers CPDP-07/08/09/10/13 — inventory is source of OPEN IDs |
+| **6** | Honesty ratchets | [honesty-ratchet-contract.md](honesty-ratchet-contract.md) | **Deferred** — needs #2 DoD + #4 symbols (health landed; escalation DoD still open) |
 
 ---
 
@@ -28,12 +28,12 @@
 
 ---
 
-## Recommended next waves (after this PR merges)
+## Recommended next waves
 
-1. **[derived-signal-close-1-2.md](derived-signal-close-1-2.md)** — finish seam 1/2 residuals.  
-2. **#1** config truth (if open) → complete **#2** escalation DoD.  
-3. **#4** machine-health → **#5** plane untangle → **#6** ratchets.  
-4. Hashtag remediation when operator prioritizes Layer A (orthogonal to #4).
+1. Finish **#2** escalation DoD and/or **#3** [derived-signal-close-1-2.md](derived-signal-close-1-2.md).  
+2. CPDP leftovers **07/08/09/10/13** (atomic briefs; one ID at a time).  
+3. **#6** honesty ratchets after #2 DoD.  
+4. Hashtag remediation when operator prioritizes Layer A.
 
 ---
 
