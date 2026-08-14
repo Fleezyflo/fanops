@@ -8,7 +8,7 @@ like fanops.compose / vocals: absent cv2, no detection, a timeout, or any error 
 crops centered (today's behavior). Detection is DETERMINISTIC per (source, window) so the result is cached
 to a per-source sidecar, mirroring signals.detect_signals — the in-lock commit re-probes nothing."""
 from __future__ import annotations
-import json, logging, os
+import json, logging, os, threading
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
@@ -26,6 +26,15 @@ _KF_WIDTH = 960              # detection sampling width: Haar/YuNet need real pi
 _MIN_CONF = 0.34             # need a face in >=34% of sampled frames (>=2 of 5) — else fall back to center crop
 _SCORE_THRESH = 0.6         # YuNet confidence floor (proven 6/6 detection on real interview footage at 0.6)
 _MODEL = "yunet_2023mar.onnx"   # vendored YuNet face detector (opencv_zoo, 232KB) — see src/fanops/data/
+_RUNTIME_LOCK = threading.Lock()       # YuNet singleton construction + cache reads
+_YUNET_DETECT_LOCK = threading.Lock()  # setInputSize + detect (mutable detector state)
+_CACHED_RUNTIME: "_FramingRuntime | None" = None
+
+def _reset_yunet_cache() -> None:
+    """Drop the process-global YuNet singleton (test isolation only)."""
+    global _CACHED_RUNTIME
+    with _RUNTIME_LOCK:
+        _CACHED_RUNTIME = None
 
 def _cv2():
     """The OpenCV module, or None when the [framing] extra isn't installed (caller -> center crop)."""
@@ -47,39 +56,52 @@ def _detector(cv2):
     """A YuNet (CNN) face detector from the vendored model, or None when it can't be built. YuNet REPLACES
     the legacy Haar cascade, which under-detected the angled / small / two-shot faces typical of interview
     footage (proven: 0-2/6 frames vs YuNet's 6/6 on the same windows). Fail-open: any miss -> None -> the
-    caller gets [] -> center crop."""
-    try:
-        mp = _model_path()
-        if not mp.exists():
-            return None                                       # model asset missing -> no detection (center crop)
-        return cv2.FaceDetectorYN.create(str(mp), "", (320, 320), _SCORE_THRESH)
-    except Exception as exc:
-        _log.warning("_detector: YuNet detector could not be built (%s); no detection", exc)
-        return None                                           # old cv2 without FaceDetectorYN, or any build error
+    caller gets [] -> center crop.
+
+    After the first successful build in a process, later calls return the SAME detector (FaceDetectorYN.create
+    runs once). YuNet's mutable setInputSize state is guarded by _YUNET_DETECT_LOCK in _detect_faces /
+    _track_observe."""
+    global _CACHED_RUNTIME
+    with _RUNTIME_LOCK:
+        if _CACHED_RUNTIME is not None:
+            return _CACHED_RUNTIME.detector
+        try:
+            mp = _model_path()
+            if not mp.exists():
+                return None                                   # model asset missing -> no detection (center crop)
+            det = cv2.FaceDetectorYN.create(str(mp), "", (320, 320), _SCORE_THRESH)
+            _CACHED_RUNTIME = _FramingRuntime(cv2, det)
+            return det
+        except Exception as exc:
+            _log.warning("_detector: YuNet detector could not be built (%s); no detection", exc)
+            return None                                       # old cv2 without FaceDetectorYN, or any build error
 
 class _FramingRuntime:
-    """A per-resolution framing runtime: the imported cv2 module + a REAL, already-constructed YuNet detector.
-    Built ONCE per _resolve_framing by _framing_runtime_or_raise and threaded into detect_window /
-    speaker_track / subject_focus / motion_saliency so they reuse this one detector instead of each
-    constructing their own. NOT a process-global: a fresh runtime per resolution, so the detector's mutable
-    input-size state (det.setInputSize, reset per frame in _track_observe / _detect_faces) is only ever
-    touched sequentially within a single resolution — no cross-thread sharing, no concurrency hazard."""
+    """Process-global framing runtime: the imported cv2 module + the ONE YuNet detector built for this process.
+    Built ONCE by _framing_runtime_or_raise (or the legacy _detector fail-open path) and reused across every
+    render_moment / _resolve_framing in the same interpreter — so a strip loop does not FaceDetectorYN.create
+    per clip. Threaded into detect_window / speaker_track / subject_focus / motion_saliency as `_rt`. YuNet's
+    mutable setInputSize is reset per frame under _YUNET_DETECT_LOCK."""
     __slots__ = ("cv2", "detector")
     def __init__(self, cv2, detector):
         self.cv2 = cv2
         self.detector = detector
 
 def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
-    """Construct the ONE YuNet detector for a framing resolution, or raise ToolchainMissingError LOUDLY.
+    """Return the process-global YuNet runtime, or raise ToolchainMissingError LOUDLY on first construction.
 
-    This is the smart-framing prerequisite gate AND the sole constructor for the resolution. It proves the
-    detector can ACTUALLY be built — not merely that cv2 imports and the attr/file exist — so a corrupt or
-    incompatible ONNX, an OpenCV ABI mismatch, or any failure inside FaceDetectorYN.create() REFUSES here,
-    before a single centered frame can be produced. A broken prerequisite is NOT a detection miss.
+    This is the smart-framing prerequisite gate. The first call proves the detector can ACTUALLY be built —
+    not merely that cv2 imports and the attr/file exist — so a corrupt or incompatible ONNX, an OpenCV ABI
+    mismatch, or any failure inside FaceDetectorYN.create() REFUSES here, before a single centered frame can
+    be produced. A broken prerequisite is NOT a detection miss. Later calls in the same process reuse the
+    cached runtime (FaceDetectorYN.create runs once).
 
     Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path never reaches it. NEVER
     degrades to centered — it refuses. (No bare except that swallows: the create() failure is caught only to
     RE-RAISE as ToolchainMissingError with a remediation message; test_swallow_ratchet.py has no quarrel.)"""
+    with _RUNTIME_LOCK:
+        if _CACHED_RUNTIME is not None:
+            return _CACHED_RUNTIME
     cv2 = _cv2()
     if cv2 is None:
         raise ToolchainMissingError(
@@ -95,7 +117,7 @@ def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
             f"smart framing is ON but the vendored YuNet model is missing ({_MODEL}) — "
             "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
     try:
-        detector = _detector(cv2)                              # the REAL construction — proves it builds
+        detector = _detector(cv2)                              # the REAL construction — proves it builds (cached)
     except Exception as e:                                     # any create() error -> loud refusal, NOT centered
         raise ToolchainMissingError(
             "smart framing is ON but the YuNet face detector failed to construct "
@@ -106,7 +128,9 @@ def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
             "smart framing is ON but the YuNet face detector could not be built "
             "(OpenCV/model incompatible, or the vendored model is unreadable) — "
             "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
-    return _FramingRuntime(cv2, detector)
+    with _RUNTIME_LOCK:
+        assert _CACHED_RUNTIME is not None
+        return _CACHED_RUNTIME
 
 def require_cv2(cfg) -> None:
     """Thin gate wrapper: build the framing runtime and discard it, so callers that only want the
@@ -146,8 +170,9 @@ def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, fl
         if img is None: return out
         h, w = img.shape[:2]
         if not (w and h): return out
-        det.setInputSize((w, h))
-        _n, faces = det.detect(img)
+        with _YUNET_DETECT_LOCK:
+            det.setInputSize((w, h))
+            _n, faces = det.detect(img)
         if faces is None: return out
         for f in faces:
             cx = min(1.0, max(0.0, (float(f[0]) + float(f[2]) / 2) / w))
@@ -408,8 +433,9 @@ def _track_observe(cv2, det, frames: list[str]) -> list[dict]:
             if img is None: obs.append(per); continue
             h, w = img.shape[:2]
             if not (w and h): obs.append(per); continue
-            det.setInputSize((w, h))
-            _n, faces = det.detect(img)
+            with _YUNET_DETECT_LOCK:
+                det.setInputSize((w, h))
+                _n, faces = det.detect(img)
             if faces is not None:
                 bysd: dict = {"L": [], "R": []}
                 for f in faces:
