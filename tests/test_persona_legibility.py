@@ -35,33 +35,31 @@ def test_card_renders_three_zones_in_order(tmp_path):
 
 
 def test_zone2_editable_inventory_matches_registry(tmp_path):
-    # Every editable lever (LEVER_REGISTRY multi/select) plus name/voice/niche has a real form control in
-    # zone 2; zone 3 carries NO editable inputs (derived corpus chips only).
+    # Zone 2 shows the five Studio knobs: name, voice, cut_policy, intensity, hook_angle, niche.
     from fanops.persona_levers import LEVER_REGISTRY
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     assert 'name="name"' in zone2 and 'name="voice"' in zone2
-    assert 'name="niche"' in zone2   # the niche is an editable lever, not a derived-zone input
-    # the editor levers (content_focus/selection_scope/hook_angle) are the editable non-tag registry keys —
-    # the GLOBAL clip_profile band is not a per-persona card input.
+    assert 'name="niche"' in zone2 and 'name="hook_angle"' in zone2
     editable = [lv["key"] for lv in LEVER_REGISTRY if lv["kind"] in ("multi", "select") and lv["key"] != "clip_profile"]
     for key in editable:
         assert f'name="{key}"' in zone2, f"editable lever {key} missing a control in zone 2"
-    # zone 3 is derived/read-only — it must not repeat a lever INPUT
+    for hidden in ('content_focus', 'selection_scope', 'clip_profile', 'energy', 'tag_lean'):
+        assert f'name="{hidden}"' not in zone2, f"hidden lever {hidden} must not appear in zone 2"
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
     assert 'name="selection_scope"' not in zone3 and 'name="hook_angle"' not in zone3 and 'name="content_focus"' not in zone3
     assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
 
 
 def test_blank_clears_hint_renders(tmp_path):
-    # Zone 2 documents the authoritative save behavior (an unchecked/blank lever CLEARS it, studio/personas.py).
+    # Zone 2 documents authoritative save for the visible knobs only (hidden legacy fields are preserved).
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
-    assert "Leaving intensity, scope, or hook angle blank clears it on save." in zone2
+    assert "Blank intensity or hook angle clears on save." in zone2
 
 
 def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
@@ -87,37 +85,31 @@ def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
 
 
 def test_edit_one_lever_round_trip(tmp_path):
-    # Editing ONE lever (hook_angle) via the inline zone-2 form must leave every OTHER on-disk persona field
-    # byte-identical (name/voice/content_focus/selection_scope + the corpus/meta) — no collateral mutation.
+    # Editing ONE visible knob (hook_angle) via the inline zone-2 form must leave every OTHER on-disk field
+    # byte-identical — including hidden legacy fields the form no longer shows.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Keep", voice="the voice", niche=["hiphop"])
-    # seed a full lever set + a corpus so there is real state to preserve, THROUGH the same edit route
-    r0 = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Keep", "voice": "the voice",
-        "cut_policy": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
-    assert r0.status_code == 200
+    pid = core.add_persona(cfg, name="Keep", voice="the voice", niche=["hiphop"],
+                           selection_scope="subject_locked", cut_policy=["punchlines"], hook_angle="curiosity")
     core.apply_auto_corpus(cfg, pid, tags=["#keeper"], meta={})
     before = json.loads(cfg.personas_path.read_text())["personas"][0]
-    # change ONLY hook_angle, re-posting the same other values (the form is authoritative)
     r = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Keep", "voice": "the voice",
-        "cut_policy": ["punchlines"], "selection_scope": "subject_locked", "hook_angle": "fomo"})
+        "id": pid, "name": "Keep", "voice": "the voice", "niche": "hiphop",
+        "cut_policy": ["punchlines"], "hook_angle": "fomo"})
     assert r.status_code == 200
     after = json.loads(cfg.personas_path.read_text())["personas"][0]
-    assert after["hook_angle"] == "fomo"                          # the one edit landed
+    assert after["hook_angle"] == "fomo"
     for k in ("name", "voice", "content_focus", "selection_scope", "hashtag_corpus", "hashtag_corpus_meta"):
         assert after[k] == before[k], f"{k} changed on a one-lever edit: {before[k]!r} -> {after[k]!r}"
 
 
 def test_edit_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
-    # The niche is an editable lever (zone 2 — "What you can change"). Zone 3 is DERIVED output only —
-    # corpus chips, no name= inputs. The add/remove/research proposal lane is gone with the curation model.
+    # The niche is knob 5 in zone 2 ("What you can change"), saved with the main edit form.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
-    assert 'name="niche"' in zone2 and "Save seeds" in zone2
+    assert 'name="niche"' in zone2 and "/personas/niche" not in zone2
     assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
     for gone in ("Force refresh now", "Check reach", "/personas/research", "/personas/corpus/add"):
         assert gone not in zone3, f"a retired curation control still renders in the derived zone: {gone}"

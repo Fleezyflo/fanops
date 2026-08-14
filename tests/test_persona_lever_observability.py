@@ -96,8 +96,8 @@ def test_drawer_renders_cut_and_caption_provenance(tmp_path):
     add_persona(cfg, name="P", voice="a devoted fan", cut_policy=["storytelling", "emotional"], niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().post("/personas/compose", data={
-        "voice": "a devoted fan", "content_focus": "storytelling"}).get_data(as_text=True)
-    assert "content_focus" in html and "selection_scope" in html     # the cut provenance names the levers
+        "voice": "a devoted fan", "cut_policy": ["storytelling", "emotional"], "niche": "hiphop"}).get_data(as_text=True)
+    assert "cut_policy" in html and "compose-grid" in html
 
 
 def test_drawer_renders_lever_health_panel(tmp_path):

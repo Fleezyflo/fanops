@@ -2,48 +2,41 @@
    and the slide-out drawer without dragging either page's context in. The lever ENGINE controls + the live
    "compiles to" compose mount, and the read-only levers reference. Autoescape stays on (engine text as text). #}
 {% macro lever_fields(levers, effects, p=None) %}
-  {# One control per persona characteristic, each option ANNOTATED with what it does (from the engine, via
-     `effects`). Shared by the Add form, the Edit drawer. `p` is the PersonaCard when editing. Names match the
-     route parsing. The whole block triggers the LIVE compose panel on any change (htmx).
-     cid scopes the compose target per-form. '__add__' for the Add form: underscores never appear in a persona
-     slug (_slug emits only [a-z0-9-]), so it can NEVER collide with an Edit form's persona id. #}
+  {# Five operator knobs: voice (parent form) + cut_policy, intensity, hook_angle, niche (here). Hidden from the
+     editor but still on disk for live personas: content_focus, selection_scope, tag_lean, energy, clip_profile,
+     directive overrides. `p` is the PersonaCard when editing. Names match the route parsing. The block triggers
+     the LIVE compose panel on any change (htmx). cid scopes the compose target per-form. '__add__' for Add. #}
   {% set cid = p.id if p else '__add__' %}
   <div class="lever-config"
        hx-post="{{ url_for('do_personas_compose') }}"
        hx-trigger="change delay:50ms, keyup changed delay:400ms"
        hx-include="closest form" hx-target="#persona-compose-{{ cid }}" hx-swap="innerHTML">
     <fieldset class="levers">
-      <legend>Levers — each option shows what it does (from the engine)
-        <span class="lever-clears-hint muted">Leaving intensity, scope, or hook angle blank clears it on save.</span></legend>
-      {# MOL-523: content_focus / selection_scope / hook_angle are FREE TEXT — a token->prose map is the only
-         kind of lever that rots, so the engine no longer ships a vocabulary for them and `levers` carries no
-         key at all (app.py builds it from levers WITH options). cut_policy keeps the token multi-select
-         because its values DERIVE the cut (length + framing) deterministically. Field names match the route
-         and studio_personas.preview_compose exactly. #}
-      <label>Editorial focus
-        <textarea name="content_focus" rows="2" placeholder="which kinds of moments this account clips for — in your own words"
-        >{{ p.content_focus if p and p.content_focus else '' }}</textarea></label>
+      <legend>Persona knobs — change one to see what it compiles to below
+        <span class="lever-clears-hint muted">Blank intensity or hook angle clears on save.</span></legend>
+      <p class="muted lever-knob-guide">Voice + hook angle shape writing · cut policy sets clip length + crop · intensity filters which peaks survive · niche seeds hashtag discovery.</p>
       <div class="lever-group">
-        <span class="lever-label">Cut policy · derives clip length + framing</span>
+        <span class="lever-label">Cut policy · what kind of moment (derives clip length + framing)</span>
         {% for c in levers.cut_policy %}
           <label class="chk" title="{{ effects.cut_policy[c] }}"><input type="checkbox" name="cut_policy" value="{{ c }}"
             {{ 'checked' if p and c in (p.cut_policy or []) else '' }}> {{ c }} <span class="lever-effect muted">— {{ effects.cut_policy[c] }}</span></label>
         {% endfor %}
       </div>
-      <label>Intensity
+      <label>Intensity · which peaks survive
         <select name="intensity"><option value="">— none (no peak filter) —</option>
           {% for i in levers.intensity %}<option value="{{ i }}" title="{{ effects.intensity[i] }}" {{ 'selected' if p and p.intensity == i else '' }}>{{ i }} — {{ effects.intensity[i] }}</option>{% endfor %}
         </select></label>
-      <label>Selection scope
-        <textarea name="selection_scope" rows="2" placeholder="the selection constraint — blank means open"
-        >{{ p.selection_scope if p and p.selection_scope else '' }}</textarea></label>
-      <label>Hook angle
+      <label>Hook angle · on-screen hook strategy
         <textarea name="hook_angle" rows="2" placeholder="the strategy of the burned on-screen hook — blank means any"
         >{{ p.hook_angle if p and p.hook_angle else '' }}</textarea></label>
+      <label>Niche · hashtag territory seeds (Layer A search roots)
+        <input type="text" name="niche" value="{{ p.niche | join(', ') if p and p.niche else '' }}"
+          placeholder="e.g. hiphop, drill" size="36" required
+          title="declared subject terms the next measurement pass searches Instagram for"></label>
     </fieldset>
   </div>
   <div id="persona-compose-{{ cid }}" class="persona-compose" aria-live="polite">
-    <p class="muted">change a lever above to see exactly what this persona compiles to →</p>
+    <p class="muted">Change a knob above to see what this persona compiles to — cut policy drives length/crop, niche drives hashtags, voice/hook drive writing, intensity filters peaks.</p>
   </div>
 {% endmacro %}
 
@@ -52,10 +45,12 @@
   <details class="levers-reference">
     <summary>Levers reference — what every lever does</summary>
     {% for lever in lever_ref %}
+      {% if lever.key in ('cut_policy', 'intensity', 'hook_angle', 'niche') %}
       <div class="lever-ref-item">
         <strong>{{ lever.label }}</strong> <span class="muted">· {{ lever.stage }} · {{ lever.does }}</span>
         {% if lever.options %}<ul>{% for o in lever.options %}<li><code>{{ o.value }}</code> — {{ o.effect }}</li>{% endfor %}</ul>{% endif %}
       </div>
+      {% endif %}
     {% endfor %}
   </details>
 {% endmacro %}
