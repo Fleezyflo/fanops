@@ -6,6 +6,7 @@ lose-update against a concurrent cron `fanops run`. Reads/normalization that can
 from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from pydantic import ValidationError
@@ -291,22 +292,66 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
-    """Track C: approve a discover candidate from the browser — move 00_review/<eid>.jpg into
-    00_review/approved/ (what the operator used to do by hand in Finder). eid must be a bare stem
-    (no path separators / ..) so a Studio POST can't move an arbitrary file. No ledger touch — this
-    is a review-folder move; `fanops intake` then copies the original into the inbox."""
+    """Track C: approve a discover candidate from the browser — admit the original into the
+    catalogue (same path as inbox ingest: discover.intake copies to 01_inbox, then catalogue_inbox
+    stage+ingests a Source). Moves 00_review/<eid>.jpg into approved/ as the operator signal. eid
+    must be a bare stem (no path separators / ..). Fails honestly when the manifest original is
+    missing or the content matches a retired Source (retired_dedup dead-end)."""
+    from fanops.discover import _load_json, intake as discover_intake
+    from fanops.ids import make_id
     if not eid or "/" in eid or "\\" in eid or ".." in eid:
         return ActionResult(ok=False, error=f"bad candidate id: {eid!r}")
-    src = cfg.review / f"{eid}.jpg"
-    if not src.exists():
+    thumb = cfg.review / f"{eid}.jpg"
+    if not thumb.exists():
         return ActionResult(ok=False, error=f"no such candidate: {eid}")
+    info = _load_json(cfg.review / "manifest.json", {}).get(eid)
+    sp = info.get("source_path") if info else None
+    original = Path(sp) if sp else None
+    if original is None or not original.exists() or original.is_symlink():
+        return ActionResult(ok=False, error=f"original missing for candidate {eid} — cannot admit")
+    digest = (info or {}).get("sha256")
+    sid = make_id("src", digest) if digest else None
     dst = cfg.review / "approved" / f"{eid}.jpg"
+
+    def _restore_thumb() -> None:
+        """Put the review thumbnail back so a failed approve is retryable from the Candidates tab."""
+        try:
+            if dst.exists() and not thumb.exists():
+                dst.rename(thumb)
+        except OSError as exc:
+            get_logger(cfg)("candidates", eid, "approve_restore_failed", err=str(exc)[:160])
+
     try:                                               # read-only mount / disk full / rename race
         dst.parent.mkdir(parents=True, exist_ok=True)
-        src.rename(dst)
+        thumb.rename(dst)
     except OSError as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"eid": eid})
+    try:
+        discover_intake(cfg)                           # copy approved original(s) into 01_inbox/
+    except Exception as exc:
+        _restore_thumb()
+        get_logger(cfg)("candidates", eid, "approve_intake_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"intake failed: {str(exc)[:160]}")
+    ingest = catalogue_inbox(cfg)                      # existing stage+ingest txn site (actions_run)
+    if not ingest.ok:
+        _restore_thumb()
+        return ActionResult(ok=False, error=ingest.error)
+    ing = ingest.detail or {}
+    if ing.get("retired_dedup"):
+        _restore_thumb()
+        rid = ing["retired_dedup"][0]
+        return ActionResult(ok=False, error=f"content matches retired source {rid} — re-upload blocked",
+                            detail={"eid": eid, "retired_dedup": ing["retired_dedup"]})
+    if ing.get("added", 0) >= 1 and not cfg.queue_gate:
+        from fanops.studio.actions_run import kick_prepare
+        kick_prepare(cfg)
+    detail: dict = {"eid": eid}
+    if sid:
+        detail["source_id"] = sid
+    detail["added"] = ing.get("added", 0)
+    if ing.get("retired_dedup"):
+        detail["retired_dedup"] = ing["retired_dedup"]
+    return ActionResult(ok=True, detail=detail)
 
 
 # Non-terminal states an operator may mark "posted by hand". `error` is included (ecc:python-review):
