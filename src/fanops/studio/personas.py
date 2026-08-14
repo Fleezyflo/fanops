@@ -13,6 +13,8 @@ from fanops.log import get_logger
 from fanops.accounts import link_persona as _link_persona
 from fanops.studio.actions import ActionResult
 
+_NICHE_OMIT = object()  # edit without a niche field preserves the stored niche
+
 
 def _parse_niche(raw: str) -> list[str]:
     """Split the niche form value on commas and newlines ONLY. Whitespace is not a separator — an entry
@@ -90,18 +92,20 @@ def create_persona(cfg: Config, name: str, voice: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
-                 cut_policy=None, hook_angle: str = "", intensity: str = "", niche: str = "") -> ActionResult:
+                 cut_policy=None, hook_angle: str = "", intensity: str = "", niche=_NICHE_OMIT) -> ActionResult:
     """Save edits to the five Studio knobs (name/voice + cut_policy/intensity/hook_angle/niche).
     The edit form is AUTHORITATIVE for those fields: an unchecked/blank lever CLEARS it. Hidden legacy fields
     (content_focus, selection_scope, etc.) are NOT in the form — update_persona leaves them untouched. The cut
-    (length) is DERIVED from cut_policy. Unknown id / unknown lever / blank name -> a clean one-line error."""
+    (length) is DERIVED from cut_policy. Unknown id / unknown lever / blank name -> a clean one-line error.
+    Niche is omitted (_NICHE_OMIT) unless the caller passes it — partial edits keep the stored niche."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
-        core.update_persona(cfg, pid, name=name, voice=voice,
-                            cut_policy=(cut_policy or []), hook_angle=hook_angle,
-                            intensity=intensity, niche=_parse_niche(niche))
+        upd = dict(name=name, voice=voice, cut_policy=(cut_policy or []), hook_angle=hook_angle, intensity=intensity)
+        if niche is not _NICHE_OMIT:
+            upd["niche"] = _parse_niche(niche)
+        core.update_persona(cfg, pid, **upd)
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name

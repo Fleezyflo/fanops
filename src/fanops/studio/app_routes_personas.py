@@ -48,11 +48,14 @@ def register_personas_routes(app, cfg):
 
     @app.post("/personas/edit")
     def do_personas_edit():
+        niche_kw = {}
+        if "niche" in request.form:
+            niche_kw["niche"] = request.form.get("niche", "")
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
             cut_policy=request.form.getlist("cut_policy"),
             hook_angle=request.form.get("hook_angle", ""), intensity=request.form.get("intensity", ""),
-            niche=request.form.get("niche", "")))
+            **niche_kw))
 
     @app.post("/personas/delete")
     def do_personas_delete():
