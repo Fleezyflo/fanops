@@ -106,7 +106,7 @@ def refresh_strip_metrics(cfg: Config) -> dict:
     Uses Ledger + fanops.pipeline_status only — does NOT import studio.views."""
     from collections import Counter
     from fanops.ledger import Ledger
-    from fanops.models import SourceState
+    from fanops.models import SourceState, PostState
     from fanops.pipeline_status import PendingIndex, source_backlog
     from fanops.controlio import write_json_atomic
     from fanops.timeutil import iso_z
@@ -119,11 +119,13 @@ def refresh_strip_metrics(cfg: Config) -> dict:
         by_kind.get("moments", 0) + by_kind.get("moment_hooks", 0) + by_kind.get("captions", 0))
     errored_ids = [sid for sid, s in sorted(led.sources.items())
                    if s.state in (SourceState.error, SourceState.moments_empty)]
+    failed = sum(1 for p in led.posts.values() if p.state is PostState.failed)
     blob = {
         "checked_at": iso_z(datetime.now(timezone.utc)),
         "blocked_gates": int(blocked),
         "recoverable_sources": int(bl.recoverable),
         "errored_first_id": errored_ids[0] if errored_ids else None,
+        "failed": int(failed),
     }
     write_json_atomic(cfg.strip_metrics_path, blob)
     return blob

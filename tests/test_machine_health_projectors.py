@@ -141,31 +141,30 @@ def test_golive_status_uses_build_health_report_not_doctor_report(tmp_path, monk
     assert st.notes == ["from-constructor"]
     assert st.half_live is False
 
-def test_build_system_strip_uses_build_health_report_projector(tmp_path, monkeypatch):
-    """Strip half_live must come from project_strip_health(build_health_report) — not half_live_state re-probe."""
+def test_build_system_strip_uses_half_live_state_not_build_health_report(tmp_path, monkeypatch):
+    """Strip half_live comes from half_live_state; never build_health_report on every page."""
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
     import fanops.health_model as hm
     from fanops.studio import views
 
-    seen = {"build": 0}
+    seen = {"build": 0, "hl": 0}
 
     def _fake_build(*a, **k):
         seen["build"] += 1
-        seen["kwargs"] = k
-        return HealthReport(
-            checks=[_check(HALF_LIVE_CHECK_LABEL, False, "from-projector")],
-            notes=[],
-            deps=[],
-        )
+        return HealthReport(checks=[], notes=[], deps=[])
+
+    def _fake_hl(_cfg):
+        seen["hl"] += 1
+        return hm.HalfLiveState(True, "from-half-live-state")
 
     monkeypatch.setattr(hm, "build_health_report", _fake_build)
-    # Dryrun cfg + direct half_live_state would yield half_live=False; projector must win.
+    monkeypatch.setattr(hm, "half_live_state", _fake_hl)
     strip = views.build_system_strip(cfg)
-    assert seen["build"] == 1
-    assert seen["kwargs"].get("probe_policy") == "observe"
+    assert seen["build"] == 0
+    assert seen["hl"] == 1
     assert strip["half_live"] is True
-    assert strip["half_live_hint"] == "from-projector"
+    assert strip["half_live_hint"] == "from-half-live-state"
 
 
 def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_path, monkeypatch, mocker):

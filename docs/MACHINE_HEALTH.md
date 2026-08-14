@@ -7,7 +7,8 @@ FanOps has **one machine-health constructor** and **one primary operator channel
 | **Primary** | `fanops doctor` (human + `--json`) | `cli.cmd_doctor` → `health_model.build_health_report` |
 | Alias | `fanops health` | `cli.cmd_health` — same report + exit semantics |
 | Readiness | `fanops init` / `fanops autopilot` | `init_flow.run_init`, `autopilot.autopilot` — exit tracks `report_is_healthy` |
-| Projections | Studio Home strip, Go-Live readiness, daemon strip, `/metrics` | `project_strip_health`, `project_golive_readiness`, `project_daemon_strip`, `render_prometheus_metrics` |
+| Home strip | Studio nav strip half-live | `health_model.half_live_state` |
+| Projections | Go-Live readiness, daemon strip, `/metrics` | `project_golive_readiness`, `project_daemon_strip`, `render_prometheus_metrics` |
 | **Not machine health** | `/healthz` | Process up only (`studio.app.healthz`) |
 | **Not machine health** | `fanops up` | Bring-up / infra READY (`cli.cmd_up`) |
 | **Not a third healthy** | `fanops status` | Backlog counters; point at doctor for health |
