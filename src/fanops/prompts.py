@@ -51,13 +51,13 @@ def _data_fence(label: str, body: str) -> str:
             f"<source_data>\n{inner}\n</source_data>\n")
 
 _MAX_TARGET_PICKS = 30   # CEILING only (the prompt frames it as "up to N", never a quota): a long source
-                         # can yield up to 30 strong clips; a short one yields proportionally fewer.
+                         # can yield up to 30 strong clips; unprobed sources omit the count line.
 
 def _target_pick_count(duration: float) -> int:
-    """How many non-overlapping clips to AIM for, by source length. <=0 (unprobed) -> 0 (no target, let
-    the model decide); else ~one per 30s of source, floored at 1 and capped at _MAX_TARGET_PICKS."""
+    """How many non-overlapping clips to AIM for. <=0 (unprobed) -> 0 (no target, let the model decide);
+    else the global ceiling (_MAX_TARGET_PICKS) — a max, never a duration-derived quota."""
     if duration <= 0: return 0
-    return max(1, min(_MAX_TARGET_PICKS, round(duration / 30.0)))
+    return _MAX_TARGET_PICKS
 
 def _hook_spec(max_words: int = 6, directive=None, *, allow_null: bool = False) -> str:
     """Shared on-screen hook craft. Universal retention-science floor + persona-supplied demos/bans (MOL-173)."""

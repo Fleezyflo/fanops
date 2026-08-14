@@ -130,10 +130,10 @@ def test_pick_personas_opens_gates_without_directive(tmp_path):
 # 4. _target_pick_count does not read band.span.
 def test_target_pick_count_no_band_span():
     src = inspect.getsource(_target_pick_count)
-    assert "band" not in src and "span" not in src
+    assert "band" not in src and "span" not in src and "/ 30" not in src
     assert _target_pick_count(0.0) == 0
-    assert _target_pick_count(60.0) == 2
-    assert _target_pick_count(700.0) <= 30
+    assert _target_pick_count(60.0) == 30
+    assert _target_pick_count(700.0) == 30
 
 
 # 5. validate_pick rejects <=6s; 0.51s does not ingest.

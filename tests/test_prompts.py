@@ -107,12 +107,12 @@ def test_moment_pick_prompt_complete_moment_no_duration_target():
     for band in ("12-22", "18-35", "8-15", "16-26", "target 12", "band="):
         assert band not in p
 
-def test_target_pick_count_is_proportional_capped_at_30():
-    from fanops.prompts import _target_pick_count
+def test_target_pick_count_is_ceiling_only():
+    from fanops.prompts import _target_pick_count, _MAX_TARGET_PICKS
     assert _target_pick_count(0.0) == 0        # unprobed -> no target (let the model decide)
-    assert _target_pick_count(9.0) == 1
-    assert _target_pick_count(60.0) == 2
-    assert _target_pick_count(700.0) <= 30     # long source -> the 30 CEILING holds (a max, never forced)
+    assert _target_pick_count(9.0) == _MAX_TARGET_PICKS
+    assert _target_pick_count(60.0) == _MAX_TARGET_PICKS
+    assert _target_pick_count(700.0) == _MAX_TARGET_PICKS
 
 def test_moment_pick_prompt_short_source_still_allows_picks():
     p = moment_pick_prompt({"duration": 10.0, "transcript": [], "signal_peaks": [],
@@ -124,7 +124,7 @@ def test_moment_pick_prompt_short_source_still_allows_picks():
 def test_moment_pick_prompt_long_source_asks_for_multiple_nonoverlapping():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
-    assert "3" in p                            # the proportional target count for ~90s
+    assert "30" in p                             # the ceiling target count for any probed source
     assert "overlap" in p.lower()              # prefer distinct windows; code dedups downstream
 
 def test_prompt_overlap_contract():
