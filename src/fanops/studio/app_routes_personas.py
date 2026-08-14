@@ -42,10 +42,7 @@ def register_personas_routes(app, cfg):
     def do_personas_add():
         return _personas_panel(studio_personas.create_persona(
             cfg, request.form.get("name", ""), request.form.get("voice", ""),
-            # MOL-523: content_focus/selection_scope/hook_angle are FREE TEXT (.get); cut_policy is the
-            # multi-select token list (.getlist) that derives cut length + framing.
-            content_focus=request.form.get("content_focus", ""), cut_policy=request.form.getlist("cut_policy"),
-            selection_scope=request.form.get("selection_scope", ""),
+            cut_policy=request.form.getlist("cut_policy"),
             hook_angle=request.form.get("hook_angle", ""), intensity=request.form.get("intensity", ""),
             niche=request.form.get("niche", "")))
 
@@ -53,9 +50,9 @@ def register_personas_routes(app, cfg):
     def do_personas_edit():
         return _personas_panel(studio_personas.edit_persona(
             cfg, request.form.get("id", ""), request.form.get("name", ""), request.form.get("voice", ""),
-            content_focus=request.form.get("content_focus", ""), cut_policy=request.form.getlist("cut_policy"),
-            selection_scope=request.form.get("selection_scope", ""),
-            hook_angle=request.form.get("hook_angle", ""), intensity=request.form.get("intensity", "")))
+            cut_policy=request.form.getlist("cut_policy"),
+            hook_angle=request.form.get("hook_angle", ""), intensity=request.form.get("intensity", ""),
+            niche=request.form.get("niche", "")))
 
     @app.post("/personas/delete")
     def do_personas_delete():

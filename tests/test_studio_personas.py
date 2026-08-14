@@ -251,28 +251,25 @@ def test_personas_route_renders(tmp_path):
 
 
 def test_edit_drawer_is_the_clean_five_lever_set(tmp_path):
-    # The edit sidebar collapses to DISTINCT, non-overlapping levers: voice, content_focus, selection_scope, hook_angle
-    # (the corpus is managed on the card). Everything that repeated another field is gone from the drawer AND
-    # the compose-preview path: tag_lean (corpus owns hashtags), the 3 directive overrides (voice + structured
-    # levers cover them), genre (-> Research), framing (-> smart framing), hook_tone/clip_profile/clip_count/brief.
+    # Studio shows exactly five operator knobs: voice, cut_policy, intensity, hook_angle, niche.
+    # Hidden from the editor: content_focus, selection_scope, tag_lean, energy, clip_profile, directive overrides.
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     drawer = _client(cfg).get(f"/personas/drawer/{pid}").get_data(as_text=True)
-    for keep in ('name="voice"', 'name="content_focus"', 'name="selection_scope"', 'name="hook_angle"'):
-        assert keep in drawer, f"missing lever {keep}"
-    for gone in ('name="tag_lean"', 'name="casting_directive"', 'name="hook_directive"',
-                 'name="caption_directive"', 'name="genre"', 'name="framing"', 'name="clip_count"',
-                 'name="hook_tone"', 'name="clip_profile"', 'name="brief"'):
-        assert gone not in drawer, f"removed control still in the edit drawer: {gone}"
+    for keep in ('name="voice"', 'name="cut_policy"', 'name="intensity"', 'name="hook_angle"', 'name="niche"'):
+        assert keep in drawer, f"missing knob {keep}"
+    for gone in ('name="content_focus"', 'name="selection_scope"', 'name="tag_lean"', 'name="casting_directive"',
+                 'name="hook_directive"', 'name="caption_directive"', 'name="genre"', 'name="framing"',
+                 'name="clip_count"', 'name="hook_tone"', 'name="clip_profile"', 'name="brief"', 'name="energy"'):
+        assert gone not in drawer, f"hidden control still in the edit drawer: {gone}"
 
 
 def test_niche_lives_in_the_editable_zone(tmp_path):
-    # niche is not a clip lever — it is the declared subject list the next measurement pass searches on,
-    # so its input sits in zone 2 ("What you can change"). The proposal routes it used to sit next to are gone.
+    # niche is knob 5 in zone 2 ("What you can change"), saved via the main edit form.
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     page = _client(cfg).get("/personas").get_data(as_text=True)
-    assert 'name="niche"' in page and "/personas/niche" in page       # the niche is settable on the card
+    assert 'name="niche"' in page
     assert 'name="genre"' not in page
     for gone in ("/personas/research", "/personas/recommend", "/personas/corpus/add", "/personas/corpus/remove"):
         assert gone not in page, f"a curation route survived in the panel: {gone}"

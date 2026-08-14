@@ -27,14 +27,11 @@
   <section class="persona-step persona-add-step">
     <details class="disclosure-step">
       <summary class="step-summary">+ Add a persona</summary>
-      <p class="muted persona-levers-intro">Each persona's levers{{ term('lever') }} shape its clips, hooks and captions.</p>
+      <p class="muted persona-levers-intro">Each persona has five knobs{{ term('lever') }} — voice, cut policy, intensity, hook angle, and niche — that shape clips, hooks, captions, and hashtags.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, write its voice, set its levers, and optionally add interim territory seeds — which moments it clips, its
-        selection scope, and its hook angle. Hashtags (and genre for research) are curated per-card after it exists.</p>
+      <p class="muted">Name it, set its voice and knobs. Hashtag corpus is derived after the persona exists.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
-        <label>Territory seeds <input type="text" name="niche" placeholder="optional tag seeds, e.g. hiphop" size="28" required
-          title="the subject term(s) the next measurement pass searches Instagram for"></label>
         <label class="block">Voice
           <textarea name="voice" rows="2" placeholder="champions craft; clip the moments that show artistry…"></textarea></label>
         {{ lever_fields(levers, effects) }}
@@ -108,17 +105,6 @@
                 hx-confirm="Delete persona {{ p.name }}? Linked accounts fall back to their inline persona.">Delete</button>
             </div>
           </form>
-          {# Niche is a SEPARATE form (not folded into lever_fields — that macro is shared with Add + drawer). #}
-          {% set niche_lever = lever_ref | selectattr("key", "equalto", "niche") | first %}
-          <form class="inline persona-niche-form" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML">
-            <input type="hidden" name="id" value="{{ p.id }}">
-            <label>Niche
-              <input type="text" name="niche" value="{{ p.niche | join(', ') }}" placeholder="interim seeds — commas separate; voice+levers also direct search"
-                size="36" required
-                title="{{ niche_lever.does if niche_lever else 'interim seeds — voice + levers also seed Layer A' }}">
-            </label>
-            <button type="submit" class="ghost" title="save interim seeds; voice + levers also seed discovery">Save seeds</button>
-          </form>
           {% if p.discovery_roots %}
           <p class="persona-discovery muted" title="LLM-generated Layer A search roots — unique ones also attribute in Layer B; search-only means shared/sibling-owned">
             Generated roots:
@@ -142,13 +128,10 @@
             {% if p.caption_text %}<p class="persona-instruction"><span class="muted">caption →</span> {{ p.caption_text }}</p>{% endif %}
           </div>
 
-          {# 2 · Derived spec line — the differentiators, read-only. MOL-523: the cut length is DERIVED from
-             cut_policy (the tokens); content_focus/selection_scope/hook_angle are free-text editorial. #}
+          {# 2 · Derived spec line — the differentiators, read-only. Cut length derives from cut_policy. #}
           <p class="persona-spec muted" title="how this voice's output differs — the cut length is DERIVED from cut policy">
             {% if p.length_band %}~{{ p.length_band }} clips{% endif %}
             {% for c in p.cut_policy or [] %} · {{ c }}{% endfor %}
-            {% if p.content_focus %} · {{ p.content_focus }}{% endif %}
-            {% if p.selection_scope %} · {{ p.selection_scope }}{% endif %}
             {% if p.hook_angle %} · {{ p.hook_angle }} hook{% endif %}
           </p>
 

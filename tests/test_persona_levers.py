@@ -164,7 +164,8 @@ def test_personas_panel_renders_lever_controls(tmp_path):
     add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], hook_angle="curiosity", niche=["hiphop"])
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
-    assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the lever controls render
+    assert 'name="cut_policy"' in html and 'name="hook_angle"' in html and 'name="niche"' in html
+    assert 'name="content_focus"' not in html and 'name="selection_scope"' not in html
     assert "AI reads" in html                                                # the composed-instruction line
 
 
@@ -257,7 +258,8 @@ def test_personas_panel_renders_directive_ui(tmp_path):
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
     assert "hook &#8594;" in html or "hook →" in html or "hook →" in html   # per-dimension directive shown (clips/hook/caption)
-    assert 'name="content_focus"' in html and 'name="hook_angle"' in html   # the clean lever controls
+    assert 'name="cut_policy"' in html and 'name="hook_angle"' in html and 'name="niche"' in html
+    assert 'name="content_focus"' not in html
 
 def test_studio_edit_persona_persists_levers(tmp_path):
     from fanops.studio import personas as sp

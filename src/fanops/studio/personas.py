@@ -32,7 +32,8 @@ def preview_compose(cfg: Config, form) -> ActionResult:
     persisting writers, so personas.json is untouched. An existing persona's curated corpus (not a form field)
     is merged in by `id` so the lead tags are accurate. A bad lever value -> a clean one-line error, never a
     500. `form` is a Werkzeug MultiDict (or any object with .get/.getlist). The five clean levers only:
-    voice, content_focus, intensity, selection_scope, hook_angle (+ the saved corpus); the cut is DERIVED from content_focus."""
+    voice, cut_policy, intensity, hook_angle, niche (+ the saved corpus); hidden legacy fields on disk are
+    preserved when editing an existing persona. The cut is DERIVED from cut_policy."""
     try:
         from fanops.personas import CUT_POLICY, INTENSITY
 
@@ -43,6 +44,7 @@ def preview_compose(cfg: Config, form) -> ActionResult:
 
         pid = (form.get("id") or "").strip()
         corpus: list = []
+        saved = None
         if pid:                                          # an existing persona keeps its curated corpus (not a form field)
             with fail_open("studio.personas.preview_compose"):
                 saved = core.Personas.load(cfg).get(pid)
@@ -50,11 +52,13 @@ def preview_compose(cfg: Config, form) -> ActionResult:
         policy = [c for c in form.getlist("cut_policy") if c]
         for c in policy:
             if c not in CUT_POLICY: raise ValueError(f"unknown cut_policy: {c}")
+        niche_raw = (form.get("niche") or "").strip()
+        niche_v = _parse_niche(niche_raw) if niche_raw else (list(saved.niche) if saved and saved.niche else [])
         per = core.Persona(
-            id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus,
-            content_focus=(form.get("content_focus") or "").strip() or None,
+            id=(pid or "preview"), voice=form.get("voice", ""), hashtag_corpus=corpus, niche=niche_v,
+            content_focus=saved.content_focus if saved else None,
             cut_policy=policy,
-            selection_scope=(form.get("selection_scope") or "").strip() or None,
+            selection_scope=saved.selection_scope if saved else None,
             hook_angle=(form.get("hook_angle") or "").strip() or None,
             intensity=_enum(form.get("intensity"), INTENSITY, "intensity"))
     except ValueError as exc:
@@ -86,19 +90,18 @@ def create_persona(cfg: Config, name: str, voice: str = "",
 
 
 def edit_persona(cfg: Config, pid: str, name: str = "", voice: str = "",
-                 content_focus: str = "", cut_policy=None, selection_scope: str = "", hook_angle: str = "",
-                 intensity: str = "") -> ActionResult:
-    """Save edits to a persona's clean levers (name/voice + content_focus/cut_policy/intensity/selection_scope/hook_angle).
-    The edit form is AUTHORITATIVE: an unchecked/blank lever CLEARS it. The cut (length) is DERIVED from cut_policy,
-    so there is no length/framing knob. Unknown id / unknown lever / blank name -> a clean one-line error."""
+                 cut_policy=None, hook_angle: str = "", intensity: str = "", niche: str = "") -> ActionResult:
+    """Save edits to the five Studio knobs (name/voice + cut_policy/intensity/hook_angle/niche).
+    The edit form is AUTHORITATIVE for those fields: an unchecked/blank lever CLEARS it. Hidden legacy fields
+    (content_focus, selection_scope, etc.) are NOT in the form — update_persona leaves them untouched. The cut
+    (length) is DERIVED from cut_policy. Unknown id / unknown lever / blank name -> a clean one-line error."""
     pid = (pid or "").strip()
     if not pid:
         return ActionResult(ok=False, error="no persona selected")
     try:
         core.update_persona(cfg, pid, name=name, voice=voice,
-                            content_focus=content_focus, cut_policy=(cut_policy or []),
-                            selection_scope=selection_scope, hook_angle=hook_angle,
-                            intensity=intensity)
+                            cut_policy=(cut_policy or []), hook_angle=hook_angle,
+                            intensity=intensity, niche=_parse_niche(niche))
     except KeyError:
         return ActionResult(ok=False, error=f"no such persona: {pid}")
     except ValueError as exc:                            # unknown lean or lever / blank name

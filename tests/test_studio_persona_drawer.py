@@ -50,8 +50,9 @@ def test_drawer_route_renders_levers_visible(tmp_path):
     html = _client(cfg).get(f"/personas/drawer/{pid}").data.decode()
     assert 'role="dialog"' in html and 'aria-modal="true"' in html
     assert 'id="persona-drawer-heading"' in html         # the labelled, focusable heading drawer.js focuses
-    # the five clean levers are PRESENT and not gated behind a second <details> collapse
-    assert 'name="content_focus"' in html and 'name="selection_scope"' in html and 'name="hook_angle"' in html
+    # the five Studio knobs are PRESENT and not gated behind a second <details> collapse
+    assert 'name="cut_policy"' in html and 'name="hook_angle"' in html and 'name="niche"' in html
+    assert 'name="content_focus"' not in html and 'name="selection_scope"' not in html
     assert '<details' not in html.replace('<details class="effective-persona"', '')  # only effective-persona may collapse
     assert "Curator" in html
 
@@ -119,13 +120,14 @@ def test_compose_panel_empty_levers_keeps_the_grid_no_produces_line(tmp_path):
 
 
 def test_drawer_lever_fields_persist_via_edit(tmp_path):
-    # the WHOLE POINT of the drawer is surfacing the levers — prove a full lever submission round-trips and saves.
+    # the WHOLE POINT of the drawer is surfacing the five knobs — prove a full lever submission round-trips.
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Lever Test", niche=["hiphop"])
+    pid = core.add_persona(cfg, name="Lever Test", niche=["hiphop"], selection_scope="subject_locked")
     r = _client(cfg).post("/personas/edit", data={
-        "id": pid, "name": "Lever Test", "voice": "v",
-        "cut_policy": ["storytelling", "emotional"], "selection_scope": "subject_locked", "hook_angle": "curiosity"})
+        "id": pid, "name": "Lever Test", "voice": "v", "niche": "drill",
+        "cut_policy": ["storytelling", "emotional"], "hook_angle": "curiosity"})
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
     assert set(p.cut_policy) == {"storytelling", "emotional"}
-    assert p.selection_scope == "subject_locked" and p.hook_angle == "curiosity"
+    assert p.hook_angle == "curiosity" and p.niche == ["drill"]
+    assert p.selection_scope == "subject_locked"  # hidden field preserved when absent from the form
