@@ -91,9 +91,11 @@ def test_approve_retired_sha_is_dead_end(tmp_path, mocker):
     assert not (cfg.review / "approved" / f"{eid}.jpg").exists()
 
 def test_approve_ingest_failure_restores_thumbnail(tmp_path, mocker):
+    from fanops.studio.actions_common import ActionResult
     cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
     _ingest_mocks(mocker)
-    mocker.patch("fanops.ingest.ingest_staged", side_effect=RuntimeError("ingest boom"))
+    mocker.patch("fanops.studio.actions.catalogue_inbox",
+                 return_value=ActionResult(ok=False, error="ingest failed: ingest boom"))
     res = actions.approve_candidate(cfg, eid)
     assert not res.ok and "ingest failed" in res.error
     assert (cfg.review / f"{eid}.jpg").exists()

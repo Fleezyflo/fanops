@@ -293,14 +293,12 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
     """Track C: approve a discover candidate from the browser — admit the original into the
-    catalogue (same path as inbox ingest: discover.intake copies to 01_inbox, then stage+ingest
-    mints a Source). Moves 00_review/<eid>.jpg into approved/ as the operator signal. eid must be a
-    bare stem (no path separators / ..). Fails honestly when the manifest original is missing or the
-    content matches a retired Source (retired_dedup dead-end)."""
+    catalogue (same path as inbox ingest: discover.intake copies to 01_inbox, then catalogue_inbox
+    stage+ingests a Source). Moves 00_review/<eid>.jpg into approved/ as the operator signal. eid
+    must be a bare stem (no path separators / ..). Fails honestly when the manifest original is
+    missing or the content matches a retired Source (retired_dedup dead-end)."""
     from fanops.discover import _load_json, intake as discover_intake
-    from fanops.digest import write_digest
     from fanops.ids import make_id
-    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
     if not eid or "/" in eid or "\\" in eid or ".." in eid:
         return ActionResult(ok=False, error=f"bad candidate id: {eid!r}")
     thumb = cfg.review / f"{eid}.jpg"
@@ -328,33 +326,31 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
         thumb.rename(dst)
     except OSError as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    counts = None
     try:
         discover_intake(cfg)                           # copy approved original(s) into 01_inbox/
-        staged = stage_inbox_candidates(cfg)           # default origin="drop" — same as CLI ingest path
-        with Ledger.transaction(cfg) as led:
-            led, counts = ingest_staged(led, cfg, staged)
-        _archive_staged(cfg, staged)
-        write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
         _restore_thumb()
-        get_logger(cfg)("candidates", eid, "approve_ingest_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
-    if counts is not None and counts.retired_dedup:
+        get_logger(cfg)("candidates", eid, "approve_intake_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"intake failed: {str(exc)[:160]}")
+    ingest = catalogue_inbox(cfg)                      # existing stage+ingest txn site (actions_run)
+    if not ingest.ok:
         _restore_thumb()
-        rid = counts.retired_dedup[0]
+        return ActionResult(ok=False, error=ingest.error)
+    ing = ingest.detail or {}
+    if ing.get("retired_dedup"):
+        _restore_thumb()
+        rid = ing["retired_dedup"][0]
         return ActionResult(ok=False, error=f"content matches retired source {rid} — re-upload blocked",
-                            detail={"eid": eid, "retired_dedup": counts.retired_dedup})
-    if counts is not None and counts.added >= 1 and not cfg.queue_gate:
+                            detail={"eid": eid, "retired_dedup": ing["retired_dedup"]})
+    if ing.get("added", 0) >= 1 and not cfg.queue_gate:
         from fanops.studio.actions_run import kick_prepare
         kick_prepare(cfg)
     detail: dict = {"eid": eid}
     if sid:
         detail["source_id"] = sid
-    if counts is not None:
-        detail["added"] = counts.added
-        if counts.retired_dedup:
-            detail["retired_dedup"] = counts.retired_dedup
+    detail["added"] = ing.get("added", 0)
+    if ing.get("retired_dedup"):
+        detail["retired_dedup"] = ing["retired_dedup"]
     return ActionResult(ok=True, detail=detail)
 
 
