@@ -20,6 +20,13 @@ import fanops.clip as clipmod
 from fanops import overlay
 
 
+@pytest.fixture(autouse=True)
+def _clear_yunet_cache():
+    framing._reset_yunet_cache()
+    yield
+    framing._reset_yunet_cache()
+
+
 # ---------------------------------------------------------------- reframe_filter offset math ----
 def test_focus_none_is_byte_identical_to_today():
     # the universal fail-open: focus=None on EVERY branch == the exact crop ffmpeg produced before.
@@ -662,8 +669,8 @@ def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
 
 
 # ================================================ smart_framing: ONE-CONSTRUCTION, FAIL-LOUD prerequisite ====
-# Contract (Decision Record v4): when smart_framing is ON (production default), _resolve_framing constructs the
-# REAL YuNet detector EXACTLY ONCE (framing._framing_runtime_or_raise) and reuses it for every detection call.
+# Contract: when smart_framing is ON (production default), the REAL YuNet detector is built ONCE per process
+# (framing._framing_runtime_or_raise / _detector cache) and reused for every render_moment / _resolve_framing.
 # A BROKEN PREREQUISITE — cv2 absent, FaceDetectorYN/.create missing, model file absent, FaceDetectorYN.create()
 # returning None, or FaceDetectorYN.create() raising — REFUSES loudly with ToolchainMissingError BEFORE any
 # centered output. A GENUINE DETECTION MISS (detector built OK, no face found) still fails open to centered.
@@ -781,7 +788,7 @@ def test_real_opencv_runtime_constructs(tmp_path):
     rt = framing._framing_runtime_or_raise(Config(root=tmp_path))
     assert rt.cv2 is not None and rt.detector is not None
 
-# (11) ONE cold-sidecar _resolve_framing invocation calls FaceDetectorYN.create EXACTLY ONCE (integration:
+# (11) ONE process: many _resolve_framing invocations call FaceDetectorYN.create EXACTLY ONCE (integration:
 # needs real cv2 so the real constructor is the thing being counted)
 @pytest.mark.integration
 def test_one_resolve_constructs_detector_exactly_once(tmp_path, monkeypatch):
@@ -793,11 +800,13 @@ def test_one_resolve_constructs_detector_exactly_once(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [])  # ffmpeg-free, forces the miss path
     cfg = Config(root=tmp_path); src = _talk_src()             # cold sidecar (fresh tmp root)
     _resolve_framing(cfg, src, 0.0, 6.0)
-    assert calls["n"] == 1                                     # constructed ONCE, not per detection function
+    assert calls["n"] == 1                                     # constructed ONCE for the process
+    _resolve_framing(cfg, src, 0.0, 6.0)                       # second resolution reuses cache
+    assert calls["n"] == 1                                     # still one create
 
 @pytest.mark.integration
 def test_framing_construction_and_extraction_counts_reported(tmp_path, monkeypatch, capsys):
-    # CI-authoritative instrumentation: with REAL cv2, measure and ASSERT the per-resolution counts the
+    # CI-authoritative instrumentation: with REAL cv2, measure process-scoped construction counts and
     # decision record reports (constructor calls, detector objects, detect_window calls, grid extractions),
     # and prove the sidecar cache makes a WARM second resolution do zero new construction/extraction.
     import cv2
@@ -825,21 +834,18 @@ def test_framing_construction_and_extraction_counts_reported(tmp_path, monkeypat
     cold = dict(n)
     print(f"[framing-counts] COLD resolution: FaceDetectorYN.create={cold['create']} "
           f"detect_window={cold['detect_window']} grid_extract={cold['grid']}")
-    assert cold["create"] == 1, f"expected exactly ONE detector construction per resolution, got {cold['create']}"
+    assert cold["create"] == 1, f"expected exactly ONE detector construction per process, got {cold['create']}"
 
     for k in n: n[k] = 0
     _resolve_framing(cfg, src, 0.0, 6.0)                        # second (WARM sidecar) resolution, same window
     warm = dict(n)
     print(f"[framing-counts] WARM resolution (same window): FaceDetectorYN.create={warm['create']} "
           f"detect_window={warm['detect_window']} grid_extract={warm['grid']}")
-    # Construction is PER-RESOLUTION: each _resolve_framing builds exactly ONE detector (the prerequisite is
-    # re-proved every resolution — never 2). The sidecar caches DETECTION RESULTS, not the detector object, so
-    # a warm resolution still constructs 1 but does LESS extraction (detect_window's grid pass hits the cache).
-    assert warm["create"] == 1, f"each resolution constructs exactly one detector, got {warm['create']}"
+    assert warm["create"] == 0, f"warm resolution must reuse cached detector, got {warm['create']}"
     assert warm["grid"] < cold["grid"], (
         f"warm sidecar must reduce frame extraction ({warm['grid']} !< {cold['grid']})")
-    print("[framing-counts] init scope = PER-RESOLUTION (fresh _FramingRuntime each _resolve_framing): "
-          f"create=1 every resolution (never 2); warm sidecar cuts extraction {cold['grid']}->{warm['grid']}")
+    print("[framing-counts] init scope = PER-PROCESS (cached YuNet): "
+          f"create=1 once; warm sidecar cuts extraction {cold['grid']}->{warm['grid']}")
 
 # (13) OFF CONTRACT: the toggle is evaluated BEFORE the runtime build, so the retained OFF path never
 # requires OpenCV. If _resolve_framing ever built the runtime first, OFF would start demanding the extra.
@@ -853,27 +859,16 @@ def test_resolve_off_never_constructs_runtime(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); src = _talk_src()
     assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime, no cv2
 
-# (14) OBJECT LIFETIME / CONCURRENCY. What THIS TEST proves: PER-INVOCATION ALLOCATION on the path it
-# exercises — 2 sequential + 2 concurrent resolutions yield 4 distinct _FramingRuntime objects and 4 distinct
-# detector objects, and no runtime is retained in module/Config/Source state at the end. It does NOT prove that
-# no OTHER code path could retain one; that rests on code inspection (one construction site framing.py:100; the
-# only callers are clip._resolve_framing (local binding) and require_cv2 (builds+discards); consumers only READ
-# _rt.cv2/_rt.detector; no global/module cache). See docs/design/cv2-decision-record-v4.md §4b. Together they
-# are why a YuNet detector (mutable setInputSize state) is never shared across concurrent resolutions.
-def test_framing_runtime_is_per_invocation_never_shared(tmp_path, monkeypatch):
+# (14) PROCESS-SCOPED YuNet reuse: many resolutions in one interpreter share one FaceDetectorYN.create.
+def test_framing_runtime_reuses_yunet_once_per_process(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from fanops.clip import _resolve_framing
-    real_rt = framing._framing_runtime_or_raise
-    seen = []
-    lock = __import__("threading").Lock()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())      # a DISTINCT detector object per build
-    def _spy(cfg):
-        rt = real_rt(cfg)
-        with lock: seen.append(rt)
-        return rt
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", _spy)
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)  # never touch the fake detector
+    creates = {"n": 0}
+    def _create(*a, **k):
+        creates["n"] += 1
+        return object()
+    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(_create))
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
     monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
     cfg = Config(root=tmp_path); src = _talk_src()
@@ -883,16 +878,11 @@ def test_framing_runtime_is_per_invocation_never_shared(tmp_path, monkeypatch):
     with ThreadPoolExecutor(max_workers=2) as ex:                         # concurrent x2
         list(ex.map(lambda _: _resolve_framing(cfg, src, 0.0, 5.0), range(2)))
 
-    assert len(seen) == 4
-    assert len({id(rt) for rt in seen}) == 4, "each resolution must build its OWN runtime (none cached/shared)"
-    assert len({id(rt.detector) for rt in seen}) == 4, "each resolution must own its detector (YuNet holds mutable state)"
-    # nothing stashed a runtime in module state, on the Config, or on the Source
-    assert not [k for k, v in vars(framing).items() if isinstance(v, framing._FramingRuntime)], \
-        "no module-level _FramingRuntime may be retained"
-    assert not [a for a in dir(cfg) if isinstance(getattr(cfg, a, None), framing._FramingRuntime)], \
-        "the runtime must never be stored on Config"
-    assert not [a for a in dir(src) if isinstance(getattr(src, a, None), framing._FramingRuntime)], \
-        "the runtime must never be stored on the Source"
+    assert creates["n"] == 1, "FaceDetectorYN.create must run once per process, not per resolution"
+    rt_a = framing._framing_runtime_or_raise(cfg)
+    rt_b = framing._framing_runtime_or_raise(cfg)
+    assert rt_a is rt_b
+    assert rt_a.detector is rt_b.detector
 
 # (12) no suite-wide or autouse require_cv2 / runtime bypass exists (guards the 6dca52c regression class)
 def test_no_autouse_framing_guard_bypass():
