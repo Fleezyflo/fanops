@@ -100,11 +100,21 @@ def test_unlinked_account_corpus_is_empty(tmp_path):
 
 # --- caption request/ingest carry + apply the corpus -------------------------------------------
 
-def _clip(led):
+def _clip(led, transcript="they slept on me"):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+                          reason="r", transcript_excerpt=transcript, state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+
+
+def _write_meas_tags(cfg, tags, sizes=None):
+    now = "2026-07-01T00:00:00+00:00"
+    sizes = sizes or {}
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        t: {"graph_id": f"g{t}", "like_count": 100, "media_count": sizes.get(t, 1000.0),
+            "measured_at": now} for t in tags
+    }))
 
 
 def _accounts_with_corpus(cfg, corpus):
@@ -113,32 +123,43 @@ def _accounts_with_corpus(cfg, corpus):
     return a
 
 
-def test_request_captions_carries_corpus_per_surface(tmp_path):
+def test_request_captions_carries_source_measured_lead_not_persona_corpus(tmp_path):
+    """Clip make leads with size-ranked measured content tags, not persona hashtag_corpus."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _clip(led, transcript="detroit rap bars fire")
+    _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
+                     {"#detroit": 5000.0, "#alphacorpus": 10.0})
+    accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus", "#gammacorpus"])
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    corpus = payload["surfaces"][0]["corpus"]
+    assert "#detroit" in corpus and corpus[0] == "#detroit"   # highest-count related tag leads
+    assert "#alphacorpus" not in corpus                            # persona monopoly is not the lead
+    assert accts.accounts[0].hashtag_corpus == ["#alphacorpus", "#betacorpus", "#gammacorpus"]
+
+
+def test_request_captions_omits_corpus_when_no_measured_overlap(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
     accts = _accounts_with_corpus(cfg, ["#detroitrap"])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    assert payload["surfaces"][0]["corpus"] == ["#detroitrap"]
+    assert "corpus" not in payload["surfaces"][0]          # cold cache / no overlap -> no key
 
 
-def test_request_captions_omits_corpus_when_empty(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
-    accts = _accounts_with_corpus(cfg, [])
-    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
-    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    assert "corpus" not in payload["surfaces"][0]          # empty corpus -> no key (byte-identical)
-
-
-def test_ingest_uses_corpus_to_lead_hashtags(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
-    accts = _accounts_with_corpus(cfg, ["#detroitrap"])
+def test_ingest_uses_source_corpus_lead_not_persona_monopoly(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _clip(led, transcript="detroit rap bars fire")
+    _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
+                     {"#detroit": 9000.0, "#alphacorpus": 5.0})
+    accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus"])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
-    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
-    assert mc["hashtags"][0] == "#detroitrap"               # the corpus leads the vetted line
+    assert mc["hashtags"][0] == "#detroit"                  # source high-count lead, not persona corpus
+    assert "#alphacorpus" not in mc["hashtags"]
+    assert mc["tag_sources"].get("#detroit") in ("corpus", "content")
     assert len(mc["hashtags"]) <= 4
 
 

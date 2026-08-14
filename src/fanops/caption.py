@@ -27,8 +27,8 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements, _norm, _num,
-                             content_tag_candidates)
+from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements, ranked_tags,
+                             _norm, _num, content_tag_candidates)
 from fanops.log import get_logger
 from fanops.control import load_guidance
 
@@ -195,6 +195,15 @@ def _per_account_hashtag_stores(cfg: Config, accounts) -> dict[str, list[str]]:
     return out
 
 
+def _source_corpus_lead(content_tags: list[str], meas: dict) -> list[str]:
+    """Size-ranked measured tags related to THIS clip's transcript — the corpus LEAD at clip make
+    (not persona hashtag_corpus). Cold cache or no measured overlap -> []."""
+    if not content_tags or not meas:
+        return []
+    content_set = set(content_tags)
+    return [t for t in ranked_tags(meas) if t in content_set]
+
+
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
                      surfaces: list[tuple[str, Platform]], accounts=None) -> Ledger:
     clip = led.clips[clip_id]
@@ -205,21 +214,22 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
     # request back). Absent registry / None value -> no key (byte-identical to before).
     personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
-    # The per-persona DERIVED corpus (hydrated onto the account from its linked Persona) — the per-account
-    # hashtag differentiator. Rides the payload so it survives to ingest (-> vet_hashtags leads on it) AND
-    # the prompt shows it as the surface's own menu. Empty corpus -> no key.
-    corpora = {a.handle: list(getattr(a, "hashtag_corpus", []) or []) for a in accounts.accounts} if accounts is not None else {}
     # MOL-513 (C-3): per-surface menu = that account's persona aligned pool (not the global cache).
     stores = _per_account_hashtag_stores(cfg, accounts)
-    # MOL-642: clip transcript → content tag candidates (dormant path wired).
+    # MOL-642: clip transcript → content tag candidates; size-ranked measured overlap leads ingest
+    # (vet_hashtags corpus tier), not persona hashtag_corpus. Persona corpus remains on the account as
+    # derived store; hashtag_store carries the aligned pool for membership. Empty lead -> no corpus key.
     content_tags = content_tag_candidates(moment.transcript_excerpt)
+    meas = load_measurements(cfg)
+    source_lead = _source_corpus_lead(content_tags, meas)
+    corpora = ({a.handle: list(source_lead) for a in accounts.accounts}
+               if accounts is not None and source_lead else {})
     # MOL-636: visibility sidecar — keep hashtag_store as list[str] for vet; numbers ride separately.
     metric_tags: set[str] = set()
     for sv in stores.values():
         metric_tags.update(sv or [])
     for cv in corpora.values():
         metric_tags.update(_norm(t) for t in (cv or []) if isinstance(t, str))
-    meas = load_measurements(cfg)
     hashtag_metrics: dict = {}
     for t in metric_tags:
         rec = meas.get(t)
