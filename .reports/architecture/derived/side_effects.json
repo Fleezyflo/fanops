@@ -113,11 +113,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 490
+        "line": 491
       },
       {
         "call": "Ledger.transaction",
-        "line": 515
+        "line": 516
       }
     ],
     "fanops.post.compress": [
@@ -161,11 +161,11 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 482
+        "line": 483
       },
       {
         "call": "Ledger.transaction",
-        "line": 607
+        "line": 608
       }
     ],
     "fanops.responder": [
@@ -523,23 +523,23 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 184
+        "line": 199
       },
       {
         "call": "requests.post",
-        "line": 214
+        "line": 229
       },
       {
         "call": "requests.post",
-        "line": 283
+        "line": 298
       },
       {
         "call": "requests.get",
-        "line": 307
+        "line": 322
       },
       {
         "call": "requests.post",
-        "line": 443
+        "line": 458
       }
     ],
     "fanops.post.zernio": [
@@ -557,7 +557,7 @@
       },
       {
         "call": "requests.post",
-        "line": 492
+        "line": 493
       }
     ]
   },

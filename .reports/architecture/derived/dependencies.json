@@ -1255,7 +1255,9 @@
         "fanops.post.zernio_outcome",
         "fanops.text"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.post.metrics"
+      ],
       "optional": [],
       "typing": []
     },
@@ -3276,6 +3278,14 @@
       "to_level": 3
     },
     {
+      "from": "fanops.post.zernio",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
       "from": "fanops.recaption",
       "from_level": 6,
       "jump": 1,
@@ -3709,10 +3719,10 @@
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 589,
-    "lazy_edges": 370,
+    "lazy_edges": 371,
     "lazy_edges_lateral": 42,
-    "lazy_edges_strictly_upward": 73,
-    "lazy_edges_to_equal_or_higher_level": 115,
+    "lazy_edges_strictly_upward": 74,
+    "lazy_edges_to_equal_or_higher_level": 116,
     "modules": 138,
     "optional_edges": 0,
     "typing_only_edges": 7
