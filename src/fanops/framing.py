@@ -99,6 +99,7 @@ def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
     Called ONLY when cfg.smart_framing is ON (clip._resolve_framing); the OFF path never reaches it. NEVER
     degrades to centered — it refuses. (No bare except that swallows: the create() failure is caught only to
     RE-RAISE as ToolchainMissingError with a remediation message; test_swallow_ratchet.py has no quarrel.)"""
+    global _CACHED_RUNTIME
     with _RUNTIME_LOCK:
         if _CACHED_RUNTIME is not None:
             return _CACHED_RUNTIME
@@ -129,7 +130,8 @@ def _framing_runtime_or_raise(cfg) -> "_FramingRuntime":
             "(OpenCV/model incompatible, or the vendored model is unreadable) — "
             "reinstall the [framing] extra, or set FANOPS_SMART_FRAMING=0 to centre-crop")
     with _RUNTIME_LOCK:
-        assert _CACHED_RUNTIME is not None
+        if _CACHED_RUNTIME is None:
+            _CACHED_RUNTIME = _FramingRuntime(cv2, detector)
         return _CACHED_RUNTIME
 
 def require_cv2(cfg) -> None:
