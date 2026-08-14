@@ -61,6 +61,7 @@ def test_edit_persona_updates_fields(tmp_path):
     assert r.ok
     p = core.Personas.load(cfg).get(pid)
     assert p.name == "Z2" and p.voice == "new" and p.cut_policy == ["hype"] and p.hook_angle == "fomo"
+    assert p.niche == ["hiphop"]  # partial edit without niche preserves the stored terms
 
 
 def test_delete_persona_action(tmp_path):
@@ -337,13 +338,12 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
 
 
 def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
-    # MOL-60 (repointed): on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice
-    # drives a real account) must out-weigh the FREQUENT inline Save. Niche seeds now live in zone 2
-    # beside the other levers — not a separate ghost "Save seeds" utility.
+    # MOL-60: the CONSEQUENTIAL, rare Assign must out-weigh the FREQUENT Save seeds utility (ghost tier).
+    # Save seeds must actually persist niche via set_niche; the zone-2 inline Save stays primary.
     import re
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
-    core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
+    pid = core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _client(cfg).get("/personas").get_data(as_text=True)
 
     def _btn(label):  # the <button ...>LABEL</button> opening tag whose text is exactly `label`
@@ -351,9 +351,10 @@ def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
         assert m, f"{label!r} button not found in rendered personas panel"
         return m.group(0)
 
-    assert 'name="niche"' in html
+    assert 'class="ghost"' in _btn("Save seeds")
+    assert "/personas/niche" in html
     # the retired curation buttons must not come back with the routes deleted underneath them
-    for gone in ("Force refresh now", "Check reach", "Tune this voice", "Save seeds"):
+    for gone in ("Force refresh now", "Check reach", "Tune this voice"):
         assert gone not in html, f"a deleted curation control still renders: {gone}"
 
     # Assign stays secondary — NOT demoted to ghost, NOT promoted to primary
@@ -363,3 +364,9 @@ def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
 
     # the card's single primary is the zone-2 inline Save
     assert 'class="primary">Save</button>' in html
+
+    # Save seeds round-trips niche through set_niche (not just a dead control)
+    r = _client(cfg).post("/personas/niche", data={"id": pid, "niche": "drill, trap"})
+    assert r.status_code == 200
+    assert core.Personas.load(cfg).get(pid).niche == ["drill", "trap"]
+    assert b"drill" in r.data

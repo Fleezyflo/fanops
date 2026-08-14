@@ -104,6 +104,13 @@
                 hx-vals='{{ {"id": p.id} | tojson }}'
                 hx-confirm="Delete persona {{ p.name }}? Linked accounts fall back to their inline persona.">Delete</button>
             </div>
+            </form>
+          {# Save seeds persists the card's niche knob via set_niche — separate from the main Save so partial
+             lever edits never wipe declared territory. hx-include grabs the zone-2 niche input. #}
+          <form class="inline persona-niche-form" hx-post="{{ url_for('do_personas_niche') }}" hx-target="#personas-panel" hx-swap="outerHTML"
+                hx-include="closest article.persona-card [name='niche']">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <button type="submit" class="ghost" title="save territory seeds">Save seeds</button>
           </form>
           {% if p.discovery_roots %}
           <p class="persona-discovery muted" title="LLM-generated Layer A search roots — unique ones also attribute in Layer B; search-only means shared/sibling-owned">

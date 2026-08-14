@@ -103,13 +103,13 @@ def test_edit_one_lever_round_trip(tmp_path):
 
 
 def test_edit_zone_offers_the_niche_lever_not_a_curation_lane(tmp_path):
-    # The niche is knob 5 in zone 2 ("What you can change"), saved with the main edit form.
+    # The niche knob lives in zone 2; Save seeds posts it through /personas/niche (set_niche).
     cfg = Config(root=tmp_path)
     core.add_persona(cfg, name="Curator", voice="champions craft", niche=["hiphop"])
     html = _panel(cfg)
     zone2 = html.split("What you can change", 1)[1].split("Derived — updates itself", 1)[0]
     zone3 = html.split("Derived — updates itself", 1)[1].split("</article>", 1)[0]
-    assert 'name="niche"' in zone2 and "/personas/niche" not in zone2
+    assert 'name="niche"' in zone2 and "/personas/niche" in zone2 and "Save seeds" in zone2
     assert 'name="niche"' not in zone3 and 'name="genre"' not in zone3
     for gone in ("Force refresh now", "Check reach", "/personas/research", "/personas/corpus/add"):
         assert gone not in zone3, f"a retired curation control still renders in the derived zone: {gone}"

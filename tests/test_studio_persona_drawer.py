@@ -91,6 +91,7 @@ def test_drawer_edit_persists_via_existing_route(tmp_path):
     assert r.status_code == 200
     p = core.Personas.load(cfg).get(pid)
     assert p.name == "Z2" and p.voice == "new voice" and p.cut_policy == ["hype"]
+    assert p.niche == ["hiphop"]  # partial edit without niche preserves the stored terms
 
 
 def test_persona_with_no_levers_still_renders_drawer(tmp_path):
