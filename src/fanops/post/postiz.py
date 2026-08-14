@@ -78,10 +78,13 @@ def _extract_postiz_id(body) -> str | None:
 
 
 def _postiz_permalink_from_body(body) -> str | None:
-    """Extract a real https permalink from a Postiz publish 2xx body when the API returns one — never invent."""
+    """Extract a real https social permalink from a Postiz publish 2xx body when present — never invent.
+
+    Only known social permalink fields are accepted (`releaseURL`, `permalink`, `publicUrl`,
+    `platformPostUrl`). Generic `url`/`link` keys are ignored — they may be a Postiz dashboard or CDN URL."""
     if not isinstance(body, dict):
         return None
-    for k in ("releaseURL", "permalink", "publicUrl", "url", "link"):
+    for k in ("releaseURL", "permalink", "publicUrl", "platformPostUrl"):
         u = safe_public_url(body.get(k))
         if u:
             return u

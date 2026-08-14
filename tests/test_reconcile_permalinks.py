@@ -134,6 +134,7 @@ def test_postiz_publish_persists_releaseurl_from_body_not_invented(tmp_path, mon
     real_url = "https://www.instagram.com/reel/from_postiz/"
     assert _postiz_permalink_from_body({"id": "postiz_1"}) is None
     assert _postiz_permalink_from_body({"id": "postiz_1", "releaseURL": real_url}) == real_url
+    assert _postiz_permalink_from_body({"id": "postiz_1", "url": "https://postiz.example.com/p/1"}) is None
     class _R:
         status_code = 201
         def json(self):
@@ -142,3 +143,26 @@ def test_postiz_publish_persists_releaseurl_from_body_not_invented(tmp_path, mon
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].public_url == real_url
     assert "postiz.example" not in (led.posts["p1"].public_url or "")
+
+
+def test_postiz_publish_ignores_dashboard_url_field(tmp_path, monkeypatch, mocker):
+    """A Postiz 2xx whose only https field is generic `url` must NOT land as public_url."""
+    from fanops.post.postiz import PostizPoster
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.submitting, post_type="post",
+                      media_urls=["https://cdn/v.mp4"], scheduled_time="2026-01-01T00:00:00Z"))
+    dashboard_url = "https://postiz.example.com/p/1"
+
+    class _R:
+        status_code = 201
+        def json(self):
+            return {"id": "postiz_1", "url": dashboard_url}
+
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R())
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].public_url is None
