@@ -324,6 +324,47 @@ def test_request_payload_hashtag_metrics_sidecar(tmp_path):
             assert all(isinstance(t, str) for t in s["hashtag_store"])
 
 
+def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
+    """Seed fallback tag_sources trace source high-count related tags (corpus/content), not persona monopoly."""
+    from fanops.agentstep import request_path
+    from fanops.controlio import write_json_atomic
+    from fanops.accounts import Accounts, Account
+    import json
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    write_json_atomic(cfg.hashtags_path, {
+        "#diss": {"graph_id": "g1", "play_count": 100, "like_count": 10, "media_count": 9_000_000.0,
+                  "measured_at": "2026-07-28T00:00:00+00:00"},
+        "#loyalty": {"graph_id": "g2", "play_count": 80, "like_count": 8, "media_count": 50_000.0,
+                     "measured_at": "2026-07-28T00:00:00+00:00"},
+        "#personaone": {"graph_id": "g3", "play_count": 10, "like_count": 1, "media_count": 100.0,
+                        "measured_at": "2026-07-28T00:00:00+00:00"},
+        "#personatwo": {"graph_id": "g4", "play_count": 10, "like_count": 1, "media_count": 50.0,
+                        "measured_at": "2026-07-28T00:00:00+00:00"},
+        "#personathree": {"graph_id": "g5", "play_count": 10, "like_count": 1, "media_count": 10.0,
+                          "measured_at": "2026-07-28T00:00:00+00:00"},
+    })
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
+                          reason="r", transcript_excerpt="fiery diss track about loyalty"))
+    led.add_clip(Clip(id="clip_x", parent_id="mom_x", path="/c.mp4", state=ClipState.rendered))
+    accts = Accounts(cfg)
+    accts.accounts = [Account(handle="a", platforms=[Platform.instagram],
+                              hashtag_corpus=["#personaone", "#personatwo", "#personathree"])]
+    led = request_captions(led, cfg, "clip_x", [("a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
+    assert "#diss" in payload["surfaces"][0]["corpus"]
+    assert "#personaone" not in payload["surfaces"][0]["corpus"]
+    rid = latest_request_id(cfg, "captions", "clip_x")
+    response_path(cfg, "captions", "clip_x").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_x")
+    entry = led.clips["clip_x"].meta_captions["a/instagram"]
+    sources = entry["tag_sources"]
+    assert "#diss" in entry["hashtags"] and sources.get("#diss") in ("corpus", "content")
+    assert all(t not in entry["hashtags"] for t in ("#personaone", "#personatwo", "#personathree"))
+    assert "corpus" in sources.values() or "content" in sources.values()
+    assert len([t for t in entry["hashtags"] if sources.get(t) == "corpus"]) <= 3  # _CORPUS_LEAD_MAX
+
+
 # ---- Task 6: Review surfaces the per-tag provenance (read-only) ---------------------------------------
 def _surface_post(**kw):
     from fanops.studio.views_review import SurfacePost

@@ -85,13 +85,20 @@ def test_dry_run_lists_targets_and_writes_nothing(tmp_path):
 
 def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    fake = _FakeResponder(hashtags=["#alpha", "#junkjunkjunk", "#hiphop"])
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#slept": {"graph_id": "g1", "play_count": 100, "media_count": 5000.0,
+                   "measured_at": "2026-07-01T00:00:00+00:00"},
+        "#hiphop": {"graph_id": "g2", "play_count": 50, "media_count": 100.0,
+                    "measured_at": "2026-07-01T00:00:00+00:00"},
+    }))
+    fake = _FakeResponder(hashtags=["#slept", "#junkjunkjunk", "#hiphop"])
     s = run_recaption(cfg, apply=True, responder=fake, now=NOW)
     assert s["done"] == 1 and s["synced"] == 1 and fake.calls == 1
     led = Ledger.load(cfg)
     p = led.posts["p1"]
     assert p.caption == " ".join(p.hashtags) and 0 < len(p.hashtags) <= 4   # the vetted tag line
-    assert "#alpha" in p.hashtags                                   # corpus member survives the vet
+    assert "#slept" in p.hashtags                                  # source-measured lead survives the vet
     assert "#junkjunkjunk" not in p.hashtags                        # junk cannot reach a post
     assert p.state is PostState.awaiting_approval                   # approval lifecycle untouched
     assert p.edited_at

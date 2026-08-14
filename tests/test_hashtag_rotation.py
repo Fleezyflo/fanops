@@ -11,13 +11,21 @@ from fanops.hashtags import vet_hashtags
 from fanops.studio.views_results import tag_exposure
 
 
-def _clip(led, clip_id="clip_1", moment_id="mom_1"):
+def _clip(led, clip_id="clip_1", moment_id="mom_1", transcript="they slept on me"):
     if "src_1" not in led.sources:
         led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     if moment_id not in led.moments:
         led.add_moment(Moment(id=moment_id, parent_id="src_1", content_token="0-7", start=0, end=7,
-                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+                              reason="r", transcript_excerpt=transcript, state=MomentState.decided))
     led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"/{clip_id}.mp4", state=ClipState.rendered))
+
+
+def _write_meas_tags(cfg, tags):
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        t: {"graph_id": f"g{t}", "like_count": 100, "media_count": 1000.0,
+            "measured_at": "2026-07-01T00:00:00+00:00"} for t in tags
+    }))
 
 
 def _ingest(cfg, led, clip_id, hashtags=None, surface="a/instagram", *, hashtag_store=None):
@@ -59,13 +67,14 @@ def test_recency_demotes_within_corpus_tier():
 def test_consecutive_ingests_differ(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     corpus = ["#alpha", "#beta", "#gamma", "#delta", "#epsilon"]
+    _write_meas_tags(cfg, corpus)
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active",
-         "hashtag_corpus": corpus}]}))
+         "hashtag_corpus": ["#personaonly"]}]}))
     accts = Accounts.load(cfg)
-    _clip(led, "clip_1")
+    _clip(led, "clip_1", transcript="alpha beta gamma delta epsilon")
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
@@ -75,7 +84,7 @@ def test_consecutive_ingests_differ(tmp_path):
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption=" ".join(tags1), hashtags=tags1, state=PostState.queued,
                       created_at="2026-07-01T12:00:00+00:00"))
-    _clip(led, "clip_2", "mom_2")
+    _clip(led, "clip_2", "mom_2", transcript="alpha beta gamma delta epsilon")
     request_captions(led, cfg, "clip_2", [("a", Platform.instagram)], accounts=accts)
     rid2 = latest_request_id(cfg, "captions", "clip_2")
     response_path(cfg, "captions", "clip_2").write_text(CaptionSet(request_id=rid2, items=[
@@ -88,13 +97,13 @@ def test_consecutive_ingests_differ(tmp_path):
 def test_pass_local_same_pass(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     corpus = ["#alpha", "#beta", "#gamma", "#delta", "#epsilon"]
+    _write_meas_tags(cfg, corpus)
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "a", "platforms": ["instagram"], "status": "active",
-         "hashtag_corpus": corpus}]}))
+        {"handle": "a", "platforms": ["instagram"], "status": "active"}]}))
     accts = Accounts.load(cfg)
-    _clip(led, "clip_1")
+    _clip(led, "clip_1", transcript="alpha beta gamma delta epsilon")
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
@@ -102,7 +111,7 @@ def test_pass_local_same_pass(tmp_path):
     pass_recent: dict[str, list[str]] = {}
     led = ingest_captions(led, cfg, "clip_1", pass_recent=pass_recent)
     tags1 = list(led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"])
-    _clip(led, "clip_2", "mom_2")
+    _clip(led, "clip_2", "mom_2", transcript="alpha beta gamma delta epsilon")
     request_captions(led, cfg, "clip_2", [("a", Platform.instagram)], accounts=accts)
     rid2 = latest_request_id(cfg, "captions", "clip_2")
     response_path(cfg, "captions", "clip_2").write_text(CaptionSet(request_id=rid2, items=[
@@ -140,19 +149,21 @@ def test_full_pool_coverage_walk():
 
 
 def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
-    """S12: a 12-tag corpus rotated across three consecutive vet/ingest passes yields disjoint-leaning lines."""
+    """S12: source-measured transcript tags rotated across three ingest passes yield disjoint-leaning lines."""
     from fanops.models import Platform, Post, PostState
     from fanops.accounts import Accounts
-    corpus = [f"#tag{i:02d}" for i in range(12)]
+    corpus = [f"#tag{i:02d}" for i in range(6)]          # content_tag_candidates caps at 6
+    transcript = " ".join(f"tag{i:02d}" for i in range(6))
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_meas_tags(cfg, corpus)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "a", "platforms": ["instagram"], "status": "active", "hashtag_corpus": corpus}]}))
+        {"handle": "a", "platforms": ["instagram"], "status": "active"}]}))
     accts = Accounts.load(cfg)
     lines: list[list[str]] = []
     for i in range(3):
         cid = f"clip_{i}"; mid = f"mom_{i}"
-        _clip(led, cid, mid)
+        _clip(led, cid, mid, transcript=transcript)
         request_captions(led, cfg, cid, [("a", Platform.instagram)], accounts=accts)
         rid = latest_request_id(cfg, "captions", cid)
         response_path(cfg, "captions", cid).write_text(CaptionSet(request_id=rid, items=[
