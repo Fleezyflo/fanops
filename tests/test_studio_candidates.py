@@ -87,6 +87,17 @@ def test_approve_retired_sha_is_dead_end(tmp_path, mocker):
     res = actions.approve_candidate(cfg, eid)
     assert not res.ok and res.detail.get("retired_dedup") == ["src_old"]
     assert make_id("src", digest) not in Ledger.load(cfg).sources
+    assert (cfg.review / f"{eid}.jpg").exists()          # restored for retry
+    assert not (cfg.review / "approved" / f"{eid}.jpg").exists()
+
+def test_approve_ingest_failure_restores_thumbnail(tmp_path, mocker):
+    cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
+    _ingest_mocks(mocker)
+    mocker.patch("fanops.ingest.ingest_staged", side_effect=RuntimeError("ingest boom"))
+    res = actions.approve_candidate(cfg, eid)
+    assert not res.ok and "ingest failed" in res.error
+    assert (cfg.review / f"{eid}.jpg").exists()
+    assert not (cfg.review / "approved" / f"{eid}.jpg").exists()
 
 def test_approve_unknown_errors(tmp_path):
     assert not actions.approve_candidate(Config(root=tmp_path), "nope").ok

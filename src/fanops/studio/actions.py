@@ -314,6 +314,15 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
     digest = (info or {}).get("sha256")
     sid = make_id("src", digest) if digest else None
     dst = cfg.review / "approved" / f"{eid}.jpg"
+
+    def _restore_thumb() -> None:
+        """Put the review thumbnail back so a failed approve is retryable from the Candidates tab."""
+        try:
+            if dst.exists() and not thumb.exists():
+                dst.rename(thumb)
+        except OSError as exc:
+            get_logger(cfg)("candidates", eid, "approve_restore_failed", err=str(exc)[:160])
+
     try:                                               # read-only mount / disk full / rename race
         dst.parent.mkdir(parents=True, exist_ok=True)
         thumb.rename(dst)
@@ -328,9 +337,11 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
         _archive_staged(cfg, staged)
         write_digest(Ledger.load(cfg), cfg)
     except Exception as exc:
+        _restore_thumb()
         get_logger(cfg)("candidates", eid, "approve_ingest_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
     if counts is not None and counts.retired_dedup:
+        _restore_thumb()
         rid = counts.retired_dedup[0]
         return ActionResult(ok=False, error=f"content matches retired source {rid} — re-upload blocked",
                             detail={"eid": eid, "retired_dedup": counts.retired_dedup})
