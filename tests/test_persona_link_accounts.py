@@ -144,10 +144,9 @@ def test_hydration_carries_voice_corpus_levers_after_migration(tmp_path):
     assert a.cut_policy == ["storytelling"]          # levers hydrated
     assert a.hook_angle == "emotional"
     assert a.selection_scope == "subject_locked"
-    assert "#beatmaking" in a.hashtag_corpus             # corpus hydrated
-    assert "#underground" in a.hashtag_corpus
-    assert a.clip_profile == "long"                      # derived from storytelling
-    assert a.framing == "top"                            # derived from storytelling
+    assert a.hashtag_corpus == ["#beatmaking", "#underground"]
+    assert a.clip_profile is None                      # hydrate no longer derives cut from cut_policy
+    assert a.framing is None
 
 
 # ---------------------------------------------------------------------------

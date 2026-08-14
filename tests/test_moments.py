@@ -58,7 +58,7 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
         response_path(cfg, "moment_hooks", key).write_text(dec.model_dump_json())
     return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
-def _src(led, cfg, dur=20.0):
+def _src(led, cfg, dur=120.0):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=dur, language="en",
                           transcript=[talk_seg("intro line here", start=0, end=3),
@@ -328,25 +328,18 @@ def test_hook_gate_legacy_sweep_discards_persona_blind_key(tmp_path):
     assert not request_path(cfg, "moment_hooks", legacy_key).exists()
     assert request_path(cfg, "moment_hooks", owner_key).exists()
 
-def test_request_moment_hooks_uses_owner_clip_profile_band(tmp_path, mocker):
-    """M14: fit_window band follows m.clip_profile, not global cfg.clip_profile."""
-    from fanops.bands import band_for
-    from fanops.clip import fit_window
+def test_request_moment_hooks_uses_picked_window_eof_clamp(tmp_path, mocker):
+    """Hook gate frames cover the picked moment (EOF clamp only — no band grow/trim)."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a", "clip_profile": "song"}])
     spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/w0.jpg"])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="verse lands", personas=["a"])])
-    m = led.moments_of("src_1")[0]
-    assert m.clip_profile == "song"
-    led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
-    song = band_for("song")
-    cs, ce = fit_window(m.start, m.end, 60.0, lo=song.lo, hi=song.hi)
+                        [MomentPick(start=14.0, end=22.0, reason="verse lands", personas=["a"])])
+    led = request_moment_hooks(led, cfg, "src_1")
     call = spy.call_args
-    assert call.args[1] == cs and call.args[2] == ce
+    assert call.args[1] == 14.0 and call.args[2] == 22.0
 
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -386,11 +379,10 @@ def test_pick_personas_returns_full_spec(tmp_path):
     assert len(specs) == 1
     assert set(specs[0]) == PERSONA_PICK_SPEC_KEYS
     assert specs[0]["handle"] == "raw"
-    assert "punchline" in specs[0]["directive"].lower()
-    assert "sensational" in specs[0]["selection_scope"].lower() or specs[0]["selection_scope"]
-    assert specs[0]["band"] and "s" in specs[0]["band"]
+    assert specs[0]["directive"] == "" and specs[0]["band"] == ""
+    assert specs[0]["selection_scope"] == ""
     assert specs[0]["framing"] in ("top", "center")
-    assert specs[0]["hook_angle"] == "curiosity"
+    assert specs[0]["hook_angle"] == ""
     assert specs[0]["corpus"] == ["#detroitrap", "#bars"]
 
 def test_pick_personas_empty_when_casting_off(tmp_path, monkeypatch):
@@ -435,8 +427,9 @@ def test_request_packs_full_persona_spec_list(tmp_path):
         assert PERSONA_PICK_SPEC_KEYS <= set(spec)
         assert "signal_peaks" in spec
         assert spec["handle"] == h
-        assert spec["directive"] and spec["band"] and spec["framing"]
-        assert spec["selection_scope"] and spec["hook_angle"] == "curiosity"
+        assert spec["directive"] == "" and spec["band"] == ""
+        assert spec["framing"] in ("top", "center")
+        assert spec["selection_scope"] == "" and spec["hook_angle"] == ""
         assert isinstance(spec["corpus"], list)
 
 def test_request_reuses_frames_once(tmp_path, mocker):
@@ -527,7 +520,7 @@ def test_request_moments_writes_pick_request_with_transcript_signals_language(tm
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
-    assert payload["duration"] == 20.0
+    assert payload["duration"] == 120.0
     assert payload["transcript"][1]["text"] == "they slept on me"
     assert payload["signal_peaks"][0]["t"] == 16.0
     assert payload["language"] == "en"
@@ -554,7 +547,7 @@ def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
                  state=SourceState.signalled, duration=60.0, language="en",
                  transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
                  meta={"transcribed": True})
-    pick = MomentPick(start=14.0, end=18.0, reason="visual beat",
+    pick = MomentPick(start=14.0, end=22.0, reason="visual beat",
                       transcript_excerpt="invented LLM line")
     assert validate_pick(pick, duration=60.0, src=src, cfg=cfg) is None
     assert "pick_speech_mismatch" in _run_log_outcomes(cfg)
@@ -581,22 +574,22 @@ def test_ingest_logs_excerpt_overwritten(tmp_path):
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                        [MomentPick(start=14.0, end=22.0, reason="bar lands",
                                     transcript_excerpt="totally invented LLM junk line")])
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
     overwritten = [r for r in recs if r["outcome"] == "excerpt_overwritten"]
-    assert overwritten and overwritten[0]["token"] == "14.00-18.00"
+    assert overwritten and overwritten[0]["token"] == "14.00-22.00"
     assert not led.moments_of("src_1")[0].transcript_excerpt
 
 def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=5, end=3, reason="r"), duration=20.0) is not None  # end<start
     assert validate_pick(MomentPick(start=-1, end=3, reason="r"), duration=20.0) is not None # start<0
     assert validate_pick(MomentPick(start=15, end=25, reason="r"), duration=20.0) is not None# end>dur
-    assert validate_pick(MomentPick(start=0, end=5, reason="r"), duration=20.0) is None      # ok
+    assert validate_pick(MomentPick(start=0, end=10, reason="r"), duration=20.0) is None      # ok (>6s)
 
 def test_owned_moment_id_includes_handle():
     # P3: two owners at the same timecode yield distinct moment ids; both differ from the bare-token id.
-    src, token = "src_1", "14.00-18.00"
+    src, token = "src_1", "14.00-22.00"
     bare = child_id("moment", src, token)
     id_a = _owned_moment_id(src, "a", token)
     id_b = _owned_moment_id(src, "b", token)
@@ -604,18 +597,18 @@ def test_owned_moment_id_includes_handle():
 
 def test_persona_blind_id_is_bare_token():
     # P3 firewall: personas==[] -> bare-token id (byte-identical to today's construction).
-    src, token = "src_1", "14.00-18.00"
+    src, token = "src_1", "14.00-22.00"
     assert _owned_moment_id(src, None, token) == child_id("moment", src, token)
 
 def test_ingest_moments_creates_content_addressed_units(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.5, reason="punchline + scene cut at 16",
+                        [MomentPick(start=14.0, end=22.5, reason="punchline + scene cut at 16",
                                     transcript_excerpt="they slept on me", signal_score=0.6)])
     moms = led.moments_of("src_1")
     assert len(moms) == 1
-    assert moms[0].content_token == "14.00-18.50"
+    assert moms[0].content_token == "14.00-22.50"
     assert moms[0].reason.startswith("punchline")
     assert led.sources["src_1"].state is SourceState.picks_decided
 
@@ -624,10 +617,10 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=0.0, end=2.0, reason="A"),
-                         MomentPick(start=14.0, end=18.0, reason="B")])
+                        [MomentPick(start=0.0, end=10.0, reason="A"),
+                         MomentPick(start=14.0, end=22.0, reason="B")])
     # hang a clip+post off moment A so we can prove cascade-delete
-    a = next(m for m in led.moments_of("src_1") if m.content_token == "0.00-2.00")
+    a = next(m for m in led.moments_of("src_1") if m.content_token == "0.00-10.00")
     led.add_clip(Clip(id="c_a", parent_id=a.id, path="/c"))
     # a REJECTED post (deletable) so A's lineage still cascade-deletes
     led.add_post(Post(id="p_a", parent_id="c_a", account="a", account_id="1",
@@ -635,17 +628,17 @@ def test_amplify_style_reingest_reconciles_not_noop(tmp_path):
     # now a fresh request + a NEW decision dropping A, keeping B (updated), adding C
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="B-better"),
-                         MomentPick(start=6.0, end=8.0, reason="C")])
+                        [MomentPick(start=14.0, end=22.0, reason="B-better"),
+                         MomentPick(start=6.0, end=14.0, reason="C")])
     tokens = {m.content_token: m for m in led.moments_of("src_1")}
-    assert set(tokens) == {"14.00-18.00", "6.00-8.00"}     # A gone, C added
-    assert tokens["14.00-18.00"].reason == "B-better"       # B updated in place (not blocked)
+    assert set(tokens) == {"14.00-22.00", "6.00-14.00"}     # A gone, C added
+    assert tokens["14.00-22.00"].reason == "B-better"       # B updated in place (not blocked)
     assert "c_a" not in led.clips and "p_a" not in led.posts # A's lineage cascade-deleted
 
 def test_ingest_all_invalid_marks_source_error(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=50, end=60, reason="out of bounds")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=110.0, end=130.0, reason="out of bounds")])
     assert led.moments_of("src_1") == []
     assert led.sources["src_1"].state is SourceState.error
     assert "end>" in (led.sources["src_1"].error_reason or "")
@@ -661,16 +654,17 @@ def test_ingest_partial_rejection_keeps_valid_drops_invalid(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="valid keep"),
+                        [MomentPick(start=14.0, end=22.0, reason="valid keep"),
                          MomentPick(start=5.0, end=3.0, reason="end<start invalid"),
-                         MomentPick(start=6.0, end=8.0, reason="valid keep 2")])
+                         MomentPick(start=6.0, end=14.0, reason="valid keep 2")])
     tokens = {m.content_token for m in led.moments_of("src_1")}
-    assert tokens == {"14.00-18.00", "6.00-8.00"}              # invalid dropped, two valid kept
+    assert tokens == {"14.00-22.00", "6.00-14.00"}              # invalid dropped, two valid kept
     assert led.sources["src_1"].state is SourceState.picks_decided
 
 def test_validate_pick_min_length_and_eof_tolerance():
     assert validate_pick(MomentPick(start=10.0, end=10.3, reason="r"), duration=20.0) is not None  # 0.30s too short
-    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is None       # 0.50s ok
+    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is not None  # 0.50s rejected (<=6s)
+    assert validate_pick(MomentPick(start=10.0, end=17.0, reason="r"), duration=20.0) is None       # 7s ok
     assert validate_pick(MomentPick(start=10.0, end=20.5, reason="r"), duration=20.0) is None        # exactly dur+0.5 ok
     assert validate_pick(MomentPick(start=10.0, end=20.6, reason="r"), duration=20.0) is not None     # dur+0.6 invalid
     assert validate_pick(MomentPick(start=10.0, end=999.0, reason="r"), duration=0.0) is None         # unprobed -> no EOF ceiling
@@ -699,21 +693,17 @@ def test_request_moments_frames_empty_when_source_absent(tmp_path):
 
 # --- PASS 2: the frame-seeing hook gate -------------------------------------------------------------
 def test_request_moment_hooks_extracts_frames_over_the_fitted_window(tmp_path, mocker):
-    # THE operator's #1 ask, mechanically proven: the hook gate's frames are extracted over the picked +
-    # FITTED window (the cut the renderer makes), NOT 0..duration. A 14-18s pick on a talk profile fits to
-    # 12s (band floor) -> the frames cover [start, start+12], not a whole-source survey.
+    # Hook gate frames are extracted over the picked moment window (EOF clamp only — no band grow).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
     spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/w0.jpg"])
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="bar lands")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="bar lands")])
     led = request_moment_hooks(led, cfg, "src_1")
-    # the extract call for the hook gate must use the FITTED window (start=14.0), not 0.0..duration
     call = spy.call_args
-    assert call.args[1] == 14.0                       # window start == pick start (in band-floor reach)
-    assert call.args[2] == 26.0                       # fitted end = 14 + 12s talk floor (NOT 18, NOT 60)
-    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-18.00").read_text())
+    assert call.args[1] == 14.0 and call.args[2] == 22.0
+    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-22.00").read_text())
     assert payload["frames"] == ["/k/w0.jpg"] and payload["moment_id"]
 
 def test_request_moment_hooks_is_write_once(tmp_path):
@@ -721,11 +711,11 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     # in-flight answer). The request_id is stable across re-runs while the moment stays picked.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="bar lands")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="bar lands")])
     led = request_moment_hooks(led, cfg, "src_1")
-    rid1 = latest_request_id(cfg, "moment_hooks", "src_1.14.00-18.00")
+    rid1 = latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00")
     led = request_moment_hooks(led, cfg, "src_1")     # second pass — must be a no-op for this gate
-    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-18.00") == rid1
+    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") == rid1
 
 def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -735,10 +725,10 @@ def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path):
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="visual beat")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
     led = request_moment_hooks(led, cfg, "src_1")
     from fanops.agentstep import read_response
-    dec = read_response(cfg, "moment_hooks", "src_1.14.00-18.00", MomentHookDecision)
+    dec = read_response(cfg, "moment_hooks", "src_1.14.00-22.00", MomentHookDecision)
     assert dec is not None and dec.hook is None
     led = ingest_moment_hooks(led, cfg, "src_1")
     assert led.moments_of("src_1")[0].hook is None
@@ -748,12 +738,12 @@ def test_ingest_overwrites_junk_excerpt(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[talk_seg("they slept on me here", start=14.0, end=18.0)],
+                          transcript=[talk_seg("they slept on me here", start=14.0, end=22.0)],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                        [MomentPick(start=14.0, end=22.0, reason="bar lands",
                                     transcript_excerpt="totally invented LLM junk line")])
     m = led.moments_of("src_1")[0]
     assert m.transcript_excerpt == "they slept on me here"
@@ -767,7 +757,7 @@ def test_ingest_degraded_yields_empty_excerpt(tmp_path):
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="bar lands",
+                        [MomentPick(start=14.0, end=22.0, reason="bar lands",
                                     transcript_excerpt="they slept on me")])
     m = led.moments_of("src_1")[0]
     assert not m.transcript_excerpt
@@ -775,8 +765,8 @@ def test_ingest_degraded_yields_empty_excerpt(tmp_path):
 def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "wait for the beat switch"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "wait for the beat switch"})
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook == "wait for the beat switch"
     assert led.sources["src_1"].state is SourceState.moments_decided
@@ -785,8 +775,8 @@ def test_null_hook_promotes_clean_decided(tmp_path):
     # Test 4: null author hook now promotes CLEAN to decided (hook=None) — MOL-476 retry removed.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": None})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": None})
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook is None
     assert led.sources["src_1"].state is SourceState.moments_decided
@@ -796,7 +786,7 @@ def test_ingest_moment_hooks_pending_gate_keeps_moment_picked(tmp_path):
     # the source STAYS picks_decided — never a silent wedge, never a premature promotion.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
     led = request_moment_hooks(led, cfg, "src_1")     # gate opened, NOT answered
     led = ingest_moment_hooks(led, cfg, "src_1")
     assert led.moments_of("src_1")[0].state is MomentState.picked
@@ -805,8 +795,8 @@ def test_ingest_moment_hooks_pending_gate_keeps_moment_picked(tmp_path):
 def test_decide_hooks_sanitizes_em_dash_in_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="r")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "the switch — you feel it"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="r")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "the switch — you feel it"})
     assert "—" not in (led.moments_of("src_1")[0].hook or "")
 
 def test_decide_hooks_without_hook_promotes_clean(tmp_path):
@@ -815,7 +805,7 @@ def test_decide_hooks_without_hook_promotes_clean(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.5, reason="punchline",
+                        [MomentPick(start=14.0, end=22.5, reason="punchline",
                                     transcript_excerpt="This changed everything for me.")])
     led = _decide_hooks(led, cfg, "src_1")            # no hook supplied -> null -> clean promotion
     m = led.moments_of("src_1")[0]
@@ -827,10 +817,10 @@ def test_decide_hooks_rejects_mechanical_dup_hook_to_clean_clip(tmp_path):
     # that EXACTLY duplicates another clip's hook is rejected to a CLEAN clip (never burned twice).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led.add_moment(Moment(id="m_other", parent_id="src_other", state=MomentState.decided,
-                          start=0.0, end=5.0, reason="x", hook="wait for the drop"))
+                          start=0.0, end=10.0, reason="x", hook="wait for the drop"))
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "wait for the drop"})   # exact cross-clip dup
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "wait for the drop"})   # exact cross-clip dup
     assert led.moments_of("src_1")[0].hook is None    # exact dup -> clean clip, not burned twice
 
 def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
@@ -841,9 +831,9 @@ def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
     # tests. A third-person hook is intentionally passed to prove ingest does not gate perspective.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
-                        {"14.00-18.50": "he switches to Arabic when it gets personal"})
+                        {"14.00-22.50": "he switches to Arabic when it gets personal"})
     m = led.moments_of("src_1")[0]
     assert m.hook == "he switches to Arabic when it gets personal"     # NOT stripped — generator owns perspective
     assert m.hook_removed is None                                      # nothing removed (no perspective gate)
@@ -851,17 +841,17 @@ def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
 def test_decide_hooks_keeps_viewer_pov_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "the part you'll replay"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "the part you'll replay"})
     assert led.moments_of("src_1")[0].hook == "the part you'll replay"   # viewer-POV ships
 
 def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path):
     # P6: ingest no longer persists hooks_by_persona — only the shared `hook` lands on m.hook.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
-                        {"14.00-18.50": ("the part you'll replay",
+                        {"14.00-22.50": ("the part you'll replay",
                                          {"a": "you won't expect the switch",
                                           "b": "he flips the whole beat"})})
     m = led.moments_of("src_1")[0]
@@ -875,8 +865,8 @@ def test_decide_hooks_rejects_off_brand_hook_to_clean_clip(tmp_path):
     # bravado guardrail ("sorry") is stripped to a clean clip; the stripped text is PRESERVED for Review.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "sorry but you'll replay this part"})
     m = led.moments_of("src_1")[0]
     assert m.hook is None                                              # off-brand -> clean clip, not burned
     assert m.hook_removed == "sorry but you'll replay this part"       # preserved for Review
@@ -885,9 +875,9 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
     # P6: off-brand keys in decision hooks_by_persona are ignored — only the shared hook is gated + persisted.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
-                        {"14.00-18.50": ("the part you'll replay",
+                        {"14.00-22.50": ("the part you'll replay",
                                          {"a": "you won't expect the switch",
                                           "b": "please stream this, link in bio"})})
     m = led.moments_of("src_1")[0]
@@ -899,9 +889,9 @@ def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = Accounts(cfg); accts.accounts = [Account(handle="mohflow", platforms=["instagram"])]
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
     led = _decide_hooks(led, cfg, "src_1",
-                        {"14.00-18.50": ("the part you'll replay",
+                        {"14.00-22.50": ("the part you'll replay",
                                          {"mohflow": "you won't expect the switch",
                                           "@MohFlow": "you won't expect the switch"})},
                         accounts=accts)
@@ -915,8 +905,8 @@ def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     cfg.control.mkdir(parents=True, exist_ok=True)
     (cfg.control / "tuning.json").write_text('{"offbrand_en": [], "offbrand_ar": []}')
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.5, reason="punchline")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.50": "sorry but you'll replay this part"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.5, reason="punchline")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.50": "sorry but you'll replay this part"})
     assert led.moments_of("src_1")[0].hook == "sorry but you'll replay this part"   # override cleared -> ships
 
 def test_decide_hooks_preserves_stripped_hook_for_operator_review(tmp_path):
@@ -956,17 +946,17 @@ def test_redecide_discards_stale_hook_gates(tmp_path):
     # source's stale moment_hooks gates so request_moment_hooks re-authors fresh against the new decision.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="OLD reason")])
-    led = _decide_hooks(led, cfg, "src_1", {"14.00-18.00": "hook for the OLD context"})
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="OLD reason")])
+    led = _decide_hooks(led, cfg, "src_1", {"14.00-22.00": "hook for the OLD context"})
     assert led.moments_of("src_1")[0].hook == "hook for the OLD context"
     # amplify-style re-decision: SAME window, NEW reason -> moment upserts in place, resets to picked
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="NEW reason")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="NEW reason")])
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.picked and m.hook is None and m.reason == "NEW reason"
     # the stale hook gate is GONE -> a FRESH gate is opened, pending an answer (the stale one is not reused)
     led = request_moment_hooks(led, cfg, "src_1")
-    assert "src_1.14.00-18.00" in pending(cfg, kind="moment_hooks")
+    assert "src_1.14.00-22.00" in pending(cfg, kind="moment_hooks")
     led = ingest_moment_hooks(led, cfg, "src_1")
     assert led.moments_of("src_1")[0].state is MomentState.picked and led.moments_of("src_1")[0].hook is None
 
@@ -1010,12 +1000,12 @@ def test_window_frames_empty_no_whole_source_fallback(tmp_path, mocker):
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
     spy = mocker.patch("fanops.moments.extract_keyframes", return_value=[])   # window probe yields nothing
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=18.0, reason="r")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="r")])
     spy.reset_mock()                                   # measure ONLY the hook pass (pick pass also probes)
     led = request_moment_hooks(led, cfg, "src_1")
     assert spy.call_count == 1                          # ONE window probe, no whole-source fallback
     assert spy.call_args.args[1] == 14.0               # ...and it was the WINDOW (start=14), never 0.0..duration
-    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-18.00").read_text())
+    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-22.00").read_text())
     assert payload["frames"] == []                     # honest text-only, not wrong footage
 
 def test_within_source_template_cluster_still_strips_surplus(tmp_path):
@@ -1042,9 +1032,9 @@ def test_validate_pick_rejects_blank_reason():
     # fit signal + hook brief blind. A real reason passes; a timing-valid but reason-less pick is rejected.
     from fanops.moments import validate_pick
     from fanops.models import MomentPick
-    assert validate_pick(MomentPick(start=0, end=7, reason="strong drop here"), duration=60) is None
-    assert validate_pick(MomentPick(start=0, end=7, reason="   "), duration=60) == "blank reason"
-    assert validate_pick(MomentPick(start=0, end=7, reason=""), duration=60) == "blank reason"
+    assert validate_pick(MomentPick(start=0, end=10, reason="strong drop here"), duration=60) is None
+    assert validate_pick(MomentPick(start=0, end=10, reason="   "), duration=60) == "blank reason"
+    assert validate_pick(MomentPick(start=0, end=10, reason=""), duration=60) == "blank reason"
 
 
 # ---- AGENT-2: the pick-payload transcript is bounded (sampled near peaks), small inputs byte-identical ----
@@ -1227,7 +1217,7 @@ def test_persona_entry_includes_directive_less(tmp_path):
     accts = Accounts.load(cfg)
     entry = _persona_entry(cfg, accts.accounts[0])
     assert entry["handle"] == "plain" and entry["directive"] == ""
-    assert _pick_personas(cfg, accts) == []
+    assert len(_pick_personas(cfg, accts)) == 1
 
 def test_hook_gate_still_owner_only_pin(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

@@ -957,8 +957,9 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         # FAIL-OPEN: today's single-window path over the envelope (fit_window/snap/visual_start below).
         spans = None
     if not is_stitch and not spans:
-        band = band_for(_moment_profile(m, cfg))
-        cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)  # widen to a real clip
+        dur = src.duration or 0.0
+        hi = dur if dur > 0 else float("inf")
+        cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)  # EOF clamp only — the picked moment
         cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)  # land on clean phrase boundaries
         # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
         # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
@@ -1122,8 +1123,9 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
                                                 span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
                                                 timeout=_FFMPEG_TIMEOUT)
         else:
-            band = band_for(profile)
-            cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the account's band
+            dur = src.duration or 0.0
+            hi = dur if dur > 0 else float("inf")
+            cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)   # EOF clamp only — the picked moment
             cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)
             if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
                 cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
