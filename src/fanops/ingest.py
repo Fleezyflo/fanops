@@ -147,10 +147,12 @@ def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
         # PER-FILE hang (corrupt media, stuck mount) — NOT the binary-absent case: raising here
         # would abort the whole ingest pass and roll back the transaction over one bad file.
         # Fail SOFT with an empty result instead: probe_dimensions -> zeros (its documented
-        # failure shape), has_video_stream -> False — the file stays in the inbox and is retried
+        # failure shape), has_video_stream -> None — the file stays in the inbox and is retried
         # next pass, bounded each time, never a crash or a dropped pass.
         return subprocess.CompletedProcess(["ffprobe", *args], returncode=124,
                                            stdout="", stderr="ffprobe timed out")
+
+_FFPROBE_TIMEOUT_RC = 124
 
 def probe_dimensions(path: Path) -> tuple[int, int, float]:
     """(width, height, duration_seconds) via ffprobe; zeros on failure (ffprobe ABSENT raises
@@ -166,11 +168,12 @@ def probe_dimensions(path: Path) -> tuple[int, int, float]:
     except (IndexError, ValueError):
         return 0, 0, 0.0
 
-def has_video_stream(path: Path) -> bool:
+def has_video_stream(path: Path) -> bool | None:
     """True if the file carries a decodable video stream (a still image counts — it has a
-    video-type stream). Audio-only files (.wav/.mp3/.m4a with no picture) return False. Used
-    to keep audio-only drops out of the clip pipeline: ffmpeg's reframe -vf is silently
-    ignored on an audio-only input, so without this guard the renderer emits a *videoless*
+    video-type stream). Audio-only files (.wav/.mp3/.m4a with no picture) return False. None when
+    ffprobe timed out — the caller must leave the file in the inbox for retry, not archive it as
+    audio-only. Used to keep audio-only drops out of the clip pipeline: ffmpeg's reframe -vf is
+    silently ignored on an audio-only input, so without this guard the renderer emits a *videoless*
     'clip' (audio masquerading as a 9:16 post) — a real data-integrity bug confirmed on
     ffmpeg 8.0.1. Audio extensions stay in MEDIA_EXT for a future audiogram path; they just
     aren't catalogued as clip sources today. ffprobe ABSENT raises ToolchainMissingError (via
@@ -179,6 +182,8 @@ def has_video_stream(path: Path) -> bool:
     r = _run_ffprobe(
         ["-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
+    if r.returncode == _FFPROBE_TIMEOUT_RC:
+        return None
     # `csv=p=0` emits "video," (trailing empty field) on some HEVC .mov muxings — exact `== "video"`
     # would then read it as audio-only and silently DROP a real clip. Token-match instead: True iff a
     # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
@@ -357,7 +362,11 @@ def stage_inbox_candidates(cfg: Config, *, origin: str = "drop",
         if origin_kind == "native" and f.suffix.lower() in _STILL_EXT:
             counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="native_still")
             archive_paths.append(f); continue
-        if not has_video_stream(f):
+        probe = has_video_stream(f)
+        if probe is None:
+            counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="probe_unavailable")
+            continue
+        if not probe:
             counts.skipped += 1; get_logger(cfg)("ingest", f.name, "skipped", why="no_video_stream")
             archive_paths.append(f); continue
         file_origin = origin if (origin_paths is None or f.resolve() in origin_paths) else "drop"
