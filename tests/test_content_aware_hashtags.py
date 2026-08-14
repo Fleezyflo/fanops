@@ -332,15 +332,15 @@ def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
     import json
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     write_json_atomic(cfg.hashtags_path, {
-        "#diss": {"play_count": 100, "like_count": 10, "media_count": 9_000_000.0,
+        "#diss": {"graph_id": "g1", "play_count": 100, "like_count": 10, "media_count": 9_000_000.0,
                   "measured_at": "2026-07-28T00:00:00+00:00"},
-        "#loyalty": {"play_count": 80, "like_count": 8, "media_count": 50_000.0,
+        "#loyalty": {"graph_id": "g2", "play_count": 80, "like_count": 8, "media_count": 50_000.0,
                      "measured_at": "2026-07-28T00:00:00+00:00"},
-        "#personaone": {"play_count": 10, "like_count": 1, "media_count": 100.0,
+        "#personaone": {"graph_id": "g3", "play_count": 10, "like_count": 1, "media_count": 100.0,
                         "measured_at": "2026-07-28T00:00:00+00:00"},
-        "#personatwo": {"play_count": 10, "like_count": 1, "media_count": 50.0,
+        "#personatwo": {"graph_id": "g4", "play_count": 10, "like_count": 1, "media_count": 50.0,
                         "measured_at": "2026-07-28T00:00:00+00:00"},
-        "#personathree": {"play_count": 10, "like_count": 1, "media_count": 10.0,
+        "#personathree": {"graph_id": "g5", "play_count": 10, "like_count": 1, "media_count": 10.0,
                           "measured_at": "2026-07-28T00:00:00+00:00"},
     })
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
