@@ -588,9 +588,11 @@ def _capture_render(tmp_path, mocker, start, end, *, duration):
     cmd = captured["cmd"]
     return float(cmd[cmd.index("-ss") + 1]), float(cmd[cmd.index("-to") + 1])  # (seek, output-relative duration)
 
-def test_render_moment_widens_short_pick_to_real_clip(tmp_path, mocker):
-    ss, dur = _capture_render(tmp_path, mocker, 10.0, 14.0, duration=120.0)  # 4s pick
-    assert 12.0 <= dur <= 22.0                                               # widened to a real clip
+# --- render uses picked window (EOF clamp only — no band grow/trim) ---------------------
+
+def test_render_moment_keeps_short_pick_unchanged(tmp_path, mocker):
+    ss, dur = _capture_render(tmp_path, mocker, 10.0, 14.0, duration=120.0)  # 4s pick stays 4s
+    assert ss == 10.0 and dur == 4.0
 
 def test_render_moment_keeps_in_band_window(tmp_path, mocker):
     ss, dur = _capture_render(tmp_path, mocker, 10.0, 28.0, duration=120.0)  # 18s pick already
@@ -672,13 +674,12 @@ def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatc
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
                                   duration=120.0, transcript=tr)
     assert ss == 9.3                                       # trusted start, not junk 9.4
-    assert round(ss + to, 1) == 22.0                       # fit widens to 22s; trusted end 17.2 beyond max_shift
+    assert round(ss + to, 1) == 17.2                       # snapped end; no band widen past phrase end
 
-def test_render_moment_song_profile_uses_wider_band(tmp_path, mocker, monkeypatch):
-    # a 14s pick on a song source grows to the 18s SONG floor (talk would keep it at 14)
+def test_render_moment_keeps_profile_pick_unchanged(tmp_path, mocker, monkeypatch):
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
                                   duration=120.0, profile="song")
-    assert to == 18.0 and 18.0 <= to <= 35.0
+    assert to == 14.0
 
 # --- P1 T1: strongest-frame cut start (visual_start) --------------------------------------------
 # render_moment refines the cut start (after the band, before transcript-snap) onto the strongest

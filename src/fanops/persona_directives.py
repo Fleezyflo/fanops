@@ -194,14 +194,10 @@ def _caption_fragments(p) -> list[dict]:
 
 
 def _cut_fragments(p) -> list[dict]:
-    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> the
-    length band + framing. Empty when neither derives (a global cut, or a carrier-pin-only cut with no levers)."""
+    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> framing
+    only (length bands are no longer compiled into the clip order)."""
     frags: list[dict] = []
-    d_prof, d_fr = derive_cut_spec(p)
-    if d_prof:
-        from fanops.bands import band_for
-        b = band_for(d_prof)
-        frags.append({"source": "cut_policy", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from cut_policy)"})
+    _, d_fr = derive_cut_spec(p)
     if d_fr:
         frags.append({"source": "cut_policy", "text": f"{d_fr} crop (derived from cut_policy)"})
     return frags
@@ -216,7 +212,6 @@ def compose_breakdown(cfg: Config, p) -> dict:
     Duck-typed (Persona/Account). (M3e: the freeform directive OVERRIDES were retired — no `override`/`shadowed`
     surface remains; every dimension is the structured-lever compile.) (M3d: a persona never pins the cut — the
     `persona` cut source is reachable only via an Account carrier pin.)"""
-    from fanops.bands import band_for
     casting = {"text": str(casting_directive(p)), "override": False,
                "fragments": _casting_fragments(p), "shadowed": []}
     hook = {"text": str(hook_directive(p)), "override": False,
@@ -225,8 +220,7 @@ def compose_breakdown(cfg: Config, p) -> dict:
     caption = {"text": caption_directive(p), "override": False, "fragments": _caption_fragments(p)}
     pin_prof = (getattr(p, "clip_profile", None) or "").strip()
     res_prof, res_fr = resolved_cut_spec(p)               # carrier pin > derived > None — the SAME floor hydration applies
-    band = band_for(res_prof or "")
-    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
+    cut = {"band": "", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
            "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (cut_policy)
     facts = persona_facts(cfg, p)                         # reuse the EXACT lead-tags + length resolver
@@ -293,9 +287,6 @@ def produces_summary(breakdown: dict) -> list[str]:
     hashtag posture (no lean/corpus) are all SILENT — so an unconfigured persona yields []. Pure; reads only
     the passed dict, never the disk."""
     out: list[str] = []
-    cut = breakdown.get("cut") or {}
-    if cut.get("source") and cut.get("source") != "global" and cut.get("band"):
-        out.append(f"~{cut['band']} clips")
     angle = (breakdown.get("hook") or {}).get("angle")
     if angle:
         out.append(f"{angle} hooks")
@@ -313,13 +304,11 @@ def persona_facts(cfg: Config, p) -> dict:
     hashtags (hashtags.vet_hashtags with this persona's derived corpus over its `_aligned_pool` menu —
     never the global measurement cache). PURE read; a cold cache simply yields a shorter lead line.
     Duck-typed (serves a Persona OR a hydrated Account)."""
-    from fanops.bands import band_for
     from fanops.hashtags import vet_hashtags, load_measurements
     from fanops.models import Platform
     from fanops.persona_research import _aligned_pool, persona_terms
-    prof, fr = resolved_cut_spec(p)          # the EFFECTIVE cut — pin OR derived from content_focus (the
-    band = band_for(prof)                    # SAME spec hydration applies), so the card shows the REAL length, not
-    try:                                     # the raw-unset value (which made every persona read as one global band)
+    _, fr = resolved_cut_spec(p)
+    try:
         # MOL-512 (C-2): store = this persona's aligned pool as an ordered tag list (vet_hashtags membership).
         pool = _aligned_pool(p, load_measurements(cfg), cfg=cfg)
         store = [t for t, _v, _s in pool] or None
@@ -330,5 +319,5 @@ def persona_facts(cfg: Config, p) -> dict:
     lead = vet_hashtags([], Platform.instagram,
                         corpus=list(getattr(p, "hashtag_corpus", None) or []), store=store,
                         cfg=cfg)   # U11: honor the global ban list here too (a banned tag must not show as a persona's "lead tag")
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": lead,
+    return {"length_band": "", "framing": fr, "lead_tags": lead,
             "terms": persona_terms(p, cfg)}   # the words Layer A searches on — the description IS the hashtag lever

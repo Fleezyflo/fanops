@@ -14,7 +14,6 @@ from fanops.ids import child_id
 from fanops.agentstep import write_request, write_response, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
-from fanops.bands import band_for
 from fanops.clip import fit_window
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
@@ -126,8 +125,8 @@ def _peak_in_segments(p, segments: list[tuple[float, float]]) -> bool:
 
 # ffprobe durations round; a pick may overrun probed EOF by this much before it's "past the end".
 _EOF_TOLERANCE_S = 0.5
-# shorter than this can't carry a hook + payoff — reject as noise
-_MIN_MOMENT_S = 0.5
+# scrap fragments — reject at ingest (no pad-to-band)
+_MIN_MOMENT_S = 6.0
 # two picks overlapping by more than this fraction of the SHORTER window are near-duplicate clips;
 # keep the first (start-ordered), drop the later. The cross-pick guard validate_pick can't do.
 _MAX_OVERLAP_FRAC = 0.5
@@ -174,7 +173,7 @@ def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> s
         return f"start<0 ({pick.start})"
     if duration and pick.end > duration + _EOF_TOLERANCE_S:   # duration==0 means unprobed: skip EOF check
         return f"end>{duration} ({pick.end})"
-    if (pick.end - pick.start) < _MIN_MOMENT_S:
+    if (pick.end - pick.start) <= _MIN_MOMENT_S:
         return f"too short ({pick.end - pick.start:.2f}s)"
     if not (pick.reason or "").strip():
         return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
@@ -239,27 +238,20 @@ def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=
     return kept, len(segs) - len(kept)
 
 def _persona_entry(cfg: Config, a) -> dict:
-    """Per-account pick spec — full fields even when casting directive is falsy (directive-less accounts
-    still get their own owned moments under per-account isolation)."""
-    from fanops.persona_directives import casting_directive, resolved_cut_spec
-    d = casting_directive(a)
-    prof = cfg.resolve_clip_profile(a)
-    band = band_for(prof)
+    """Per-account pick spec — handle + gate filters only (no clip-order poem in the pick prompt)."""
     pin_fr = (getattr(a, "framing", None) or "").strip().lower()
-    _, derived_fr = resolved_cut_spec(a)
-    framing = pin_fr or derived_fr or ("top" if cfg.resolve_top_bias(a) else "center")
-    content_focus = list(getattr(a, "content_focus", None) or [])
+    framing = pin_fr if pin_fr in ("top", "center") else ("top" if cfg.resolve_top_bias(a) else "center")
     intensity = (getattr(a, "intensity", None) or "")
     if isinstance(intensity, str): intensity = intensity.strip().lower() or None
     else: intensity = None
     return {"handle": a.handle,
-            "directive": (d.select_rule or d.register) if d else "",
-            "selection_scope": (d.scope_lens if d else ""),
-            "band": f"{band.lo:g}-{band.hi:g}s",
+            "directive": "",
+            "selection_scope": "",
+            "band": "",
             "framing": framing,
-            "content_focus": content_focus,
+            "content_focus": [],
             "intensity": intensity or "",
-            "hook_angle": (getattr(a, "hook_angle", None) or ""),
+            "hook_angle": "",
             "corpus": list(getattr(a, "hashtag_corpus", None) or [])}
 
 def _pick_personas(cfg: Config, accounts) -> list[dict]:
@@ -271,9 +263,7 @@ def _pick_personas(cfg: Config, accounts) -> list[dict]:
     out: list[dict] = []
     for a in accounts.active():
         try:
-            entry = _persona_entry(cfg, a)
-            if not entry.get("directive"): continue
-            out.append(entry)
+            out.append(_persona_entry(cfg, a))
         except Exception as exc:
             get_logger(cfg)("moments", getattr(a, "handle", "-"), "persona_entry_skipped", err=str(exc)[:120])
             continue
@@ -582,8 +572,9 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         owner = (m.affinities or [None])[0]
         if owner:
             discard_gate(cfg, "moment_hooks", f"{source_id}.{m.content_token}")
-        band = band_for(m.clip_profile or cfg.clip_profile)
-        cs, ce = fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)   # the cut the renderer makes
+        dur = src.duration or 0.0
+        hi = dur if dur > 0 else float("inf")
+        cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)   # EOF clamp only — the picked moment
         env_peaks = [p for p in (src.signal_peaks or []) if _peak_in_window(p, cs, ce)]
         if m.segments:
             span_peaks = [p for p in (src.signal_peaks or []) if _peak_in_segments(p, m.segments)]

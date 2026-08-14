@@ -92,7 +92,7 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     d = compose_breakdown(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                        hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
-    assert "16-26s" in d["cut"]["band"] and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
+    assert d["cut"]["band"] == "" and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
     assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
     assert d2["cut"]["source"] == "global"                        # unset profile → global, not persona
@@ -106,8 +106,8 @@ def test_produces_summary_lists_configured_dimensions(tmp_path):
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
-    assert "16-26s" in joined and "clips" in joined                 # the LENGTH band, from the same cut resolver
-    assert "curiosity hooks" in clauses                             # the hook ANGLE
+    assert "16-26s" not in joined and "clips" not in joined
+    assert "curiosity hooks" in clauses
     assert any(c.startswith("≤") and "hashtag" in c for c in clauses)  # the hashtag count (lean/corpus is set)
 
 def test_produces_summary_unset_persona_is_empty(tmp_path):
@@ -119,8 +119,8 @@ def test_produces_summary_unset_persona_is_empty(tmp_path):
 def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
     # length set but NO corpus -> the hashtag clause stays silent (the floor isn't a choice); clips still list.
     cfg = Config(root=tmp_path)
-    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", cut_policy=["storytelling"])))   # M3d: derives long
-    assert any("clips" in c for c in clauses)
+    clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", cut_policy=["storytelling"])))
+    assert not any("clips" in c for c in clauses)
     assert not any("hashtag" in c for c in clauses)
 
 def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):
