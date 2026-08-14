@@ -132,6 +132,7 @@ def test_credentialed_transport_error_is_fail_open_not_parked(tmp_path, monkeypa
     # fail-open: the post is NOT parked as an identity failure on a network hiccup. It is left untouched
     # (still needs_reconcile, still re-pollable) so the next tick re-confirms — never stranded/failed.
     assert led.posts["p1"].state is PostState.needs_reconcile   # untouched, re-pollable next pass
+    assert led.posts["p1"].public_url == _URL                  # captured URL must not be discarded
     assert led.posts["p1"].state is not PostState.failed
     er = (led.posts["p1"].error_reason or "").lower()
     assert "unverified" not in er                               # NOT the definitive-identity-failure park

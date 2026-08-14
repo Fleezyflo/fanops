@@ -77,19 +77,31 @@ def _extract_postiz_id(body) -> str | None:
     return None
 
 
-def _postiz_permalink(cfg: Config, post_id: str | None) -> str | None:
-    """The single chokepoint for "what PUBLIC URL do we record for a published Postiz post" (P2) —
-    ships returning None, ALWAYS, today — and that is correct BY TIMING, not because Postiz never exposes a
-    URL: this is the PUBLISH-time read (the immediate 2xx for a freshly-SCHEDULED post), and a not-yet-live
-    post has no permalink to record. The real IG/TikTok permalink IS captured later by the reconcile READ
-    (metrics.py PostizStatusClient), which pulls a PUBLISHED row's `releaseURL` into public_url (verified
-    against the running instance 2026-06-21). So THIS publish-time chokepoint stays None (a *guessed*
-    dashboard link like {POSTIZ_URL}/.../{post_id} would 404 on the operator's calendar UI — worse than
-    None); `fanops resolve <id> published --url <url>` / Studio mark-published remain the manual fallback
-    for a post the reconcile read genuinely can't see (absent from its date-window page)."""
-    if not post_id:                                  # no confirmed id -> never a link
+def _postiz_permalink_from_body(body) -> str | None:
+    """Extract a real https permalink from a Postiz publish 2xx body when the API returns one — never invent."""
+    if not isinstance(body, dict):
         return None
-    return None                                      # route unverified -> None (build the URL here once verified)
+    for k in ("releaseURL", "permalink", "publicUrl", "url", "link"):
+        u = safe_public_url(body.get(k))
+        if u:
+            return u
+    posts = body.get("posts")
+    if isinstance(posts, list) and posts and isinstance(posts[0], dict):
+        return _postiz_permalink_from_body(posts[0])
+    return None
+
+
+def _postiz_permalink(cfg: Config, post_id: str | None, body=None) -> str | None:
+    """The single chokepoint for "what PUBLIC URL do we record for a published Postiz post" (P2).
+    At publish time the immediate 2xx may carry no social permalink yet; when the response body DOES
+    include a verified releaseURL (or equivalent), persist it here. Otherwise None — reconcile READ
+    (PostizStatusClient) back-fills from a PUBLISHED row's releaseURL later. Never fabricate a
+    dashboard guess link."""
+    if body is not None:
+        return _postiz_permalink_from_body(body)
+    if not post_id:
+        return None
+    return None
 
 
 def _postiz_image(u: str) -> dict:
@@ -451,24 +463,23 @@ class PostizPoster:
                 return led
             last = resp
             if resp.status_code in (200, 201):
+                body = None
                 sid = None
                 try:
-                    sid = _extract_postiz_id(resp.json())
-                except Exception as exc:                 # unparseable 2xx body -> parks needs_reconcile below (no id)
+                    body = resp.json()
+                    sid = _extract_postiz_id(body)
+                except Exception as exc:
                     _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
+                    body = None
                     sid = None
                 if not sid:
                     led.set_post_state(post_id, PostState.needs_reconcile,
-                                       error_reason="postiz 2xx but no recognizable post id (body withheld)")  # body may echo the auth header -> never persist it
+                                       error_reason="postiz 2xx but no recognizable post id (body withheld)")
                     return led
                 led.set_post_state(post_id, PostState.submitted)
                 post = led.posts[post_id]
                 post.submission_id = sid
-                # P2: record a public URL ONLY on the confirmed-submitted branch (no confirmed id ->
-                # no link). _postiz_permalink is None today (no URL in the API); `or post.public_url`
-                # keeps any operator-set link and makes this a no-op until the route is verified. M2:
-                # safe_public_url guards a future permalink to https-only (never persist a dead link).
-                post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid)) or post.public_url
+                post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid, body)) or post.public_url
                 return led
             if resp.status_code == 401:
                 raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")

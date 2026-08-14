@@ -468,7 +468,7 @@ class ZernioPoster:
         self.base = _base(cfg)
         self.headers = {"Authorization": f"Bearer {_key(cfg)}", "Content-Type": "application/json"}
 
-    def _create(self, post) -> ZernioCreateResult:
+    def _create(self, post) -> tuple[ZernioCreateResult, str | None]:
         """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
         never leaves this class. Raises ONLY ZernioAuthError, which must halt the whole run rather than burn
         one post (a bad key fails every post).
@@ -479,7 +479,7 @@ class ZernioPoster:
         re-queueable and re-queueing a landed post is the double-post this exists to prevent."""
         bad = _require_request_identity(post)
         if bad is not None:
-            return bad                                   # ZERO network calls (I-10) — never fabricate an id
+            return bad, None
         rid = _request_id(post)
         payload = build_zernio_payload(account_id=post.account_id, platform=post.platform.value,
                                        content=post.caption, media_urls=post.media_urls,
@@ -499,25 +499,28 @@ class ZernioPoster:
                         time.sleep(wait); delay *= 2; continue
                     if not sent_any:
                         return TerminalFailure("connect_timeout",
-                                               f"could not connect after {attempt + 1} attempt(s); nothing was sent")
+                                               f"could not connect after {attempt + 1} attempt(s); nothing was sent"), None
                     return ReconciliationRequired("connect_timeout_after_send",
                                                   f"an earlier attempt reached Zernio and this one could not re-check "
-                                                  f"within {_RETRY_DEADLINE_S:.0f}s — may be live")
+                                                  f"within {_RETRY_DEADLINE_S:.0f}s — may be live"), None
                 # The body may have landed (the response, not the request, was lost) — ambiguous. Park; do
                 # NOT re-POST. The retry that WOULD be safe is the in-deadline loop above; this exception
                 # class is no evidence that a fresh send lands inside the window.
                 sent_any = True
                 return ReconciliationRequired("network_error_may_be_live",
-                                              f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}")
+                                              f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}"), None
             sent_any = True                              # a RESPONSE proves the request reached Zernio
             if resp.status_code in (200, 201):
                 parsed: ZernioCreateResult | None = None
+                permalink: str | None = None
                 with fail_open("zernio.create.parse", log=_breadcrumb(self.cfg, post.id, "zernio_2xx_body_unparsed")):
-                    parsed = _parse_create_body(resp.json())
+                    body = resp.json()
+                    parsed = _parse_create_body(body)
+                    from fanops.post.metrics import _extract_zernio_permalink
+                    permalink = safe_public_url(_extract_zernio_permalink(body))
                 if parsed is not None:
-                    return parsed
-                # Non-JSON / unreadable 2xx: Zernio accepted SOMETHING we cannot identify. NEVER terminal.
-                return ReconciliationRequired("success_unreadable_body", "2xx but the body did not parse — body withheld")
+                    return parsed, permalink
+                return ReconciliationRequired("success_unreadable_body", "2xx but the body did not parse — body withheld"), None
             if resp.status_code == 401:
                 raise ZernioAuthError("Zernio 401 unauthorized — check ZERNIO_API_KEY (response body withheld)")
             if resp.status_code == 409:
@@ -537,9 +540,9 @@ class ZernioPoster:
                 unread = "" if read else " (409 body unreadable — a candidate may exist but could not be read)"
                 return ReconciliationRequired("duplicate_content_409",
                                               "Zernio reports duplicate content in its 24h window — identity UNPROVEN, "
-                                              f"reconcile by hand{unread}", candidate_post_id=cand)
+                                              f"reconcile by hand{unread}", candidate_post_id=cand), None
             if 500 <= resp.status_code < 600:
-                return ReconciliationRequired("http_5xx", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld")
+                return ReconciliationRequired("http_5xx", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld"), None
             if resp.status_code == 429:
                 # The request REACHED Zernio, so the create may already have landed — this is exactly the
                 # R-1 branch that used to re-POST bare. Retry only if the wait still lands the next SEND
@@ -551,28 +554,25 @@ class ZernioPoster:
                     time.sleep(wait); delay *= 2; continue
                 return ReconciliationRequired("rate_limited_may_be_live",
                                               f"429 and the retry budget ({_RETRY_DEADLINE_S:.0f}s) is spent — the create "
-                                              f"may already have landed; body withheld")
+                                              f"may already have landed; body withheld"), None
             # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD — display prose must
             # never carry a status dump that could confuse operators; classification is ErrorKind at write.
-            return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld")
-        # Unreachable: every branch returns or continues, and the last iteration cannot continue
-        # (attempt < _MAX_RETRIES - 1 is False there). Belt-and-braces, never the re-queueable direction.
-        return ReconciliationRequired("retries_exhausted", f"no verdict after {_MAX_RETRIES} attempts — may be live")
+            return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld"), None
+        return ReconciliationRequired("retries_exhausted", f"no verdict after {_MAX_RETRIES} attempts — may be live"), None
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         """Poster protocol — signature UNCHANGED and shared with postiz/dryrun (invariant I-11). The SOLE
         site mapping a Zernio create result onto the ledger, so each rule ("a 409 is never failed", "a
         candidate is never a submission_id") has exactly one owner to review."""
         post = led.posts[post_id]
-        result = self._create(post)                      # ZernioAuthError propagates: halts the run (run.py H8)
+        result, publish_permalink = self._create(post)                      # ZernioAuthError propagates: halts the run (run.py H8)
         if isinstance(result, (Created, IdempotentReplay)):
             # Both are the SAME logical submission, so both take the SAME ledger state: `submitted` + a real
-            # id. Zernio returns no permalink at create, so run.py's public_url gate parks both in
-            # needs_reconcile and reconcile back-fills the URL — identical to the pre-fix success path.
+            # id. Zernio usually returns no permalink at create; when the 2xx body carries one, persist it.
             led.set_post_state(post_id, PostState.submitted)
             post = led.posts[post_id]
             post.submission_id = result.post_id
-            post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
+            post.public_url = safe_public_url(publish_permalink) or post.public_url
             if isinstance(result, IdempotentReplay):
                 # The ONLY behavioral difference from Created: an audit trail. A replay means a send DID
                 # land and we recovered it instead of creating a second post — the whole point of the
