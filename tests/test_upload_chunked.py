@@ -93,6 +93,20 @@ def test_upload_finalize_probes_before_promote(tmp_path, mocker):
     assert not list(cfg.inbox.glob("*.uploadpart"))
 
 
+def test_upload_finalize_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
+    mocker.patch("fanops.ingest.has_video_stream", return_value=None)
+    cfg = Config(root=tmp_path)
+    data = b"KEEPME" * 16
+    init = actions.upload_init(cfg, "clip.mp4", len(data), _sha(data))
+    uid = init.detail["upload_id"]
+    actions.upload_chunk(cfg, uid, 0, data)
+    res = actions.upload_finalize(cfg, uid, trigger_ingest=False)
+    assert not res.ok and "probe unavailable" in (res.error or "").lower()
+    assert (cfg.inbox / "clip.mp4.uploadpart").read_bytes() == data
+    assert not (cfg.inbox / "clip.mp4").exists()
+    assert list(cfg.inbox.glob("*.uploadmeta.json"))
+
+
 def test_upload_resume_after_partial(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)

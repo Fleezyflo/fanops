@@ -125,6 +125,16 @@ def test_save_uploads_skips_audio_only_when_probing(tmp_path, mocker):
     assert res.detail["skipped"] and not res.detail["saved"]
     assert not (cfg.inbox / "audio.mp4").exists()           # removed after the probe rejected it
 
+def test_save_uploads_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
+    # A per-file ffprobe timeout must not delete the staged upload — the operator can retry.
+    mocker.patch("fanops.ingest.has_video_stream", return_value=None)
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("clip.mp4", b"KEEPME")], probe=True)
+    assert not res.ok and res.detail["skipped"] == [("clip.mp4", "probe unavailable — retry")]
+    part = cfg.inbox / "clip.mp4.uploadpart"
+    assert part.exists() and part.read_bytes() == b"KEEPME"
+    assert not (cfg.inbox / "clip.mp4").exists()
+
 def test_save_uploads_probes_uploadpart_before_promote(tmp_path, mocker):
     spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     cfg = Config(root=tmp_path)
