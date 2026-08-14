@@ -136,7 +136,7 @@ def test_lift_still_301(tmp_path):
 
 
 # ---- Add & run blocked-gates badge ----
-def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None):
+def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_first_id=None, failed=0):
     from datetime import datetime, timezone
     from fanops.timeutil import iso_z
     cfg.control.mkdir(parents=True, exist_ok=True)
@@ -145,6 +145,7 @@ def _seed_strip_metrics(cfg, *, blocked_gates=0, recoverable_sources=0, errored_
         "blocked_gates": blocked_gates,
         "recoverable_sources": recoverable_sources,
         "errored_first_id": errored_first_id,
+        "failed": failed,
     }))
 
 
@@ -214,6 +215,16 @@ def test_build_system_strip_does_not_call_pipeline_status(tmp_path, monkeypatch)
         AssertionError("pipeline_status must not run on the strip path")))
     strip = views.build_system_strip(cfg)
     assert strip["blocked_gates"] == 1
+
+
+def test_build_system_strip_does_not_load_ledger(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _seed_strip_metrics(cfg, blocked_gates=1, failed=4)
+    monkeypatch.setattr("fanops.ledger.Ledger.load", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("build_system_strip must not Ledger.load")))
+    strip = views.build_system_strip(cfg)
+    assert strip["blocked_gates"] == 1
+    assert strip["failed"] == 4
 
 
 # ---- folded live lens content parity ----

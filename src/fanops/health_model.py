@@ -596,7 +596,7 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
 
     probe_policy:
       - 'live' (default): real network/launchd probes — doctor / CLI / Go-Live readiness.
-      - 'observe': snapshot + local cfg only — Studio Home strip / CP observe (MOL-965 WP2-fix2).
+      - 'observe': snapshot + local cfg only — CP observe (MOL-965 WP2-fix2).
         Defaults postiz_probe→snapshot_postiz_probe, daemon_status→snapshot_daemon_status,
         deps→deps_from_snapshot; strip metrics freshness check (WP3); skips Meta token
         network + bounded live confirm.

@@ -784,30 +784,16 @@ def build_system_strip(cfg: Config) -> dict:
             blocked = int(m.get("blocked_gates") or 0)
             recoverable = int(m.get("recoverable_sources") or 0)
             errored_first_id = m.get("errored_first_id")
+            failed = int(m.get("failed") or 0)
         else:
-            # Missing/stale/unreadable → unknown, never calm zero
+            # Missing/stale/unreadable → unknown, never calm zero. Do not Ledger.load on the strip path.
             strip_metrics_unknown = True
-            blocked = None; recoverable = 0; errored_first_id = None
+            blocked = None; recoverable = 0; errored_first_id = None; failed = 0
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "pipeline_status_error", err=str(exc)[:160])
         strip_metrics_unknown = True
-        blocked = None; recoverable = 0; errored_first_id = None
-    failed = 0
-    try:
-        failed = sum(1 for p in led_for_request(cfg).posts.values() if p.state is PostState.failed)
-    except Exception as exc:
-        get_logger(cfg)("system_strip", "-", "failed_scan_error", err=str(exc)[:160])
-        failed = 0
-    # MOL-123: errored sources must be LOUD — a source parked in error/moments_empty means clip production
-    # silently stalled (the 2026-07-05 TimeoutExpired sat invisible while the strip read "idle"). Same
-    # fail-open-with-breadcrumb discipline as the failed-post scan; the count links to the Run tab's list.
-    errored = recoverable if recoverable else 0
-    if not errored:
-        try:
-            errored = sum(1 for s in led_for_request(cfg).sources.values() if s.state in _RECOVERABLE_SOURCE_STATES)
-        except Exception as exc:
-            get_logger(cfg)("system_strip", "-", "errored_scan_error", err=str(exc)[:160])
-            errored = 0
+        blocked = None; recoverable = 0; errored_first_id = None; failed = 0
+    errored = recoverable
     # Leg 2 (Insight): the one external gate — a persisted breadcrumb means Graph media-insights was refused
     # for lack of instagram_manage_insights, so IG performance is frozen at its last snapshot until granted.
     try:
@@ -816,15 +802,10 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "insights_blocked_error", err=str(exc)[:160])
         insights_blocked = False
-    # Half-live + strip freshness from ONE HealthReport projector (MOL-965 WP2/WP3).
-    # Constructor freshness is authoritative — never healthy/green beside strip_metrics_unknown.
     try:
-        from fanops.health_model import build_health_report, project_strip_health
-        strip_h = project_strip_health(build_health_report(cfg, probe_policy="observe"))
-        half_live, half_live_hint = strip_h["half_live"], strip_h["half_live_hint"]
-        if strip_h.get("strip_metrics_unknown"):
-            strip_metrics_unknown = True
-            blocked = None
+        from fanops.health_model import half_live_state
+        hl = half_live_state(cfg)
+        half_live, half_live_hint = hl.is_half_live, (hl.hint or "")
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "half_live_error", err=str(exc)[:160])
         half_live, half_live_hint = True, "readiness unavailable — not confirmed LIVE"

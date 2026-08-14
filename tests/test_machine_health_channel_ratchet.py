@@ -34,7 +34,6 @@ _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS = frozenset({
     ("src/fanops/health_model.py", "render_prometheus_metrics"),
     ("src/fanops/init_flow.py", "run_init"),
     ("src/fanops/autopilot.py", "autopilot"),                # via doctor_report
-    ("src/fanops/studio/views.py", "build_system_strip"),
     ("src/fanops/studio/views.py", "golive_status"),
 })
 

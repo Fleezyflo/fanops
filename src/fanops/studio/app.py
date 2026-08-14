@@ -325,7 +325,11 @@ def create_app(cfg: Config) -> Flask:
         # M5: inject `cfg` globally so templates can read cfg.is_live for the Posted-tab system-mode banner
         # (and any future banner that surfaces system state). Single source of truth — never recomputed
         # per surface, never out of sync with the running deployment's live/dryrun state.
-        return {"nav_account": _account_arg(), "review_nav": views.review_nav_params(cfg, _account_arg()), "compact": _compact_arg(),
+        acct = _account_arg()
+        review_nav = {"view": "account", "focus": 1}
+        if acct:
+            review_nav["account"] = acct
+        return {"nav_account": acct, "review_nav": review_nav, "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
                 "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile},
@@ -343,7 +347,10 @@ def create_app(cfg: Config) -> Flask:
         acct = _account_arg()
         if not acct:
             return {}
-        wc = views.account_work_counts(cfg).get(acct, {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0})
+        empty = {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0}
+        if request.endpoint not in _INFLIGHT_SURFACES:
+            return {"account_session": {"handle": acct, **empty}}
+        wc = views.account_work_counts(cfg).get(acct, empty)
         return {"account_session": {"handle": acct, **wc}}
 
     @app.context_processor
