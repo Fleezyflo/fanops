@@ -290,7 +290,7 @@
         "swallow": "baseline 23 — SHARED between S06 and S09. *** NEITHER may raise it. ***"
       },
       "exists": true,
-      "function_count": 43,
+      "function_count": 44,
       "is_partitioned": true,
       "missing": false,
       "owners": [
