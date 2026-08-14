@@ -16,7 +16,7 @@ from fanops.models import PostState, MomentState, display_origin  # MOL-808: per
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
-from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, _imminent, suggest_time
+from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, REVIEW_FEED_SLICE, GridPage, _imminent, paginate, suggest_time
 from fanops.studio.actions_common import RENDER_PENDING_REASON
 
 _log = logging.getLogger("fanops.studio.views_review")
@@ -686,6 +686,188 @@ def review_awaiting_by_account(cards: list[ReviewCard]) -> dict[str, int]:
             c[account] += 1
     return dict(c)
 
+
+def review_awaiting_by_account_led(led: Ledger) -> dict[str, int]:
+    """Editable clip count per account without building ReviewCards — mirrors review_awaiting_by_account."""
+    from collections import Counter
+    c = Counter()
+    seen: set[tuple[str, str]] = set()
+    for p in led.review_posts():
+        clip = led.clips.get(p.parent_id)
+        if clip is None or clip.held:
+            continue
+        key = (p.parent_id, p.account)
+        if key in seen:
+            continue
+        seen.add(key)
+        c[p.account] += 1
+    return dict(c)
+
+
+@dataclass
+class _FeedKey:
+    clip_id: str
+    account: str
+    post_id: str
+    source_key: Optional[str]
+    batch_created: Optional[str]
+    created_at: str
+
+
+def _editable_feed_keys(led: Ledger, handle: str, *, batch: Optional[str] = None,
+                        source: Optional[str] = None, state: Optional[str] = None) -> list[_FeedKey]:
+    """Ordered feed row keys for one account — no _surface / _card, ledger scan only."""
+    if not (handle or "").strip():
+        return []
+    if state is not None and _STATE_TO_BUCKET.get(state) not in (None, "editable"):
+        return []
+    keys: list[_FeedKey] = []
+    seen: set[tuple[str, str]] = set()
+    for p in led.review_posts():
+        if p.account != handle:
+            continue
+        if batch is not None and p.batch_id != batch:
+            continue
+        clip = led.clips.get(p.parent_id)
+        if clip is None or clip.held:
+            continue
+        mom = led.moments.get(clip.parent_id)
+        src_key = mom.parent_id if mom is not None else None
+        if source is not None and src_key != source:
+            continue
+        dedup = (clip.id, p.account)
+        if dedup in seen:
+            continue
+        seen.add(dedup)
+        bid = p.batch_id
+        b = led.get_batch(bid) if bid else None
+        keys.append(_FeedKey(clip_id=clip.id, account=p.account, post_id=p.id, source_key=src_key,
+                             batch_created=(b.created_at if b is not None else None),
+                             created_at=p.created_at or ""))
+    src_order: dict = {}
+    for i, k in enumerate(keys):
+        if k.source_key and k.source_key not in src_order:
+            src_order[k.source_key] = i
+    keys.sort(key=lambda k: src_order.get(k.source_key, 999))
+    keys.sort(key=lambda k: k.created_at, reverse=True)
+    keys.sort(key=lambda k: k.batch_created or "\x00", reverse=True)
+    return keys
+
+
+def _surfaces_for_feed_keys(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, handle: str,
+                            keys: list[_FeedKey]) -> list[SurfacePost]:
+    """Build feed SurfacePost rows for the given keys — pays _card/_surface only for these clips."""
+    if not keys:
+        return []
+    personas = _personas(accounts)
+    acct_by_handle = {a.handle: a for a in accounts.accounts}
+    active_handles = frozenset(a.handle for a in accounts.active())
+    queued_by_clip: dict[str, list] = {}
+    for p in led.review_posts():
+        queued_by_clip.setdefault(p.parent_id, []).append(p)
+    rows: list[SurfacePost] = []
+    for k in keys:
+        clip = led.clips.get(k.clip_id)
+        if clip is None:
+            continue
+        posts = queued_by_clip.get(k.clip_id, [])
+        card = _card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle)
+        _, _, _, reason, _, _ = _lineage_for_clip(led, clip)
+        src = led.sources.get(k.source_key) if k.source_key else None
+        source_name = Path(src.source_path).name if (src and src.source_path) else "—"
+        bid = next((p.batch_id for p in posts if getattr(p, "batch_id", None)), None)
+        for s in card.surfaces:
+            if s.account == handle and s.editable:
+                rows.append(replace(s, reason=reason, source_key=k.source_key, source_name=source_name,
+                                    batch_id=bid, batch_created=k.batch_created, clip_id=k.clip_id))
+                break
+    return rows
+
+
+def review_feed_page(led: Ledger, accounts: Accounts, cfg: Config, *, now: datetime, account: Optional[str],
+                     batch: Optional[str] = None, source: Optional[str] = None, state: Optional[str] = None,
+                     offset: int = 0, page_size: int = REVIEW_FEED_SLICE) -> GridPage:
+    """Paginated per-account editable feed — surfaces built ONLY for the returned page."""
+    handle = (account or "").strip()
+    keys = _editable_feed_keys(led, handle, batch=batch, source=source, state=state)
+    page = paginate(keys, offset, page_size=page_size)
+    rows = _surfaces_for_feed_keys(led, accounts, cfg, now=now, handle=handle, keys=page.items)
+    return GridPage(items=rows, total=page.total, offset=page.offset, next_offset=page.next_offset)
+
+
+def review_scope_bucket_counts(led: Ledger, cfg: Config, *, now: datetime,
+                               account: Optional[str] = None, batch: Optional[str] = None,
+                               source: Optional[str] = None, state: Optional[str] = None) -> dict[str, int]:
+    """Per-bucket card counts for a scoped Review header — no _surface / _card."""
+    from collections import Counter
+    recent_cutoff = now - timedelta(hours=RECENT_WINDOW_HOURS)
+    queued_by_clip: dict[str, list] = {}
+    recent_by_clip: dict[str, list] = {}
+    for p in led.posts.values():
+        if p.state is PostState.awaiting_approval and led.can_promote(p):
+            queued_by_clip.setdefault(p.parent_id, []).append(p)
+        elif p.state in (PostState.published, PostState.analyzed):
+            keep = True
+            if p.scheduled_time:
+                try:
+                    dt = parse_iso(p.scheduled_time)
+                    keep = dt.tzinfo is not None and dt >= recent_cutoff
+                except (ValueError, TypeError):
+                    keep = True
+            if keep:
+                recent_by_clip.setdefault(p.parent_id, []).append(p)
+    clips_with_posts = {p.parent_id for p in led.posts.values()}
+    tallies: Counter = Counter()
+
+    def _meta(clip, posts):
+        mom = led.moments.get(clip.parent_id)
+        src_key = mom.parent_id if mom is not None else None
+        bid = next((p.batch_id for p in posts if getattr(p, "batch_id", None)), None)
+        accts = {p.account for p in posts}
+        return src_key, bid, accts
+
+    def _keep(bucket: str, clip, posts) -> bool:
+        src_key, bid, accts = _meta(clip, posts)
+        if account is not None:
+            if bucket in ("held", "prepared"):
+                return False
+            if account not in accts:
+                return False
+        if batch is not None and bid != batch:
+            return False
+        if source is not None and src_key != source:
+            return False
+        if state is not None:
+            target = _STATE_TO_BUCKET.get(state)
+            if target and bucket != target:
+                return False
+        return True
+
+    editable_ids: set[str] = set()
+    for clip_id, posts in queued_by_clip.items():
+        clip = led.clips.get(clip_id)
+        if clip is None or clip.held:
+            continue
+        if _keep("editable", clip, posts):
+            tallies["editable"] += 1
+            editable_ids.add(clip_id)
+    for clip_id, posts in recent_by_clip.items():
+        if clip_id in editable_ids:
+            continue
+        clip = led.clips.get(clip_id)
+        if clip is None or clip.held:
+            continue
+        if _keep("recent", clip, posts):
+            tallies["recent"] += 1
+    for clip in led.clips.values():
+        if clip.held:
+            if _keep("held", clip, []):
+                tallies["held"] += 1
+        elif clip.id not in clips_with_posts and clip.state in PREPARABLE_STATES:
+            if _keep("prepared", clip, []):
+                tallies["prepared"] += 1
+    return {k: tallies[k] for k in ("editable", "prepared", "held", "recent")}
+
 def review_progress(cards: list[ReviewCard]) -> dict:
     """Phase 4 progress header: per-scope counts (awaiting/approved/held/prepared) over the SAME cards the
     worklist renders — a pure read, re-derived each htmx swap so the count rides the URL (mirrors review_counts).
@@ -739,32 +921,8 @@ def review_feed_rows(led: Ledger, accounts: Accounts, cfg: Config, *, now: datet
     handle = (account or "").strip()
     if not handle:
         return []
-    cards = review_buckets(led, accounts, cfg, now=now, account=handle, batch=batch, source=source, state=state)
-    src_order: dict = {}
-    for i, c in enumerate(cards):
-        if c.source_key and c.source_key not in src_order:
-            src_order[c.source_key] = i
-    rows: list[SurfacePost] = []
-    for c in cards:
-        if c.bucket != "editable":
-            continue
-        for s in c.surfaces:
-            if s.account == handle and s.editable:
-                rows.append(replace(s, reason=c.reason, source_key=c.source_key, source_name=c.source_name,
-                                    batch_id=c.batch_id, batch_created=c.batch_created, clip_id=c.clip_id))
-    rows.sort(key=lambda r: src_order.get(r.source_key, 999))
-    rows.sort(key=lambda r: (led.posts[r.post_id].created_at or "") if r.post_id in led.posts else "", reverse=True)
-    rows.sort(key=lambda r: r.batch_created or "\x00", reverse=True)
-
-    deduped: list[SurfacePost] = []
-    seen: set[tuple[str | None, str]] = set()
-    for r in rows:
-        key = (r.clip_id, r.account)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(r)
-    return deduped
+    keys = _editable_feed_keys(led, handle, batch=batch, source=source, state=state)
+    return _surfaces_for_feed_keys(led, accounts, cfg, now=now, handle=handle, keys=keys)
 
 
 def group_review_by_source(rows: list) -> list:

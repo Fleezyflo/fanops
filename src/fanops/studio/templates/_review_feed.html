@@ -8,7 +8,7 @@
       {% for s in rows %}{% include "_review_feed_card.html" %}{% endfor %}
     {% endfor %}
     {% if feed_page and feed_page.next_offset is not none %}
-    <div id="feed-sentinel" class="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
+    <div id="feed-sentinel" class="feed-sentinel" hx-get="{{ url_for('review_feed_slice', account=feed_account|default(active), offset=feed_page.next_offset, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none)) }}" hx-trigger="revealed" hx-swap="outerHTML"></div>
     {% endif %}
   </div>
   {% endif %}
