@@ -422,10 +422,10 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
             if probe:
                 from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
                 try:
-                    probe = has_video_stream(tmp)
-                    if probe is None:
+                    has_video = has_video_stream(tmp)
+                    if has_video is None:
                         skipped.append((raw, "probe unavailable — retry")); continue
-                    if not probe:
+                    if not has_video:
                         tmp.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
                 except ToolchainMissingError:
                     tmp.unlink(missing_ok=True)                         # ING-9: an unverifiable upload would later ABORT the whole native ingest pass

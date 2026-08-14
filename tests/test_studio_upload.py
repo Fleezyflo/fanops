@@ -135,6 +135,17 @@ def test_save_uploads_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
     assert part.exists() and part.read_bytes() == b"KEEPME"
     assert not (cfg.inbox / "clip.mp4").exists()
 
+def test_save_uploads_still_probes_later_files_after_probe_unavailable(tmp_path, mocker):
+    # The probe flag must not be shadowed by a per-file result — later files still get checked.
+    spy = mocker.patch("fanops.ingest.has_video_stream", side_effect=[None, True])
+    cfg = Config(root=tmp_path)
+    res = actions.save_uploads(cfg, [_Up("hung.mp4", b"HUNG"), _Up("ok.mp4", b"OK")], probe=True)
+    assert res.ok and res.detail["saved"] == ["ok.mp4"]
+    assert res.detail["skipped"] == [("hung.mp4", "probe unavailable — retry")]
+    assert spy.call_count == 2
+    assert (cfg.inbox / "hung.mp4.uploadpart").read_bytes() == b"HUNG"
+    assert (cfg.inbox / "ok.mp4").read_bytes() == b"OK"
+
 def test_save_uploads_probes_uploadpart_before_promote(tmp_path, mocker):
     spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     cfg = Config(root=tmp_path)
