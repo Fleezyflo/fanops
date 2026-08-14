@@ -45,7 +45,7 @@ def register_review_routes(app, cfg):
                         "held": bucket_tallies["held"], "prepared": bucket_tallies["prepared"]}
             bucket_totals = bucket_tallies
             cards = []
-            feed_page = views.review_feed_page(led, accounts, cfg, now=now, account=feed_account,
+            feed_page = views.review_feed_rows(led, accounts, cfg, now=now, account=feed_account,
                                                batch=batch, source=source, state=state,
                                                offset=_offset_arg(), page_size=REVIEW_FEED_SLICE)
             feed_rows_full = None
@@ -115,7 +115,7 @@ def register_review_routes(app, cfg):
         feed_account = account if account and account != "all" else None
         if not feed_account:
             return "", 404
-        feed_page = views.review_feed_page(led, accounts, cfg, now=now, account=feed_account,
+        feed_page = views.review_feed_rows(led, accounts, cfg, now=now, account=feed_account,
                                            batch=batch, source=source, state=state,
                                            offset=_offset_arg(), page_size=REVIEW_FEED_SLICE)
         return render_template("_review_feed_slice.html", feed=feed_page.items, feed_page=feed_page,
