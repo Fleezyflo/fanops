@@ -8,7 +8,6 @@ from collections import Counter
 from datetime import datetime, timezone
 from flask import render_template, request
 from fanops.accounts import Accounts
-from fanops.ledger import Ledger
 from fanops.studio import actions, views
 from fanops.studio.views_common import REVIEW_FEED_SLICE
 from fanops.studio.app import _account_all_arg, _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
@@ -16,14 +15,13 @@ from fanops.studio.app import _account_all_arg, _account_arg, _batch_arg, _card_
 
 def register_review_routes(app, cfg):
     def _review_context(*, result=None, regen_note=None, reburn_note=None):
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
+        led = views.led_for_request(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
         account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
         account_all = _account_all_arg()
         view = _view_arg()
         compact = _compact_arg()
         ultra = _ultra_arg()
-        cards_full = views.review_buckets(led, accounts, cfg, now=now)
-        pending_full = {h: n for h, n in views.review_awaiting_by_account(cards_full).items() if n > 0}
+        pending_full = {h: n for h, n in views.review_awaiting_by_account_led(led).items() if n > 0}
         bare_entry = (not account and not batch and not source and not state and not account_all
                       and view is None and "compact" not in request.args and "ultra" not in request.args)
         single_bare = bare_entry and len(pending_full) == 1
@@ -35,25 +33,43 @@ def register_review_routes(app, cfg):
             feed_account = next(iter(pending_full))
         show_feed = feed_account is not None and not switcher_only
         mixed_view = account_all or (bare_entry and len(pending_full) == 0)
-        # Single-bare feed: feed_account is already the strip's active scope (_card_chips below). Include
-        # it in scoped + card selection so body counts match the poll (prepared/held drop under an account
-        # filter — post-less cards have no surfaces). MOL-835; do not touch Ledger.attention_counts/can_promote.
         scope_account = account or feed_account
         scoped = bool(scope_account or batch or source or state or account_all)
-        cards = (views.review_buckets(led, accounts, cfg, now=now, account=scope_account, batch=batch,
-                                      source=source, state=state) if scoped else cards_full)
-        if switcher_only:
-            cards = []
-        counts = views.review_counts(cards)
-        full_counts = views.review_counts(cards_full) if switcher_only else counts
-        progress = views.review_progress(cards_full if switcher_only else cards)
-        sources = views.source_universe(cards_full)
-        feed_rows_full = None
-        feed_page = None
+        cards_full = None
         if show_feed:
-            feed_rows_full = views.review_feed_rows(led, accounts, cfg, now=now, account=feed_account,
-                                                    batch=batch, source=source, state=state)
-            feed_page = views.paginate(feed_rows_full, _offset_arg(), page_size=REVIEW_FEED_SLICE)
+            bucket_tallies = views.review_scope_bucket_counts(led, cfg, now=now, account=scope_account,
+                                                            batch=batch, source=source, state=state)
+            counts = {"awaiting": bucket_tallies["editable"], "prepared": bucket_tallies["prepared"],
+                      "held": bucket_tallies["held"]}
+            progress = {"awaiting": bucket_tallies["editable"], "approved": bucket_tallies["recent"],
+                        "held": bucket_tallies["held"], "prepared": bucket_tallies["prepared"]}
+            bucket_totals = bucket_tallies
+            cards = []
+            feed_page = views.review_feed_page(led, accounts, cfg, now=now, account=feed_account,
+                                               batch=batch, source=source, state=state,
+                                               offset=_offset_arg(), page_size=REVIEW_FEED_SLICE)
+            feed_rows_full = None
+            sources = []
+            awaiting_by_account = {feed_account: views.review_awaiting_by_account_led(led).get(feed_account, 0)}
+            page = views.paginate([], _offset_arg())
+        else:
+            cards_full = views.review_buckets(led, accounts, cfg, now=now)
+            cards = (views.review_buckets(led, accounts, cfg, now=now, account=scope_account, batch=batch,
+                                          source=source, state=state) if scoped else cards_full)
+            if switcher_only:
+                cards = []
+            counts = views.review_counts(cards)
+            progress = views.review_progress(cards_full if switcher_only else cards)
+            sources = views.source_universe(cards_full)
+            feed_page = None
+            feed_rows_full = None
+            bucket_tally = Counter(c.bucket for c in cards)
+            bucket_totals = {k: bucket_tally[k] for k in ("editable", "prepared", "held", "recent")}
+            page = views.paginate(cards, _offset_arg())
+            acct_cards = views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
+                                              source=source, state=state)
+            awaiting_by_account = views.review_awaiting_by_account(acct_cards)
+        full_counts = views.review_counts(cards_full) if (switcher_only and cards_full is not None) else counts
         picker_accounts = []
         if len(pending_full) >= 1:
             active_map = {a.handle: a for a in accounts.active()}
@@ -71,17 +87,6 @@ def register_review_routes(app, cfg):
         show_lanes = view == "lanes" and not show_feed
         lanes = (views.account_lanes(led, accounts, cfg, source_id=focused, now=now, state=(state or "awaiting"))
                  if (show_lanes and focused) else None)
-        acct_cards = views.review_buckets(led, accounts, cfg, now=now, account=account, batch=batch,
-                                          source=source, state=state)
-        awaiting_by_account = views.review_awaiting_by_account(acct_cards)
-        if show_feed and feed_account:
-            awaiting_by_account = {feed_account: views.review_awaiting_by_account(cards).get(feed_account, 0)}
-        # T2.7: bucket sizes over the PRE-pagination cards. `cards` becomes `page.items` below, so the
-        # per-bucket <h3> counted the 24-card SLICE while the progress line above it counted the whole scoped
-        # set — one render, two numbers, neither labelled. Same set as `counts`/`progress`, one extra pass.
-        bucket_tally = Counter(c.bucket for c in cards)
-        bucket_totals = {k: bucket_tally[k] for k in ("editable", "prepared", "held", "recent")}
-        page = views.paginate(cards, _offset_arg())
         ctx = dict(cards=page.items, page=page, bucket_totals=bucket_totals, tab="review", compact=compact, ultra=ultra,
                    active_view=view, awaiting_by_account=awaiting_by_account, backend=cfg.poster_backend,
                    counts=counts, awaiting_total=full_counts["awaiting"], active_batch=batch, progress=progress,
@@ -92,7 +97,7 @@ def register_review_routes(app, cfg):
                    feed_account=feed_account, feed=(feed_page.items if feed_page else None),
                    feed_page=feed_page, feed_rows_full=feed_rows_full,
                    regen_note=regen_note, reburn_note=reburn_note,
-                   **_card_chips(cards_full, account if not show_feed else feed_account))
+                   **_card_chips(cards_full or [], account if not show_feed else feed_account))
         return ctx
 
     @app.get("/review")
@@ -105,8 +110,17 @@ def register_review_routes(app, cfg):
 
     @app.get("/review/feed-slice")
     def review_feed_slice():
-        ctx = _review_context()
-        return render_template("_review_feed_slice.html", **ctx)
+        led = views.led_for_request(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
+        account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
+        feed_account = account if account and account != "all" else None
+        if not feed_account:
+            return "", 404
+        feed_page = views.review_feed_page(led, accounts, cfg, now=now, account=feed_account,
+                                           batch=batch, source=source, state=state,
+                                           offset=_offset_arg(), page_size=REVIEW_FEED_SLICE)
+        return render_template("_review_feed_slice.html", feed=feed_page.items, feed_page=feed_page,
+                               feed_account=feed_account, active=feed_account, active_batch=batch,
+                               active_source=source, active_state=state)
 
     def _focus_mutation_response(result, *, regen_note=None, reburn_note=None, post_id=None):
         if _focus_arg():
@@ -115,7 +129,7 @@ def register_review_routes(app, cfg):
             return render_template("_result.html", result=result)
         if post_id is None:
             return render_template("_result.html", result=result)
-        s = views.surface_for_post(Ledger.load(cfg), Accounts.load(cfg), post_id,
+        s = views.surface_for_post(views.led_for_request(cfg), Accounts.load(cfg), post_id,
                                    now=datetime.now(timezone.utc), cfg=cfg)
         if s is None:
             return render_template("_result.html",
@@ -129,7 +143,7 @@ def register_review_routes(app, cfg):
         # with any batch/source/state filter active its counts covered the whole account while the body's
         # data-awaiting covered the filtered set — the strip then manufactured a "N new — load them" alert out
         # of the filter itself. The filters now ride the poll URL (_review_live.html) and are re-applied here.
-        led = Ledger.load(cfg); accounts = Accounts.load(cfg); account = _account_arg()
+        led = views.led_for_request(cfg); accounts = Accounts.load(cfg); account = _account_arg()
         batch = _batch_arg(); source = _source_arg(); state = _state_arg()
         cards = views.review_buckets(led, accounts, cfg, now=datetime.now(timezone.utc), account=account,
                                      batch=batch, source=source, state=state)

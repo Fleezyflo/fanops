@@ -337,10 +337,9 @@ def test_account_assignment_is_folded_into_each_card(tmp_path):
 
 
 def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
-    # MOL-60 (kept, repointed): on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice
-    # drives a real account, stealing it from another persona) must out-weigh the FREQUENT, low-stakes
-    # hashtag utility. With the corpus DERIVED there is exactly one such utility left — Save seeds — and
-    # it sits in the tertiary ghost tier. The card's single .primary is the zone-2 inline Save.
+    # MOL-60 (repointed): on a persona card the CONSEQUENTIAL, rare Assign (rewires which voice
+    # drives a real account) must out-weigh the FREQUENT inline Save. Niche seeds now live in zone 2
+    # beside the other levers — not a separate ghost "Save seeds" utility.
     import re
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@free", "platforms": ["tiktok"], "status": "active"}])
@@ -352,9 +351,9 @@ def test_persona_card_action_tiers_assign_over_the_niche_util(tmp_path):
         assert m, f"{label!r} button not found in rendered personas panel"
         return m.group(0)
 
-    assert 'class="ghost"' in _btn("Save seeds")
+    assert 'name="niche"' in html
     # the retired curation buttons must not come back with the routes deleted underneath them
-    for gone in ("Force refresh now", "Check reach", "Tune this voice"):
+    for gone in ("Force refresh now", "Check reach", "Tune this voice", "Save seeds"):
         assert gone not in html, f"a deleted curation control still renders: {gone}"
 
     # Assign stays secondary — NOT demoted to ghost, NOT promoted to primary

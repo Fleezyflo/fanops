@@ -502,7 +502,7 @@
     {
       "decorator": "app.post",
       "handler": "do_caption",
-      "line": 256,
+      "line": 270,
       "methods": [
         "POST"
       ],
@@ -513,7 +513,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_add",
-      "line": 200,
+      "line": 214,
       "methods": [
         "POST"
       ],
@@ -524,7 +524,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_remove",
-      "line": 207,
+      "line": 221,
       "methods": [
         "POST"
       ],
@@ -535,7 +535,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear",
-      "line": 251,
+      "line": 265,
       "methods": [
         "POST"
       ],
@@ -1294,7 +1294,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_edit",
-      "line": 53,
+      "line": 50,
       "methods": [
         "POST"
       ],
@@ -1338,7 +1338,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_posts",
-      "line": 149,
+      "line": 163,
       "methods": [
         "POST"
       ],
@@ -1349,7 +1349,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_account",
-      "line": 183,
+      "line": 197,
       "methods": [
         "POST"
       ],
@@ -1360,7 +1360,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_as_is",
-      "line": 171,
+      "line": 185,
       "methods": [
         "POST"
       ],
@@ -1371,7 +1371,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_batch",
-      "line": 175,
+      "line": 189,
       "methods": [
         "POST"
       ],
@@ -1382,7 +1382,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_channel",
-      "line": 191,
+      "line": 205,
       "methods": [
         "POST"
       ],
@@ -1393,7 +1393,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_clip",
-      "line": 179,
+      "line": 193,
       "methods": [
         "POST"
       ],
@@ -1404,7 +1404,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_moment",
-      "line": 187,
+      "line": 201,
       "methods": [
         "POST"
       ],
@@ -1415,7 +1415,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_edits",
-      "line": 162,
+      "line": 176,
       "methods": [
         "POST"
       ],
@@ -1426,7 +1426,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_hook",
-      "line": 167,
+      "line": 181,
       "methods": [
         "POST"
       ],
@@ -1470,7 +1470,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reject_posts",
-      "line": 154,
+      "line": 168,
       "methods": [
         "POST"
       ],
@@ -1514,7 +1514,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unapprove_post",
-      "line": 158,
+      "line": 172,
       "methods": [
         "POST"
       ],
@@ -1558,7 +1558,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reburn_hook",
-      "line": 273,
+      "line": 287,
       "methods": [
         "POST"
       ],
@@ -1580,7 +1580,7 @@
     {
       "decorator": "app.post",
       "handler": "do_regenerate",
-      "line": 263,
+      "line": 277,
       "methods": [
         "POST"
       ],
@@ -1591,7 +1591,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule_surface",
-      "line": 246,
+      "line": 260,
       "methods": [
         "POST"
       ],
@@ -1602,7 +1602,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule",
-      "line": 241,
+      "line": 255,
       "methods": [
         "POST"
       ],
@@ -1613,7 +1613,7 @@
     {
       "decorator": "app.post",
       "handler": "do_restore_persona_hook",
-      "line": 268,
+      "line": 282,
       "methods": [
         "POST"
       ],
@@ -1624,7 +1624,7 @@
     {
       "decorator": "app.get",
       "handler": "review",
-      "line": 99,
+      "line": 104,
       "methods": [
         "GET"
       ],
@@ -1646,7 +1646,7 @@
     {
       "decorator": "app.get",
       "handler": "review_feed_slice",
-      "line": 107,
+      "line": 112,
       "methods": [
         "GET"
       ],
@@ -1657,7 +1657,7 @@
     {
       "decorator": "app.get",
       "handler": "review_live",
-      "line": 127,
+      "line": 141,
       "methods": [
         "GET"
       ],
@@ -1668,7 +1668,7 @@
     {
       "decorator": "app.get",
       "handler": "review_panel_refresh",
-      "line": 145,
+      "line": 159,
       "methods": [
         "GET"
       ],
@@ -1976,7 +1976,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear_segments",
-      "line": 231,
+      "line": 245,
       "methods": [
         "POST"
       ],
@@ -1987,7 +1987,7 @@
     {
       "decorator": "app.post",
       "handler": "do_set_segments",
-      "line": 214,
+      "line": 228,
       "methods": [
         "POST"
       ],
@@ -1998,7 +1998,7 @@
     {
       "decorator": "app.post",
       "handler": "do_snooze",
-      "line": 278,
+      "line": 292,
       "methods": [
         "POST"
       ],
@@ -2086,7 +2086,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unhold",
-      "line": 283,
+      "line": 297,
       "methods": [
         "POST"
       ],
