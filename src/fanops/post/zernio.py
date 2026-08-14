@@ -467,6 +467,7 @@ class ZernioPoster:
         self.cfg = cfg
         self.base = _base(cfg)
         self.headers = {"Authorization": f"Bearer {_key(cfg)}", "Content-Type": "application/json"}
+        self._create_2xx_body = None
 
     def _create(self, post) -> ZernioCreateResult:
         """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
@@ -512,8 +513,14 @@ class ZernioPoster:
             sent_any = True                              # a RESPONSE proves the request reached Zernio
             if resp.status_code in (200, 201):
                 parsed: ZernioCreateResult | None = None
+                body = None
+                self._create_2xx_body = None
                 with fail_open("zernio.create.parse", log=_breadcrumb(self.cfg, post.id, "zernio_2xx_body_unparsed")):
-                    parsed = _parse_create_body(resp.json())
+                    body = resp.json()
+                    parsed = _parse_create_body(body)
+                if isinstance(parsed, (Created, IdempotentReplay)):
+                    self._create_2xx_body = body
+                    return parsed
                 if parsed is not None:
                     return parsed
                 # Non-JSON / unreadable 2xx: Zernio accepted SOMETHING we cannot identify. NEVER terminal.
@@ -567,12 +574,14 @@ class ZernioPoster:
         result = self._create(post)                      # ZernioAuthError propagates: halts the run (run.py H8)
         if isinstance(result, (Created, IdempotentReplay)):
             # Both are the SAME logical submission, so both take the SAME ledger state: `submitted` + a real
-            # id. Zernio returns no permalink at create, so run.py's public_url gate parks both in
-            # needs_reconcile and reconcile back-fills the URL — identical to the pre-fix success path.
+            # id. Zernio usually returns no permalink at create; when the 2xx body carries one, persist it.
             led.set_post_state(post_id, PostState.submitted)
             post = led.posts[post_id]
             post.submission_id = result.post_id
-            post.public_url = safe_public_url(None) or post.public_url   # permalink captured later by ZernioStatusClient (reconcile); none on the publish 2xx — placeholder mirrors postiz.py
+            if self._create_2xx_body is not None:
+                from fanops.post.metrics import _extract_zernio_permalink
+                post.public_url = safe_public_url(_extract_zernio_permalink(self._create_2xx_body)) or post.public_url
+            self._create_2xx_body = None
             if isinstance(result, IdempotentReplay):
                 # The ONLY behavioral difference from Created: an audit trail. A replay means a send DID
                 # land and we recovered it instead of creating a second post — the whole point of the

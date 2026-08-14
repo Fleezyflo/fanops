@@ -44,7 +44,7 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import ErrorKind, PostState, is_real_submission_id, ImportedMedia
+from fanops.models import ErrorKind, Platform, PostState, is_real_submission_id, ImportedMedia
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
@@ -242,6 +242,7 @@ def _norm_permalink(url: Optional[str]) -> Optional[str]:
     if host.startswith("www."): host = host[4:]
     path = u.path.rstrip("/")
     return f"{host}{path}" if host else None
+
 
 def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
     """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
@@ -681,7 +682,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             log("reconcile", post.id, "mirrored", postiz_state=mirror_upd["postiz_state"])
         status = (info.get("status") or "").lower()
         if status == "published":
-            from fanops.models import Platform
             liv = info.get("liveness")
             if liv is not None:
                 # M04: apply reads cached liveness only — no network under the flock.
@@ -703,9 +703,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     if _verdict == _GATE_PARK:
                         _reason = _UNVERIFIED_IG
                     elif _verdict == _GATE_FAILOPEN:
+                        if (_u := safe_public_url(captured_url)):
+                            post = post.model_copy(update={"public_url": _u})
+                            led.posts[post.id] = post
                         log("reconcile", post.id, "ig_confirm_transport_failopen")
                         continue
                 if _reason is not None:
+                    if (_u := safe_public_url(captured_url)):
+                        post = post.model_copy(update={"public_url": _u})
+                        led.posts[post.id] = post
                     led.set_post_state(post.id, PostState.needs_reconcile, error_reason=_reason)
                     log("reconcile", post.id, "unverified_identity_parked")
                     continue
@@ -743,9 +749,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     if _verdict == _GATE_PARK:
                         _reason = _UNVERIFIED_IG
                     elif _verdict == _GATE_FAILOPEN:
+                        if (_u := safe_public_url(captured_url)):
+                            post = post.model_copy(update={"public_url": _u})
+                            led.posts[post.id] = post
                         log("reconcile", post.id, "ig_confirm_transport_failopen")
                         continue
                 if _reason is not None:
+                    if (_u := safe_public_url(captured_url)):
+                        post = post.model_copy(update={"public_url": _u})
+                        led.posts[post.id] = post
                     led.set_post_state(post.id, PostState.needs_reconcile, error_reason=_reason)
                     log("reconcile", post.id, "unverified_identity_parked")
                     continue

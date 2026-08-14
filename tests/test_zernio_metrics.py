@@ -581,6 +581,7 @@ def test_reconcile_tiktok_stays_parked_when_oembed_author_mismatch(tmp_path, mon
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": url, "tiktokUsername": "mark"})
     p = led.posts["tt"]
     assert p.state is PostState.needs_reconcile                    # author mismatch -> parked, not rested
+    assert p.public_url == url                                     # operator still gets the captured link
     from fanops.reconcile import _UNVERIFIED_PREFIX
     assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
 

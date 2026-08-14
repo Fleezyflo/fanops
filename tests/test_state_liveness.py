@@ -135,7 +135,7 @@ EXITS: dict[type[Enum], dict[Enum, list[ExitRef]]] = {
         ],
         PostState.queued: [
             ("fanops.post.run", "publish_due", "queued -> submitting"),
-            ("fanops.reconcile", "reconcile_due", "pre-publish reconcile pass"),
+            ("fanops.reconcile", "reconcile_due", "post-publish reconcile pass (same-tick permalink)"),
         ],
         PostState.submitting: [
             ("fanops.reconcile", "heal_stranded_submitting", "stuck submitting heal"),

@@ -314,12 +314,13 @@ def _stage_crosspost(led: Ledger, cfg: Config, accts: Accounts, base_time: str, 
 
 
 def _reconcile_safe(cfg: Config, log) -> None:
-    """Reconcile last pass's stranded posts AFTER the main txn commits, BEFORE publishing (AUDIT H4 + M1
-    reconcile-out-of-lock): reconcile_due pre-polls each backend status with NO lock held, then applies the
-    cached results in its OWN tight transaction (N status GETs never hold the ledger flock). Gated on
-    is_live_backend (per-channel readiness); resolves each post's provider via effective_provider and skips
-    dryrun/provider-less posts. A FATAL AuthError halts (symmetry with publish); any other hiccup must not
-    wedge the pass. `fanops resolve` stays the manual escape hatch."""
+    """Reconcile stranded / in-flight posts AFTER the main txn commits (AUDIT H4 + M1 reconcile-out-of-lock).
+    Runs AFTER publish in advance() so a post shipped this tick can land its permalink in the SAME pass
+    (not only on the next daemon tick). reconcile_due pre-polls each backend status with NO lock held,
+    then applies the cached results in its OWN tight transaction (N status GETs never hold the ledger
+    flock). Gated on is_live_backend (per-channel readiness); resolves each post's provider via
+    effective_provider and skips dryrun/provider-less posts. A FATAL AuthError halts (symmetry with
+    publish); any other hiccup must not wedge the pass. `fanops resolve` stays the manual escape hatch."""
     if cfg.is_live_backend:
         try:
             reconcile_due(cfg)
@@ -552,8 +553,8 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         led = _stage_ingest_captions(led, cfg, log)
         note_stage(cfg, "crosspost", "-")
         led = _stage_crosspost(led, cfg, accts, base_time, log)
-    note_stage(cfg, "reconcile", "-")
-    _reconcile_safe(cfg, log)                            # stranded-post reconcile, out of lock (AUDIT H4)
     note_stage(cfg, "publish", "-")
     _publish_safe(cfg, log)                              # publish-out-of-lock (own per-post locking)
+    note_stage(cfg, "reconcile", "-")
+    _reconcile_safe(cfg, log)                            # reconcile AFTER publish: same-tick permalink back-fill
     return _build_summary(cfg, before)                   # post-publish read-only snapshot + digest
