@@ -1261,7 +1261,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_connect",
-      "line": 72,
+      "line": 69,
       "methods": [
         "POST"
       ],
@@ -1272,7 +1272,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_delete",
-      "line": 61,
+      "line": 58,
       "methods": [
         "POST"
       ],
@@ -1305,7 +1305,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_migrate",
-      "line": 77,
+      "line": 74,
       "methods": [
         "POST"
       ],
@@ -1316,7 +1316,7 @@
     {
       "decorator": "app.post",
       "handler": "do_personas_niche",
-      "line": 65,
+      "line": 62,
       "methods": [
         "POST"
       ],

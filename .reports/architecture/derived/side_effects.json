@@ -181,103 +181,107 @@
     "fanops.studio.actions": [
       {
         "call": "Ledger.transaction",
-        "line": 67
+        "line": 68
       },
       {
         "call": "Ledger.transaction",
-        "line": 96
+        "line": 97
       },
       {
         "call": "Ledger.transaction",
-        "line": 116
+        "line": 117
       },
       {
         "call": "Ledger.transaction",
-        "line": 234
+        "line": 235
       },
       {
         "call": "Ledger.transaction",
-        "line": 272
+        "line": 273
       },
       {
         "call": "Ledger.transaction",
-        "line": 334
+        "line": 326
       },
       {
         "call": "Ledger.transaction",
-        "line": 396
+        "line": 372
       },
       {
         "call": "Ledger.transaction",
-        "line": 465
+        "line": 434
       },
       {
         "call": "Ledger.transaction",
-        "line": 544
+        "line": 503
       },
       {
         "call": "Ledger.transaction",
-        "line": 567
+        "line": 582
       },
       {
         "call": "Ledger.transaction",
-        "line": 679
+        "line": 605
       },
       {
         "call": "Ledger.transaction",
-        "line": 777
+        "line": 717
       },
       {
         "call": "Ledger.transaction",
-        "line": 817
+        "line": 815
       },
       {
         "call": "Ledger.transaction",
-        "line": 861
+        "line": 855
       },
       {
         "call": "Ledger.transaction",
-        "line": 972
+        "line": 899
       },
       {
         "call": "Ledger.transaction",
-        "line": 1012
+        "line": 1010
       },
       {
         "call": "Ledger.transaction",
-        "line": 1047
+        "line": 1050
       },
       {
         "call": "Ledger.transaction",
-        "line": 1109
+        "line": 1085
       },
       {
         "call": "Ledger.transaction",
-        "line": 1140
+        "line": 1147
       },
       {
         "call": "Ledger.transaction",
-        "line": 1173
+        "line": 1178
       },
       {
         "call": "Ledger.transaction",
-        "line": 1208
+        "line": 1211
       },
       {
         "call": "Ledger.transaction",
-        "line": 1255
+        "line": 1246
       },
       {
         "call": "Ledger.transaction",
-        "line": 1266
+        "line": 1293
       },
       {
         "call": "Ledger.transaction",
-        "line": 1277
+        "line": 1304
       },
       {
         "call": "Ledger.transaction",
-        "line": 1303
+        "line": 1315
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1341
       }
     ],
     "fanops.studio.actions_approve": [
@@ -789,7 +793,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 81,
+    "ledger_transaction_sites": 82,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,

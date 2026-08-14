@@ -6,6 +6,7 @@ lose-update against a concurrent cron `fanops run`. Reads/normalization that can
 from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from pydantic import ValidationError
@@ -291,22 +292,59 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
 
 
 def approve_candidate(cfg: Config, eid: str) -> ActionResult:
-    """Track C: approve a discover candidate from the browser — move 00_review/<eid>.jpg into
-    00_review/approved/ (what the operator used to do by hand in Finder). eid must be a bare stem
-    (no path separators / ..) so a Studio POST can't move an arbitrary file. No ledger touch — this
-    is a review-folder move; `fanops intake` then copies the original into the inbox."""
+    """Track C: approve a discover candidate from the browser — admit the original into the
+    catalogue (same path as inbox ingest: discover.intake copies to 01_inbox, then stage+ingest
+    mints a Source). Moves 00_review/<eid>.jpg into approved/ as the operator signal. eid must be a
+    bare stem (no path separators / ..). Fails honestly when the manifest original is missing or the
+    content matches a retired Source (retired_dedup dead-end)."""
+    from fanops.discover import _load_json, intake as discover_intake
+    from fanops.digest import write_digest
+    from fanops.ids import make_id
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
     if not eid or "/" in eid or "\\" in eid or ".." in eid:
         return ActionResult(ok=False, error=f"bad candidate id: {eid!r}")
-    src = cfg.review / f"{eid}.jpg"
-    if not src.exists():
+    thumb = cfg.review / f"{eid}.jpg"
+    if not thumb.exists():
         return ActionResult(ok=False, error=f"no such candidate: {eid}")
+    info = _load_json(cfg.review / "manifest.json", {}).get(eid)
+    sp = info.get("source_path") if info else None
+    original = Path(sp) if sp else None
+    if original is None or not original.exists() or original.is_symlink():
+        return ActionResult(ok=False, error=f"original missing for candidate {eid} — cannot admit")
+    digest = (info or {}).get("sha256")
+    sid = make_id("src", digest) if digest else None
     dst = cfg.review / "approved" / f"{eid}.jpg"
     try:                                               # read-only mount / disk full / rename race
         dst.parent.mkdir(parents=True, exist_ok=True)
-        src.rename(dst)
+        thumb.rename(dst)
     except OSError as exc:
         return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"eid": eid})
+    counts = None
+    try:
+        discover_intake(cfg)                           # copy approved original(s) into 01_inbox/
+        staged = stage_inbox_candidates(cfg)           # default origin="drop" — same as CLI ingest path
+        with Ledger.transaction(cfg) as led:
+            led, counts = ingest_staged(led, cfg, staged)
+        _archive_staged(cfg, staged)
+        write_digest(Ledger.load(cfg), cfg)
+    except Exception as exc:
+        get_logger(cfg)("candidates", eid, "approve_ingest_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"ingest failed: {str(exc)[:160]}")
+    if counts is not None and counts.retired_dedup:
+        rid = counts.retired_dedup[0]
+        return ActionResult(ok=False, error=f"content matches retired source {rid} — re-upload blocked",
+                            detail={"eid": eid, "retired_dedup": counts.retired_dedup})
+    if counts is not None and counts.added >= 1 and not cfg.queue_gate:
+        from fanops.studio.actions_run import kick_prepare
+        kick_prepare(cfg)
+    detail: dict = {"eid": eid}
+    if sid:
+        detail["source_id"] = sid
+    if counts is not None:
+        detail["added"] = counts.added
+        if counts.retired_dedup:
+            detail["retired_dedup"] = counts.retired_dedup
+    return ActionResult(ok=True, detail=detail)
 
 
 # Non-terminal states an operator may mark "posted by hand". `error` is included (ecc:python-review):
