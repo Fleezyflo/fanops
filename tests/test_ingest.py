@@ -8,7 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.errors import ToolchainMissingError
 from fanops.ingest import (ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions,
-                           has_video_stream, download_url)
+                           has_video_stream, download_url, stage_inbox_candidates, _archive_dir)
 
 @pytest.fixture(autouse=True)
 def _gate_off(monkeypatch):
@@ -74,7 +74,7 @@ def test_probe_timeout_is_per_file_fail_soft(tmp_path, mocker):
     # ingest_drops runs outside the per-unit quarantine, INSIDE advance()'s transaction, so a raise
     # would abort the whole pass and roll back its committed transitions over one bad file. Bound
     # the probe and fail SOFT per file: probe_dimensions -> zeros (its documented failure shape),
-    # has_video_stream -> False; the file stays in the inbox and is retried next pass — bounded
+    # has_video_stream -> None; the file stays in the inbox and is retried next pass — bounded
     # every time, never a crash, never a dropped pass.
     seen = {}
     def hung(cmd, **kw):
@@ -82,8 +82,54 @@ def test_probe_timeout_is_per_file_fail_soft(tmp_path, mocker):
         raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
     mocker.patch("fanops.ingest.subprocess.run", side_effect=hung)
     assert probe_dimensions(tmp_path / "a.mp4") == (0, 0, 0.0)
-    assert has_video_stream(tmp_path / "a.mp4") is False
+    assert has_video_stream(tmp_path / "a.mp4") is None
     assert seen.get("timeout") == 30.0                                # the bound is actually wired
+
+def test_stage_inbox_probe_timeout_stays_in_inbox(tmp_path, mocker):
+    # stage_inbox_candidates must NOT archive a file whose video-stream probe timed out — it is
+    # retried next pass, not parked in .ingested/ as if it were audio-only.
+    cfg = Config(root=tmp_path)
+    hung = cfg.inbox / "hung.mp4"
+    _put(hung, b"V")
+    def run(cmd, **kw):
+        if any("codec_type" in str(a) for a in cmd):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+        return subprocess.CompletedProcess(cmd, 0, stdout="1920\n1080\n12.0\n", stderr="")
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=run)
+    staged = stage_inbox_candidates(cfg)
+    assert hung.exists()
+    assert hung not in staged.archive_paths
+    assert staged.candidates == []
+    assert staged.counts.skipped == 1
+
+def test_ingest_drops_probe_timeout_no_archive(tmp_path, mocker):
+    # Full ingest path: a probe timeout must leave the inbox file in place for the next pass.
+    cfg = Config(root=tmp_path)
+    hung = cfg.inbox / "hung.mp4"
+    _put(hung, b"V")
+    def run(cmd, **kw):
+        if any("codec_type" in str(a) for a in cmd):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+        return subprocess.CompletedProcess(cmd, 0, stdout="1920\n1080\n12.0\n", stderr="")
+    mocker.patch("fanops.ingest.subprocess.run", side_effect=run)
+    led, counts = ingest_drops(Ledger.load(cfg), cfg)
+    assert hung.exists()
+    assert not (_archive_dir(cfg.inbox) / "hung.mp4").exists()
+    assert len(led.sources) == 0
+    assert counts.skipped == 1
+
+def test_stage_inbox_audio_only_still_archived(tmp_path, mocker):
+    # Genuine audio-only (empty codec probe) is still disposed to .ingested/ — only probe-unavailable
+    # files are left for retry.
+    cfg = Config(root=tmp_path)
+    audio = cfg.inbox / "voice.wav"
+    _put(audio, b"A")
+    cp = subprocess.CompletedProcess(["ffprobe"], 0, stdout="\n", stderr="")
+    mocker.patch("fanops.ingest.subprocess.run", return_value=cp)
+    staged = stage_inbox_candidates(cfg)
+    assert audio in staged.archive_paths
+    assert staged.candidates == []
+    assert staged.counts.skipped == 1
 
 def test_has_video_stream_tolerates_trailing_csv_comma(tmp_path, mocker):
     # ffprobe `-of csv=p=0` emits "video," (a trailing empty field) on some HEVC .mov muxings — a

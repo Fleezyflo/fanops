@@ -351,11 +351,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 484
+        "line": 490
       },
       {
         "call": "Ledger.transaction",
-        "line": 588
+        "line": 594
       }
     ],
     "fanops.studio.actions_segments": [
@@ -697,11 +697,11 @@
       },
       {
         "call": "subprocess.run",
-        "line": 198
+        "line": 203
       },
       {
         "call": "subprocess.run",
-        "line": 479
+        "line": 488
       }
     ],
     "fanops.keyframes": [

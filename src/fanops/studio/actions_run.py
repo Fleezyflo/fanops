@@ -366,7 +366,10 @@ def upload_finalize(cfg: Config, upload_id: str, *, batch_name: str = "", target
     try:
         from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
         try:
-            if not has_video_stream(tmp):
+            probe = has_video_stream(tmp)
+            if probe is None:
+                return ActionResult(ok=False, error="probe unavailable — retry")
+            if not probe:
                 tmp.unlink(missing_ok=True); meta_p.unlink(missing_ok=True)
                 return ActionResult(ok=False, error="no video stream")
         except ToolchainMissingError:
@@ -419,7 +422,10 @@ def save_uploads(cfg: Config, files: Sequence[FileStorage], *, probe: bool = Tru
             if probe:
                 from fanops.ingest import has_video_stream                # local import so a test's mocker.patch is seen
                 try:
-                    if not has_video_stream(tmp):
+                    has_video = has_video_stream(tmp)
+                    if has_video is None:
+                        skipped.append((raw, "probe unavailable — retry")); continue
+                    if not has_video:
                         tmp.unlink(missing_ok=True); skipped.append((raw, "no video stream")); continue
                 except ToolchainMissingError:
                     tmp.unlink(missing_ok=True)                         # ING-9: an unverifiable upload would later ABORT the whole native ingest pass
