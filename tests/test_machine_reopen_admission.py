@@ -107,7 +107,7 @@ def test_release_reopens_writes_the_request_with_the_gate_still_on(tmp_path, mon
     re-parks itself, and the release is a no-op that only refreshes requested_at. The gate stays ON
     for this whole test — that is the point."""
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
+    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         sid = _source(led)
@@ -131,7 +131,7 @@ def test_release_keeps_the_machine_provenance(tmp_path, monkeypatch, mocker):
     """Releasing must not relabel the work `operator` — that would destroy the provenance the park
     exists to record. The release opens the guard with a key, not with a lie."""
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
+    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         sid = _source(led)
@@ -151,7 +151,7 @@ def test_release_keeps_the_machine_provenance(tmp_path, monkeypatch, mocker):
 
 def test_release_of_an_unparked_source_releases_nothing(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
+    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         sid = _source(led)
@@ -284,7 +284,7 @@ def test_gate_off_amplify_count_matches_fae546e5_executed_lines(tmp_path, monkey
 
 def test_release_then_amplify_charges_budget_once(tmp_path, monkeypatch, mocker):
     """Park (no charge) → release (mints the request, still no charge) → serve via amplify → charge 1."""
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
+    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:

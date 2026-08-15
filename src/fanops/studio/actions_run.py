@@ -102,8 +102,18 @@ def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts
     return ActionResult(ok=True, detail=detail)
 
 
+def _drive_make_clips(cfg: Config, *, confirmed: bool, extra_detail: Optional[dict] = None) -> ActionResult:
+    """MAKE-CLIPS CONTRACT: the queue-line and primary Make clips controls must run cut → caption →
+    crosspost in the SAME request (run_prepare), not a best-effort detached kick that can fail-open
+    while the UI shows Done."""
+    prep = run_prepare(cfg, confirmed=confirmed)
+    detail = {**(prep.detail or {}), **(extra_detail or {})}
+    return ActionResult(ok=prep.ok, detail=detail, error=prep.error)
+
+
 def release_batch(cfg: Config, batch_id: str, *, confirmed: bool = True) -> ActionResult:
-    """Release one queue line: held pending→catalogued for that batch; kick when ≥1 released."""
+    """Release one queue line: held pending→catalogued for that batch, then run_prepare (same as the
+    primary Make clips button) so cut and crosspost finish instead of a detached kick."""
     from fanops.models import SourceState
     if cfg.is_live and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): releasing "
@@ -118,12 +128,12 @@ def release_batch(cfg: Config, batch_id: str, *, confirmed: bool = True) -> Acti
         from fanops.log import get_logger
         get_logger(cfg)("run", "-", "release_batch_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
-    if released >= 1: kick_prepare(cfg)
-    return ActionResult(ok=True, detail={"released": released, "batch_id": batch_id})
+    return _drive_make_clips(cfg, confirmed=confirmed,
+                             extra_detail={"line_released": released, "batch_id": batch_id})
 
 
 def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
-    """Release every held queue line (pending + batch_id set); one kick when ≥1 released."""
+    """Release every held queue line (pending + batch_id set), then run_prepare."""
     from fanops.models import SourceState
     if cfg.is_live and not confirmed:
         return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): releasing "
@@ -138,8 +148,7 @@ def release_all_held(cfg: Config, *, confirmed: bool = True) -> ActionResult:
         from fanops.log import get_logger
         get_logger(cfg)("run", "-", "release_all_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
-    if released >= 1: kick_prepare(cfg)
-    return ActionResult(ok=True, detail={"released": released})
+    return _drive_make_clips(cfg, confirmed=confirmed, extra_detail={"line_released": released})
 
 
 def release_reopens(cfg: Config, *, source_ids: Sequence[str], confirmed: bool = True) -> ActionResult:
@@ -172,7 +181,8 @@ def release_reopens(cfg: Config, *, source_ids: Sequence[str], confirmed: bool =
         from fanops.log import get_logger
         get_logger(cfg)("run", "-", "release_reopens_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
-    if released >= 1: kick_prepare(cfg)
+    if released >= 1:
+        return _drive_make_clips(cfg, confirmed=confirmed, extra_detail={"reopens_released": released})
     return ActionResult(ok=True, detail={"released": released})
 
 
