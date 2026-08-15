@@ -8,8 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import SourceState
 from fanops.errors import ToolchainMissingError
 from fanops.ingest import (ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions,
-                           has_video_stream, has_muxed_subtitle_stream, has_sidecar_captions,
-                           download_url, stage_inbox_candidates, _archive_dir)
+                           has_video_stream, download_url, stage_inbox_candidates, _archive_dir)
 
 @pytest.fixture(autouse=True)
 def _gate_off(monkeypatch):
@@ -85,24 +84,6 @@ def test_probe_timeout_is_per_file_fail_soft(tmp_path, mocker):
     assert probe_dimensions(tmp_path / "a.mp4") == (0, 0, 0.0)
     assert has_video_stream(tmp_path / "a.mp4") is None
     assert seen.get("timeout") == 30.0                                # the bound is actually wired
-
-def test_has_muxed_subtitle_stream_true_false_and_timeout(tmp_path, mocker):
-    f = tmp_path / "clip.mp4"; f.write_bytes(b"V")
-    mocker.patch("fanops.ingest.subprocess.run",
-                 return_value=subprocess.CompletedProcess([], 0, stdout="subtitle\n"))
-    assert has_muxed_subtitle_stream(f) is True
-    mocker.patch("fanops.ingest.subprocess.run",
-                 return_value=subprocess.CompletedProcess([], 0, stdout=""))
-    assert has_muxed_subtitle_stream(f) is False
-    mocker.patch("fanops.ingest.subprocess.run",
-                 return_value=subprocess.CompletedProcess([], 124, stdout=""))
-    assert has_muxed_subtitle_stream(f) is None
-
-def test_has_sidecar_captions_detects_sibling_files(tmp_path):
-    media = tmp_path / "clip.mp4"; media.write_bytes(b"V")
-    assert has_sidecar_captions(media) is False
-    (tmp_path / "clip.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
-    assert has_sidecar_captions(media) is True
 
 def test_stage_inbox_probe_timeout_stays_in_inbox(tmp_path, mocker):
     # stage_inbox_candidates must NOT archive a file whose video-stream probe timed out — it is

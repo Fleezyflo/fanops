@@ -674,35 +674,13 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
 
-def _source_has_picture_subs(src) -> bool:
-    """Render-time file signal: the source already carries captions (muxed stream or sidecar).
-
-    Fail-open — a probe timeout or missing file is NOT treated as picture subs, so the no-source-subs
-    talk path (global burn_subs ON, no batch override) stays byte-identical when the file is silent."""
-    from fanops.ingest import has_muxed_subtitle_stream, has_sidecar_captions
-    path = getattr(src, "source_path", None) or ""
-    if not path:
-        return False
-    p = Path(path)
-    if has_sidecar_captions(p):
-        return True
-    muxed = has_muxed_subtitle_stream(p)
-    return muxed is True
-
-
 def _transcript_burn_enabled(led: Ledger, cfg: Config, src) -> bool:
-    """True when FanOps should burn TRANSCRIPT captions (not the retention hook).
+    """False — FanOps no longer burns transcript captions at render.
 
-    Precedence:
-      1. Batch.burn_subs when set (operator ingest/bind: Studio \"Skip subtitles\" -> False).
-      2. Source file already carries captions (muxed subtitle stream or .srt/.vtt/.ass sidecar).
-      3. Global cfg.burn_subs (default ON)."""
-    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
-    if batch is not None and batch.burn_subs is not None:
-        return batch.burn_subs
-    if _source_has_picture_subs(src):
-        return False
-    return cfg.burn_subs
+    The retention hook (m.hook) is burned separately. Hardsub sources already carry lyrics on the
+    picture; talk sources must not get a second transcript layer. cfg.burn_subs and Batch.burn_subs
+    are ignored here (Studio checkbox remains for other paths; render never layers transcript text)."""
+    return False
 
 
 def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
@@ -767,8 +745,7 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
         a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — gated by _transcript_burn_enabled (batch override, then a render-time
-        file probe for muxed/sidecar captions, else global cfg.burn_subs default ON). The retention
+      • the TRANSCRIPT captions — never burned (_transcript_burn_enabled is always False). The retention
         hook still burns regardless.
     Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
     wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or

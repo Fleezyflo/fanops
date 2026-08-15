@@ -189,26 +189,6 @@ def has_video_stream(path: Path) -> bool | None:
     # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
     return "video" in r.stdout.replace(",", " ").split()
 
-_CAPTION_SIDECAR_EXT = (".srt", ".vtt", ".ass")
-
-def has_sidecar_captions(path: Path) -> bool:
-    """True when a caption sidecar (.srt/.vtt/.ass) sits beside the source media file."""
-    if not path.is_file():
-        return False
-    stem = path.with_suffix("")
-    return any(stem.with_suffix(ext).is_file() for ext in _CAPTION_SIDECAR_EXT)
-
-def has_muxed_subtitle_stream(path: Path) -> bool | None:
-    """True when ffprobe sees a muxed subtitle/caption stream in the container (file metadata, not CV).
-    None on ffprobe timeout — the caller must fail-open and keep today's burn path."""
-    r = _run_ffprobe(
-        ["-v", "error", "-select_streams", "s",
-         "-show_entries", "stream=codec_type",
-         "-of", "csv=p=0", str(path)])
-    if r.returncode == _FFPROBE_TIMEOUT_RC:
-        return None
-    return bool((r.stdout or "").strip())
-
 _SHARD_TARGET_S = 1500.0      # ~25 min segment target (internal — not env)
 _SHARD_SNAP_WINDOW_S = 90.0   # silence snap radius around nominal window end
 _SHARD_SIL_START = re.compile(r"silence_start:\s*([0-9.]+)")
