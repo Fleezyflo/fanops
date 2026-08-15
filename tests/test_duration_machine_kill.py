@@ -2,7 +2,6 @@
 from __future__ import annotations
 import inspect
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +13,7 @@ from fanops.moments import validate_pick, _persona_entry, _pick_personas, reques
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
 from fanops.prompts import moment_pick_prompt, _target_pick_count
 from fanops.clip import render_moment, fit_window
-from tests.test_moments import _src, request_moments, _ingest_picks
+from tests.test_moments import _src
 
 
 def _write_personas(cfg, personas):
