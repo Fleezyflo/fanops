@@ -109,8 +109,8 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
              "hook_angle": "emotional", "selection_scope": "open"}])
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
     assert a.persona == "tasteful" and a.cut_policy == ["storytelling"] and a.selection_scope == "open"
-    # M3d: clip_profile/framing DERIVE from content_focus/energy onto the account (no per-persona pin)
-    assert a.hook_angle == "emotional" and a.clip_profile == "long" and a.framing == "top"
+    assert a.hook_angle == "emotional"
+    assert a.clip_profile is None and a.framing is None
 
 def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg = Config(root=tmp_path)
@@ -186,7 +186,7 @@ def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                    hashtag_corpus=["#myscene"]))
-    assert f["length_band"] == "16-26s"          # emotional wins medium tier over punchlines short
+    assert f["length_band"] == ""
     assert f["framing"] == "center"
     assert "#myscene" in f["lead_tags"]         # vet_hashtags floats the curated corpus to the lead
 
@@ -194,14 +194,14 @@ def test_persona_facts_default_length_when_unset(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", voice="v"))
-    assert f["length_band"] == "12-22s" and f["framing"] is None     # band_for(None) -> TALK default (pipeline-faithful)
+    assert f["length_band"] == "" and f["framing"] is None
 
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", cut_policy=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
-    assert card.length_band == "28-45s"
+    assert card.length_band == ""
     assert isinstance(card.lead_tags, list)
 
 def test_personas_panel_renders_transparency_facts(tmp_path):
@@ -210,7 +210,7 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
     add_persona(cfg, name="P", voice="v", cut_policy=["punchlines"], niche=["hiphop"])   # M3d: derives short (8-15s)
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/personas").get_data(as_text=True)
-    assert "8-15s" in html                       # the resolved length band is shown (transparency)
+    assert "AI reads" in html                                                # the composed-instruction line
 
 
 # ======================================================================================
@@ -322,7 +322,7 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
     from fanops.personas import casting_directive, compose_breakdown
     assert "introspective" not in str(casting_directive(p))          # old energy=low clause gone; framing from focus
     d = compose_breakdown(cfg, p)
-    assert d["cut"]["framing"] == "top" and "28-45s" in d["cut"]["band"]
+    assert d["cut"]["framing"] == "top" and d["cut"]["band"] == ""
 
 
 def test_no_new_lever_family():

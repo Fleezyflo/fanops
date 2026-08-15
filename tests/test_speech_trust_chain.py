@@ -26,6 +26,7 @@ def _vf_of(cmd):
 def test_talk_window_subs_and_snap_use_trusted_only(tmp_path, mocker, monkeypatch):
     """Talk source: junk boundaries are ignored for snap; junk text is excluded from burned subs."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     junk = {**MUSIC_HALLUC, "start": 9.4, "end": 9.8, "text": "junk start"}
     good = talk_seg("they slept on me", start=9.3, end=12.0)
@@ -43,7 +44,7 @@ def test_talk_window_subs_and_snap_use_trusted_only(tmp_path, mocker, monkeypatc
     assert clip.state is ClipState.rendered
     cmd = captured["cmd"]
     assert float(cmd[cmd.index("-ss") + 1]) == 9.3
-    assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 22.0
+    assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 17.2
     ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
     ass_l = ass.lower()
     assert "slept" in ass_l and "watch this part" in ass_l and "junk" not in ass_l

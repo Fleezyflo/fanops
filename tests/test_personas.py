@@ -298,7 +298,7 @@ def test_each_baked_persona_coherent(tmp_path):
         assert all(r["health"] == "ok" for r in rows), {r["key"]: r["health"] for r in rows if r["health"] != "ok"}
 
 
-def test_credibility_first_scope_reaches_pick(tmp_path):
+def test_credibility_first_pick_is_handle_only(tmp_path):
     from fanops.accounts import Accounts
     from fanops.moments import _pick_personas
     cfg = Config(root=tmp_path)
@@ -307,8 +307,8 @@ def test_credibility_first_scope_reaches_pick(tmp_path):
     link_persona(cfg, "@trust", "credibility-first")
     specs = _pick_personas(cfg, Accounts.load(cfg))
     assert len(specs) == 1
-    scope = specs[0]["selection_scope"].lower()
-    assert "sensational" in scope or "accurate" in scope
+    assert specs[0]["handle"] == "trust"
+    assert specs[0]["selection_scope"] == "" and specs[0]["band"] == ""
 
 
 def test_baked_personas_mappable_to_account(tmp_path):

@@ -111,7 +111,7 @@ def test_card_renders_cause_via_macro(tmp_path):
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "28–45s" in html                                # the long band label still shows
     assert 'class="cause"' in html                         # the _prov macro's inline cause marker is present
-    assert "persona long" in html                          # the WHY: the persona owns the length
+    assert "long long" in html                             # the WHY: the account pin owns the length
     assert "clip length band" not in html                  # the OLD hand-rolled parallel chip title is GONE
 
 

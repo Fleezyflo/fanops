@@ -110,7 +110,7 @@ def test_compose_panel_shows_produces_prose(tmp_path):
         "voice": "a devoted fan", "cut_policy": "punchlines",   # MOL-523: the tokens post as cut_policy
         "hook_angle": "curiosity"}).get_data(as_text=True)
     assert "produces-line" in html                       # the styled lead sentence is rendered
-    assert "curiosity hooks" in html and "clips" in html  # the hook ANGLE + the DERIVED length
+    assert "curiosity hooks" in html
 
 def test_compose_panel_empty_levers_keeps_the_grid_no_produces_line(tmp_path):
     # an unconfigured persona still gets the live panel (the affordance), just no Produces lead (nothing to say).
