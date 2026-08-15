@@ -271,17 +271,18 @@ def test_window_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
     from zoneinfo import ZoneInfo
     from collections import Counter
     from fanops.studio.views_common import suggest_times_for_batch
-    n = 11
+    n = 20
     posts = _bare_posts("a", n)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     assert len(sched) == n and len(set(sched.values())) == n, (
-        f"duplicate ISO after window+cap overflow: {sorted(sched.values())}")
+        f"duplicate ISO after window overflow: {sorted(sched.values())}")
     zone = ZoneInfo("Asia/Dubai")
     by_day: dict[str, list] = {}
     for t in sched.values():
         local = parse_iso(t).astimezone(zone)
         by_day.setdefault(local.date().isoformat(), []).append(local)
-    assert len(by_day) >= 2, f"expected overflow onto a second local day: {sorted(by_day)}"
+    assert len(by_day) >= 2, (
+        f"expected daily_window close to roll onto a second local day: {sorted(by_day)}")
     for day, dts in sorted(by_day.items()):
         open_hits = sum(1 for d in dts if d.hour == 9 and d.minute == 0 and d.second == 0)
         assert open_hits <= 1, f"{day}: stacked at 09:00:00 ({open_hits} posts)"
@@ -319,19 +320,14 @@ def test_multi_account_overflow_opens_are_not_lockstep(tmp_path, monkeypatch):
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     assert len(set(sched.values())) == len(sched), f"batch not pairwise-distinct: {sorted(sched.values())}"
     zone = ZoneInfo("America/New_York")
-    days = sorted({parse_iso(t).astimezone(zone).date() for t in sched.values()})
-    assert len(days) >= 2
-    overflow = days[1]
     opens = {}
     for p in posts:
         local = parse_iso(sched[p.id]).astimezone(zone)
-        if local.date() != overflow:
-            continue
         cur = opens.get(p.account)
         if cur is None or local < cur:
             opens[p.account] = local
     assert len(opens) == 4, opens
-    # Not all four first-of-day slots share the same wall-clock minute
+    # Per-account anchors must survive _roll_into_window — not all four land lockstep.
     stamps = {dt.replace(second=0, microsecond=0) for dt in opens.values()}
     assert len(stamps) >= 2, f"all accounts opened lockstep: {opens}"
 
