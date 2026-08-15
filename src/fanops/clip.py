@@ -674,6 +674,18 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
 
+def _transcript_burn_enabled(led: Ledger, cfg: Config, src) -> bool:
+    """True when FanOps should burn TRANSCRIPT captions (not the retention hook).
+
+    The operator signal for \"source already has subs on the picture\" is Batch.burn_subs=False,
+    stamped at ingest/bind when Studio's \"Skip subtitles\" box is checked (no_subs -> burn_subs=False).
+    None on the batch defers to the global cfg.burn_subs knob (default ON)."""
+    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
+    if batch is not None and batch.burn_subs is not None:
+        return batch.burn_subs
+    return cfg.burn_subs
+
+
 def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                     *, clip_start: float, clip_end: float,
                     supercut_spans: list[tuple[float, float]] | None = None) -> tuple[str | None, bool]:
@@ -689,12 +701,8 @@ def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: 
     m = led.moments[moment_id]
     src = led.sources[m.parent_id]
     hook = ((m.hook or "").strip() or None)
-    # Subtitle burn follows GLOBAL cfg.burn_subs (default ON), with a PER-BATCH override (Batch.burn_subs): a music
-    # batch can skip lyric subs (burn_subs=False) while talk stays on, or vice-versa. None override -> global.
-    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
-    burn = batch.burn_subs if (batch is not None and batch.burn_subs is not None) else cfg.burn_subs
     raw = src.transcript or []
-    if burn:
+    if _transcript_burn_enabled(led, cfg, src):
         from fanops.transcribe import trusted_segments
         segments = trusted_segments(raw, src_lang=src.language)
     else:
@@ -740,9 +748,9 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
         a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — gated by burn_subs (default ON). Showing what the audio says is
-        redundant (the viewer hears it) and only as good as the auto-transcription; useful for
-        talking-head content, wrong for music — music batches opt out via Batch.burn_subs=False.
+      • the TRANSCRIPT captions — gated by _transcript_burn_enabled (global cfg.burn_subs, default ON,
+        with a per-batch override). Batch.burn_subs=False is the operator signal for a source that
+        already has subs on the picture (Studio \"Skip subtitles\"); the retention hook still burns.
     Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
     wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
     build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
