@@ -488,8 +488,6 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
     (halt the queue, H8). Returns a small summary."""
-    from fanops.timeutil import operator_local_day
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
@@ -515,14 +513,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    # MOL-712: operator-local-day outbound ceiling. Cap lives in views_common (MOL-708); this is the
-    # backstop for schedules the allocator never touched. Pre-count spent slots, then skip (leave
-    # queued) anything that would push a day past the cap. Reserve a slot BEFORE _publish_one so a
-    # single pass of 20 due posts ships 10, not 20 — under-count on a lost-race claim is fail-safe.
-    spent = _outbound_spent_by_day(led, cfg)
-    today = operator_local_day(cutoff, cfg)
     published = no_provider = no_integration_id = not_distributed = skipped_existing_id = not_live_ready = 0
-    quota_skipped = 0
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -539,13 +530,6 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
-        if today is not None:
-            key = (post.account, today)
-            if spent.get(key, 0) >= _DAILY_ACCOUNT_CAP:
-                quota_skipped += 1
-                log("publish", post.id, "daily_quota", account=post.account, day=today, cap=_DAILY_ACCOUNT_CAP)
-                continue
-            spent[key] = spent.get(key, 0) + 1         # reserve before claim; lost-race under-count is fail-safe
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         tally: dict = {}
         if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,
@@ -557,33 +541,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed,
             "skipped_existing_id": skipped_existing_id, "not_live_ready": not_live_ready,
-            "quota_skipped": quota_skipped, "skipped_retired_lineage": len(stranded)}
-
-
-_IN_FLIGHT_STATES = frozenset({PostState.submitting, PostState.submitted, PostState.needs_reconcile})
-
-
-def _outbound_spent_by_day(led: Ledger, cfg: Config) -> dict:
-    """MOL-712: {(account, operator-local day): outbound slots already spent}. Conservative: a post
-    counts against a day if it was published that local day (`published_at`) OR claimed that local day
-    and still in flight (`submission_started_at` + submitting/submitted/needs_reconcile). Old rows with
-    neither stamp fall back to `scheduled_time` rather than counting as zero (a legacy hand-edited
-    schedule must not walk past the cap by looking empty). Pure; never raises."""
-    from fanops.timeutil import operator_local_day
-    out: dict = {}
-    for p in led.posts.values():
-        day = None
-        if p.published_at:
-            day = operator_local_day(p.published_at, cfg)
-        elif p.submission_started_at and p.state in _IN_FLIGHT_STATES:
-            day = operator_local_day(p.submission_started_at, cfg)
-        elif p.state is PostState.published or p.state in _IN_FLIGHT_STATES:
-            day = operator_local_day(p.scheduled_time, cfg)   # pre-MOL-709 row: intent day is the best we have
-        if day is None:
-            continue
-        key = (p.account, day)
-        out[key] = out.get(key, 0) + 1
-    return out
+            "skipped_retired_lineage": len(stranded)}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:

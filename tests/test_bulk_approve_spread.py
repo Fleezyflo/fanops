@@ -193,26 +193,21 @@ def _per_day(days) -> list[int]:
     return [counts[d] for d in sorted(counts)]
 
 
-def test_batch_spread_caps_at_ten_per_account_per_day(tmp_path, monkeypatch):
-    """MOL-708 RED — the incident, exactly: 106 queued videos for ONE account. Today the cumulative
-    walk has no notion of a calendar day, so it runs straight through midnight at cadence and piles
-    piles on a single day. The contract: three per operator-local day, then the remainder —
-    3x35 + 1 for 106 — with every post preserved."""
+def test_batch_spread_has_no_per_day_account_cap(tmp_path, monkeypatch):
+    """106 posts for one account still all get slots; more than three may share one operator-local day."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from fanops.studio.views_common import suggest_times_for_batch
     posts = _bare_posts("a", 106)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
-    assert len(sched) == 106, "every post must get a slot — a cap must never DROP a post"
+    assert len(sched) == 106, "every post must get a slot"
     per_day = _per_day([parse_iso(t).date() for t in sched.values()])
-    assert per_day == [3] * 35 + [1], f"daily capacity violated: per_day={per_day}"
+    assert max(per_day) > 3, f"expected no 3/day ceiling: per_day={per_day}"
 
 
-def test_daily_cap_keeps_the_gap_distinctness_and_account_isolation(tmp_path, monkeypatch):
-    """MOL-708 RED — the cap must not buy its capacity by breaking the M4/M7 invariants: consecutive
-    per-account gaps stay >= STEP, timestamps stay pairwise distinct (no shared minute — the other
-    half of the incident), and two accounts allocate INDEPENDENTLY (a full day for @a never displaces
-    @b, and @b's posts never count against @a's capacity)."""
+def test_batch_spread_keeps_gap_distinctness_and_account_isolation(tmp_path, monkeypatch):
+    """Consecutive per-account gaps stay >= STEP, timestamps stay pairwise distinct, and two accounts
+    allocate independently."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from fanops.studio.views_common import suggest_times_for_batch
@@ -223,17 +218,12 @@ def test_daily_cap_keeps_the_gap_distinctness_and_account_isolation(tmp_path, mo
         dts = sorted(parse_iso(sched[p.id]) for p in posts if p.account == handle)
         gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
         assert all(g >= MIN_PER_ACCOUNT_GAP_MIN for g in gaps_min), f"{handle} gap floor: {gaps_min}"
-        # Each account independently gets 3/day then overflow.
-        assert _per_day([d.date() for d in dts]) == [3, 3, 3, 3], (
-            f"{handle} not independently capped: {[iso_z(d) for d in dts]}")
+        assert max(_per_day([d.date() for d in dts])) > 3, (
+            f"{handle} still capped at 3/day: {[iso_z(d) for d in dts]}")
 
 
-def test_daily_cap_boundary_is_operator_local_not_utc(tmp_path, monkeypatch):
-    """MOL-708 RED — the day boundary is OPERATOR-LOCAL midnight (cfg.operator_tz), matching
-    publish_buckets' operator-local hour/weekday. Pinned with a +04:00 zone where the two readings
-    genuinely disagree: from 16:00 local the first ten slots fill the LOCAL day while all twelve
-    still share ONE UTC date — so a UTC-bucketed cap would report 12-on-one-day and let an 11th
-    through, and a local-bucketed cap correctly reports 10 + 2."""
+def test_batch_spread_may_exceed_three_on_one_operator_local_day(tmp_path, monkeypatch):
+    """With no daily cap, twelve posts can exceed three on one operator-local day even when UTC disagrees."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")          # UTC+4, no DST
     from zoneinfo import ZoneInfo
@@ -244,39 +234,32 @@ def test_daily_cap_boundary_is_operator_local_not_utc(tmp_path, monkeypatch):
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)       # 12:00Z == 16:00 local
     zone = ZoneInfo("Asia/Dubai")
     local_days = [parse_iso(t).astimezone(zone).date() for t in sched.values()]
-    assert _per_day(local_days) == [3, 3, 3, 3], (
-        f"operator-local capacity violated: {sorted(sched.values())}")
-    utc_days = _per_day([parse_iso(t).date() for t in sched.values()])
-    assert utc_days[0] > 3, (
-        "test is not discriminating: the +04:00 case must put >3 slots on ONE UTC date, "
-        f"otherwise a UTC-bucketed cap would pass it too (utc_days={utc_days})")
+    assert max(_per_day(local_days)) > 3, (
+        f"operator-local day still capped at 3: {sorted(sched.values())}")
 
 
-def test_occupancy_at_capacity_pushes_the_whole_batch_to_the_next_day(tmp_path, monkeypatch):
-    """MOL-710 RED (allocator boundary): the cap only ever saw the batch in hand. Hand the allocator ten
-    posts already sitting on today for this account and the incoming batch must skip today entirely —
-    without `occupied` all three would land on a day that is already full."""
+def test_second_batch_may_land_same_operator_local_day(tmp_path, monkeypatch):
+    """Approving another batch when posts already sit on today does not force a next-day spill."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from fanops.studio.views_common import suggest_times_for_batch
-    held = _bare_posts("a", 10)                                  # already queued, all on FIXED_DT's day
+    held = _bare_posts("a", 3)
     for k, p in enumerate(held):
         held[k] = p.model_copy(update={"state": PostState.queued,
                                        "scheduled_time": iso_z(FIXED_DT + timedelta(minutes=31 * (k + 1)))})
     incoming = [Post(id=f"a_new_{k}", parent_id="clip_1", account="a", account_id="ia",
                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
-                     media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(3)]
-    sched = suggest_times_for_batch(cfg, incoming, now=FIXED_DT, occupied=held)
+                     media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(4)]
+    sched = suggest_times_for_batch(cfg, incoming, now=FIXED_DT)
     days = {parse_iso(t).date() for t in sched.values()}
-    assert FIXED_DT.date() not in days, (
-        f"batch landed on a day already at capacity: {sorted(sched.values())}")
-    assert len(days) == 1 and len(sched) == 3            # all three on the SAME next open day, none dropped
+    assert FIXED_DT.date() in days, (
+        f"incoming batch was forced off today: {sorted(sched.values())}")
+    assert len(sched) == 4
 
 
-def test_window_day_cap_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
-    """Re-spread / batch overflow with daily_window: after the 10/day cap, _roll_into_window snaps
-    candidates to local open (09:00). Cursor must sync to that rolled `t` or every overflow slot
-    collapses onto the same 09:00:00 (operator calendar piles on days 2+)."""
+def test_window_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
+    """Re-spread / batch overflow with daily_window: _roll_into_window snaps candidates to local open
+    (09:00). Cursor must sync to that rolled `t` or overflow slots collapse onto the same 09:00:00."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")
     cfg = Config(root=tmp_path)
@@ -287,18 +270,19 @@ def test_window_day_cap_overflow_does_not_stack_at_open(tmp_path, monkeypatch):
     assert cfg.account_window("a") == (9, 23)
     from zoneinfo import ZoneInfo
     from collections import Counter
-    from fanops.studio.views_common import suggest_times_for_batch, _DAILY_ACCOUNT_CAP
-    n = _DAILY_ACCOUNT_CAP + 8
+    from fanops.studio.views_common import suggest_times_for_batch
+    n = 20
     posts = _bare_posts("a", n)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     assert len(sched) == n and len(set(sched.values())) == n, (
-        f"duplicate ISO after window+cap overflow: {sorted(sched.values())}")
+        f"duplicate ISO after window overflow: {sorted(sched.values())}")
     zone = ZoneInfo("Asia/Dubai")
     by_day: dict[str, list] = {}
     for t in sched.values():
         local = parse_iso(t).astimezone(zone)
         by_day.setdefault(local.date().isoformat(), []).append(local)
-    assert len(by_day) >= 2, f"expected overflow onto a second local day: {sorted(by_day)}"
+    assert len(by_day) >= 2, (
+        f"expected daily_window close to roll onto a second local day: {sorted(by_day)}")
     for day, dts in sorted(by_day.items()):
         open_hits = sum(1 for d in dts if d.hour == 9 and d.minute == 0 and d.second == 0)
         assert open_hits <= 1, f"{day}: stacked at 09:00:00 ({open_hits} posts)"
@@ -328,27 +312,22 @@ def test_multi_account_overflow_opens_are_not_lockstep(tmp_path, monkeypatch):
         {"handle": "@d", "account_id": "id", "platforms": ["instagram"], "status": "active",
          "daily_window": [9, 23]}]}))
     from zoneinfo import ZoneInfo
-    from fanops.studio.views_common import suggest_times_for_batch, _DAILY_ACCOUNT_CAP
-    posts = (_bare_posts("a", _DAILY_ACCOUNT_CAP + 2)
-             + _bare_posts("b", _DAILY_ACCOUNT_CAP + 2, account_id="ib")
-             + _bare_posts("c", _DAILY_ACCOUNT_CAP + 2, account_id="ic")
-             + _bare_posts("d", _DAILY_ACCOUNT_CAP + 2, account_id="id"))
+    from fanops.studio.views_common import suggest_times_for_batch
+    posts = (_bare_posts("a", 5)
+             + _bare_posts("b", 5, account_id="ib")
+             + _bare_posts("c", 5, account_id="ic")
+             + _bare_posts("d", 5, account_id="id"))
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     assert len(set(sched.values())) == len(sched), f"batch not pairwise-distinct: {sorted(sched.values())}"
     zone = ZoneInfo("America/New_York")
-    days = sorted({parse_iso(t).astimezone(zone).date() for t in sched.values()})
-    assert len(days) >= 2
-    overflow = days[1]
     opens = {}
     for p in posts:
         local = parse_iso(sched[p.id]).astimezone(zone)
-        if local.date() != overflow:
-            continue
         cur = opens.get(p.account)
         if cur is None or local < cur:
             opens[p.account] = local
     assert len(opens) == 4, opens
-    # Not all four first-of-day slots share the same wall-clock minute
+    # Per-account anchors must survive _roll_into_window — not all four land lockstep.
     stamps = {dt.replace(second=0, microsecond=0) for dt in opens.values()}
     assert len(stamps) >= 2, f"all accounts opened lockstep: {opens}"
 
@@ -361,37 +340,19 @@ def test_same_day_consecutive_gaps_at_most_six_hours(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_REALISTIC_CADENCE", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from zoneinfo import ZoneInfo
-    from fanops.studio.views_common import suggest_times_for_batch, _DAILY_ACCOUNT_CAP, _MAX_GAP_MIN
-    posts = _bare_posts("a", _DAILY_ACCOUNT_CAP)
+    from fanops.studio.views_common import suggest_times_for_batch, _MAX_GAP_MIN
+    posts = _bare_posts("a", 4)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     zone = ZoneInfo("America/New_York")
     dts = sorted(parse_iso(sched[p.id]).astimezone(zone) for p in posts)
-    assert len(dts) == _DAILY_ACCOUNT_CAP
+    assert len(dts) == 4
     gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
     assert all(g <= _MAX_GAP_MIN for g in gaps_min), f"max-gap 6h violated: {gaps_min}"
     assert all(d.date() == dts[0].date() for d in dts), "cap-sized batch must fit one local day"
 
 
-def test_an_untimed_or_garbage_occupied_post_holds_no_day(tmp_path, monkeypatch):
-    """MOL-710 — occupancy is per-DAY, so a post with no (or an unparseable) scheduled_time occupies
-    nothing: it has not claimed a slot. Fail-safe, and it keeps a torn row from silently eating capacity."""
-    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    from fanops.studio.views_common import _occupancy_by_day
-    held = _bare_posts("a", 3)
-    held[0].scheduled_time = None
-    held[1].scheduled_time = "garbage"
-    held[2].scheduled_time = iso_z(FIXED_DT)
-    occ = _occupancy_by_day(held, cfg)
-    assert occ == {("a", FIXED_DT.date().isoformat()): 1}, f"unexpected occupancy: {occ}"
-    assert _occupancy_by_day(None, cfg) == {}            # default/None is empty, not a crash
-
-
-def test_a_second_bulk_approve_cannot_refill_a_full_day(tmp_path, monkeypatch):
-    """MOL-710 RED (the real hole, end to end): approve ten posts, then approve ten MORE. The second
-    batch's allocator never saw the first batch's now-queued posts, so both landed ten-on-one-day = 20.
-    Contract: across both approvals no operator-local day holds more than ten posts for the account, and
-    all twenty are still approved."""
+def test_a_second_bulk_approve_may_stack_more_on_one_day(tmp_path, monkeypatch):
+    """Approving ten posts, then ten more, may place more than three on one operator-local day."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
@@ -418,8 +379,7 @@ def test_a_second_bulk_approve_cannot_refill_a_full_day(tmp_path, monkeypatch):
     queued = [p for p in reloaded.posts.values() if p.state is PostState.queued and p.account == "a"]
     assert len(queued) == 20, f"an approval was lost: {len(queued)} queued of 20"
     per_day = _per_day([parse_iso(p.scheduled_time).date() for p in queued])
-    assert max(per_day) <= 3, f"a second approve refilled a full day: per_day={per_day}"
-    assert per_day == [3] * 6 + [2], f"expected 3/day packing across days: per_day={per_day}"
+    assert max(per_day) > 3, f"daily cap still enforced across approvals: per_day={per_day}"
 
 
 def _assert_account_spread(cfg, ids, *, min_gap_min: int) -> None:
