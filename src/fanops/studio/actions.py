@@ -56,8 +56,6 @@ def _guard_editable_post(led: Ledger, post_id: str, now: datetime) -> tuple[Opti
 
 
 def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[datetime] = None) -> ActionResult:
-    from fanops.timeutil import operator_local_day
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
     now = _now(now)
     try:
         z = _normalize_z(new_time)                 # OUTSIDE the lock: reject bad input early
@@ -69,19 +67,6 @@ def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[d
         p, err = _guard_editable_post(led, post_id, now)
         if err:
             return ActionResult(ok=False, error=err)
-        # MOL-711: refuse an 11th queued post on a full operator-local day. Count OTHER queued posts
-        # only (self-moves on a full day leave the total unchanged; awaiting has not claimed a slot).
-        # Refuse loudly — silently rolling the operator's chosen time to another day is the same class
-        # of surprise as the original incident. Cap + day helper land in views_common/timeutil (MOL-708).
-        day = operator_local_day(z, cfg)
-        if day is not None:
-            n = sum(1 for q in led.posts.values()
-                    if q.id != post_id and q.account == p.account and q.state is PostState.queued
-                    and operator_local_day(q.scheduled_time, cfg) == day)
-            if n >= _DAILY_ACCOUNT_CAP:
-                return ActionResult(ok=False, error=(
-                    f"account {p.account} already has {_DAILY_ACCOUNT_CAP} queued posts on {day} "
-                    f"(operator-local) — pick another day"))
         p.scheduled_time = z
     return ActionResult(ok=True, detail={"post_id": post_id, "scheduled_time": z})
 
@@ -440,8 +425,6 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
     try:
         with Ledger.transaction(cfg) as led:
             posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
-            # MOL-710: no `occupied` here BY DESIGN — this batch is ALREADY every queued post for the
-            # account, so passing it as occupancy would double-count the very posts being re-timed.
             sched = suggest_times_for_batch(cfg, posts, now=now)
             for pid, t in sched.items():
                 p = led.posts[pid]
@@ -825,11 +808,7 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
                    and not _seconds_away(p.scheduled_time, now)
                    and (handle is None or p.account == handle)]
             due.sort(key=lambda p: (p.scheduled_time or "", p.account, p.platform.value, p.id))  # stable order in
-            # MOL-710: a `_seconds_away` post is deliberately NOT respread, but it still consumes a slot on
-            # its day — count it as occupancy so the respread doesn't lay a fresh post on top of it.
-            due_ids = {p.id for p in due}
-            occupied = [p for p in led.posts.values() if p.state is PostState.queued and p.id not in due_ids]
-            sched = suggest_times_for_batch(cfg, due, now=now, occupied=occupied)
+            sched = suggest_times_for_batch(cfg, due, now=now)
             for p in due:
                 p.scheduled_time = sched[p.id]
     except Exception as exc:

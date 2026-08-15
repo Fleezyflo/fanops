@@ -101,9 +101,7 @@ def test_reschedule_accepts_future_time(tmp_path):
     assert res.ok is True
     assert Ledger.load(cfg).posts["p_edit"].scheduled_time == _z(NOW + timedelta(hours=8))
 
-# ---- MOL-711: a manual reschedule cannot exceed the per-account operator-local DAILY cap ----
-# The MOL-708 allocator caps the batch spread, but a hand-placed time bypassed it entirely, so an
-# operator could stack an unlimited number of posts on one day — the same incident shape by hand.
+# ---- per-account daily cap removed: fourth+ post on one operator-local day is allowed ----
 _FULL_DAY = datetime(2026, 6, 9, tzinfo=timezone.utc)      # 3 days out: never imminent, always future
 
 def _fill_day(cfg, n, *, account="a", day=_FULL_DAY, state=PostState.queued, tag="f"):
@@ -115,69 +113,51 @@ def _fill_day(cfg, n, *, account="a", day=_FULL_DAY, state=PostState.queued, tag
                           scheduled_time=_z(day + timedelta(hours=i))))
     led.save()
 
-def test_reschedule_refuses_an_eleventh_post_on_a_full_local_day(tmp_path):
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    cfg = Config(root=tmp_path); _seed(cfg)
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP)                     # the day is already at capacity
-    orig = Ledger.load(cfg).posts["p_edit"].scheduled_time
-    res = reschedule_post(cfg, "p_edit", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
-    assert res.ok is False and res.error
-    assert "2026-06-09" in res.error and str(_DAILY_ACCOUNT_CAP) in res.error and "a" in res.error
-    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == orig   # ZERO mutation on refusal
+def test_daily_account_cap_constant_is_gone():
+    import fanops.studio.views_common as vc
+    assert not hasattr(vc, "_DAILY_ACCOUNT_CAP")
 
-def test_reschedule_within_its_own_full_day_is_allowed(tmp_path):
-    # The post being moved is EXCLUDED from the count: moving it inside its own full day leaves the
-    # day's total unchanged, so refusing would strand the operator with no way to re-time it.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+def test_reschedule_allows_fourth_post_on_same_local_day(tmp_path):
+    cfg = Config(root=tmp_path); _seed(cfg)
+    _fill_day(cfg, 3)                                      # three others already on the day
+    res = reschedule_post(cfg, "p_edit", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
+    assert res.ok is True
+    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == _z(_FULL_DAY + timedelta(hours=20))
+
+def test_reschedule_move_within_same_day_is_allowed(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP - 1)                 # 9 others + p_edit itself == 10 on that day
+    _fill_day(cfg, 3)                                      # three others + p_edit on the day
     led = Ledger.load(cfg)
     led.posts["p_edit"].scheduled_time = _z(_FULL_DAY + timedelta(hours=12)); led.save()
     res = reschedule_post(cfg, "p_edit", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
     assert res.ok is True
     assert Ledger.load(cfg).posts["p_edit"].scheduled_time == _z(_FULL_DAY + timedelta(hours=20))
 
-def test_reschedule_under_capacity_is_unaffected(tmp_path):
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+def test_reschedule_ignores_awaiting_posts_for_same_account_day(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP - 1)                 # 9 on the target day -> the move is the 10th
-    res = reschedule_post(cfg, "p_edit", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
-    assert res.ok is True
-    assert Ledger.load(cfg).posts["p_edit"].scheduled_time == _z(_FULL_DAY + timedelta(hours=20))
-
-def test_reschedule_capacity_counts_only_queued_posts_of_the_same_account(tmp_path):
-    # awaiting_approval posts have not claimed a slot, and another handle's day is its own.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    cfg = Config(root=tmp_path); _seed(cfg)
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP, state=PostState.awaiting_approval, tag="aw")
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP, account="b", tag="oth")
+    _fill_day(cfg, 3, state=PostState.awaiting_approval, tag="aw")
+    _fill_day(cfg, 3, account="b", tag="oth")
     res = reschedule_post(cfg, "p_edit", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
     assert res.ok is True
 
-def test_reschedule_refuses_a_full_day_for_an_awaiting_post_too(tmp_path):
-    # An operator-set future time on an awaiting post is preserved verbatim through approval, so a
-    # hand-placed awaiting post lands on that day as an 11th unless it is refused here.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+def test_reschedule_allows_awaiting_post_on_busy_local_day(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg); _seed_awaiting(cfg)
-    _fill_day(cfg, _DAILY_ACCOUNT_CAP)
+    _fill_day(cfg, 3)
     res = reschedule_post(cfg, "p_aw", _z(_FULL_DAY + timedelta(hours=20)), now=NOW)
-    assert res.ok is False and "2026-06-09" in (res.error or "")
-    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == _z(NOW + timedelta(hours=3))
+    assert res.ok is True
+    assert Ledger.load(cfg).posts["p_aw"].scheduled_time == _z(_FULL_DAY + timedelta(hours=20))
 
-def test_reschedule_capacity_uses_operator_local_days(tmp_path, monkeypatch):
-    # The cap is in the operator's calendar, not UTC. At UTC-8, 2026-06-10T04:00Z is still June 9
-    # locally, so it must be refused by a full local June 9 even though its UTC date differs.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+def test_reschedule_uses_operator_local_days_without_cap_refusal(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Etc/GMT+8")          # UTC-8, no DST
     cfg = Config(root=tmp_path); _seed(cfg)
     led = Ledger.load(cfg)
-    for i in range(_DAILY_ACCOUNT_CAP):                            # 10 slots inside LOCAL June 9
+    for i in range(3):
         led.add_post(Post(id=f"p_loc_{i}", parent_id="clip_1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.queued,
                           scheduled_time=_z(datetime(2026, 6, 9, 16, tzinfo=timezone.utc) + timedelta(hours=i))))
     led.save()
     res = reschedule_post(cfg, "p_edit", "2026-06-10T04:00:00Z", now=NOW)   # UTC Jun 10 == LOCAL Jun 9
-    assert res.ok is False and "2026-06-09" in (res.error or "")
+    assert res.ok is True
 
 # ---- P1: clear_time (atomic unapprove-then-clear for queued) ----
 def _seed_awaiting(cfg):

@@ -125,9 +125,7 @@ def test_reschedule_cadence_2_to_3_hours_jittered(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     clip = _seed_clip(led)
     yesterday_iso = iso_z(FIXED_DT - timedelta(days=1))
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    # Stay inside one local day so the 2-3h band is not confused with overnight day-cap spill.
-    n = _DAILY_ACCOUNT_CAP
+    n = 4
     _seed_queued_posts(led, clip, n=n, base_iso=yesterday_iso)
     led.save()
 
