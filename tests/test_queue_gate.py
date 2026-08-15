@@ -70,11 +70,10 @@ def test_release_batch_only_that_line(tmp_path, mocker):
     r1 = actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="Line A", target_accounts=["a"])
     assert actions.bind_queue(cfg, source_ids=[sids[1]], batch_name="Line B", target_accounts=["b"]).ok
     bid_a = r1.detail["batch_id"]
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
-    mocker.patch("fanops.produce.run_all")
-    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
-    actions.release_batch(cfg, bid_a, confirmed=True)
-    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    prep = mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
+    res = actions.release_batch(cfg, bid_a, confirmed=True)
+    assert res.ok
+    prep.assert_called_once()
     led = Ledger.load(cfg)
     assert led.sources[sids[0]].state is SourceState.catalogued
     assert led.sources[sids[1]].state is SourceState.pending
@@ -88,8 +87,9 @@ def test_release_all_held(tmp_path, mocker):
     sids = sorted(led.sources)
     actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="A", target_accounts=["a"])
     actions.bind_queue(cfg, source_ids=[sids[1]], batch_name="B", target_accounts=["b"])
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
-    actions.release_all_held(cfg, confirmed=True)
+    prep = mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
+    assert actions.release_all_held(cfg, confirmed=True).ok
+    prep.assert_called_once()
     led = Ledger.load(cfg)
     assert all(s.state is SourceState.catalogued for s in led.sources.values())
 
