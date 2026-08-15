@@ -674,15 +674,34 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
 
+def _source_has_picture_subs(src) -> bool:
+    """Render-time file signal: the source already carries captions (muxed stream or sidecar).
+
+    Fail-open — a probe timeout or missing file is NOT treated as picture subs, so the no-source-subs
+    talk path (global burn_subs ON, no batch override) stays byte-identical when the file is silent."""
+    from fanops.ingest import has_muxed_subtitle_stream, has_sidecar_captions
+    path = getattr(src, "source_path", None) or ""
+    if not path:
+        return False
+    p = Path(path)
+    if has_sidecar_captions(p):
+        return True
+    muxed = has_muxed_subtitle_stream(p)
+    return muxed is True
+
+
 def _transcript_burn_enabled(led: Ledger, cfg: Config, src) -> bool:
     """True when FanOps should burn TRANSCRIPT captions (not the retention hook).
 
-    The operator signal for \"source already has subs on the picture\" is Batch.burn_subs=False,
-    stamped at ingest/bind when Studio's \"Skip subtitles\" box is checked (no_subs -> burn_subs=False).
-    None on the batch defers to the global cfg.burn_subs knob (default ON)."""
+    Precedence:
+      1. Batch.burn_subs when set (operator ingest/bind: Studio \"Skip subtitles\" -> False).
+      2. Source file already carries captions (muxed subtitle stream or .srt/.vtt/.ass sidecar).
+      3. Global cfg.burn_subs (default ON)."""
     batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
     if batch is not None and batch.burn_subs is not None:
         return batch.burn_subs
+    if _source_has_picture_subs(src):
+        return False
     return cfg.burn_subs
 
 
@@ -748,9 +767,9 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
         a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — gated by _transcript_burn_enabled (global cfg.burn_subs, default ON,
-        with a per-batch override). Batch.burn_subs=False is the operator signal for a source that
-        already has subs on the picture (Studio \"Skip subtitles\"); the retention hook still burns.
+      • the TRANSCRIPT captions — gated by _transcript_burn_enabled (batch override, then a render-time
+        file probe for muxed/sidecar captions, else global cfg.burn_subs default ON). The retention
+        hook still burns regardless.
     Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
     wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
     build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking

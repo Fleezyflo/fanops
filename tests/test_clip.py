@@ -1049,7 +1049,8 @@ def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeyp
 # These GUARD the refactor — they do not test the dry-run itself (that is test_reframe_dryrun.py).
 # ---------------------------------------------------------------------------------------------------
 from fanops.clip import (_build_ass_text, _render_fingerprint, _render_fingerprint_payload,   # noqa: E402
-                         _REFRAME_GEOM_V, _transcript_burn_enabled, fingerprint_of_payload, fingerprint_payload_bytes)
+                         _REFRAME_GEOM_V, _transcript_burn_enabled, _source_has_picture_subs,
+                         fingerprint_of_payload, fingerprint_payload_bytes)
 
 _FP_KW = dict(src_path="/s.mp4", cs=1.0, ce=11.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="X")
 _FOCUS4 = (0.61, 0.44, 0.30, 0.38)          # subject lock: zooms  -> geom True
@@ -1161,7 +1162,7 @@ def test_build_ass_text_batch_burn_subs_override_still_wins(tmp_path, monkeypatc
 
 
 def test_transcript_burn_enabled_respects_batch_skip_subs_signal(tmp_path, monkeypatch):
-    """Batch.burn_subs=False is the operator signal for sources that already have picture subs."""
+    """Batch.burn_subs=False still wins over every other signal (operator override)."""
     monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)   # global ON
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_batch(Batch(id="b_skip", name="skip", burn_subs=False))
@@ -1174,6 +1175,35 @@ def test_transcript_burn_enabled_respects_batch_skip_subs_signal(tmp_path, monke
     assert _transcript_burn_enabled(led, cfg, led.sources["src_global"]) is True
 
 
+def test_transcript_burn_enabled_skips_when_source_has_muxed_captions(tmp_path, monkeypatch, mocker):
+    """Drop-batch sources with burn_subs=None: file caption signal suppresses transcript burn."""
+    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="drop_1", name="drop-2026-08-15", burn_subs=None))
+    src_path = cfg.sources / "src_1.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"SRC")
+    led.add_source(Source(id="src_1", source_path=str(src_path), batch_id="drop_1"))
+    mocker.patch("fanops.ingest.subprocess.run",
+                 return_value=subprocess.CompletedProcess([], 0, stdout="subtitle\n"))
+    assert _source_has_picture_subs(led.sources["src_1"]) is True
+    assert _transcript_burn_enabled(led, cfg, led.sources["src_1"]) is False
+
+
+def test_transcript_burn_enabled_probe_timeout_fail_open(tmp_path, monkeypatch, mocker):
+    """ffprobe timeout is not a picture-subs signal — global burn_subs ON still applies."""
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    src_path = cfg.sources / "src_1.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"SRC")
+    led.add_source(Source(id="src_1", source_path=str(src_path)))
+    mocker.patch("fanops.ingest.subprocess.run",
+                 return_value=subprocess.CompletedProcess([], 124, stdout=""))
+    assert _source_has_picture_subs(led.sources["src_1"]) is False
+    assert _transcript_burn_enabled(led, cfg, led.sources["src_1"]) is True
+
+
 def test_build_ass_text_skips_transcript_but_keeps_hook_for_picture_subs_batch(tmp_path, monkeypatch):
     """Source with picture subs (batch burn_subs=False): no transcript captions, hook still burns."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
@@ -1184,6 +1214,32 @@ def test_build_ass_text_skips_transcript_but_keeps_hook_for_picture_subs_batch(t
     assert hbf is False
     assert text and "watch this" in text
     assert "already on screen" not in text.lower()
+
+
+def test_render_skips_transcript_for_drop_batch_with_muxed_captions_keeps_hook(tmp_path, mocker, monkeypatch):
+    """Drop batch + burn_subs=None + muxed caption stream: no transcript burn, hook kept."""
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="drop_1", name="drop-2026-08-15", burn_subs=None))
+    src_path = cfg.sources / "src_1.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"SRC")
+    mocker.patch("fanops.ingest.has_muxed_subtitle_stream", return_value=True)
+    mocker.patch("fanops.ingest.has_sidecar_captions", return_value=False)
+    led.add_source(Source(id="src_1", source_path=str(src_path), width=1920, height=1080, batch_id="drop_1",
+                          transcript=[talk_seg("on screen lyrics", start=0.0, end=3.0)]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="the drop"))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    vf = _vf_of(captured["cmd"])
+    assert "subtitles=" in vf
+    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
+    assert "the drop" in ass and "on screen lyrics" not in ass.lower()
 
 
 def test_render_skips_transcript_for_picture_subs_batch_keeps_hook(tmp_path, mocker, monkeypatch):
@@ -1209,13 +1265,17 @@ def test_render_skips_transcript_for_picture_subs_batch_keeps_hook(tmp_path, moc
 
 
 def test_render_burns_transcript_when_no_picture_subs_signal(tmp_path, mocker, monkeypatch):
-    """No skip-subtitles signal: global burn_subs ON still burns transcript (unchanged path)."""
+    """No caption file signal and no batch override: global burn_subs ON still burns transcript."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080,
+    src_path = cfg.sources / "src_1.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"SRC")
+    mocker.patch("fanops.ingest.has_muxed_subtitle_stream", return_value=False)
+    mocker.patch("fanops.ingest.has_sidecar_captions", return_value=False)
+    led.add_source(Source(id="src_1", source_path=str(src_path), width=1920, height=1080,
                           transcript=[talk_seg("spoken line", start=0.0, end=3.0)]))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
                           start=0, end=7, reason="r", state=MomentState.decided, hook=""))
