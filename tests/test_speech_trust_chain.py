@@ -23,8 +23,8 @@ def _vf_of(cmd):
     return cmd[i]
 
 
-def test_talk_window_subs_and_snap_use_trusted_only(tmp_path, mocker, monkeypatch):
-    """Talk source: junk boundaries are ignored for snap; junk text is excluded from burned subs."""
+def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker, monkeypatch):
+    """Talk source: junk boundaries are ignored for snap; transcript is not burned at render."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
@@ -45,9 +45,8 @@ def test_talk_window_subs_and_snap_use_trusted_only(tmp_path, mocker, monkeypatc
     cmd = captured["cmd"]
     assert float(cmd[cmd.index("-ss") + 1]) == 9.3
     assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 17.2
-    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    ass_l = ass.lower()
-    assert "slept" in ass_l and "watch this part" in ass_l and "junk" not in ass_l
+    assert "subtitles=" not in _vf_of(cmd)
+    assert not list(cfg.clips.glob("*.ass"))
 
 
 def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeypatch):
