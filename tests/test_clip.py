@@ -964,26 +964,24 @@ def test_supercut_first_frame_kind_none_ok(tmp_path, mocker, monkeypatch):
     _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.first_frame_kind is None                       # visual_start bypassed on supercut
 
-def test_supercut_subtitles_rebased_to_assembled_timeline(tmp_path, mocker, monkeypatch):
+def test_supercut_hook_burns_without_transcript_layer(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    spans = [(10.0, 15.0), (30.0, 35.0)]                      # span2 offset = 5s in assembled timeline
+    spans = [(10.0, 15.0), (30.0, 35.0)]
     tr = [talk_seg("span two line", start=31.0, end=34.0),
-          talk_seg("gap line", start=20.0, end=25.0),          # in the GAP between spans -> dropped
+          talk_seg("gap line", start=20.0, end=25.0),
           talk_seg("span one", start=11.0, end=13.0)]
     cfg, led = _supercut_moment_led(tmp_path, segments=spans, transcript=tr, hook="hook")
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
     render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     ass = list(cfg.clips.glob("*.ass"))
-    assert ass, "expected supercut .ass"
+    assert ass, "expected supercut .ass for hook"
     text = ass[0].read_text(encoding="utf-8")
-    assert "gap line" not in text                              # gap transcript dropped
-    assert "span two line" in text
-    # span-2 line at source 31s -> assembled 31-30+5 = 6s (within the 5-10s assembled window)
-    assert ",0:00:06." in text or ",0:00:05." in text        # rebased onto assembled timeline
+    assert "hook" in text
+    assert "gap line" not in text and "span two line" not in text and "span one" not in text
 
 def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
