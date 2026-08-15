@@ -120,7 +120,6 @@
         "fanops.models"
       ],
       "lazy": [
-        "fanops.bands",
         "fanops.errors",
         "fanops.ledger",
         "fanops.personas"
@@ -931,7 +930,6 @@
       "compile": [
         "fanops.accounts",
         "fanops.agentstep",
-        "fanops.bands",
         "fanops.clip",
         "fanops.config",
         "fanops.control",
@@ -949,7 +947,6 @@
         "fanops.accounts",
         "fanops.caption",
         "fanops.ids",
-        "fanops.persona_directives",
         "fanops.personas",
         "fanops.signals",
         "fanops.text",
@@ -998,7 +995,6 @@
       ],
       "lazy": [
         "fanops",
-        "fanops.bands",
         "fanops.hashtags",
         "fanops.log",
         "fanops.models",
@@ -1295,9 +1291,7 @@
       "typing": []
     },
     "fanops.prompts": {
-      "compile": [
-        "fanops.bands"
-      ],
+      "compile": [],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2193,7 +2187,7 @@
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
     "fanops.autopilot": 2,
-    "fanops.bands": 9,
+    "fanops.bands": 7,
     "fanops.batches": 0,
     "fanops.canary": 0,
     "fanops.caption": 2,
@@ -2386,7 +2380,7 @@
     "fanops.metrics_schedule": 0,
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
-    "fanops.moments": 15,
+    "fanops.moments": 14,
     "fanops.overlay": 0,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
@@ -2410,7 +2404,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 9,
-    "fanops.prompts": 1,
+    "fanops.prompts": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
     "fanops.reframe": 9,
@@ -2466,7 +2460,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 255,
+  "lazy_downward_count": 252,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3486,7 +3480,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 6,
-    "fanops.prompts": 1,
+    "fanops.prompts": 0,
     "fanops.recaption": 6,
     "fanops.reconcile": 3,
     "fanops.reframe": 6,
@@ -3559,6 +3553,7 @@
       "fanops.persona_levers",
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
+      "fanops.prompts",
       "fanops.secret_provider",
       "fanops.studio",
       "fanops.studio.actions_common",
@@ -3581,7 +3576,6 @@
       "fanops.models",
       "fanops.persona_directives",
       "fanops.post.providers",
-      "fanops.prompts",
       "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
@@ -3719,8 +3713,8 @@
     "G2_largest_scc_size": 73,
     "G2_module_sccs_total": 58,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 589,
-    "lazy_edges": 371,
+    "compile_edges_G1": 587,
+    "lazy_edges": 368,
     "lazy_edges_lateral": 42,
     "lazy_edges_strictly_upward": 74,
     "lazy_edges_to_equal_or_higher_level": 116,
