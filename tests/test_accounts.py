@@ -176,6 +176,36 @@ def test_validate_legacy_single_account_id_still_passes(tmp_path):
     assert Accounts.load(cfg).validate() == []
 
 
+def test_validate_allows_matching_global_cut_spec_with_persona(tmp_path, monkeypatch):
+    # Post duration-machine kill: live accounts often have persona links but no per-handle clip_profile/
+    # framing pins, so resolve_clip_profile + resolve_top_bias inherit the global talk band. That shared
+    # length is allowed — validate must not treat it as a config problem.
+    monkeypatch.delenv("FANOPS_ACCOUNT_CASTING", raising=False)   # casting ON (default)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                 "persona": "studio voice"}])
+    accts = Accounts.load(cfg)
+    a = accts.active()[0]
+    assert cfg.resolve_clip_profile(a) == cfg.clip_profile == "talk"
+    assert cfg.resolve_top_bias(a) == cfg.aware_reframe is False
+    assert accts.validate() == []
+
+
+def test_validate_still_flags_missing_persona_when_casting_on(tmp_path, monkeypatch):
+    # The sibling gate: when casting is ON and any active account has a persona, unlinked accounts
+    # must still surface as problems.
+    monkeypatch.delenv("FANOPS_ACCOUNT_CASTING", raising=False)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [
+        {"handle": "@linked", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "persona": "studio voice"},
+        {"handle": "@bare", "account_id": "2", "platforms": ["instagram"], "status": "active"},
+    ])
+    problems = Accounts.load(cfg).validate()
+    assert any("no persona linked" in p and "bare" in p for p in problems)
+    assert not any("cut spec matches global" in p for p in problems)
+
+
 # ---- M2.1: writers backing the UI onboarding. write_integration maps ONE (handle, platform) channel;
 # add_account onboards a brand-new account — both atomic raw-dict writes (siblings + unknown fields kept).
 def test_write_integration_sets_nested_id_and_preserves_siblings(tmp_path):
