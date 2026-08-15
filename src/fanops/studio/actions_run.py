@@ -182,7 +182,7 @@ def release_reopens(cfg: Config, *, source_ids: Sequence[str], confirmed: bool =
         get_logger(cfg)("run", "-", "release_reopens_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"release failed: {str(exc)[:160]}")
     if released >= 1:
-        return _drive_make_clips(cfg, confirmed=confirmed, extra_detail={"reopens_released": released})
+        return _drive_make_clips(cfg, confirmed=confirmed, extra_detail={"released": released})
     return ActionResult(ok=True, detail={"released": released})
 
 
