@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
-from fanops.bands import band_for, TALK
+from fanops.bands import TALK
 from fanops import overlay, frames, framing
 from fanops.log import get_logger
 from fanops.errors import ToolchainMissingError

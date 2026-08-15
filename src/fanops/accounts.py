@@ -297,15 +297,9 @@ class Accounts:
                 problems.append(f"duplicate handle {a.handle} (handles must be unique)")
             seen.add(a.handle)
         if self.cfg.account_casting and any((a.persona_id or a.persona) for a in self.active()):
-            from fanops.bands import band_for
-            g_band = band_for(self.cfg.clip_profile); g_frame = self.cfg.aware_reframe
             for a in self.active():
                 if not ((a.persona_id or "").strip() or (a.persona or "").strip()):
                     problems.append(f"{a.handle}: no persona linked — per-account hooks/cuts need a persona")
-                    continue
-                prof = self.cfg.resolve_clip_profile(a); tb = self.cfg.resolve_top_bias(a)
-                if band_for(prof) == g_band and tb == g_frame:
-                    problems.append(f"{a.handle}: cut spec matches global ({prof}) — will shared-cut without a length/framing diff")
         return problems
 
     def surfaces(self) -> list[Surface]:
