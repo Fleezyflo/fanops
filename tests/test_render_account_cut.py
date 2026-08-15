@@ -36,29 +36,32 @@ def _capturing_run(captured):
 def _to_of(cmd):
     return cmd[cmd.index("-to") + 1]
 
-def test_cut_grows_short_window_to_long_band(tmp_path, mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")     # isolate the band math from the frame probe
+def test_cut_keeps_short_window_without_band_growth(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r_long.9x16.mp4")
     ok, secs = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
-    assert ok is True and Path(out).exists() and secs == 28.0   # P3: returns the realized window seconds
-    assert _to_of(captured["cmd"]) == "28.000"          # LONG floor 28 grows the 4s window (output-relative -to)
+    assert ok is True and Path(out).exists() and secs == 4.0
+    assert _to_of(captured["cmd"]) == "4.000"          # picked window only — no band growth
 
-def test_cut_grows_short_window_to_short_band(tmp_path, mocker, monkeypatch):
+def test_cut_keeps_short_window_for_short_profile(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r_short.9x16.mp4")
     render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="short", hook="H", out_path=out)
-    assert _to_of(captured["cmd"]) == "8.000"           # SHORT floor 8
+    assert _to_of(captured["cmd"]) == "4.000"           # profile does not grow the window
 
 def test_cut_burns_the_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
@@ -71,6 +74,7 @@ def test_cut_burns_the_hook(tmp_path, mocker, monkeypatch):
 def test_cut_no_textfilter_still_cuts_without_hook(tmp_path, mocker, monkeypatch):
     # fail-open legibility: the toolchain can't burn text -> still cut the RIGHT LENGTH (clean clip), True
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
@@ -81,6 +85,7 @@ def test_cut_no_textfilter_still_cuts_without_hook(tmp_path, mocker, monkeypatch
 
 def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     mocker.patch("fanops.clip.subprocess.run", side_effect=FileNotFoundError("ffmpeg gone"))
@@ -90,6 +95,7 @@ def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
 
 def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     def bad_run(cmd, **kw):
@@ -103,12 +109,13 @@ def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
 
 def test_cut_success_leaves_no_artifacts(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     out = str(cfg.clips / "r.9x16.mp4")
-    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) == (True, 28.0)
+    assert render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out) == (True, 4.0)
     assert Path(out).exists() and not Path(out + ".part").exists() and not Path(out).with_suffix(".ass").exists()
 
 

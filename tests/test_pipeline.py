@@ -11,6 +11,7 @@ from tests.fixtures.speech_segments import talk_seg
 @pytest.fixture(autouse=True)
 def _gate_off(monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
 
 def _put(p, b): p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
 
@@ -26,7 +27,7 @@ def _ff(mocker):
         if _is_asr(cmd):
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=13.0, end=20.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] in ("ffmpeg",) and "null" in cmd:
@@ -92,7 +93,7 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     rid = latest_request_id(cfg, "moments", pick_key)
     response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
-        picks=[MomentPick(start=14.0, end=18.0, reason="punchline",
+        picks=[MomentPick(start=13.0, end=20.0, reason="punchline",
                           transcript_excerpt="they slept on me")]).model_dump_json())
 
     # M1b: answering the PICK gate lands picks_decided + opens the per-pick frame-seeing hook gate —
@@ -255,7 +256,7 @@ def test_advance_rollback_recovers_warm_artifacts(tmp_path, monkeypatch, mocker)
             asr_calls.append(tuple(cmd))                      # count the EXPENSIVE whisper invocations
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=13.0, end=20.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] == "ffprobe":
@@ -312,7 +313,7 @@ def test_advance_auto_resumes_error_source_with_warm_transcript(tmp_path, monkey
             asr_calls.append(tuple(cmd))
             outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
             (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-                {"language": "en", "segments": [talk_seg("they slept on me", start=14.0, end=18.0)]}))
+                {"language": "en", "segments": [talk_seg("they slept on me", start=13.0, end=20.0)]}))
             class R: returncode=0; stderr=""; stdout=""
             return R()
         if cmd[0] == "ffprobe":

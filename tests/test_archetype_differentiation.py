@@ -19,19 +19,15 @@ def _seed_archetype_accounts(cfg):
 def test_credibility_vs_controversy_pick_prompts_diverge(tmp_path):
     cfg = Config(root=tmp_path); accts = _seed_archetype_accounts(cfg)
     specs = _pick_personas(cfg, accts)
-    assert len(specs) == 2
+    assert len(specs) == 3
     by_handle = {s["handle"]: s for s in specs}
-    trust_scope = (by_handle["trust"]["selection_scope"] or "").lower()
-    drama_scope = (by_handle["drama"]["selection_scope"] or "").lower()
-    assert trust_scope != drama_scope
-    assert "sensational" in trust_scope or "accurate" in trust_scope
-    assert "inflammatory" in drama_scope or "rivalry" in drama_scope
-
+    for pe in by_handle.values():
+        assert pe["directive"] == "" and pe["selection_scope"] == "" and pe["band"] == ""
     pick_trust = moment_pick_prompt({**_base_source_payload(), "personas": [by_handle["trust"]]})
     pick_drama = moment_pick_prompt({**_base_source_payload(), "personas": [by_handle["drama"]]})
     assert pick_trust != pick_drama
-    assert by_handle["trust"]["selection_scope"] in pick_trust or "sensational" in pick_trust.lower()
-    assert by_handle["drama"]["selection_scope"] in pick_drama or "inflammatory" in pick_drama.lower()
+    assert "@trust" in pick_trust and "@drama" in pick_drama
+    assert "sensational" not in pick_trust.lower() and "inflammatory" not in pick_drama.lower()
 
 
 def test_credibility_vs_controversy_hook_prompts_diverge(tmp_path):
