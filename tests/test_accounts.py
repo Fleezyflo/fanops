@@ -187,7 +187,8 @@ def test_validate_allows_matching_global_cut_spec_with_persona(tmp_path, monkeyp
     accts = Accounts.load(cfg)
     a = accts.active()[0]
     assert cfg.resolve_clip_profile(a) == cfg.clip_profile == "talk"
-    assert cfg.resolve_top_bias(a) == cfg.aware_reframe is False
+    assert cfg.resolve_top_bias(a) == cfg.aware_reframe
+    assert cfg.aware_reframe is False
     assert accts.validate() == []
 
 
