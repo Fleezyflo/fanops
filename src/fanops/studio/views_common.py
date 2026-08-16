@@ -8,7 +8,7 @@ network."""
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -160,11 +160,17 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     that band — a candidate that falls outside is rolled forward to the next open hour. Window
     is in OPERATOR-LOCAL hours (cfg.operator_tz); None == 24h open.
 
+    After the window roll, a per-handle daily cap (`cfg.max_posts_per_account_per_day`, default 2)
+    rolls leftover slots to the next operator-local day. 0 = unlimited. Without the cap, a 2–3h
+    gap on a 24h-open window lays ~8–12 posts/account/day and platforms flag the accounts.
+
     Pure (no I/O beyond cfg.account_window which is a JSON read at the seam). Pinned by
     tests/test_bulk_approve_spread.py + tests/test_operator_timezone_cadence_window.py."""
     import hashlib, random
-    from fanops.timeutil import iso_z
+    from fanops.timeutil import iso_z, _operator_zone
     step, jitter_max = _cadence_for(cfg)
+    cap = int(getattr(cfg, "max_posts_per_account_per_day", 2) or 0)
+    zone = _operator_zone(cfg) or timezone.utc
     # Stable account order (deterministic across processes, no Python hash() salt).
     by_account: dict[str, list] = {}
     for p in posts:
@@ -172,6 +178,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     accounts_sorted = sorted(by_account)
     date_str = now.date().isoformat()
     out: dict[str, str] = {}
+    used: set[str] = set()
     for ai, handle in enumerate(accounts_sorted):
         rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode(), usedforsecurity=False).hexdigest()[:8], 16))
         # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
@@ -187,12 +194,34 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
         # would re-open the floor as a probabilistic property guarded by tests rather than an
         # invariant. The cumulative form makes the bad path unconstructable.
         cursor_min = anchor_offset + cfg.publish_lead_minutes
+        slots_on_day = 0
+        day_key = None
         for p in sorted(by_account[handle], key=lambda q: q.id):
             t = now + timedelta(minutes=cursor_min)
             if t <= now:                   # belt-and-braces (lead_minutes < 0 hand-edit)
                 t = now + timedelta(seconds=1)
             t = _roll_into_window(t, window, cfg)    # M7: roll forward to the next open hour if outside
-            out[p.id] = iso_z(t)
+            if cap > 0:
+                local_day = t.astimezone(zone).date()
+                if day_key is None:
+                    day_key = local_day
+                    slots_on_day = 0
+                if slots_on_day >= cap:
+                    t = _start_of_next_local_day(t, zone, window, cfg, minute=anchor_offset)
+                    day_key = t.astimezone(zone).date()
+                    slots_on_day = 0
+                    cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
+                    t = now + timedelta(minutes=cursor_min)
+                    if t <= now:
+                        t = now + timedelta(seconds=1)
+                    t = _roll_into_window(t, window, cfg)
+                slots_on_day += 1
+            stamp = iso_z(t)
+            while stamp in used:
+                t = t + timedelta(minutes=1)
+                stamp = iso_z(t)
+            used.add(stamp)
+            out[p.id] = stamp
             # Window roll can snap `t` far ahead of cursor_min (e.g. before open → 09:00
             # open). Without syncing, the next N candidates stay pre-open and all collapse onto
             # the same local open minute — Re-spread's overflow-day 09:00 pile.
@@ -201,6 +230,17 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
             # gap >= STEP by construction; also gap <= _MAX_GAP_MIN (operator: never more than 9h apart)
             cursor_min += min(step + jitter, _MAX_GAP_MIN)
     return out
+
+
+def _start_of_next_local_day(t: datetime, zone, window, cfg, *, minute: int = 0) -> datetime:
+    """First legal slot on the next operator-local day (window open, or local midnight if 24h).
+    `minute` keeps the per-account anchor so two handles do not lockstep at :00."""
+    local = t.astimezone(zone)
+    nxt = (local + timedelta(days=1)).replace(
+        hour=0, minute=int(minute) % 60, second=0, microsecond=0)
+    if window is not None:
+        nxt = nxt.replace(hour=int(window[0]) % 24)
+    return nxt.astimezone(t.tzinfo or timezone.utc)
 
 
 def _roll_into_window(t: datetime, window, cfg) -> datetime:

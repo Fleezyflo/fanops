@@ -65,13 +65,13 @@
     },
     "FANOPS_CONCURRENT_SOURCES": {
       "read_at": [
-        "fanops.config:1212"
+        "fanops.config:1226"
       ],
       "reader_count": 1
     },
     "FANOPS_CONCURRENT_WORKERS": {
       "read_at": [
-        "fanops.config:1223"
+        "fanops.config:1237"
       ],
       "reader_count": 1
     },
@@ -183,6 +183,12 @@
       ],
       "reader_count": 1
     },
+    "FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY": {
+      "read_at": [
+        "fanops.config:1140"
+      ],
+      "reader_count": 1
+    },
     "FANOPS_MEDIA_PUBLIC_BASE": {
       "read_at": [
         "fanops.config:454"
@@ -215,20 +221,20 @@
     },
     "FANOPS_POSTER": {
       "read_at": [
-        "fanops.config:1232",
+        "fanops.config:1246",
         "fanops.config:333"
       ],
       "reader_count": 2
     },
     "FANOPS_POSTIZ_AUTOSTART": {
       "read_at": [
-        "fanops.config:1238"
+        "fanops.config:1252"
       ],
       "reader_count": 1
     },
     "FANOPS_POSTIZ_COMPOSE_DIR": {
       "read_at": [
-        "fanops.config:1243"
+        "fanops.config:1257"
       ],
       "reader_count": 1
     },
@@ -241,13 +247,13 @@
     },
     "FANOPS_POSTIZ_PUBLISH_PER_MIN": {
       "read_at": [
-        "fanops.config:1197"
+        "fanops.config:1211"
       ],
       "reader_count": 1
     },
     "FANOPS_PUBLISH_LEAD_MINUTES": {
       "read_at": [
-        "fanops.config:1177"
+        "fanops.config:1191"
       ],
       "reader_count": 1
     },
@@ -410,7 +416,7 @@
     },
     "FANOPS_ZERNIO_MAX_UPLOAD_MB": {
       "read_at": [
-        "fanops.config:1187"
+        "fanops.config:1201"
       ],
       "reader_count": 1
     },
@@ -470,7 +476,7 @@
     },
     "XDG_CACHE_HOME": {
       "read_at": [
-        "fanops.config:1250"
+        "fanops.config:1264"
       ],
       "reader_count": 1
     },
@@ -503,7 +509,7 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "env_vars_read": 80,
+    "env_vars_read": 81,
     "env_write_sites": 1
   }
 }
