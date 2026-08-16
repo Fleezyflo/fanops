@@ -228,7 +228,7 @@ def pipeline_status(cfg: Config) -> dict:
             if not b:
                 continue
             queue_lines.append({"batch_id": bid, "name": b.name, "sources": sorted(sids),
-                                "target_accounts": b.target_accounts, "burn_subs": b.burn_subs})
+                                "target_accounts": b.target_accounts})
     # T2.3: machine-origin moment re-opens that request_moments parked instead of serving. Listed
     # unconditionally — the gate can be switched off AFTER a park, and a row nobody can release is
     # exactly the invisible backlog this ticket exists to end.
