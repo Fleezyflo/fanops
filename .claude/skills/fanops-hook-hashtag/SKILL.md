@@ -1,22 +1,25 @@
 ---
 name: fanops-hook-hashtag
-description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. Hashtags are capped at 4, hard, and chosen from the persona's derived corpus + measured cache (relatedness→candidate, platform metric→member) — never words the model invents. Evidence-backed; sources cited inline.
+description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen from store ∪ corpus (relatedness→candidate, size_band/size_rank_key→rank) — never words the model invents. Evidence-backed; sources cited inline.
 ---
 
 # FanOps Hooks & Hashtags — researched, platform-measured
 
 > **Source of truth = code.** Hook patterns live in `prompts._hook_spec`; hashtag
 > composition floors live in `hashtags._ARABIC` (the only frozen tag list — format,
-> not a reach claim). The DRIFT-GUARD blocks below are mirror-tested by
-> `tests/test_skill_drift.py` — if this doc and the code disagree, that test goes red.
-> Edit code + doc together. Corpus membership is derived (relatedness + metric), never
-> a hand-ranked `VETTED` pool.
+> not a reach claim). Band + slot constants live in `hashtags.MEGA_MEDIA_FLOOR`,
+> `MID_MEDIA_FLOOR`, `INT32_MEDIA_COUNT`, `MEGA_SLOT_MAX`. The DRIFT-GUARD blocks
+> below are mirror-tested by `tests/test_skill_drift.py` — if this doc and the
+> code disagree, that test goes red. Edit code + doc together. Corpus membership
+> is derived (relatedness + metric), never a hand-ranked `VETTED` pool. Rank is
+> `size_band` / `size_rank_key`, not Top-grid medians.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
-(big text in a clip's first ~2s) and the **hashtag caption**. Both were freestyled
-by the model before this skill existed — hooks paraphrased the lyric transcript
-("shackled up, feels like flying"), hashtags were 5–15 random words. Both are now
-grounded in what actually works, with proof.
+(big text in a clip's first ~2s) and the **posted caption** — one hook sentence
+plus 3–4 tags in the `hashtags` array. Both were freestyled by the model before
+this skill existed — hooks paraphrased the lyric transcript ("shackled up, feels
+like flying"), hashtags were 5–15 random words. Both are now grounded in what
+actually works, with proof.
 
 ## Drift guards (machine-readable; mirror-tested against the code)
 
@@ -38,6 +41,14 @@ social proof
 fomo
 ```
 
+<!-- DRIFT-GUARD:composition — F3 band + slot constants (hashtags.py). Integers only; equals MEGA_MEDIA_FLOOR / MID_MEDIA_FLOOR / INT32_MEDIA_COUNT / MEGA_SLOT_MAX. -->
+```text
+MEGA_MEDIA_FLOOR=2_000_000
+MID_MEDIA_FLOOR=10_000
+INT32_MEDIA_COUNT=2_147_483_647
+MEGA_SLOT_MAX=1
+```
+
 ## Operator hard rules (override any generic advice below)
 
 1. **Hooks are RETENTION mechanics, NOT artist hype.** The line is about the
@@ -47,10 +58,11 @@ fomo
 2. **Max 4 hashtags. Hard.** More than 4 is forbidden. Enforced in code
    ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
-3. **Hashtags come from the persona's derived corpus + measured cache** —
-   never words the model invents. Relatedness makes a candidate; platform metric
-   (play_count preferred, else like_count) ranks membership (Part 3). There is no
-   hand-ranked frozen reach pool and no Graph-as-Layer-A path.
+   The posted `caption` is one hook sentence; the 3–4 tags live in `hashtags`.
+3. **Hashtags come from store ∪ corpus** — never words the model invents.
+   Relatedness makes a candidate; rank is `size_band` / `size_rank_key` (Part 2).
+   Mega/untrusted occupy at most 1 of 4 slots. INT32-saturated `media_count` is
+   mega/untrusted, not gold. There is no `VETTED` pool and no semantic ban-list.
 
 ---
 
@@ -157,42 +169,50 @@ unchanged.
 
 ---
 
-## Part 2 — Reach-vetted hashtags (proven post volumes)
+## Part 2 — Caption is language; tags are banded composition
 
-### The set, ranked by real volume
+### Posted caption
 
-Counts are platform post-counts at research time (June 2026). Reach class, not a
-live API — re-verify before treating a number as current.
+The posted `caption` is **one non-hashtag hook sentence**. The same 3–4 tags live
+in the `hashtags` array (hard cap 4). The caption is not the tag line. Tags-only
+or missing language HOLDs (`caption_tags_only` / `caption_missing_language`) —
+the engine does not manufacture `caption = " ".join(tags)`.
 
-| Tag | Posts (≈) | Class | Source |
-|---|---|---|---|
-| #hiphop | 504M | mega | [iqhashtags] |
-| #hiphopmusic | 113M | mega | [iqhashtags] |
-| #rap | 113M | mega | [iqhashtags / best-hashtags] |
-| #rapper | high (8-fig) | large | [best-hashtags] |
-| #bars | large | niche-genre | [iqhashtags] |
-| #newmusic | large | discovery-music | [iqhashtags] |
-| #undergroundhiphop | mid | niche-relevance | [iqhashtags] |
-| #fyp / #foryou | ubiquitous | platform-discovery | [Buffer / TikTok] |
-| #viral | ubiquitous | platform-discovery | [Buffer] |
-| #arabicmusic | 195K | language/region | [displaypurposes] |
-| #arabicmusiclovers | 7.4K | language-niche | [displaypurposes] |
-| #arabtiktok / #اغاني | mid (regional) | language/region | [displaypurposes / TikTok] |
+On-screen hook stays the moment gate (`m.hook`). Do not add a caption-item `hook`
+field.
 
-### Selection rule (≤4, deterministic)
+### Membership and rank
 
-A balanced 4 beats 4 mega-tags (mega-only = drowned instantly; niche-only = no
-reach). Compose the 4 as:
+Membership = **store ∪ corpus**. Invented tags die. Unmeasured non-corpus tags
+die. Unmeasured **corpus** tags survive. Empty store AND empty corpus (and
+non-AR) → empty line.
 
-1. **One mega genre tag** — #hiphop / #rap / #hiphopmusic (reach).
-2. **One relevance tag** — #rapper / #bars / #undergroundhiphop (targets the right feed).
-3. **One language/region tag IF the clip is Arabic** — #arabicmusic / #arabtiktok;
-   else a second relevance/discovery-music tag (#newmusic).
-4. **One platform-discovery tag** — #fyp (TikTok) / #foryou; reach is contested but
-   it's the standard surface tag.
+Rank is `size_band` / `size_rank_key` (F3) — not Top-grid medians:
 
-Mixing languages is fine (English #fyp on an Arabic clip is normal — reach beats
-language purity). The hard cap is 4 regardless.
+| Band | `media_count` |
+|---|---|
+| mid | `MID_MEDIA_FLOOR` ≤ n < `MEGA_MEDIA_FLOOR` (10k–2M) |
+| small | 0 < n < `MID_MEDIA_FLOOR` |
+| mega | `MEGA_MEDIA_FLOOR` ≤ n < `INT32_MEDIA_COUNT` |
+| untrusted | n ≥ `INT32_MEDIA_COUNT` (INT32-saturated; mega for slots) |
+| unknown | missing / unparseable |
+
+Order: **mid → small → mega/untrusted → unknown**. Within a band: Instagram
+keeps size-then-trend; TikTok prefers `TREND_FIELD` then size. Plays cannot stand
+in for volume.
+
+### Shipped line (when measurements exist)
+
+- hard cap 4
+- mega/untrusted occupy **at most 1** slot (`MEGA_SLOT_MAX`); leftover slots
+  prefer mid
+- INT32-saturated `media_count` is mega/untrusted, not infinite gold
+- AR region floor (`_ARABIC`) still applies on Arabic-language clips
+- no `VETTED` / `_MEGA` pool, no semantic ban-list (a magnet is limited because
+  it is INT32/mega, not because of its name)
+- no mega / relevance / discovery-slot recipe
+
+`cfg is None` / no measurements: mega cap and platform reorder do not fire.
 
 ---
 
@@ -215,16 +235,18 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    aborts loudly (`no_scrape`). `fanops hashtags discover` is read-only (zero network).
 3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): relatedness→candidate
    (anchors always; else inbound_hits≥2 or n_roots≥2 — the magnet soft lane is DELETED, MOL-692);
-   then SIZE→rank via `hashtags.size_rank_key` (`media_count` DESC, 7-day Reels max as the tie-break
-   within equal size) + the `corpus_target` cut. Non-anchor category-scale tags (high `media_count`)
-   still need multi-root relatedness to be ADMITTED, but once admitted they rank by their true volume —
-   the old demotion tier capped the corpus just under `CATEGORY_MEDIA_FLOOR`. Outage / empty pool holds
-   the previous corpus. An empty corpus is honest (no padding). Runs ONCE at the end of a Layer A pass
-   that measured something, plus the input-driven safety net `refresh_corpora_if_due` — gated on a
-   personas.json+hashtags.json fingerprint in `.corpora_refresh.json`, never a clock (MOL-694).
-4. **Selection** (`vet_hashtags`): per-surface store = that persona's aligned pool ∪ corpus; corpus
-   leads when present; hard cap 4; composition rules only (no hand-ranked mega pools, no discovery floor,
-   no ban list). Cold empty store → empty hashtag line.
+   then SIZE→rank via `hashtags.size_rank_key` (band first: mid → small → mega/untrusted → unknown;
+   within a band, `media_count` DESC then 7-day Reels max) + the `corpus_target` cut. Non-anchor
+   category-scale tags (high `media_count`) still need multi-root relatedness to be ADMITTED, but
+   once admitted they rank by `size_band` / `size_rank_key` — INT32-saturated volume is untrusted
+   mega, not gold. Outage / empty pool holds the previous corpus. An empty corpus is honest (no
+   padding). Runs ONCE at the end of a Layer A pass that measured something, plus the input-driven
+   safety net `refresh_corpora_if_due` — gated on a personas.json+hashtags.json fingerprint in
+   `.corpora_refresh.json`, never a clock (MOL-694).
+4. **Selection** (`vet_hashtags`): membership = store ∪ corpus; corpus leads when present (capped
+   by `_CORPUS_LEAD_MAX`); hard cap 4; mega/untrusted ≤ `MEGA_SLOT_MAX`; mid-band order splits IG
+   (size-then-trend) from TikTok (trend-then-size). No hand-ranked mega pools, no discovery floor,
+   no ban list. Empty store AND empty corpus (and non-AR) → empty line.
 5. **Attribution severance** — a tag's worth is Instagram's own number for the tag, never a post that
    used it (`tests/test_hashtag_attribution_severance.py`).
 
