@@ -178,6 +178,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     accounts_sorted = sorted(by_account)
     date_str = now.date().isoformat()
     out: dict[str, str] = {}
+    used: set[str] = set()
     for ai, handle in enumerate(accounts_sorted):
         rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode(), usedforsecurity=False).hexdigest()[:8], 16))
         # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
@@ -206,7 +207,7 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
                     day_key = local_day
                     slots_on_day = 0
                 if slots_on_day >= cap:
-                    t = _start_of_next_local_day(t, zone, window, cfg)
+                    t = _start_of_next_local_day(t, zone, window, cfg, minute=anchor_offset)
                     day_key = t.astimezone(zone).date()
                     slots_on_day = 0
                     cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
@@ -215,7 +216,12 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
                         t = now + timedelta(seconds=1)
                     t = _roll_into_window(t, window, cfg)
                 slots_on_day += 1
-            out[p.id] = iso_z(t)
+            stamp = iso_z(t)
+            while stamp in used:
+                t = t + timedelta(minutes=1)
+                stamp = iso_z(t)
+            used.add(stamp)
+            out[p.id] = stamp
             # Window roll can snap `t` far ahead of cursor_min (e.g. before open → 09:00
             # open). Without syncing, the next N candidates stay pre-open and all collapse onto
             # the same local open minute — Re-spread's overflow-day 09:00 pile.
@@ -226,13 +232,14 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, s
     return out
 
 
-def _start_of_next_local_day(t: datetime, zone, window, cfg) -> datetime:
-    """First legal slot on the next operator-local day (window open, or local midnight if 24h)."""
+def _start_of_next_local_day(t: datetime, zone, window, cfg, *, minute: int = 0) -> datetime:
+    """First legal slot on the next operator-local day (window open, or local midnight if 24h).
+    `minute` keeps the per-account anchor so two handles do not lockstep at :00."""
     local = t.astimezone(zone)
-    nxt = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    nxt = (local + timedelta(days=1)).replace(
+        hour=0, minute=int(minute) % 60, second=0, microsecond=0)
     if window is not None:
-        open_h = window[0]
-        nxt = nxt.replace(hour=int(open_h) % 24)
+        nxt = nxt.replace(hour=int(window[0]) % 24)
     return nxt.astimezone(t.tzinfo or timezone.utc)
 
 
