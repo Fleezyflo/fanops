@@ -19,11 +19,11 @@ def _mom1(led, mid="mom_1"):
                           state=MomentState.clipped))
 
 
-def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
+def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z", account="a"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="98432",
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()                                          # persist so the self-loading publish_due sees it
@@ -730,3 +730,122 @@ def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch,
     assert led.posts["p_ok"].state is PostState.published           # the control still ships
     for pid in ("p_clip", "p_mom", "p_gone"):                       # refused, and ZERO mutation on the skip
         assert led.posts[pid].state is PostState.queued and led.posts[pid].submission_started_at is None
+
+
+# ---- F6-I / F6-T (MOL-980 / MOL-982): non-active handles stay queued ----
+
+def _acct_row(handle, status, account_id="98432"):
+    """Explicit accounts.json row. F6-T PIN: write status; do not rely on the model default."""
+    return {"handle": handle, "account_id": account_id, "platforms": ["instagram"],
+            "status": status, "backends": {"instagram": "postiz"},
+            "integrations": {"instagram": account_id}}
+
+
+def _write_accounts(cfg, rows):
+    import json
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
+
+
+def test_publish_due_planned_live_creds_stay_queued(tmp_path, monkeypatch, mocker):
+    # F6-T: queued + planned + live Postiz creds → skip, left queued. Poster must not run.
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_plan", cid="c_plan", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_plan")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["skipped_not_active"] >= 1
+    assert "quota_skipped" not in summary
+    p = Ledger.load(cfg).posts["p_plan"]
+    assert p.state is PostState.queued and p.submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+    poster.assert_not_called()
+    ensure.assert_not_called()                                 # all-dead due list must not start Postiz
+
+
+def test_publish_due_active_handle_still_ships(tmp_path, monkeypatch, mocker):
+    # F6-T sibling: same fixture with status=active still ships (happy path with an explicit row).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "active")])
+    _queued(led, cfg, pid="p_ok", cid="c_ok", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_ok"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] == 0
+    assert "quota_skipped" not in summary
+    assert Ledger.load(cfg).posts["p_ok"].state is PostState.published
+
+
+def test_publish_due_mixed_planned_and_active(tmp_path, monkeypatch, mocker):
+    # F6-T: one planned + one active in the same pass → only the active handle publishes.
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@dead", "planned"), _acct_row("@live", "active")])
+    _queued(led, cfg, pid="p_dead", cid="c_dead", when="2020-01-01T00:00:00Z", account="dead")
+    _queued(led, cfg, pid="p_live", cid="c_live", when="2020-01-01T00:00:00Z", account="live")
+    _http_media(led, "p_dead", "p_live"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] >= 1
+    assert "quota_skipped" not in summary
+    led = Ledger.load(cfg)
+    assert led.posts["p_live"].state is PostState.published
+    assert led.posts["p_dead"].state is PostState.queued and led.posts["p_dead"].submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+
+
+def test_publish_due_warming_and_retired_stay_queued(tmp_path, monkeypatch, mocker):
+    # F6-I: still skip warming / retired when a row exists (same path as planned).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@warm", "warming"), _acct_row("@gone", "retired")])
+    _queued(led, cfg, pid="p_warm", cid="c_warm", when="2020-01-01T00:00:00Z", account="warm")
+    _queued(led, cfg, pid="p_gone", cid="c_gone", when="2020-01-01T00:00:00Z", account="gone")
+    _http_media(led, "p_warm", "p_gone")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["skipped_not_active"] == 2
+    led = Ledger.load(cfg)
+    assert led.posts["p_warm"].state is PostState.queued and led.posts["p_gone"].state is PostState.queued
+    poster.assert_not_called()
+
+
+def test_publish_post_planned_does_not_claim(tmp_path, monkeypatch, mocker):
+    # F6-T: Studio Publish-now inherits the claim guard via _publish_one.
+    from fanops.post.run import publish_post
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_now", cid="c_now", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_now")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    assert publish_post(cfg, "p_now") is None
+    p = Ledger.load(cfg).posts["p_now"]
+    assert p.state is PostState.queued and p.submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+    poster.assert_not_called()
+
+
+def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, mocker):
+    # F6-I PIN: missing / unknown handle → do not apply this guard (empty-registry parity).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@other", "planned")])   # a row exists, but not for this post's handle
+    _queued(led, cfg, pid="p_unk", cid="c_unk", when="2020-01-01T00:00:00Z", account="a")
+    _http_media(led, "p_unk"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] == 0
+    assert Ledger.load(cfg).posts["p_unk"].state is PostState.published
+
+
+def test_publish_one_accounts_none_skips_status_guard(tmp_path, monkeypatch, mocker):
+    # F6-I PIN: accounts is None (internal test callers) must not apply the status check.
+    from fanops.post.run import _publish_one
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_int", cid="c_int", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_int"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    assert _publish_one(cfg, "p_int", "postiz", accounts=None) == PostState.published.value
+    assert Ledger.load(cfg).posts["p_int"].state is PostState.published
