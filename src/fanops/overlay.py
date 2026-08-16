@@ -252,7 +252,8 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     (a few words at a time, synced to speech — see caption_events), NOT one bulk line. If `hook` is a
     non-empty string, one clean top-third HOOK line (the retention opener) spans the clip's first
     min(2.5, clip_len) seconds. The default clip path passes the moment's retention hook; the
-    transcript captions are layered in only when the caller opts in (clip._subtitles_vf / burn_subs)."""
+    transcript captions are never layered at render (clip._transcript_burn_enabled is always False);
+    only the retention hook burns when present."""
     clip_len = max(0.0, clip_end - clip_start)
 
     lines: list[str] = []

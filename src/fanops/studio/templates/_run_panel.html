@@ -77,8 +77,6 @@
       {% endif %}
       {% endif %}
 
-      <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles <span class="muted">— burn from transcript by default</span></label>
-
       <div class="stage-actions">
         <button type="submit" data-busy-label="Adding…">{% if status.queue_gate %}Add{% else %}Add to queue{% endif %}</button>
         {% if status.queue_gate %}<span class="muted">Finder drops work too — they appear in Pending below.</span>{% else %}<span class="muted">Add via Finder works too — the next Make press picks it up.</span>{% endif %}
@@ -158,7 +156,6 @@
           {% endfor %}
         </fieldset>
       {% endif %}
-      <label class="check-row no-subs-opt"><input type="checkbox" name="no_subs" value="1"> Skip subtitles</label>
       <button type="submit" data-busy-label="Queuing…">Add to queue</button>
     </form>
   </section>

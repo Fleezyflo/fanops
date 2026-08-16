@@ -789,11 +789,10 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # Toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT ON: transcript
-        # subs ship live with no operator action; music batches opt out per-batch (Batch.burn_subs=False).
-        # The on-screen RETENTION HOOK (m.hook) is a SEPARATE layer that burns regardless of this flag;
-        # this only adds the transcript on top. Only the explicit off-words "0"/"false"/"no"/"off"
-        # disable it; unset/blank/anything else stays ON. Mirrors isolate_vocals' default-on shape.
+        # Legacy env toggle — render no longer burns transcript captions (_transcript_burn_enabled is
+        # always False; hook-only overlay). Batch.burn_subs and this flag are ignored at render; the
+        # retention hook (m.hook) burns regardless. Kept for settings/doctor parity and any future
+        # opt-in path; only explicit off-words disable the registered default.
         return env_bool(os.getenv("FANOPS_BURN_SUBS"), default=True)
 
     @property
