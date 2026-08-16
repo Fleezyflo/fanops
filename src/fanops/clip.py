@@ -696,14 +696,8 @@ def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: 
 
     READ-ONLY BY CONSTRUCTION: calls overlay.build_ass / build_supercut_ass, never overlay.write_ass."""
     m = led.moments[moment_id]
-    src = led.sources[m.parent_id]
     hook = ((m.hook or "").strip() or None)
-    raw = src.transcript or []
-    if _transcript_burn_enabled(led, cfg, src):
-        from fanops.transcribe import trusted_segments
-        segments = trusted_segments(raw, src_lang=src.language)
-    else:
-        segments = []
+    segments: list = []                                # transcript captions never burned (hook-only since PR 994)
     if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
         return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():
