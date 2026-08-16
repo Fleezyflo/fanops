@@ -59,49 +59,55 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1272
+        "line": 1277
       },
       {
         "call": "Ledger.transaction",
-        "line": 1285
+        "line": 1290
       },
       {
         "call": "Ledger.transaction",
-        "line": 1297
+        "line": 1302
       },
       {
         "call": "Ledger.transaction",
-        "line": 1529
+        "line": 1552
       },
       {
         "call": "Ledger.transaction",
-        "line": 1542
+        "line": 1565
       },
       {
         "call": "Ledger.transaction",
-        "line": 1629
+        "line": 1652
       },
       {
         "call": "Ledger.transaction",
-        "line": 1637
+        "line": 1660
       },
       {
         "call": "Ledger.transaction",
-        "line": 1662
+        "line": 1685
       },
       {
         "call": "Ledger.transaction",
-        "line": 1669
+        "line": 1692
       },
       {
         "call": "Ledger.transaction",
-        "line": 1678
+        "line": 1701
       }
     ],
     "fanops.ledger_wipe": [
       {
         "call": "Ledger.transaction",
         "line": 384
+      }
+    ],
+    "fanops.overlay_reburn": [
+      {
+        "call": "Ledger.transaction",
+        "line": 358
       }
     ],
     "fanops.paths_rebase": [
@@ -479,7 +485,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1481
+        "line": 1503
       }
     ],
     "fanops.post.compress": [
@@ -572,7 +578,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1513
+        "line": 1535
       }
     ],
     "fanops.post.compress": [
@@ -727,11 +733,11 @@
     "fanops.overlay": [
       {
         "call": "subprocess.run",
-        "line": 357
+        "line": 327
       },
       {
         "call": "subprocess.run",
-        "line": 395
+        "line": 365
       }
     ],
     "fanops.post.compress": [
@@ -789,7 +795,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 81,
+    "ledger_transaction_sites": 82,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,

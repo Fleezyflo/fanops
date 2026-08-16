@@ -904,6 +904,11 @@ def main(argv: list[str] | None = None) -> int:
     p_reframe.add_argument("--rollback", metavar="RUN_ID", help="restore the original bytes (whole run, or --clip)")
     p_reframe.add_argument("--clip", metavar="CLIP_ID", help="--rollback: restore just this clip")
     p_reframe.add_argument("--cleanup", metavar="RUN_ID", help="delete a terminal run's backups (explicit, refused otherwise)")
+    p_or = sub.add_parser("overlay-reburn", help="recut awaiting-only Review clips in place (ass-only). Reuses reframe.lock; stale lock = operator unlink. fanops reframe --status will not understand or_ run dirs.")
+    p_or.add_argument("--dry-run", action="store_true", help="READ-ONLY classify (the default)")
+    p_or.add_argument("--apply", action="store_true", help="MUTATE: stage-then-replace eligible clips (pauses the pump)")
+    p_or.add_argument("--limit", type=int, help="classify/apply at most N awaiting clips")
+    p_or.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL prove writes land here.")
     p_rec = sub.add_parser("recover", help="delivery recovery read-models")
     rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
     rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
@@ -1457,6 +1462,23 @@ def _reframe_mutation(paths, args) -> int:
     return 0
 
 
+def cmd_overlay_reburn(cfg: Config, args) -> int:
+    """In-place ass-only recut of awaiting Review clips. Reuses reframe.lock (stale lock = operator
+    unlink). `fanops reframe --status` will not understand or_ run dirs."""
+    from fanops import overlay_reburn as ob
+    from fanops.reframe_apply import MigrationLockHeld
+    try:
+        if args.apply:
+            cmd_pause(cfg, on=True)
+            summary = ob.run_apply(cfg, limit=args.limit, scratch=args.scratch)
+        else:
+            summary = ob.run_dry_run(cfg, limit=args.limit, scratch=args.scratch)
+    except MigrationLockHeld as exc:
+        get_logger(cfg)("overlay_reburn", "-", "lock_held", reason=str(exc)[:200])
+        return 2
+    return 1 if summary.get("aborted") else 0
+
+
 def cmd_reframe(cfg: Config, args) -> int:
     """Classify (--dry-run) or migrate (--apply) the corpus framing.
 
@@ -1515,6 +1537,7 @@ def cmd_reframe(cfg: Config, args) -> int:
 
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reframe":  return cmd_reframe(cfg, args)
+    if args.cmd == "overlay-reburn": return cmd_overlay_reburn(cfg, args)
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "pause":    return cmd_pause(cfg, on=True)
     if args.cmd == "resume":   return cmd_pause(cfg, on=False)
