@@ -215,8 +215,6 @@ def test_cmd_limit_non_positive_and_apply_dry_run_exit_2(tmp_path):
     from argparse import Namespace
     from fanops.recaption import cmd_posts_recaption
     cfg = Config(root=tmp_path)
-    def _ns(**kw):
-        return Namespace(apply=False, dry_run=False, limit=None, account=None, **kw)
-    assert cmd_posts_recaption(cfg, _ns(limit=0)) == 2
-    assert cmd_posts_recaption(cfg, _ns(limit=-1)) == 2
-    assert cmd_posts_recaption(cfg, _ns(apply=True, dry_run=True)) == 2
+    assert cmd_posts_recaption(cfg, Namespace(apply=False, dry_run=False, limit=0, account=None)) == 2
+    assert cmd_posts_recaption(cfg, Namespace(apply=False, dry_run=False, limit=-1, account=None)) == 2
+    assert cmd_posts_recaption(cfg, Namespace(apply=True, dry_run=True, limit=None, account=None)) == 2
