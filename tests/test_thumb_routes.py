@@ -79,8 +79,10 @@ def test_source_thumb_traversal_guard(tmp_path):
 
 def test_clip_routes_alias_parity(tmp_path, monkeypatch):
     cfg = _seed_clip(Config(root=tmp_path))
+    calls = []
 
     def fake_thumb(path, out_jpg, *, at_seconds=0.5):
+        calls.append(at_seconds)
         out_jpg.write_bytes(b"\xff\xd8\xffCLIP")
         return True
 
@@ -90,6 +92,7 @@ def test_clip_routes_alias_parity(tmp_path, monkeypatch):
     b = c.get("/clip-thumb/clip_1")
     assert a.status_code == 200 and b.status_code == 200
     assert a.data == b.data
+    assert calls == [0.0]
 
 
 def test_clip_thumb_stale_mtime_reextracts(tmp_path, monkeypatch):
@@ -101,13 +104,13 @@ def test_clip_thumb_stale_mtime_reextracts(tmp_path, monkeypatch):
     calls = []
 
     def fake_thumb(path, out_jpg, *, at_seconds=0.5):
-        calls.append(1)
+        calls.append(at_seconds)
         out_jpg.write_bytes(b"\xff\xd8\xffNEWPOSTER")
         return True
 
     monkeypatch.setattr(thumb_mod, "make_thumbnail", fake_thumb)
     r = _client(cfg).get("/thumb/clip/clip_1")
-    assert r.status_code == 200 and calls == [1]
+    assert r.status_code == 200 and calls == [0.0]
 
 
 def test_clip_unknown_returns_gif_not_500(tmp_path):
