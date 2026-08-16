@@ -14,11 +14,11 @@ from datetime import datetime, timezone
 import requests
 from pathlib import Path
 from fanops.config import Config
-from fanops.accounts import Accounts
+from fanops.accounts import Account, AccountStatus, Accounts
 from fanops.controlio import write_text_atomic
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, PostState, is_real_submission_id
+from fanops.models import ErrorKind, Post, PostState, is_real_submission_id, validate_account_handle
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
@@ -246,6 +246,22 @@ def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: b
     get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
 
 
+def _non_active_row(accounts: Accounts | None, handle: str) -> Account | None:
+    """Row iff a registry entry exists and is not AccountStatus.active. None when accounts is None,
+    the handle has no row, or the row is active — a missing row must not apply this guard
+    (empty-registry / unknown-handle parity with channel_provider_if_ready)."""
+    if accounts is None:
+        return None
+    try:
+        want = validate_account_handle(handle)
+    except ValueError:
+        return None
+    for a in accounts.accounts:
+        if a.handle == want:
+            return None if a.status is AccountStatus.active else a
+    return None
+
+
 def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts | None" = None,
                  account_id: str | None = None,
                  _tally: dict | None = None, due_cutoff: datetime | None = None) -> str | None:
@@ -275,6 +291,16 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             return None                                # lost the race / not eligible — no-op (F11)
         if due_cutoff is not None and not is_scheduled_due(post, due_cutoff):   # M08: re-check dueness under lock
             return None
+        # F6-I / MOL-980: a row that exists and is not active must never enter submitting. Missing row
+        # does NOT apply this guard (empty-registry / unknown-handle parity). accounts is None skips
+        # the check (internal test callers that exercise the network path).
+        row = _non_active_row(accounts, post.account)
+        if row is not None:
+            get_logger(cfg)("publish", post_id, "skip_account_not_active",
+                            account=post.account, platform=post.platform.value, status=row.status.value)
+            if _tally is not None:
+                _tally["skipped_not_active"] = _tally.get("skipped_not_active", 0) + 1
+            return None                                # leave it `queued` — planned/warming/retired do not ship
         # RC-3b (S07): the producer and the SOLE consumer of `submitting` must agree on backend capability.
         # A post may enter `submitting` ONLY on a channel `channel_provider_if_ready` ADMITS — the exact
         # per-channel predicate `is_live_backend`/`live_ready_channels` gate reconcile (the sole resolver of
@@ -509,11 +535,24 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     for pid, p in stranded.items():
         get_logger(cfg)("publish", pid, "skipped_retired_lineage", account=p.account)
     due = [p for p in due if p.id not in stranded]
+    # F6-I / MOL-980: park non-active handles BEFORE ensure_up so an all-dead due queue does not start
+    # Postiz. Same predicate as the _publish_one claim (row exists AND status is not active). Missing
+    # row is a no-op — empty registry / unknown handle keeps today's path.
+    parked_not_active: dict[str, tuple[Post, Account]] = {}
+    for p in due:
+        row = _non_active_row(accounts, p.account)
+        if row is not None:
+            parked_not_active[p.id] = (p, row)
+    for pid, (p, row) in parked_not_active.items():
+        get_logger(cfg)("publish", pid, "skip_account_not_active",
+                        account=p.account, platform=p.platform.value, status=row.status.value)
+    due = [p for p in due if p.id not in parked_not_active]
     if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
     published = no_provider = no_integration_id = not_distributed = skipped_existing_id = not_live_ready = 0
+    skipped_not_active = len(parked_not_active)
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -538,10 +577,11 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
         not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued
+        skipped_not_active += tally.get("skipped_not_active", 0)           # F6-I: non-active row, left queued
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed,
             "skipped_existing_id": skipped_existing_id, "not_live_ready": not_live_ready,
-            "skipped_retired_lineage": len(stranded)}
+            "skipped_retired_lineage": len(stranded), "skipped_not_active": skipped_not_active}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:
