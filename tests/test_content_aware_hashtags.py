@@ -291,15 +291,17 @@ def test_contentless_clip_is_byte_identical(tmp_path):
 
 
 def test_prompt_annotates_menu_with_hashtag_metrics():
-    """MOL-636 + MOL-692: menu entries carry the platform numbers, and the rule tells the model the menu
-    is already ordered biggest-first — it is never asked to compare unlike units itself."""
+    """MOL-636 + MOL-692 + MOL-976: menu entries carry the platform numbers. Tie-break is earlier
+    menu entry when fit is equal — never a volume-order claim, never unlike-unit arithmetic."""
     out = caption_prompt({**_BASE_PAYLOAD,
                           "surfaces": [{"surface": "a/instagram", "platform": "instagram",
                                         "hashtag_store": ["#hiphop"]}],
                           "hashtag_metrics": {"#hiphop": {"media_count": 9000.0, "play_count": 120.0,
                                                           "current_top_reel_play_max_7d": 77.0}}})
     assert "media_count" in out and "9000" in out and "77" in out
-    assert "BIGGEST FIRST" in out
+    assert "BIGGEST FIRST" not in out
+    assert "prefer earlier menu entries when fit is equal" in out
+    assert "keep the earlier entry" in out
     assert "do not add or average them" in out.lower()
 
 
