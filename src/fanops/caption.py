@@ -222,6 +222,8 @@ def _source_corpus_lead(content_tags: list[str], meas: dict) -> list[str]:
 
 def request_captions(led: Ledger, cfg: Config, clip_id: str,
                      surfaces: list[tuple[str, Platform]], accounts=None) -> Ledger:
+    from fanops.tag_outcomes import refresh_tag_outcomes
+    refresh_tag_outcomes(cfg, led)                       # fail-open; selection sidecar, not a gate
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
@@ -390,7 +392,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
                             src.language if src else None, store=surface_store.get(item.surface),
                             corpus=surface_corpus.get(item.surface),   # the derived per-persona pool leads
                             content=content_tags,                     # MOL-642: clip transcript signal
-                            cfg=cfg, recent=recent)
+                            cfg=cfg, recent=recent, account=handle)
         if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[item.surface] = _caption_entry(
             tags, [str(h) for h in (item.hashtags or [])],

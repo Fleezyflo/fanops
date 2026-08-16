@@ -257,25 +257,51 @@ def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
     return out
 
 
-def _mid_rank_key(tag: str, rec, platform: Platform) -> tuple:
-    """Within the mid band: IG keeps size-then-trend; TikTok prefers TREND_FIELD then size."""
+def _mid_rank_key(tag: str, rec, platform: Platform, outcome=None) -> tuple:
+    """Within the mid band: own-outcome p50 when n≥K; else IG size-then-trend / TT trend-then-size."""
+    from fanops.tag_outcomes import qualifies
+    if qualifies(outcome):
+        return (-float(outcome["p50"]), *size_rank_key(tag, rec), -(tag_size(rec) or 0.0))
     if platform is Platform.tiktok:
         return (-(tag_trend(rec) or 0.0), -(tag_size(rec) or 0.0), tag)
     return size_rank_key(tag, rec)
 
 
-def _compose_shipped(candidates, platform: Platform, measurements: dict, max_tags: int) -> list[str]:
+def _selection_rank(tag: str, rec, platform: Platform, outcome=None) -> tuple:
+    """Metric order for one tag. n≥K → p50 DESC, then size_rank_key, then media_count. Else size/band."""
+    from fanops.tag_outcomes import qualifies
+    if qualifies(outcome):
+        return (0, -float(outcome["p50"]), *size_rank_key(tag, rec), -(tag_size(rec) or 0.0))
+    return (1, 0.0, *_mid_rank_key(tag, rec, platform), 0.0)
+
+
+def _account_outcomes(cfg, platform: Platform, account) -> dict:
+    """This account+platform's outcome rows, or {}. Fail-open (load never raises)."""
+    if cfg is None or not account or not str(account).strip():
+        return {}
+    from fanops.tag_outcomes import load_tag_outcomes
+    table = load_tag_outcomes(cfg)
+    by_acc = table.get(platform.value) if isinstance(table, dict) else None
+    if not isinstance(by_acc, dict):
+        return {}
+    rows = by_acc.get(str(account))
+    return rows if isinstance(rows, dict) else {}
+
+
+def _compose_shipped(candidates, platform: Platform, measurements: dict, max_tags: int,
+                     outcomes=None) -> list[str]:
     """Slot hygiene after membership/sort/corpus-lead: mega/untrusted ≤ MEGA_SLOT_MAX; leftover
     slots prefer mid. Mid-band order is platform-split. No semantic tag-name list — `#love` is
     limited because it is INT32/mega, not because it is named `#love`."""
     def rec(t): return measurements.get(t) or {}
     def band(t): return size_band(rec(t))
+    def oc(t): return (outcomes or {}).get(t)
     uniq: list[str] = []; seen: set[str] = set()
     for t in candidates:
         if t and t not in seen:
             seen.add(t); uniq.append(t)
     mid_pos = [i for i, t in enumerate(uniq) if band(t) == "mid"]
-    mids = sorted((uniq[i] for i in mid_pos), key=lambda t: _mid_rank_key(t, rec(t), platform))
+    mids = sorted((uniq[i] for i in mid_pos), key=lambda t: _mid_rank_key(t, rec(t), platform, oc(t)))
     for i, t in zip(mid_pos, mids):
         uniq[i] = t
     out: list[str] = []; leftover: list[str] = []; mega_n = 0
@@ -315,7 +341,7 @@ def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None,
                  corpus: list[str] | None = None, content: list[str] | None = None,
-                 cfg=None, recent: list[str] | None = None) -> list[str]:
+                 cfg=None, recent: list[str] | None = None, account=None) -> list[str]:
     """Return at most `max_tags` tags for one surface, composed from PLATFORM-MEASURED material only.
 
     `store` is the measurement cache as an ordered menu (`ranked_tags(load_measurements(cfg))`) — it is
@@ -327,11 +353,22 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     Order: corpus tier, then the clip's own picks, then graded LRU (`recent`, oldest-first — never-used
     leads), then the platform metric rank. After sort + corpus-lead cap: when `cfg` has measurements, at most `MEGA_SLOT_MAX` mega/untrusted tags occupy the shipped line and leftover slots prefer mid; within mid, IG keeps size-then-trend and TikTok prefers `TREND_FIELD` then size. `cfg is None` / empty measurements skip that layer (byte-identical). Floors take the TAIL slots so the corpus/metric lead survives:
     one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu (content is preference only).
+    Optional `account=`: when that account+platform has n≥OUTCOME_MIN_N for a tag, metric rank is p50
+    DESC then `size_rank_key`. `account=None` is the size path (byte-identical).
 
     Empty store AND empty corpus (and non-AR) -> an empty line. That is the honest floor: there is no
     hand-ranked pool and no discovery pad left to invent reach with."""
     corpus_norm = _dedupe_norm(corpus)
     store_norm = _dedupe_norm(store)                   # the measured menu, already metric-ranked
+    acct_out = _account_outcomes(cfg, platform, account)
+    measurements = None
+    if acct_out and cfg is not None:
+        try:
+            measurements = load_measurements(cfg) or {}
+        except OSError:
+            measurements = {}
+        store_norm.sort(key=lambda t: _selection_rank(
+            t, measurements.get(t) or {}, platform, acct_out.get(t)))
     # MOL-635 residual / MOL-642 tighten: content is a FIT signal among MEASURED tags only
     # (store ∪ corpus). Unmeasured ASR tokens must not pad a cold/empty line (no content floor).
     measured = set(store_norm) | set(corpus_norm)
@@ -396,10 +433,11 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     # MOL-978: mega ≤ 1 and IG/TT mid split. Fail-open when cfg/measurements are missing so
     # clip-signal tests (cfg=None) stay byte-identical. `platform` is read here.
     # load_measurements never raises; OSError covers monkeypatched/unreadable cache (persona_facts).
-    try:
-        measurements = {} if cfg is None else (load_measurements(cfg) or {})
-    except OSError:
-        measurements = {}
+    if measurements is None:
+        try:
+            measurements = {} if cfg is None else (load_measurements(cfg) or {})
+        except OSError:
+            measurements = {}
     if not measurements:
         return kept[:max_tags]
     pool = list(kept)
@@ -407,7 +445,7 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     for h in corpus_norm + store_norm:
         if h not in seen_p:
             seen_p.add(h); pool.append(h)
-    return _compose_shipped(pool, platform, measurements, max_tags)
+    return _compose_shipped(pool, platform, measurements, max_tags, outcomes=acct_out)
 
 
 _ARABIC_SET = set(_ARABIC)
@@ -428,12 +466,14 @@ def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
                         max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None, content: list[str] | None = None,
-                        cfg=None, recent: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
+                        cfg=None, recent: list[str] | None = None,
+                        account=None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection (DRY — it calls it), then
     labels each kept tag by the signal it traces to (content|corpus|region|graph-reach). This proves every
     shipped tag is evidence-backed — no tag can ride a claim we invented."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, corpus=corpus, content=content, cfg=cfg, recent=recent)
+                       store=store, corpus=corpus, content=content, cfg=cfg, recent=recent,
+                       account=account)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
     store_set = set(_dedupe_norm(store))
     sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}
