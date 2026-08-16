@@ -203,10 +203,13 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if flag:
         return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
                             "Edit it by hand or regenerate again.")
-    # Parity with ingest_captions (the one true vet): the model's picks are vetted under the post's platform
-    # with corpus + recency threading, and the POSTED caption IS the vetted <=4-tag line — regenerate can no
-    # longer write raw model tags past the cap/membership gates.
-    from fanops.caption import _recent_tags, _tags_in
+    from fanops.caption import _recent_tags, _tags_in, is_tags_only_caption
+    if is_tags_only_caption(item.caption):
+        return ActionResult(ok=False, error="regenerated caption rejected — caption_tags_only. "
+                            "Edit it by hand or regenerate again.")
+    # Parity with ingest_captions: persist the stripped model sentence + the vetted <=4-tag array.
+    # Tags-only / empty sentence is rejected above (same stem as ingest HOLD). An empty tag line
+    # after vet is honest; an empty sentence is not.
     # MOL-512 (C-2): vet from this account's persona aligned pool (same menu the regen prompt carried),
     # never the global ranked_tags(load_measurements) cache — so regen cannot accept/backfill another
     # persona's tags.
@@ -216,7 +219,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
                            p.platform, src.language if src else None, store=store,
                            corpus=corpus, content=content_tags or None, cfg=cfg,
                            recent=_recent_tags(led, p.account), account=p.account)
-    new_caption, new_tags = " ".join(vetted), vetted
+    new_caption, new_tags = (item.caption or "").strip(), vetted
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become
         # imminent/due — re-check against real wall-clock (fail-safe), not the stale entry-time now.

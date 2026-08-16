@@ -39,12 +39,12 @@ def test_regenerate_rewrites_queued_post(tmp_path):
     res = regenerate_caption(cfg, "p_edit", "punchier", model=_model("PUNCHIER LINE", ["#hiphop", "#rap"]), now=NOW)
     assert res.ok is True
     p = Ledger.load(cfg).posts["p_edit"]
-    # pipeline parity (ingest_captions contract): the written caption IS the vetted <=4-tag line —
-    # raw model prose/tags are never persisted past the vet. Cold fixture (no corpus/store): unmeasured
-    # picks die and the line is honest-empty (discovery floor deleted). Non-empty survival is covered
-    # by test_regenerate_payload_carries_corpus_and_vet_keeps_it.
-    assert p.hashtags == [] and p.caption == ""
-    assert p.caption != "PUNCHIER LINE"
+    # pipeline parity (ingest_captions contract): persist the model sentence; hashtags stay the
+    # vetted <=4 array. Cold fixture (no corpus/store): unmeasured picks die and the tag line is
+    # honest-empty. An empty sentence is rejected (caption_tags_only); a sentence with no surviving
+    # tags is not. Non-empty tag survival is covered by
+    # test_regenerate_payload_carries_corpus_and_vet_keeps_it.
+    assert p.hashtags == [] and p.caption == "PUNCHIER LINE"
     assert res.detail["caption"] == p.caption
 
 
@@ -132,7 +132,7 @@ def test_regenerate_picks_exact_surface_among_many(tmp_path):
         return {"items": [{"surface": "b/youtube", "caption": "check the link in bio", "language": "en"},
                           {"surface": "a/instagram", "caption": "RIGHT", "hashtags": ["#hiphop"], "language": "en"}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
-    assert res.ok is True and res.detail["caption"] == " ".join(res.detail["hashtags"])
+    assert res.ok is True and res.detail["caption"] == "RIGHT"
 
 def test_regenerate_accepts_lone_item_on_surface_mismatch(tmp_path):
     # Single-surface regen: if the model returns exactly ONE item whose surface label differs from
@@ -141,7 +141,14 @@ def test_regenerate_accepts_lone_item_on_surface_mismatch(tmp_path):
     def m(prompt, schema): return {"items": [{"surface": "wrong/label", "caption": "LONE",
                                               "hashtags": ["#hiphop"], "language": "en"}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
-    assert res.ok is True and res.detail["caption"] == " ".join(res.detail["hashtags"])
+    assert res.ok is True and res.detail["caption"] == "LONE"
+
+def test_regenerate_rejects_tags_only_without_persisting(tmp_path):
+    # Same stem as ingest HOLD: a tags-only model caption is rejected, never written as language.
+    cfg = Config(root=tmp_path); _seed(cfg, caption="CLEAN")
+    res = regenerate_caption(cfg, "p_edit", "", model=_model("#hiphop #rap", ["#hiphop", "#rap"]), now=NOW)
+    assert res.ok is False and "caption_tags_only" in (res.error or "")
+    assert Ledger.load(cfg).posts["p_edit"].caption == "CLEAN"   # unchanged — no tag-line manufacture
 
 def test_regenerate_malformed_model_output_rejected(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, caption="KEEP")
@@ -164,13 +171,11 @@ def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
                                                                  "language": "en"}]})
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})
-    # The route re-renders the VETTED line, not the model's raw pick. With no measurement cache and no
-    # derived corpus in this fixture, #hiphop carries no platform evidence and is therefore not in the
-    # membership set — cold path ships empty. That IS the contract: a tag ships only when the platform
-    # measured it, and an empty line is correct where a padded one would be a lie.
+    # Caption is the model sentence; tags still run the ingest vet. With no measurement cache and no
+    # derived corpus in this fixture, #hiphop dies — empty tag line is honest. Empty sentence is not.
     assert r.status_code == 200
     p = Ledger.load(cfg).posts["p_edit"]
-    assert p.hashtags == [] and p.caption == ""
+    assert p.hashtags == [] and p.caption == "ROUTED"
 
 def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     from fanops.studio.app import create_app
