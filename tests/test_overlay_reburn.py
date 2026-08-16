@@ -25,12 +25,6 @@ _OLD_ASS = "OLD-ASS-TEXT"
 _NEW_ASS = "NEW-ASS-TEXT"
 
 
-def _stub_resolve(monkeypatch, *, focus=None, track=None, content_type=None):
-    """Make prove_payload's crop:resolve axis match a stamped fingerprint (CI has no detector)."""
-    res = type("R", (), {"focus": focus, "track": track, "content_type": content_type})()
-    monkeypatch.setattr(framing, "_resolve", lambda *a, **k: res)
-
-
 def _stub_framing(monkeypatch, *, ct="talk", detect=_STATS, focus=None, track=None, sal=None):
     """Stub framing._resolve's return — prove enumerates that crop vs centered. CI has no YuNet."""
     res = type("R", (), {"focus": focus, "track": track, "content_type": ct})()
@@ -184,7 +178,6 @@ def test_supercut_stitch_render_id_skip(tmp_path, monkeypatch):
 
 def test_current_framing_match_when_centered_reconstruct_would_fail(tmp_path, monkeypatch):
     _stub_framing(monkeypatch, focus=_FOCUS)
-    _stub_resolve(monkeypatch, focus=_FOCUS, content_type="talk")
     paths, cid, cfg = _corpus(tmp_path, monkeypatch, focus=_FOCUS, content_type="talk")
     reframe.snapshot_ledger(paths)
     led = Ledger.load(paths.scratch_cfg)
@@ -215,7 +208,6 @@ def test_framing_keys_in_delta_skip(tmp_path, monkeypatch):
 
 def test_stack_fail_open_not_committed(tmp_path, monkeypatch):
     _stub_framing(monkeypatch, focus=_STACK_FOCUS, ct=framing.RENDER_STACK_PAIR)
-    _stub_resolve(monkeypatch, focus=_STACK_FOCUS, content_type=framing.RENDER_STACK_PAIR)
     paths, cid, cfg = _corpus(tmp_path, monkeypatch, focus=_STACK_FOCUS,
                               content_type=framing.RENDER_STACK_PAIR)
     reframe.snapshot_ledger(paths)
@@ -242,8 +234,7 @@ def test_ct_stack_pair_never_fed_to_ffmpeg_clip_cmd(tmp_path, monkeypatch):
         fed.append(k.get("content_type"))
         return real(*a, **k)
     monkeypatch.setattr(clipmod, "ffmpeg_clip_cmd", spy)
-    _stub_framing(monkeypatch, focus=_STACK_FOCUS)
-    _stub_resolve(monkeypatch, focus=_STACK_FOCUS, content_type=framing.RENDER_STACK_PAIR)
+    _stub_framing(monkeypatch, focus=_STACK_FOCUS, ct=framing.RENDER_STACK_PAIR)
     paths, cid, cfg = _corpus(tmp_path, monkeypatch, focus=_STACK_FOCUS,
                               content_type=framing.RENDER_STACK_PAIR)
     reframe.snapshot_ledger(paths)
