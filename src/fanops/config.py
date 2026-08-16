@@ -789,8 +789,8 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # Legacy env toggle — render no longer burns transcript captions (_transcript_burn_enabled is
-        # always False; hook-only overlay). Batch.burn_subs and this flag are ignored at render; the
+        # Legacy env toggle — render no longer burns transcript captions (hook-only overlay since PR 994).
+        # Batch.burn_subs and this flag are ignored at render; the
         # retention hook (m.hook) burns regardless. Kept for settings/doctor parity and any future
         # opt-in path; only explicit off-words disable the registered default.
         return env_bool(os.getenv("FANOPS_BURN_SUBS"), default=True)
