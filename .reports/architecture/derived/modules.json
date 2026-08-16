@@ -70,6 +70,7 @@
     "fanops.moment_hook_learning",
     "fanops.moments",
     "fanops.overlay",
+    "fanops.overlay_reburn",
     "fanops.p4_dim_bias",
     "fanops.paths_rebase",
     "fanops.persona_directives",
@@ -217,6 +218,7 @@
     "fanops.moment_hook_learning": "S14_learning",
     "fanops.moments": "S08_selection",
     "fanops.overlay": "S09_render",
+    "fanops.overlay_reburn": "S19_maintenance",
     "fanops.p4_dim_bias": "S14_learning",
     "fanops.paths_rebase": "S19_maintenance",
     "fanops.persona_directives": "S04_registry",
@@ -293,9 +295,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 138,
+    "assigned": 139,
     "ghosts": 0,
-    "modules": 138,
+    "modules": 139,
     "unassigned": 0
   },
   "unassigned_modules": []
