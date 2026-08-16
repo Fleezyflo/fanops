@@ -479,7 +479,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     accts = Accounts.load(cfg)
     log = get_logger(cfg)
     for p in accts.validate():
-        if "persona" in p or "shared-cut" in p:
+        if "persona" in p:
             log("accounts", "-", "differentiation_warn", err=p[:160])
     aspects = _aspects_for(accts)
 
