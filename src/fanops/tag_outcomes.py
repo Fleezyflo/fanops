@@ -3,9 +3,9 @@
 
 Built from PostState.analyzed posts. Used by vet_hashtags when n ≥ OUTCOME_MIN_N for THIS
 account+platform; otherwise selection stays on size_rank_key. No (platform, tag) rollup — that
-launders one account's death into another's menu. Not a learning module: lift_score and
-_LEARNING_MODULES stay blind to .hashtags. YouTube is not trained. Sidecar is
-cfg.control / "tag_outcomes.json" (no config.py path). Fail-open everywhere."""
+launders one account's death into another's menu. Not a scoring module and not listed among
+the learning files. YouTube is not trained. Sidecar is cfg.control / "tag_outcomes.json"
+(no config.py path). Fail-open everywhere."""
 from __future__ import annotations
 import json
 import statistics

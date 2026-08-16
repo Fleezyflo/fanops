@@ -241,8 +241,9 @@ def test_selection_may_read_outcomes_learning_modules_stay_blind():
     trainer = (src / "tag_outcomes.py").read_text()
     assert "tag_outcomes" not in _LEARNING_MODULES
     assert trainer.count("PostState.analyzed")
-    assert ".hashtags" in trainer or "hashtags" in trainer
-    assert "lift_score" not in trainer
+    assert "getattr(p, \"hashtags\"" in trainer          # trainer reads tags for SELECTION only
+    assert "from fanops.track" not in trainer
+    assert "import lift_score" not in trainer
     assert "tag_reach_means" not in trainer
     assert "rank_tags_by_reach" not in trainer
     for name in ("track", "variant_learning", "variant_amplify", "variant_transfer",
