@@ -97,7 +97,7 @@ def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
     assert s["done"] == 1 and s["synced"] == 1 and fake.calls == 1
     led = Ledger.load(cfg)
     p = led.posts["p1"]
-    assert p.caption == " ".join(p.hashtags) and 0 < len(p.hashtags) <= 4   # the vetted tag line
+    assert p.caption == "fresh" and 0 < len(p.hashtags) <= 4   # model sentence, tags stay the vetted array
     assert "#slept" in p.hashtags                                  # source-measured lead survives the vet
     assert "#junkjunkjunk" not in p.hashtags                        # junk cannot reach a post
     assert p.state is PostState.awaiting_approval                   # approval lifecycle untouched
@@ -141,7 +141,7 @@ def test_imminent_queued_post_is_skipped(tmp_path):
     assert s["skipped_imminent"] == 1 and s["synced"] == 1
     led = Ledger.load(cfg)
     assert led.posts["p1"].caption == "#old"                        # imminent queued: shipping, untouched
-    assert led.posts["p2"].caption == " ".join(led.posts["p2"].hashtags) != "#old"
+    assert led.posts["p2"].caption == "fresh" != "#old"
 
 
 def _write_accounts(cfg, handles):

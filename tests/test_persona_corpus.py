@@ -156,11 +156,10 @@ def test_ingest_uses_source_corpus_lead_not_persona_monopoly(tmp_path):
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    mc = led.clips["clip_1"].meta_captions["a/instagram"]
-    assert mc["hashtags"][0] == "#detroit"                  # source high-count lead, not persona corpus
-    assert "#alphacorpus" not in mc["hashtags"]
-    assert mc["tag_sources"].get("#detroit") in ("corpus", "content")
-    assert len(mc["hashtags"]) <= 4
+    c = led.clips["clip_1"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert "a/instagram" not in c.meta_captions
 
 
 # --- the prompt surfaces the corpus rule -------------------------------------------------------

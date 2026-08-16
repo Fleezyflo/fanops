@@ -28,8 +28,7 @@ from fanops.variant_learning import ucb_rank
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
 from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements, ranked_tags,
-                             _norm, _num, content_tag_candidates)
-from fanops.log import get_logger
+                             _norm, _num, content_tag_candidates, CAPTION_TAG_RE)
 from fanops.control import load_guidance
 
 logger = logging.getLogger(__name__)
@@ -45,6 +44,23 @@ def _tags_in(caption: str | None) -> list[str]:
     """Hashtags found inside a caption line (the model's tags live in the array AND the caption
     text); used as the fallback when the structured `hashtags` array is empty."""
     return _TAG_RE.findall(caption or "")
+
+
+def is_tags_only_caption(caption: str, tags=None) -> bool:
+    """True when `caption` is empty/whitespace, or only hashtags + leftover punctuation.
+
+    After stripping `hashtags.CAPTION_TAG_RE` matches (and any explicit `tags` tokens) plus leftover
+    punctuation/whitespace, nothing remains → True. A sentence plus tags → False."""
+    text = caption or ""
+    if not text.strip():
+        return True
+    text = CAPTION_TAG_RE.sub("", text)
+    if tags:
+        for raw in tags:
+            tok = str(raw).strip() if raw is not None else ""
+            if tok:
+                text = text.replace(tok, "")
+    return re.sub(r"[\s\W_]+", "", text, flags=re.UNICODE) == ""
 
 # DEFAULT English off-brand / begging / main-brand-linkage anti-patterns. Operator-overridable
 # via 00_control/tuning.json -> "offbrand_en" (audit b); when that key is present it REPLACES this
@@ -295,17 +311,16 @@ def _platform_for_surface(surface: str, surface_platform: dict) -> Platform:
         raise ValueError(f"caption request has invalid platform {p!r} for {surface!r}") from None
 
 
-def _caption_entry(tags: list, hashtags_raw: list, *, fallback: bool = False, tag_sources: dict | None = None) -> dict:
-    """One surface's stored meta_captions entry. The posted caption IS the vetted <=4-tag line (hashtags-only).
-    hashtags_raw keeps the model's RAW picks verbatim (finding #3: Studio shows picked-vs-vetted; display-only).
-    ROOT FIX: the caption gate no longer authors an on-screen hook (the frame-seeing moment gate does, via
-    m.hook) -> hook/axis/rationale are always None here. They are KEPT on the persisted entry (not on
-    the CaptionItem model — AGENT-7 dropped those) as the DORMANT variant-A/B contract the dormant readers
-    expect (variant_amplify/digest read entry.get("hook"); crosspost reads cap.get("axis")). `fallback` marks a
-    seed-tag synthesized entry.
-    `tag_sources` is the per-tag provenance ({tag: source}) — proves every shipped tag traces to a real
+def _caption_entry(tags: list, hashtags_raw: list, *, caption: str, fallback: bool = False, tag_sources: dict | None = None) -> dict:
+    """One surface's stored meta_captions entry. `caption` is the stripped model sentence, never the
+    joined tag line. `hashtags` is the vetted <=4 list; hashtags_raw keeps the model's RAW picks
+    verbatim (Studio shows picked-vs-vetted; display-only). hook/axis/rationale stay None (AGENT-7;
+    the moment gate owns m.hook). They stay on the persisted entry as the dormant variant-A/B
+    contract (variant_amplify/digest read entry.get("hook"); crosspost reads cap.get("axis")).
+    `fallback` is not a license to manufacture caption = join(tags).
+    `tag_sources` is the per-tag provenance ({tag: source}) — every shipped tag traces to a real
     signal (content|corpus|region|graph-reach|discovery|genre-floor); Review renders it. Absent -> {}."""
-    entry = {"caption": " ".join(tags), "hashtags": tags, "hashtags_raw": hashtags_raw,
+    entry = {"caption": (caption or "").strip(), "hashtags": tags, "hashtags_raw": hashtags_raw,
              "hook": None, "axis": None, "rationale": None, "tag_sources": tag_sources or {}}
     if fallback:
         entry["fallback"] = True
@@ -342,6 +357,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
         led.set_clip_state(clip_id, ClipState.held)
         return led
     held_reason = None
+    tags_only = False
     for item in cs.items:
         # AUDIT H5: a caption declared in a language other than the source's is held for a human
         # (conservative — hold the WHOLE clip on first mismatch). Compare on the BASE language
@@ -376,28 +392,19 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
                             content=content_tags,                     # MOL-642: clip transcript signal
                             cfg=cfg, recent=recent)
         if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
-        clip.meta_captions[item.surface] = _caption_entry(tags, [str(h) for h in (item.hashtags or [])], tag_sources=sources)
+        clip.meta_captions[item.surface] = _caption_entry(
+            tags, [str(h) for h in (item.hashtags or [])],
+            caption=(item.caption or "").strip(), tag_sources=sources)
+        if is_tags_only_caption(item.caption, item.hashtags):
+            tags_only = True
     answered = {item.surface for item in cs.items}
     missing = requested - answered
-    # SEED-TAG FALLBACK (was: hold). The caption is hashtags-ONLY, and the model frequently returns NO
-    # item for a surface — most often a SOFT REFUSAL on a clip's edgy/explicit lyrics (it sends
-    # items:[] even though the output is just genre tags that never reproduce the words). The old
-    # behavior held the clip on this "missing caption", which silently buried ~83% of a rap catalogue.
-    # Instead synthesize the reach-vetted SEED tags + NO hook (clean clip) for each missing surface and
-    # let the clip through to the operator's Review queue, logged. This is NOT F74's "silent default to
-    # publish": the post is born awaiting_approval, so a human still reviews it before anything ships.
-    for surface in sorted(missing):
-        plat = _platform_for_surface(surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
-        handle = surface.split("/", 1)[0]
-        recent = _recent_tags(led, handle) + (pass_recent or {}).get(handle, [])
-        tags, sources = vet_hashtags_traced(None, plat, src.language if src else None,
-                            store=surface_store.get(surface),
-                            corpus=surface_corpus.get(surface),   # the derived corpus leads the seed line
-                            content=content_tags,                 # MOL-642: same clip signal on fallback
-                            cfg=cfg, recent=recent)
-        if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
-        clip.meta_captions[surface] = _caption_entry(tags, [], fallback=True, tag_sources=sources)
-        get_logger(cfg)("captions", clip_id, "caption_fallback_seed", surface=surface)
+    # Brand-risk (already scored on present items) wins over tags-only, which wins over missing.
+    # Do not manufacture caption = join(tags) for a missing surface / items:[].
+    if held_reason is None and tags_only:
+        held_reason = "caption_tags_only"
+    if held_reason is None and missing:
+        held_reason = "caption_missing_language"
     if held_reason:
         clip.held = True
         clip.held_reason = held_reason
