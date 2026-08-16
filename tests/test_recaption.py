@@ -142,3 +142,81 @@ def test_imminent_queued_post_is_skipped(tmp_path):
     led = Ledger.load(cfg)
     assert led.posts["p1"].caption == "#old"                        # imminent queued: shipping, untouched
     assert led.posts["p2"].caption == " ".join(led.posts["p2"].hashtags) != "#old"
+
+
+def _write_accounts(cfg, handles):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": h, "platforms": ["instagram"], "status": "active",
+         "hashtag_corpus": ["#alpha", "#beta", "#gamma"]} for h in handles]}))
+
+
+def _add_clip_post(led, *, i, account="a"):
+    mid, cid, pid = f"mom_{i}", f"clip_{i}", f"p_{i}"
+    led.add_moment(Moment(id=mid, parent_id="src_1", content_token=str(i), start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id=cid, parent_id=mid, path=f"/c{i}.mp4", state=ClipState.queued,
+                      meta_captions={f"{account}/instagram": dict(_OLD_ENTRY)}))
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="1",
+                      platform=Platform.instagram, caption="#old", hashtags=["#old"],
+                      state=PostState.awaiting_approval, scheduled_time=f"2099-01-01T00:{i:02d}:00Z",
+                      created_at="2026-07-01T12:00:00+00:00"))
+    return cid, pid
+
+
+def test_limit_caps_seed_clips_at_20(tmp_path):
+    # Canary PIN: limit=20 is seed clips, not posts. 25 clips -> open 20 gates; the other 5 stay put.
+    # Re-run with the same limit honors the journal and walks the remaining pending (not the first 20 again).
+    cfg = Config(root=tmp_path); _write_accounts(cfg, ["a"])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    for i in range(25):
+        _add_clip_post(led, i=i)
+    led.save()
+    dry = run_recaption(cfg, apply=False, now=NOW, limit=20)
+    assert dry["clips"] == 20 and not request_path(cfg, "captions", "clip_0").exists()
+    fake = _FakeResponder()
+    s = run_recaption(cfg, apply=True, responder=fake, now=NOW, limit=20)
+    assert fake.calls == 20 and s["done"] == 20
+    led = Ledger.load(cfg)
+    for i in range(20):
+        assert request_path(cfg, "captions", f"clip_{i}").exists()
+        assert led.posts[f"p_{i}"].caption != "#old"
+    for i in range(20, 25):
+        assert not request_path(cfg, "captions", f"clip_{i}").exists()
+        assert led.posts[f"p_{i}"].caption == "#old"                 # untouched — not in this canary
+    again = _FakeResponder()
+    s2 = run_recaption(cfg, apply=True, responder=again, now=NOW, limit=20)
+    assert again.calls == 5 and s2["done"] == 5                     # remaining pending, not a re-walk of 0..19
+    assert Ledger.load(cfg).posts["p_24"].caption != "#old"
+
+
+def test_account_filter_does_not_walk_other_handles(tmp_path):
+    # account="a" must not open a caption gate for a b-only clip; b's post keeps its old caption.
+    cfg = Config(root=tmp_path); _write_accounts(cfg, ["a", "b"])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    _add_clip_post(led, i=0, account="a")
+    _add_clip_post(led, i=1, account="b")
+    led.save()
+    miss = run_recaption(cfg, apply=False, now=NOW, account="missing")
+    assert miss["clips"] == 0 and miss["posts"] == 0                # unknown handle: list 0, do not crash
+    fake = _FakeResponder()
+    s = run_recaption(cfg, apply=True, responder=fake, now=NOW, account="a")
+    assert fake.calls == 1 and s["done"] == 1
+    assert not request_path(cfg, "captions", "clip_1").exists()      # b-only clip: no gate
+    led = Ledger.load(cfg)
+    assert led.posts["p_1"].caption == "#old"
+    assert led.posts["p_0"].caption != "#old"
+
+
+def test_cmd_limit_non_positive_and_apply_dry_run_exit_2(tmp_path):
+    # --limit 0 is not "all". --apply + --dry-run stays mutually exclusive (exit 2).
+    from argparse import Namespace
+    from fanops.recaption import cmd_posts_recaption
+    cfg = Config(root=tmp_path)
+    def _ns(**kw):
+        return Namespace(apply=False, dry_run=False, limit=None, account=None, **kw)
+    assert cmd_posts_recaption(cfg, _ns(limit=0)) == 2
+    assert cmd_posts_recaption(cfg, _ns(limit=-1)) == 2
+    assert cmd_posts_recaption(cfg, _ns(apply=True, dry_run=True)) == 2

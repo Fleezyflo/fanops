@@ -962,6 +962,10 @@ def main(argv: list[str] | None = None) -> int:
     p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
                       "snapshot first; resumable via 00_control/.recaption_progress.json")
     p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    p_rc.add_argument("--limit", type=int, default=None,
+                      help="max seed clips after --account filter (positive int; omit = all)")
+    p_rc.add_argument("--account", default=None,
+                      help="exact handle filter; unknown handle lists 0")
     posts_sub.add_parser("census-retired", help="census: posts under a RETIRED lineage "
                          "(read-only; suppression is derived, never written; "
                          "renamed from reconcile-retired)")
