@@ -3,10 +3,11 @@
 into the <=4-tag line a post ships.
 
 Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape). RANK is
-SIZE-FIRST (`size_rank_key`, MOL-692): Instagram's own `media_count` DESC, then `current_top_reel_play_max_7d`
-as a tie-break within equal size. The Top-grid MEDIANS (`play_count`/`like_count`) remain stored evidence
-and still admit a legacy row, but they are no longer the cross-tag order — under them a 52k-post tag
-outranked a 20.9M-post tag by ~36x. Nothing here blends the two axes into one invented score.
+banded (`size_rank_key`, MOL-977): mid (10k–2M) first, then small, then mega/untrusted, then unknown.
+INT32-saturated `media_count` is untrusted mega, not infinite gold. Within a band: Instagram's own
+`media_count` DESC, then `current_top_reel_play_max_7d` as a tie-break. The Top-grid MEDIANS
+(`play_count`/`like_count`) remain stored evidence and still admit a legacy row, but they are not the
+cross-tag order. Nothing here blends the two axes into one invented score.
 The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
 
 What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
@@ -24,8 +25,12 @@ from fanops.models import Platform
 # collection, but NO LONGER the cross-tag rank — see `size_rank_key` (MOL-692).
 RANK_FIELDS = ("play_count", "like_count")
 METRIC_FIELD = "play_count"        # which median `_metric` prefers, for provenance/UI honesty only
-SIZE_FIELD = "media_count"                          # primary rank: Instagram's own tag volume
+SIZE_FIELD = "media_count"                          # within-band rank: Instagram's own tag volume
 TREND_FIELD = "current_top_reel_play_max_7d"        # secondary rank: current Reels popularity
+# Volume bands for `size_rank_key` (MOL-977). Compare via `tag_size` so 2147483647.0 matches.
+MEGA_MEDIA_FLOOR = 2_000_000
+MID_MEDIA_FLOOR = 10_000
+INT32_MEDIA_COUNT = 2_147_483_647
 
 # THE record shape Layer A persists (MOL-691). `refresh_store` seeds its working cache from
 # `load_measurements` and then rewrites hashtags.json WHOLE, so a field absent from these tuples is
@@ -99,8 +104,9 @@ def _rank_field(rec) -> str | None:
 
 
 def tag_size(rec) -> float | None:
-    """SCALE: Instagram's own `media_count` — lifetime posts carrying the tag. The PRIMARY rank (MOL-692).
-    None when volume was never served; a volumeless tag is not "small", it is unmeasured on this axis."""
+    """SCALE: Instagram's own `media_count` — lifetime posts carrying the tag. Within-band rank
+    after `size_band` (MOL-977). None when volume was never served; a volumeless tag is not "small",
+    it is unmeasured on this axis."""
     if not isinstance(rec, dict): return None
     v = _num(rec.get("media_count"))
     return v if (v or 0) > 0 else None
@@ -108,8 +114,8 @@ def tag_size(rec) -> float | None:
 
 def tag_trend(rec) -> float | None:
     """CURRENT REELS POPULARITY: max plays among Top rows Instagram dated inside 7 days. A strictly
-    SECONDARY tie-break (MOL-692) — it refines the size order and can never promote a smaller tag over a
-    larger one. Different unit from `tag_size`; the two are never summed or blended."""
+    SECONDARY tie-break — it refines the size order WITHIN a band and cannot promote a smaller tag
+    over a larger one in the same band. Different unit from `tag_size`; the two are never summed or blended."""
     if not isinstance(rec, dict): return None
     v = _num(rec.get("current_top_reel_play_max_7d"))
     return v if (v or 0) > 0 else None
@@ -122,19 +128,44 @@ def has_evidence(rec) -> bool:
     return tag_size(rec) is not None or tag_trend(rec) is not None or _metric(rec) is not None
 
 
+def size_band(rec) -> str:
+    """Volume band for one measurement record. Compare via `tag_size` so INT32 floats match.
+
+    mid:        MID_MEDIA_FLOOR <= size < MEGA_MEDIA_FLOOR
+    small:      0 < size < MID_MEDIA_FLOOR
+    mega:       MEGA_MEDIA_FLOOR <= size < INT32_MEDIA_COUNT
+    untrusted:  size >= INT32_MEDIA_COUNT
+    unknown:    missing / unparseable
+    """
+    size = tag_size(rec)
+    if size is None:
+        return "unknown"
+    if size >= INT32_MEDIA_COUNT:
+        return "untrusted"
+    if size >= MEGA_MEDIA_FLOOR:
+        return "mega"
+    if size >= MID_MEDIA_FLOOR:
+        return "mid"
+    return "small"
+
+
+# mid first, then small, then mega/untrusted, then unknown. mega and untrusted share a rank.
+_BAND_RANK = {"mid": 0, "small": 1, "mega": 2, "untrusted": 2, "unknown": 3}
+
+
 def size_rank_key(tag: str, rec) -> tuple:
-    """THE menu order (MOL-692): size first, lexicographic — NOT a weighted score.
+    """THE menu order (MOL-977): band first, then size-then-trend within the band — NOT a weighted score.
 
-    1. a positive `media_count` outranks every record lacking one (plays cannot stand in for volume);
-    2. `media_count` DESC — the dominant ordering;
-    3. `current_top_reel_play_max_7d` DESC — a tie-break WITHIN equal size only;
-    4. tag string, so the order is total and stable.
+    1. band: mid, then small, then mega/untrusted, then unknown;
+    2. a positive `media_count` still outranks a volumeless peer (plays cannot stand in for volume);
+    3. `media_count` DESC — the dominant ordering inside a band;
+    4. `current_top_reel_play_max_7d` DESC — a tie-break WITHIN equal size only;
+    5. tag string, so the order is total and stable.
 
-    The old order was the MEDIAN of a handful of Top posts, under which a 52k-post tag outranked a
-    20.9M-post tag by ~36x. Volumeless-but-evidenced tags sort after every sized tag and use their 7-day
-    plays only among themselves."""
+    INT32-saturated `media_count` is untrusted mega, not the largest gold. Volumeless-but-evidenced
+    tags sort last (unknown) and use their 7-day plays only among themselves."""
     size = tag_size(rec) or 0.0
-    return (0 if size > 0 else 1, -size, -(tag_trend(rec) or 0.0), tag)
+    return (_BAND_RANK[size_band(rec)], -size, -(tag_trend(rec) or 0.0), tag)
 
 
 def load_measurements(cfg) -> dict[str, dict]:
@@ -183,9 +214,8 @@ def load_measurements(cfg) -> dict[str, dict]:
 
 
 def ranked_tags(measurements: dict[str, dict]) -> list[str]:
-    """The cache as one ordered menu, SIZE-FIRST: `media_count` DESC, then the 7-day Top-Reel max as a
-    tie-break, then tag (`size_rank_key`). `vet_hashtags` takes its whole metric rank from this order, so
-    this function is where "which tags are the biggest" is decided."""
+    """The cache as one ordered menu via `size_rank_key` (band, then size, then 7-day trend, then tag).
+    `vet_hashtags` takes its whole metric rank from this order."""
     return sorted(measurements, key=lambda t: size_rank_key(t, measurements[t]))
 
 

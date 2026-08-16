@@ -102,7 +102,8 @@ def test_aligned_pool_is_size_ordered_and_still_drops_one_hit():
     pool = _aligned_pool(per, cache, now=NOW)
     order = [t for t, _v, _s in pool]
     assert "#celia" not in order and "#ghost" not in order
-    assert order == ["#bars", "#remix", "#songs"], "biggest first, regardless of median plays"
+    # mid (#remix 200k) then small (#songs 8k) then mega (#bars 4M); one-hit / ghost still dropped
+    assert order == ["#remix", "#songs", "#bars"]
     assert dict((t, v) for t, v, _s in pool)["#bars"] == 4_000_000.0
 
 
