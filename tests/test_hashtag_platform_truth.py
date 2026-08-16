@@ -687,6 +687,89 @@ def test_int32_saturated_media_count_sorts_after_mid_band():
     assert ranked_tags({"#love": love, "#craft": mid}) == ["#craft", "#love"]
 
 
+def _volume_cache(cfg, rows):
+    """Layer A cache with graph_id + measured_at so load_measurements keeps the rows."""
+    from fanops.hashtags import SIZE_FIELD, TREND_FIELD
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    blob = {}
+    for i, (tag, rec) in enumerate(rows.items()):
+        item = {"graph_id": f"id-{i}", "measured_at": "2026-08-17T00:00:00+00:00",
+                SIZE_FIELD: rec[SIZE_FIELD]}
+        if TREND_FIELD in rec:
+            item[TREND_FIELD] = rec[TREND_FIELD]
+        blob[tag] = item
+    cfg.hashtags_path.write_text(json.dumps(blob))
+
+
+def test_vet_hashtags_mega_occupies_at_most_one_slot(tmp_path):
+    """4 mega + 3 mid + measurements: ship ≤1 mega/untrusted and fill the rest from mid."""
+    from fanops.hashtags import INT32_MEDIA_COUNT, MEGA_SLOT_MAX, SIZE_FIELD, size_band
+    assert MEGA_SLOT_MAX == 1
+    cfg = Config(root=tmp_path)
+    megas = ["#mega1", "#mega2", "#mega3", "#love"]
+    mids = ["#mid1", "#mid2", "#mid3"]
+    rows = {
+        "#mega1": {SIZE_FIELD: 3_000_000},
+        "#mega2": {SIZE_FIELD: 4_000_000},
+        "#mega3": {SIZE_FIELD: 5_000_000},
+        "#love": {SIZE_FIELD: INT32_MEDIA_COUNT},          # untrusted counts as the magnet slot
+        "#mid1": {SIZE_FIELD: 50_000},
+        "#mid2": {SIZE_FIELD: 80_000},
+        "#mid3": {SIZE_FIELD: 120_000},
+    }
+    _volume_cache(cfg, rows)
+    store = megas + mids
+    out = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg)
+    ms = load_measurements(cfg)
+    assert len(out) == 4
+    magnet = [t for t in out if size_band(ms[t]) in ("mega", "untrusted")]
+    mid_shipped = [t for t in out if size_band(ms[t]) == "mid"]
+    assert len(magnet) <= MEGA_SLOT_MAX
+    assert len(mid_shipped) == 3
+    assert set(mid_shipped) == set(mids)
+
+
+def test_vet_hashtags_ig_and_tiktok_disagree_inside_mid_band(tmp_path):
+    """Same store: IG mid order is size-then-trend; TT prefers TREND_FIELD then size."""
+    from fanops.hashtags import SIZE_FIELD, TREND_FIELD
+    cfg = Config(root=tmp_path)
+    rows = {
+        "#bigsize": {SIZE_FIELD: 1_500_000, TREND_FIELD: 1_000},     # bigger, colder
+        "#hottrend": {SIZE_FIELD: 80_000, TREND_FIELD: 900_000},     # smaller, hotter
+        "#midmid": {SIZE_FIELD: 200_000, TREND_FIELD: 50_000},
+        "#smallmid": {SIZE_FIELD: 20_000, TREND_FIELD: 5_000},
+    }
+    _volume_cache(cfg, rows)
+    store = ["#bigsize", "#hottrend", "#midmid", "#smallmid"]
+    ig = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg)
+    tt = vet_hashtags(store, Platform.tiktok, "en", store=store, cfg=cfg)
+    assert ig != tt
+    assert ig.index("#bigsize") < ig.index("#hottrend")
+    assert tt.index("#hottrend") < tt.index("#bigsize")
+
+
+def test_vet_hashtags_cfg_none_or_empty_measurements_skips_compose(tmp_path):
+    """cfg is None / no measurements: mega cap and platform reorder do not fire."""
+    megas = ["#mega1", "#mega2", "#mega3", "#mega4"]
+    mids = ["#mid1", "#mid2", "#mid3"]
+    store = megas + mids
+    assert vet_hashtags(store, Platform.instagram, "en", store=store, cfg=None) == megas
+    cfg = Config(root=tmp_path)
+    assert vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg) == megas
+    ig = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=None)
+    tt = vet_hashtags(store, Platform.tiktok, "en", store=store, cfg=None)
+    assert ig == tt == megas
+
+
+def test_vet_hashtags_reads_platform():
+    """platform must stay a live input — a later unused-parameter grep must fail."""
+    import inspect
+    from fanops import hashtags as h
+    src = inspect.getsource(h.vet_hashtags)
+    assert "_compose_shipped(pool, platform," in src
+    assert h.MEGA_SLOT_MAX == 1
+
+
 # ---------------------------------------------------------------- 7. refusals are the only governor
 
 def test_throttle_stops_the_pass_with_evidence_intact(tmp_path, monkeypatch):

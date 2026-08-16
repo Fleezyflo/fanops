@@ -10,13 +10,15 @@ INT32-saturated `media_count` is untrusted mega, not infinite gold. Within a ban
 cross-tag order. Nothing here blends the two axes into one invented score.
 The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
 
-What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
-persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
-and a region tag on Arabic-language clips (`_ARABIC`).
+What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, at most
+one mega/untrusted slot (`MEGA_SLOT_MAX`), mid-band order that splits IG (size-then-trend) from TikTok
+(trend-then-size), the persona's curated corpus leads but may not monopolise the line
+(`_CORPUS_LEAD_MAX`), graded-LRU rotation, and a region tag on Arabic-language clips (`_ARABIC`).
+`cfg is None` / no measurements skips mega cap and the platform split (byte-identical).
 
-Membership is the cache UNION the surface's corpus (content may LABEL a measured tag for provenance):
-a tag the model invents cannot ship, and a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a
-padded one."""
+Membership is store ∪ corpus (content may LABEL a measured tag for provenance): invented tags die;
+unmeasured non-corpus tags die; unmeasured corpus tags survive; empty store AND empty corpus
+(and non-AR) → empty line."""
 from __future__ import annotations
 import json, re
 from fanops.models import Platform
@@ -31,6 +33,7 @@ TREND_FIELD = "current_top_reel_play_max_7d"        # secondary rank: current Re
 MEGA_MEDIA_FLOOR = 2_000_000
 MID_MEDIA_FLOOR = 10_000
 INT32_MEDIA_COUNT = 2_147_483_647
+MEGA_SLOT_MAX = 1                 # shipped line: at most one mega/untrusted (MOL-978)
 
 # THE record shape Layer A persists (MOL-691). `refresh_store` seeds its working cache from
 # `load_measurements` and then rewrites hashtags.json WHOLE, so a field absent from these tuples is
@@ -254,6 +257,49 @@ def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
     return out
 
 
+def _mid_rank_key(tag: str, rec, platform: Platform) -> tuple:
+    """Within the mid band: IG keeps size-then-trend; TikTok prefers TREND_FIELD then size."""
+    if platform is Platform.tiktok:
+        return (-(tag_trend(rec) or 0.0), -(tag_size(rec) or 0.0), tag)
+    return size_rank_key(tag, rec)
+
+
+def _compose_shipped(candidates, platform: Platform, measurements: dict, max_tags: int) -> list[str]:
+    """Slot hygiene after membership/sort/corpus-lead: mega/untrusted ≤ MEGA_SLOT_MAX; leftover
+    slots prefer mid. Mid-band order is platform-split. No semantic tag-name list — `#love` is
+    limited because it is INT32/mega, not because it is named `#love`."""
+    def rec(t): return measurements.get(t) or {}
+    def band(t): return size_band(rec(t))
+    uniq: list[str] = []; seen: set[str] = set()
+    for t in candidates:
+        if t and t not in seen:
+            seen.add(t); uniq.append(t)
+    mid_pos = [i for i, t in enumerate(uniq) if band(t) == "mid"]
+    mids = sorted((uniq[i] for i in mid_pos), key=lambda t: _mid_rank_key(t, rec(t), platform))
+    for i, t in zip(mid_pos, mids):
+        uniq[i] = t
+    out: list[str] = []; leftover: list[str] = []; mega_n = 0
+    for t in uniq:
+        magnet = band(t) in ("mega", "untrusted")
+        if len(out) < max_tags and not (magnet and mega_n >= MEGA_SLOT_MAX):
+            out.append(t)
+            if magnet: mega_n += 1
+        else:
+            leftover.append(t)
+    if len(out) < max_tags:
+        prefer = [t for t in leftover if band(t) == "mid"]
+        rest = [t for t in leftover if band(t) not in ("mid", "mega", "untrusted")]
+        magnets = [t for t in leftover if band(t) in ("mega", "untrusted")]
+        for t in prefer + rest + (magnets if mega_n < MEGA_SLOT_MAX else []):
+            if len(out) >= max_tags: break
+            if t in out: continue
+            if band(t) in ("mega", "untrusted"):
+                if mega_n >= MEGA_SLOT_MAX: continue
+                mega_n += 1
+            out.append(t)
+    return out[:max_tags]
+
+
 def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
     """MOL-76: drop any content-derived candidate that trips brand_risk_flag — the SAME off-brand guard
     caption.py runs on the model's caption/hook — BEFORE it can join the membership or win the content
@@ -275,15 +321,15 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
     `store` is the measurement cache as an ordered menu (`ranked_tags(load_measurements(cfg))`) — it is
     both the membership set and the rank. `corpus` is the surface's derived per-persona pool; it JOINS the
     membership (a corpus tag is by construction already measured, but joining keeps the gate honest if a
-    cache entry expires between derivation and selection) and leads the line. A tag the model invented is
-    in neither set and dies here.
+    cache entry expires between derivation and selection) and leads the line. Invented tags die;
+    unmeasured non-corpus tags die; unmeasured corpus tags survive.
 
     Order: corpus tier, then the clip's own picks, then graded LRU (`recent`, oldest-first — never-used
-    leads), then the platform metric rank. Floors take the TAIL slots so the corpus/metric lead survives:
+    leads), then the platform metric rank. After sort + corpus-lead cap: when `cfg` has measurements, at most `MEGA_SLOT_MAX` mega/untrusted tags occupy the shipped line and leftover slots prefer mid; within mid, IG keeps size-then-trend and TikTok prefers `TREND_FIELD` then size. `cfg is None` / empty measurements skip that layer (byte-identical). Floors take the TAIL slots so the corpus/metric lead survives:
     one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu (content is preference only).
 
-    Cold cache + no corpus -> an empty line. That is the honest floor: there is no hand-ranked pool and no
-    discovery pad left to invent reach with."""
+    Empty store AND empty corpus (and non-AR) -> an empty line. That is the honest floor: there is no
+    hand-ranked pool and no discovery pad left to invent reach with."""
     corpus_norm = _dedupe_norm(corpus)
     store_norm = _dedupe_norm(store)                   # the measured menu, already metric-ranked
     # MOL-635 residual / MOL-642 tighten: content is a FIT signal among MEASURED tags only
@@ -347,7 +393,21 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
-    return kept[:max_tags]
+    # MOL-978: mega ≤ 1 and IG/TT mid split. Fail-open when cfg/measurements are missing so
+    # clip-signal tests (cfg=None) stay byte-identical. `platform` is read here.
+    # load_measurements never raises; OSError covers monkeypatched/unreadable cache (persona_facts).
+    try:
+        measurements = {} if cfg is None else (load_measurements(cfg) or {})
+    except OSError:
+        measurements = {}
+    if not measurements:
+        return kept[:max_tags]
+    pool = list(kept)
+    seen_p = set(pool)
+    for h in corpus_norm + store_norm:
+        if h not in seen_p:
+            seen_p.add(h); pool.append(h)
+    return _compose_shipped(pool, platform, measurements, max_tags)
 
 
 _ARABIC_SET = set(_ARABIC)
