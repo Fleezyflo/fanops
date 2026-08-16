@@ -674,15 +674,6 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
 
-def _transcript_burn_enabled(led: Ledger, cfg: Config, src) -> bool:
-    """False — FanOps no longer burns transcript captions at render.
-
-    The retention hook (m.hook) is burned separately. Hardsub sources already carry lyrics on the
-    picture; talk sources must not get a second transcript layer. cfg.burn_subs and Batch.burn_subs
-    are ignored here; render never layers transcript text."""
-    return False
-
-
 def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                     *, clip_start: float, clip_end: float,
                     supercut_spans: list[tuple[float, float]] | None = None) -> tuple[str | None, bool]:
@@ -698,7 +689,7 @@ def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: 
     m = led.moments[moment_id]
     hook = ((m.hook or "").strip() or None)
     segments: list = []                                # transcript captions never burned (hook-only since PR 994)
-    if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
+    if not hook and not segments:                        # no hook -> clean clip (transcript never burned)
         return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():
         # Text was asked for but the toolchain can't burn it. Don't block the clip — log once and
@@ -739,10 +730,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
         a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — never burned (_transcript_burn_enabled is always False). The retention
-        hook still burns regardless.
+      • the TRANSCRIPT captions — never burned (hook-only overlay since PR 994). The retention hook
+        still burns regardless.
     Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
-    wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
+    wanted (a hook) but could NOT be burned — ffmpeg lacks the text filter, or
     build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
     clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned.
 

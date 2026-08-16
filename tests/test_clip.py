@@ -1063,7 +1063,7 @@ def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeyp
 # These GUARD the refactor — they do not test the dry-run itself (that is test_reframe_dryrun.py).
 # ---------------------------------------------------------------------------------------------------
 from fanops.clip import (_build_ass_text, _render_fingerprint, _render_fingerprint_payload,   # noqa: E402
-                         _REFRAME_GEOM_V, _transcript_burn_enabled,
+                         _REFRAME_GEOM_V,
                          fingerprint_of_payload, fingerprint_payload_bytes)
 
 _FP_KW = dict(src_path="/s.mp4", cs=1.0, ce=11.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="X")
@@ -1166,21 +1166,6 @@ def test_build_ass_text_flags_a_wanted_but_unburnable_hook(tmp_path, monkeypatch
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
     text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     assert text is None and hbf is True            # WANTED but unburnable -> the F9 flag, unchanged
-
-
-def test_transcript_burn_enabled_always_false(tmp_path, monkeypatch):
-    """Render never layers transcript captions — batch/cfg burn_subs are ignored."""
-    monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_batch(Batch(id="b_skip", name="skip", burn_subs=False))
-    led.add_batch(Batch(id="b_talk", name="talk", burn_subs=True))
-    led.add_source(Source(id="src_skip", source_path="/s.mp4", batch_id="b_skip"))
-    led.add_source(Source(id="src_talk", source_path="/s.mp4", batch_id="b_talk"))
-    led.add_source(Source(id="src_global", source_path="/s.mp4"))
-    assert _transcript_burn_enabled(led, cfg, led.sources["src_skip"]) is False
-    assert _transcript_burn_enabled(led, cfg, led.sources["src_talk"]) is False
-    assert _transcript_burn_enabled(led, cfg, led.sources["src_global"]) is False
 
 
 def test_build_ass_text_keeps_hook_without_transcript(tmp_path, monkeypatch):

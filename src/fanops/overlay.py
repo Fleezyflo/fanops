@@ -264,7 +264,7 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     non-empty string, one centered HOOK line (Alignment 5, MarginV 0, \\fad(0,200); the retention
     opener) spans the clip's first min(2.5, clip_len) seconds. The default clip path passes the
     moment's retention hook; the transcript captions are never layered at render
-    (clip._transcript_burn_enabled is always False); only the retention hook burns when present."""
+    (hook-only overlay since PR 994); only the retention hook burns when present."""
     clip_len = max(0.0, clip_end - clip_start)
     lines = _ass_preamble(width, height, font, hook)
     events: list[str] = []
