@@ -37,6 +37,22 @@ from fanops.reframe import (
 
 OVERLAY_KEYS = {"ass"}
 
+
+def _owned_scratch(scratch) -> tuple[Path, tempfile.TemporaryDirectory | None]:
+    """Operator `--scratch` is theirs. A minted temp dir is cleaned in the caller `finally`."""
+    if scratch:
+        return Path(scratch), None
+    td = tempfile.TemporaryDirectory(prefix="fanops_or_")
+    return Path(td.name), td
+
+
+def _scratch_ledger(paths: ReframePaths) -> Ledger:
+    """Snapshot production into scratch. A missing production sqlite is an empty corpus, not a crash."""
+    if paths.production_cfg.ledger_path.exists():
+        snapshot_ledger(paths)
+    return Ledger.load(paths.scratch_cfg)
+
+
 UNTOUCHED = ra.UNTOUCHED
 BACKED_UP = ra.BACKED_UP
 COMMITTED = ra.COMMITTED
@@ -513,23 +529,33 @@ def _log_counts(cfg: Config, totals: dict, *, outcome: str) -> None:
 
 
 def run_dry_run(cfg: Config, *, limit: int | None = None, scratch=None) -> dict:
-    scratch_root = Path(scratch) if scratch else Path(tempfile.mkdtemp(prefix="fanops_or_"))
-    paths = ReframePaths.build(cfg.root, scratch_root)
-    snapshot_ledger(paths)
-    led = Ledger.load(paths.scratch_cfg)
-    clips = _scan(paths, paths.scratch_cfg, led, limit=limit)
-    totals = dict(Counter(r["classification"] for r in clips))
-    _log_counts(cfg, totals, outcome="dry_run")
-    return {"clips": clips, "totals": totals, "partial": bool(limit), "scratch": str(scratch_root)}
+    scratch_root, owned = _owned_scratch(scratch)
+    try:
+        paths = ReframePaths.build(cfg.root, scratch_root)
+        led = _scratch_ledger(paths)
+        clips = _scan(paths, paths.scratch_cfg, led, limit=limit)
+        totals = dict(Counter(r["classification"] for r in clips))
+        _log_counts(cfg, totals, outcome="dry_run")
+        return {"clips": clips, "totals": totals, "partial": bool(limit), "scratch": str(scratch_root)}
+    finally:
+        if owned is not None:
+            owned.cleanup()
 
 
 def run_apply(cfg: Config, *, limit: int | None = None, scratch=None) -> dict:
     """Pause the pump, lock, re-assert eligibility, stage, then replace three files."""
     set_paused(cfg, True)
-    scratch_root = Path(scratch) if scratch else Path(tempfile.mkdtemp(prefix="fanops_or_"))
+    scratch_root, owned = _owned_scratch(scratch)
+    try:
+        return _run_apply_body(cfg, limit=limit, scratch_root=scratch_root)
+    finally:
+        if owned is not None:
+            owned.cleanup()
+
+
+def _run_apply_body(cfg: Config, *, limit: int | None, scratch_root: Path) -> dict:
     paths = ReframePaths.build(cfg.root, scratch_root)
-    snapshot_ledger(paths)
-    led = Ledger.load(paths.scratch_cfg)
+    led = _scratch_ledger(paths)
     class_rows = _scan(paths, paths.scratch_cfg, led, limit=limit)
     eligible = [r for r in class_rows if r.get("classification") == "eligible"]
     run_id = new_run_id()
@@ -544,6 +570,15 @@ def run_apply(cfg: Config, *, limit: int | None = None, scratch=None) -> dict:
         {k: v for k, v in row.items() if k not in ("payload_old", "payload_new", "ass_new")}
         for row in plan_rows
     ]}, indent=2, sort_keys=True, default=str))
+
+    if not plan_rows:
+        class_totals = dict(Counter(r["classification"] for r in class_rows))
+        _log_counts(cfg, class_totals, outcome="apply")
+        summary = {"run_id": run_id, "aborted": False, "totals": class_totals, "apply_totals": {},
+                   "planned": 0, "results": [], "run_dir": str(dirs.root)}
+        dirs.summary.write_text(json.dumps({k: v for k, v in summary.items() if k != "results"},
+                                           indent=2, sort_keys=True, default=str))
+        return summary
 
     need = 0
     for row in plan_rows:

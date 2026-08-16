@@ -107,7 +107,7 @@
     "fanops.overlay_reburn": [
       {
         "call": "Ledger.transaction",
-        "line": 342
+        "line": 358
       }
     ],
     "fanops.paths_rebase": [
@@ -488,16 +488,6 @@
         "line": 1503
       }
     ],
-    "fanops.overlay_reburn": [
-      {
-        "call": "tempfile.mkdtemp",
-        "line": 516
-      },
-      {
-        "call": "tempfile.mkdtemp",
-        "line": 529
-      }
-    ],
     "fanops.post.compress": [
       {
         "call": "tempfile.mkdtemp",
@@ -807,7 +797,7 @@
     "env_write_sites": 1,
     "ledger_transaction_sites": 82,
     "lock_sites": 22,
-    "mkdtemp_sites": 4,
+    "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
     "subprocess_sites": 37
