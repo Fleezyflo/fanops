@@ -105,7 +105,6 @@ class ReviewCard:
     moment_window: str
     reason: str
     language: Optional[str]
-    subtitles_burned: bool
     held: bool
     held_reason: Optional[str]
     transcript_excerpt: Optional[str]
@@ -326,7 +325,7 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     excluded = len(excluded_names)
     return ReviewCard(
         clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
-        moment_window=window, reason=reason, language=language, subtitles_burned=False,
+        moment_window=window, reason=reason, language=language,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
         hook_removed=(mom.hook_removed if mom is not None else None),

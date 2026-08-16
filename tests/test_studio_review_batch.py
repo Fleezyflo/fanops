@@ -52,7 +52,7 @@ def test_review_card_unbatched_batch_field_none(tmp_path):
 def test_review_card_batch_fields_default_none():
     # back-compat: constructing ReviewCard with the EXISTING keyword set still works (None defaults).
     rc = ReviewCard(clip_id="c", preview_url="", source_name="", label="", moment_window="", reason="",
-                    language=None, subtitles_burned=False, held=False, held_reason=None,
+                    language=None, held=False, held_reason=None,
                     transcript_excerpt=None, surfaces=[], bucket="editable")
     assert rc.batch_id is None and rc.batch_title is None
 
@@ -72,7 +72,7 @@ def test_clip_in_editable_and_recent_dedups_to_editable(tmp_path):
 # ---- T3: group_review_by_batch (first-appearance order, None -> 'Ungrouped' LAST) ----
 def _rc(cid, batch_id=None, batch_title=None):
     return ReviewCard(clip_id=cid, preview_url="", source_name="", label="", moment_window="", reason="",
-                      language=None, subtitles_burned=False, held=False, held_reason=None,
+                      language=None, held=False, held_reason=None,
                       transcript_excerpt=None, surfaces=[], bucket="editable",
                       batch_id=batch_id, batch_title=batch_title)
 
