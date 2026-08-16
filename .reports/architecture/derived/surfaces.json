@@ -1074,7 +1074,7 @@
     {
       "decorator": "app.get",
       "handler": "library",
-      "line": 142,
+      "line": 138,
       "methods": [
         "GET"
       ],
@@ -1085,7 +1085,7 @@
     {
       "decorator": "app.get",
       "handler": "library_source",
-      "line": 156,
+      "line": 152,
       "methods": [
         "GET"
       ],
@@ -1096,7 +1096,7 @@
     {
       "decorator": "app.get",
       "handler": "library_source_live",
-      "line": 165,
+      "line": 161,
       "methods": [
         "GET"
       ],
@@ -1107,7 +1107,7 @@
     {
       "decorator": "app.post",
       "handler": "do_library_promote",
-      "line": 197,
+      "line": 193,
       "methods": [
         "POST"
       ],
@@ -1118,7 +1118,7 @@
     {
       "decorator": "app.post",
       "handler": "do_library_resume",
-      "line": 186,
+      "line": 182,
       "methods": [
         "POST"
       ],
@@ -1129,7 +1129,7 @@
     {
       "decorator": "app.post",
       "handler": "do_library_retire",
-      "line": 193,
+      "line": 189,
       "methods": [
         "POST"
       ],
@@ -1140,7 +1140,7 @@
     {
       "decorator": "app.post",
       "handler": "do_thirdparty_upload",
-      "line": 174,
+      "line": 170,
       "methods": [
         "POST"
       ],
@@ -1690,7 +1690,7 @@
     {
       "decorator": "app.post",
       "handler": "do_run_advance",
-      "line": 101,
+      "line": 98,
       "methods": [
         "POST"
       ],
@@ -1701,7 +1701,7 @@
     {
       "decorator": "app.post",
       "handler": "do_bind_queue",
-      "line": 118,
+      "line": 115,
       "methods": [
         "POST"
       ],
@@ -1723,7 +1723,7 @@
     {
       "decorator": "app.post",
       "handler": "do_run_prepare",
-      "line": 111,
+      "line": 108,
       "methods": [
         "POST"
       ],
@@ -1745,7 +1745,7 @@
     {
       "decorator": "app.post",
       "handler": "do_pull_metrics",
-      "line": 107,
+      "line": 104,
       "methods": [
         "POST"
       ],
@@ -1756,7 +1756,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_all",
-      "line": 131,
+      "line": 127,
       "methods": [
         "POST"
       ],
@@ -1767,7 +1767,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_batch",
-      "line": 126,
+      "line": 122,
       "methods": [
         "POST"
       ],
@@ -1778,7 +1778,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_reopens",
-      "line": 135,
+      "line": 131,
       "methods": [
         "POST"
       ],
@@ -1789,7 +1789,7 @@
     {
       "decorator": "app.post",
       "handler": "do_run_resume",
-      "line": 92,
+      "line": 89,
       "methods": [
         "POST"
       ],
@@ -1822,7 +1822,7 @@
     {
       "decorator": "app.put",
       "handler": "do_run_upload_chunk",
-      "line": 72,
+      "line": 70,
       "methods": [
         "PUT"
       ],
@@ -1833,7 +1833,7 @@
     {
       "decorator": "app.post",
       "handler": "do_run_upload_finalize",
-      "line": 84,
+      "line": 82,
       "methods": [
         "POST"
       ],
@@ -1844,7 +1844,7 @@
     {
       "decorator": "app.post",
       "handler": "do_run_upload_init",
-      "line": 64,
+      "line": 62,
       "methods": [
         "POST"
       ],

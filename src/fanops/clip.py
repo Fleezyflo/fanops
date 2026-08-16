@@ -679,7 +679,7 @@ def _transcript_burn_enabled(led: Ledger, cfg: Config, src) -> bool:
 
     The retention hook (m.hook) is burned separately. Hardsub sources already carry lyrics on the
     picture; talk sources must not get a second transcript layer. cfg.burn_subs and Batch.burn_subs
-    are ignored here (Studio checkbox remains for other paths; render never layers transcript text)."""
+    are ignored here; render never layers transcript text."""
     return False
 
 
