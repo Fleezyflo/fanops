@@ -395,7 +395,11 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
             seen.add(h); kept.append(h)
     # MOL-978: mega ≤ 1 and IG/TT mid split. Fail-open when cfg/measurements are missing so
     # clip-signal tests (cfg=None) stay byte-identical. `platform` is read here.
-    measurements = {} if cfg is None else load_measurements(cfg)
+    # load_measurements never raises; OSError covers monkeypatched/unreadable cache (persona_facts).
+    try:
+        measurements = {} if cfg is None else (load_measurements(cfg) or {})
+    except OSError:
+        measurements = {}
     if not measurements:
         return kept[:max_tags]
     pool = list(kept)
