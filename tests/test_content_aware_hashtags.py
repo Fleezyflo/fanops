@@ -1,5 +1,5 @@
 """Content-aware hashtags: a clip's tags must derive from THAT clip's information (its transcript),
-survive vetting, and carry a provenance `source` for every shipped tag. Captions stay hashtags-only.
+survive vetting, and carry a provenance `source` for every shipped tag. Caption is a sentence + tags array.
 
 These pin the pure hashtags.py seams (the extractor + the `content=` admit/slot + the traced provenance).
 The `content=None` cases are the FIREWALL — they must be byte-identical to today's vet_hashtags.
@@ -150,7 +150,7 @@ from fanops.config import Config
 
 # ---- MOL-642: content_tags wired through request / prompt / ingest ---------------------------------
 # content_tags ride the payload + prompt as a fit signal; ingest passes content= so model-picked
-# content tags survive membership. Seed fallback (items:[]) still has no content floor.
+# content tags survive membership. items:[] HOLDs caption_missing_language (no seed manufacture).
 
 def test_request_payload_embeds_content_tags(tmp_path):
     """request_captions embeds content_tags derived from the transcript (MOL-642)."""
@@ -193,10 +193,11 @@ def test_pipeline_model_pick_content_survives_ingest(tmp_path):
     rid = latest_request_id(cfg, "captions", "clip_x")
     response_path(cfg, "captions", "clip_x").write_text(
         CaptionSet(request_id=rid, items=[
-            CaptionItem(surface="a/instagram", caption="#loyalty #hiphop", language="en",
+            CaptionItem(surface="a/instagram", caption="loyalty over everything.", language="en",
                         hashtags=["#loyalty", "#hiphop"])]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_x")
     entry = led.clips["clip_x"].meta_captions["a/instagram"]
+    assert entry["caption"] == "loyalty over everything."
     assert "#loyalty" in entry["hashtags"]
     assert entry["tag_sources"].get("#loyalty") == "content"
 
@@ -220,7 +221,7 @@ def _seed(led, *, clip_id, mom_id, transcript):
 
 
 def _ingest_empty(led, cfg, clip_id):
-    # the 83% case: the model soft-refuses (items:[]) -> seed fallback. Content must STILL reach the line.
+    # items:[] is missing language — HOLD, no seed-tag manufacture.
     led = request_captions(led, cfg, clip_id, [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
@@ -228,8 +229,7 @@ def _ingest_empty(led, cfg, clip_id):
 
 
 def test_two_clips_seed_fallback_empty_without_corpus(tmp_path):
-    # No content floor: seed fallback (items:[]) with cold cache still ships empty — content
-    # only admits model picks. Different transcripts still diverge in the REQUEST payload.
+    # items:[] HOLDs both clips. Request payloads still diverge by transcript (content_tags).
     from fanops.agentstep import request_path
     import json
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -238,24 +238,26 @@ def test_two_clips_seed_fallback_empty_without_corpus(tmp_path):
     _seed(led, clip_id="clip_b", mom_id="mom_b", transcript="a tender lullaby about devotion")
     led = _ingest_empty(led, cfg, "clip_a")
     led = _ingest_empty(led, cfg, "clip_b")
-    a = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
-    b = led.clips["clip_b"].meta_captions["a/instagram"]["hashtags"]
-    assert a == b == []                                        # honest cold-cache floor: empty, not padded
+    for cid in ("clip_a", "clip_b"):
+        c = led.clips[cid]
+        assert c.held is True and c.state is ClipState.held
+        assert "caption_missing_language" in (c.held_reason or "")
+        assert "a/instagram" not in c.meta_captions
     pa = json.loads(request_path(cfg, "captions", "clip_a").read_text())
     pb = json.loads(request_path(cfg, "captions", "clip_b").read_text())
     assert pa.get("content_tags") != pb.get("content_tags")
 
 
 def test_seed_fallback_entry_carries_tag_sources(tmp_path):
-    # Seed fallback with empty picks: no content floor → no content source (membership-only channel).
+    # No seed-fallback "not held" contract: items:[] HOLDs caption_missing_language.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="a fiery diss track about betrayal")
     led = _ingest_empty(led, cfg, "clip_a")
-    entry = led.clips["clip_a"].meta_captions["a/instagram"]
-    assert set(entry["tag_sources"]) == set(entry["hashtags"])  # one source per shipped tag
-    assert all(entry["tag_sources"].values())                  # none empty/sourceless
-    assert "content" not in entry["tag_sources"].values()      # no model pick → no content source
+    c = led.clips["clip_a"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert "a/instagram" not in c.meta_captions
 
 
 # ---- Task 5: the prompt offers the clip's content tags (byte-identical without) ----------------------
@@ -280,13 +282,15 @@ def test_prompt_byte_identical_without_content():
 
 
 def test_contentless_clip_is_byte_identical(tmp_path):
-    # an empty-transcript clip ships the same seed line as before this feature (firewall).
+    # items:[] HOLDs even on an empty-transcript clip — no manufactured seed caption.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     _seed(led, clip_id="clip_a", mom_id="mom_a", transcript="")
     led = _ingest_empty(led, cfg, "clip_a")
-    tags = led.clips["clip_a"].meta_captions["a/instagram"]["hashtags"]
-    assert tags == vet_hashtags(None, Platform.instagram, "en")
+    c = led.clips["clip_a"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert "a/instagram" not in c.meta_captions
 
 
 
@@ -327,7 +331,7 @@ def test_request_payload_hashtag_metrics_sidecar(tmp_path):
 
 
 def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
-    """Seed fallback tag_sources trace source high-count related tags (corpus/content), not persona monopoly."""
+    """items:[] HOLDs caption_missing_language; request corpus still traces source, not persona monopoly."""
     from fanops.agentstep import request_path
     from fanops.controlio import write_json_atomic
     from fanops.accounts import Accounts, Account
@@ -359,12 +363,10 @@ def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
     rid = latest_request_id(cfg, "captions", "clip_x")
     response_path(cfg, "captions", "clip_x").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_x")
-    entry = led.clips["clip_x"].meta_captions["a/instagram"]
-    sources = entry["tag_sources"]
-    assert "#diss" in entry["hashtags"] and sources.get("#diss") in ("corpus", "content")
-    assert all(t not in entry["hashtags"] for t in ("#personaone", "#personatwo", "#personathree"))
-    assert "corpus" in sources.values() or "content" in sources.values()
-    assert len([t for t in entry["hashtags"] if sources.get(t) == "corpus"]) <= 3  # _CORPUS_LEAD_MAX
+    c = led.clips["clip_x"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert "a/instagram" not in c.meta_captions
 
 
 # ---- Task 6: Review surfaces the per-tag provenance (read-only) ---------------------------------------
