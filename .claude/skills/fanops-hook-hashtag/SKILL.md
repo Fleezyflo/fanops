@@ -148,10 +148,12 @@ Read the clip's **visual** energy (frames) + **audio** transient (signal peaks) 
 
 ### Render concerns (deferred)
 
-Stacked EN/AR on-screen typography, the 100–200ms caption-lead **anticipation timing**, and central
-**safe-zone Y** placement are *render* concerns (`overlay.build_ass`), out of scope for the generator
-and deferred to a future render PR. Today the author emits a **single high-contrast string** the
-renderer ships unchanged; the safe-zone work should also re-check the current top-third placement.
+Stacked EN/AR on-screen typography and the 100–200ms caption-lead **anticipation timing** remain
+*render* concerns out of scope for the generator. HOOK placement is Alignment 5 (middle-centre),
+MarginV 0, `\fad(0,200)` in `overlay.build_ass`. Existing Review `{cid}.mp4` files burned with the
+old top-third hook are recut in place by `fanops overlay-reburn` (ass-only; proved crop; never
+center fail-open). The author still emits a **single high-contrast string** the renderer ships
+unchanged.
 
 ---
 
