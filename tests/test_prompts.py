@@ -1,4 +1,5 @@
 # tests/test_prompts.py
+import re
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 
@@ -348,13 +349,19 @@ def test_caption_prompt_is_fan_third_person_voice():
     assert "third person" in low or "third-person" in low
     assert "first person" in low or "as the artist" in low   # explicitly forbids the artist voice
 
-def test_caption_prompt_caption_is_hashtags_only():
-    # Real fan pages post a stack of hashtags as the caption — nothing else.
+def test_caption_prompt_caption_is_one_sentence_plus_tags():
+    # F1-P / MOL-976: caption is one non-hashtag sentence; 3–4 tags live in the hashtags array.
     p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
                         "transcript_excerpt": "x",
                         "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
     low = p.lower()
-    assert "hashtag" in low and "only" in low                 # caption == hashtags only
+    assert "hashtags only" not in low
+    assert "vibe hook" not in low
+    assert re.search(r"\bsentence\b", p, re.I)
+    assert "3–4" in p or "3-4" in p
+    assert "`hashtags`" in p
+    assert "NEVER an empty `items` array" in p
+    assert "reproduces the transcript" in low
 
 def test_caption_prompt_honors_surface_persona():
     # A per-surface persona (the UI-set fan voice) must reach the model as a voice instruction.
@@ -365,7 +372,7 @@ def test_caption_prompt_honors_surface_persona():
     assert "hype superfan" in p                # the persona value reaches the model
     assert "persona" in p.lower()              # named as a voice instruction
 
-# REMOVED with the root fix: caption_prompt is hashtags-only now (no on-screen hook), so it carries no
+# REMOVED with the root fix: caption_prompt does not author the on-screen hook, so it carries no
 # em-dash hook rule. The hook em-dash guarantee lives on the moment gate + the deterministic text sanitizer.
 
 def test_caption_prompt_lists_every_surface_and_language():
@@ -411,12 +418,15 @@ def test_caption_prompt_isolates_transcript_excerpt_against_injection():
     assert "nice bar" in p_evil
     assert "\\n" in p_evil   # backslash-n literal => excerpt was json-escaped, not interpolated raw
 
-def test_caption_prompt_asks_for_per_surface_hook():
-    from fanops.prompts import caption_prompt
+def test_caption_prompt_asks_for_sentence_in_caption_and_tags_in_array():
+    # Word-bounded sentence ask in `caption`; tags go in the hashtags array (not a hook field).
     p = caption_prompt({"clip_id": "c1", "transcript_excerpt": "they slept on me",
                         "language": "en", "guidance": "",
                         "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
-    assert "hook" in p.lower()        # the prompt instructs the model to return a per-surface hook
+    assert re.search(r"\bsentence\b", p, re.I)
+    assert "`caption`" in p
+    assert "`hashtags` array" in p
+    assert "rationale" not in p and "hooks_by_persona" not in p
 
 def test_caption_prompt_renders_learned_hint():
     # Creative-variation v2: when the gated scorer has fed a winning hook into the payload as

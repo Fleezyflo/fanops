@@ -362,12 +362,11 @@ def caption_prompt(payload: dict) -> str:
     pick_body = (" ".join(pick_parts) if pick_parts else
                  "Choose ONLY from each surface's `hashtag_store` UNION its `corpus` "
                  "(both may be empty — ship a short honest line).")
-    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — each surface's menu is already "
-                 "ordered BIGGEST FIRST by Instagram's own post volume, so prefer earlier entries when "
-                 f"the fit is equal. {pick_body} Do NOT invent tags outside them. ")
+    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — prefer earlier menu entries "
+                 f"when fit is equal. {pick_body} Do NOT invent tags outside them. ")
     metrics_block = (
-        "  - Your job is CLIP FIT; the menu order already carries size. When two tags fit equally, keep "
-        "the earlier (larger) one. `media_count` is how many posts carry the tag; "
+        "  - Your job is CLIP FIT. When two tags fit equally, keep the earlier entry. "
+        "`media_count` is how many posts carry the tag; "
         "`current_top_reel_play_max_7d` is the best plays on a Reel it carried in the last 7 days. These "
         "are different units — do not add or average them. "
         f"Platform numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
@@ -395,15 +394,13 @@ def caption_prompt(payload: dict) -> str:
         "mismatched value holds the clip).\n"
         "  - One item per surface. Set each item's `surface` to the EXACT key given (copy verbatim — "
         "do not reformat, abbreviate, or fix it).\n"
-        "  - You MUST return EXACTLY one item per surface — NEVER an empty `items` array. The caption is "
-        "GENRE HASHTAGS ONLY (chosen from the menu below); it never quotes, endorses, or reproduces the "
-        "transcript. So even if the transcript is explicit, edgy, or sensitive, that is IRRELEVANT to "
-        "your output — still return the genre hashtags + a vibe hook for every surface. Refusing or "
-        "returning no item is never correct here.\n"
+        "  - You MUST return EXACTLY one item per surface — NEVER an empty `items` array. The caption "
+        "never quotes, endorses, or reproduces the transcript. So even if the transcript is explicit, "
+        "edgy, or sensitive, that is IRRELEVANT to your output — still return one sentence plus 3–4 "
+        "tags for every surface. Refusing or returning no item is never correct here.\n"
         f"  - Surfaces to caption (use these exact keys): {json.dumps(keys, ensure_ascii=False)}\n"
-        "  - Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags (MAX 4 — fewer is "
-        "fine) separated by spaces and NOTHING ELSE — no sentences, no prose, no @mentions, no emoji. "
-        f"Put the SAME tags in the `hashtags` array. {pick_rule}"
+        "  - Each `caption` is one non-hashtag sentence. Put the SAME 3–4 tags in the `hashtags` array "
+        f"(MAX 4 — fewer is fine). {pick_rule}"
         "Anything beyond 4 or off-menu is dropped by the system, so pick well.\n"
         "  - Honor each surface's `persona` when present — it sets the fan angle/voice for that "
         "account (e.g. which sub-scene to lean into within the menu).\n"
@@ -412,10 +409,11 @@ def caption_prompt(payload: dict) -> str:
         "any remaining slots (up to 4) from that surface's `hashtag_store` menu.\n"
         f"{metrics_block}"
         f"{content_block}"
-        # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
-        # seeing MOMENT gate (m.hook), never this blind text-only gate. The per-surface
-        # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;
-        # the learned/transferred feeds stay, empty by default while learning is frozen).
+        # ROOT FIX: caption is one non-hashtag sentence + 3–4 tags in `hashtags`. The on-screen
+        # hook remains the moment gate via m.hook — do not ask for hook/axis/rationale fields.
+        # The per-surface hook/axis/rationale ask was removed (the dormant coherence-gate machinery
+        # was deleted with it; the learned/transferred feeds stay, empty by default while learning
+        # is frozen).
         f"{learned_block}"
         f"{transferred_block}"
         "\n"
