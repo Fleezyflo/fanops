@@ -37,13 +37,13 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
 
-    # #hiphop is the LOUDER tag (higher Top-grid median) but #detroitrap is the BIGGER one, so
-    # size-first rank (MOL-692) must lead with #detroitrap all the way to the shipped line.
+    # #hiphop is the LOUDER tag (higher Top-grid median) but #detroitrap is the BIGGER one, both
+    # mid-band — size-not-median must lead with #detroitrap all the way to the shipped line (MOL-977).
     client = _FakeClient({"#hiphop": 990, "#detroitrap": 500}, cooccur="#detroitrap",
-                         media_count_by_tag={"#hiphop": 10_000, "#detroitrap": 4_000_000})
+                         media_count_by_tag={"#hiphop": 10_000, "#detroitrap": 1_500_000})
     refresh_store(cfg, scrape_client=client)
     cache = load_measurements(cfg)
-    assert _metric(cache["#detroitrap"]) == 500 and cache["#detroitrap"]["media_count"] == 4_000_000.0
+    assert _metric(cache["#detroitrap"]) == 500 and cache["#detroitrap"]["media_count"] == 1_500_000.0
     assert cache["#detroitrap"]["from"] == {"#hiphop": 2}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
