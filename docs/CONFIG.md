@@ -130,6 +130,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 |---|---|---|---|
 | `FANOPS_OPERATOR_TZ` | `UTC` | Operator timezone for scheduling/buckets (fails closed to UTC) | .env |
 | `FANOPS_REALISTIC_CADENCE` | off | 2–3h jittered cadence band | .env |
+| `FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY` | 2 | Hard cap of queued slots per handle per operator-local day (Approve + Re-spread). `0` = unlimited. Stops a bulk-approve from laying 8–12 posts/day on a 2–3h gap × 24h window | .env |
 | `FANOPS_PUBLISH_LEAD_MINUTES` | 0 | Editorial lead window (clamped ≥0) | .env |
 | `FANOPS_CONCURRENT_SOURCES` | off | Parallel per-source pipeline | .env |
 | `FANOPS_CONCURRENT_WORKERS` | 4 | Concurrency pool size (clamped ≥1) | .env |

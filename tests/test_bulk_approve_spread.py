@@ -193,16 +193,18 @@ def _per_day(days) -> list[int]:
     return [counts[d] for d in sorted(counts)]
 
 
-def test_batch_spread_has_no_per_day_account_cap(tmp_path, monkeypatch):
-    """106 posts for one account still all get slots; more than three may share one operator-local day."""
+def test_batch_spread_default_caps_two_per_local_day(tmp_path, monkeypatch):
+    """106 posts still all get slots; default cap is 2 per operator-local day (spam-flag floor)."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
+    assert cfg.max_posts_per_account_per_day == 2
     from fanops.studio.views_common import suggest_times_for_batch
     posts = _bare_posts("a", 106)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     assert len(sched) == 106, "every post must get a slot"
     per_day = _per_day([parse_iso(t).date() for t in sched.values()])
-    assert max(per_day) > 3, f"expected no 3/day ceiling: per_day={per_day}"
+    assert max(per_day) <= 2, f"default daily cap broken: per_day={per_day}"
+    assert len(per_day) >= 53, f"106 posts at 2/day must span many days: {len(per_day)}"
 
 
 def test_batch_spread_keeps_gap_distinctness_and_account_isolation(tmp_path, monkeypatch):
@@ -218,29 +220,32 @@ def test_batch_spread_keeps_gap_distinctness_and_account_isolation(tmp_path, mon
         dts = sorted(parse_iso(sched[p.id]) for p in posts if p.account == handle)
         gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
         assert all(g >= MIN_PER_ACCOUNT_GAP_MIN for g in gaps_min), f"{handle} gap floor: {gaps_min}"
-        assert max(_per_day([d.date() for d in dts])) > 3, (
-            f"{handle} still capped at 3/day: {[iso_z(d) for d in dts]}")
+        assert max(_per_day([d.date() for d in dts])) <= 2, (
+            f"{handle} exceeded 2/day default: {[iso_z(d) for d in dts]}")
 
 
-def test_batch_spread_may_exceed_three_on_one_operator_local_day(tmp_path, monkeypatch):
-    """With no daily cap, twelve posts can exceed three on one operator-local day even when UTC disagrees."""
+def test_batch_spread_cap_zero_may_exceed_three_on_one_operator_local_day(tmp_path, monkeypatch):
+    """Escape hatch: FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY=0 restores unlimited-per-day."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_OPERATOR_TZ", "Asia/Dubai")          # UTC+4, no DST
+    monkeypatch.setenv("FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY", "0")
     from zoneinfo import ZoneInfo
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
-    assert cfg.operator_tz == "Asia/Dubai", "FANOPS_OPERATOR_TZ not reading through cfg"
+    assert cfg.max_posts_per_account_per_day == 0
     from fanops.studio.views_common import suggest_times_for_batch
     posts = _bare_posts("a", 12)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)       # 12:00Z == 16:00 local
     zone = ZoneInfo("Asia/Dubai")
     local_days = [parse_iso(t).astimezone(zone).date() for t in sched.values()]
     assert max(_per_day(local_days)) > 3, (
-        f"operator-local day still capped at 3: {sorted(sched.values())}")
+        f"cap=0 should exceed 3/day: {sorted(sched.values())}")
 
 
 def test_second_batch_may_land_same_operator_local_day(tmp_path, monkeypatch):
-    """Approving another batch when posts already sit on today does not force a next-day spill."""
+    """Approving another batch when posts already sit on today does not force a next-day spill
+    when the daily cap is off. (Default cap=2 is covered elsewhere.)"""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    monkeypatch.setenv("FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from fanops.studio.views_common import suggest_times_for_batch
     held = _bare_posts("a", 3)
@@ -341,18 +346,18 @@ def test_same_day_consecutive_gaps_at_most_six_hours(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     from zoneinfo import ZoneInfo
     from fanops.studio.views_common import suggest_times_for_batch, _MAX_GAP_MIN
-    posts = _bare_posts("a", 4)
+    posts = _bare_posts("a", 2)
     sched = suggest_times_for_batch(cfg, posts, now=FIXED_DT)
     zone = ZoneInfo("America/New_York")
     dts = sorted(parse_iso(sched[p.id]).astimezone(zone) for p in posts)
-    assert len(dts) == 4
+    assert len(dts) == 2
     gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
     assert all(g <= _MAX_GAP_MIN for g in gaps_min), f"max-gap 6h violated: {gaps_min}"
-    assert all(d.date() == dts[0].date() for d in dts), "cap-sized batch must fit one local day"
+    assert all(d.date() == dts[0].date() for d in dts), "2 posts at 2/day must fit one local day"
 
 
-def test_a_second_bulk_approve_may_stack_more_on_one_day(tmp_path, monkeypatch):
-    """Approving ten posts, then ten more, may place more than three on one operator-local day."""
+def test_a_second_bulk_approve_still_respects_daily_cap(tmp_path, monkeypatch):
+    """Approving ten posts, then ten more: respread of the union still caps at 2/local day."""
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
@@ -379,7 +384,7 @@ def test_a_second_bulk_approve_may_stack_more_on_one_day(tmp_path, monkeypatch):
     queued = [p for p in reloaded.posts.values() if p.state is PostState.queued and p.account == "a"]
     assert len(queued) == 20, f"an approval was lost: {len(queued)} queued of 20"
     per_day = _per_day([parse_iso(p.scheduled_time).date() for p in queued])
-    assert max(per_day) > 3, f"daily cap still enforced across approvals: per_day={per_day}"
+    assert max(per_day) <= 2, f"daily cap lost across approvals: per_day={per_day}"
 
 
 def _assert_account_spread(cfg, ids, *, min_gap_min: int) -> None:

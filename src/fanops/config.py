@@ -1132,6 +1132,20 @@ class Config:
         explicit-on-words pattern. Set via FANOPS_REALISTIC_CADENCE."""
         return env_bool(os.getenv("FANOPS_REALISTIC_CADENCE"), default=False)
 
+    @property
+    def max_posts_per_account_per_day(self) -> int:
+        # Hard cap of queued slots per handle per operator-local day. Default 2 — IG/TT fan
+        # accounts get spam-flagged at the 2–3h-gap × 24h-open density (~8–12/day). 0 disables
+        # the cap (escape hatch). Negative or garbage env → default 2, never unlimited-by-typo.
+        raw = os.getenv("FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY")
+        if raw is None or not str(raw).strip():
+            return 2
+        try:
+            v = int(str(raw).strip())
+        except ValueError:
+            return 2
+        return v if v >= 0 else 2
+
     def account_window(self, handle: str) -> "tuple[int, int] | None":
         """M7 seam: the per-account daily posting window (open_hour, close_hour) in operator-local
         hours. Returns None when the account is unknown OR has no daily_window field — None means
