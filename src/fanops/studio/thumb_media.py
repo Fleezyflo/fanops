@@ -91,7 +91,7 @@ def resolve_clip_thumb(cfg, clip_id: str) -> Response:
                  and cache.stat().st_mtime >= os.path.getmtime(src))
         if fresh:
             return _serve_cached_jpg(cache)
-        return _extract_and_serve(src, cache, at_seconds=0.5)
+        return _extract_and_serve(src, cache, at_seconds=0.0)
     except Exception as exc:
         _log.warning("thumb clip resolve failed: %s", exc)
         return _fallback_response(str(exc)[:120], log=False)
