@@ -1677,6 +1677,7 @@ def test_refresh_store_if_due_caps_30_unique_names_per_7_days(tmp_path, monkeypa
     """Exact-name quota: at most 30 unique sidecar names remesured in 7 days."""
     from datetime import datetime, timezone, timedelta
     from fanops.fanops_hashtags import refresh_store_if_due
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "40")  # pass cap is 25; quota is 30
     cfg = Config(root=tmp_path)
     names = [f"#t{i:02d}" for i in range(35)]
     _write_sidecar(cfg, names)
