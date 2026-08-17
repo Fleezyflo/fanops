@@ -1416,7 +1416,10 @@ def test_refresh_store_does_not_spend_budget_exhausted_session(tmp_path, monkeyp
     monkeypatch.setattr(igs, "open_client", boom)
     out = refresh_store(cfg, now=t0)
     assert out.get("written") is False
-    assert out.get("aborted") == "budget"
+    # Layer A short-circuits before open (`aborted=cooldown`, reason=budget) or
+    # the walk-empty path (`aborted=budget`). Either way: no client.
+    assert out.get("aborted") in ("budget", "cooldown")
+    assert out.get("reason") in ("budget", "cooldown")
 
 
 def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
