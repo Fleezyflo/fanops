@@ -671,27 +671,106 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
     open_client(cfg, client_factory=_Ok)
 
 
-def test_open_client_allow_reauth_calls_login_relogin_once(tmp_path, monkeypatch):
-    """Operator path: any probe Exception with allow_reauth=True → login(..., relogin=True) exactly once."""
-    from fanops.ig_hashtag_scrape import open_client
+def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypatch):
+    """Operator path: LoginRequired probe → clear auth/cookies + login(..., relogin=False)."""
+    from types import SimpleNamespace
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     seen = []
     from instagrapi.exceptions import LoginRequired as _LR
+
+    class _Jar:
+        def clear(self):
+            seen.append("cleared")
+
     class _Stale:
+        def __init__(self):
+            self.authorization_data = {"sessionid": "x"}
+            self.private = SimpleNamespace(cookies=_Jar(), headers={"Authorization": "Bearer x"})
+            self.public = SimpleNamespace(cookies=_Jar(), headers={})
+            self.last_login = 1.0
         def load_settings(self, _p): pass
-        def account_info(self): raise _LR("login_required")
+        def set_settings(self, s):
+            seen.append(("set", s))
+        def search_hashtags(self, _q):
+            raise _LR("login_required")
+        def account_info(self):
+            raise AssertionError("search probe must run before account_info")
         def login(self, user, pw, relogin=False):
-            seen.append((user, pw, relogin))
+            seen.append(("login", user, pw, relogin))
         def dump_settings(self, _p): pass
     c = open_client(cfg, client_factory=_Stale, allow_reauth=True)
     assert c is not None
-    assert seen == [("u", "p", True)]
+    assert c.authorization_data == {}
+    assert "Authorization" not in c.private.headers
+    assert seen.count("cleared") >= 1
+    assert ("login", "u", "p", False) in seen
+    assert not any(x[0] == "login" and x[-1] is True for x in seen if isinstance(x, tuple))
+    assert not any(x[0] == "set" for x in seen if isinstance(x, tuple))
+
+
+def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
+    """PleaseWait / rate-limit on a live dump must not become a password login."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+
+    class PleaseWaitFewMinutes(Exception):
+        pass
+
+    class _Live:
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise PleaseWaitFewMinutes("wait")
+        def login(self, *_a, **_k):
+            raise AssertionError("throttle must not login")
+        def dump_settings(self, _p):
+            raise AssertionError("throttle must not dump")
+    try:
+        open_client(cfg, client_factory=_Live, allow_reauth=True, user="u")
+    except PleaseWaitFewMinutes:
+        return
+    raise AssertionError("throttle must propagate")
+
+
+def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
+    """A failed password restore must not overwrite the on-disk dump."""
+    from instagrapi.exceptions import LoginRequired, BadPassword
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text('{"keep": true}')
+    class _Fail:
+        def load_settings(self, _p): pass
+        def get_settings(self):
+            return {"uuids": {"uuid": "keep-me"}}
+        def set_settings(self, _s): pass
+        def set_uuids(self, _u): pass
+        def search_hashtags(self, _q):
+            raise LoginRequired("login_required")
+        def login(self, *_a, **_k):
+            raise BadPassword("bad")
+        def dump_settings(self, _p):
+            raise AssertionError("must not dump after failed login")
+    try:
+        open_client(cfg, client_factory=_Fail, allow_reauth=True, user="u")
+    except BadPassword:
+        pass
+    else:
+        raise AssertionError("failed login must propagate")
+    assert '"keep": true' in sess.read_text()
 
 
 def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypatch):
@@ -1394,6 +1473,35 @@ def test_open_client_uses_budget_exhausted_unfrozen_session(tmp_path, monkeypatc
     c = open_client(cfg, client_factory=_Ok, now=t0)
     assert getattr(c, "_fanops_scrape_user", None) == "spent"
     assert str(scrape_session_path(cfg, "spent")) in seen[0]
+
+
+def test_read_active_cooldown_budget_not_frozen_peer_login_required(tmp_path, monkeypatch):
+    """Frozen LoginRequired + unfrozen day-cap peer → gate is budget, not LoginRequired."""
+    from datetime import datetime, timezone
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _read_active_cooldown,
+                                        refresh_store_if_due)
+    from fanops.controlio import write_json_atomic
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,spent")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    for u in ("dead", "spent"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {
+            "dead": {"until": "2026-07-01T18:00:00+00:00", "streak": 4,
+                     "reason": "LoginRequired", "day": "2026-07-01", "used": 3},
+            "spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET,
+                      "updated_at": "2026-07-01T03:49:33+00:00"},
+        }})
+    cool = _read_active_cooldown(cfg, t0)
+    assert cool is not None
+    assert cool.get("reason") == "budget"
+    skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+    assert skip.get("cooldown_reason") == "budget"
 
 
 def test_refresh_store_does_not_spend_budget_exhausted_session(tmp_path, monkeypatch):

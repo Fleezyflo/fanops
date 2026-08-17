@@ -79,6 +79,68 @@ def scrape_configured(cfg: Config) -> bool:
     return any(scrape_user_usable(cfg, u) for u in scrape_users(cfg))
 
 
+_SESSION_DEAD_NAMES = frozenset({
+    "LoginRequired", "ClientLoginRequired",
+    "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
+})
+
+
+def scrape_session_dead(exc: BaseException) -> bool:
+    """True when this exception (or any base) means the loaded dump is rejected.
+
+    Match the MRO so ChallengeRedirection / RecaptchaChallengeForm / etc. rotate
+    instead of fail-opening to []. Never used as a password-login trigger for
+    Challenge* — only LoginRequired restores.
+    """
+    return bool({c.__name__ for c in type(exc).__mro__} & _SESSION_DEAD_NAMES)
+
+
+def scrape_session_needs_restore(exc: BaseException) -> bool:
+    """Password restore is only for a rejected session dump, not throttle/network."""
+    return bool({c.__name__ for c in type(exc).__mro__} & {"LoginRequired", "ClientLoginRequired"})
+
+
+def _probe_scrape_session(client) -> None:
+    """Work-shaped probe for scrape-login. search_hashtags is the lock-producer call.
+
+    Fall back to account_info only when the client has no search surface (unit fakes).
+    Never call login() here.
+    """
+    search = getattr(client, "search_hashtags", None)
+    if callable(search):
+        search("music")
+        return
+    info = getattr(client, "account_info", None)
+    if callable(info):
+        info()
+
+
+def _clear_auth_keep_device(client) -> None:
+    """Drop session auth/cookies so login() does not see a user_id and relogin=True.
+
+    Keep uuids, device_settings, user_agent, mid — set_settings({}) resets those to
+    library defaults and is the more suspicious fingerprint.
+    """
+    if hasattr(client, "authorization_data"):
+        client.authorization_data = {}
+    for sess_name in ("private", "public"):
+        sess = getattr(client, sess_name, None)
+        cookies = getattr(sess, "cookies", None)
+        if cookies is not None and hasattr(cookies, "clear"):
+            cookies.clear()
+        headers = getattr(sess, "headers", None)
+        if isinstance(headers, dict):
+            headers.pop("Authorization", None)
+    if hasattr(client, "last_login"):
+        client.last_login = None
+
+
+def _restore_uuids_and_login(client, user: str, password: str) -> None:
+    """Password login that keeps the device envelope. Never login(..., relogin=True)."""
+    _clear_auth_keep_device(client)
+    client.login(user, password)
+
+
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
@@ -89,7 +151,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     Unattended callers (Layer A tick, doctor) MUST leave this False — instagrapi>=2.18.12 escalates
     LoginRequired inside `login()` into a full password re-auth, which earned the 2026-07-29T22:01Z
     native checkpoint when the tick still called `login()` every pass.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (probe decides whether to relogin).
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (search probe decides login).
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
     (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
@@ -133,10 +195,13 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         client.load_settings(str(sess))
         if allow_reauth:                                # operator scrape-login only: the probe DECIDES login()
             try:
-                client.account_info()
+                _probe_scrape_session(client)
             except Exception as e:                      # noqa: BLE001 — probe surface is opaque
                 get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
-                client.login(user, scrape_password_for(user) or "", relogin=True)
+                if not scrape_session_needs_restore(e):
+                    raise
+                # Failed login raises before dump_settings — the on-disk dump stays untouched.
+                _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
         # Unattended: load_settings → dump → return (session validated by the first work call).
     else:
         if not allow_reauth:
@@ -259,6 +324,8 @@ def search_hashtags_scrape(client, name) -> list[dict]:
     try:
         hits = client.search_hashtags(query)
     except Exception as exc:
+        if scrape_session_dead(exc):
+            raise
         _log.warning("search_hashtags_scrape fail-open: %s: %s", type(exc).__name__, str(exc)[:200])
         return []
     out: list[dict] = []
