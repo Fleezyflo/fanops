@@ -332,7 +332,8 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
     """Return a blocking cooldown view only when NO healthy under-budget scrape peer remains.
 
     Per-account freeze lives under accounts[user]={until,streak,reason,day,used} (MOL-858). A single
-    dead account must not idle the tick while a peer can still scrape. With no scrape-user list,
+    dead account must not idle the tick while a peer can still scrape. A frozen LoginRequired peer
+    must not name the outage when an unfrozen session is only at the day cap. With no scrape-user list,
     fall back to the pre-MOL-858 top-level until/budget gate (injected-client / single-budget tests).
     Corrupt / unreadable → fail OPEN. Never sleeps."""
     raw = _load_cooldown_blob(cfg)
@@ -345,11 +346,24 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
         # peer without a freeze must not clear the gate while every session-bearing peer is dead.
         if _pick_healthy_scrape_user(cfg, now) is not None:
             return None
+        # No under-budget peer. An unfrozen session at the day cap is budget, not the first
+        # frozen peer's LoginRequired — that label idled the fleet while perca.late still answered.
+        from fanops.ig_hashtag_scrape import scrape_session_path
+        budget_view = None
+        frozen_view = None
+        unfrozen_sess = False
         for user in users:
-            view = _block_view_for_rec(_account_rec(raw, user), now)
-            if view is not None:
-                return view
-        return None
+            rec = _account_rec(raw, user)
+            view = _block_view_for_rec(rec, now)
+            if scrape_session_path(cfg, user).exists() and not _is_frozen(rec, now):
+                unfrozen_sess = True
+                if view is not None and budget_view is None:
+                    budget_view = view
+            elif view is not None and frozen_view is None and _is_frozen(rec, now):
+                frozen_view = view
+        if unfrozen_sess:
+            return budget_view
+        return frozen_view
     return _block_view_for_rec(raw, now)
 
 

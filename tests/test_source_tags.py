@@ -183,3 +183,46 @@ def test_search_hashtags_scrape_fail_open():
             raise RuntimeError("network")
 
     assert search_hashtags_scrape(_Boom(), "music") == []
+
+
+def test_search_hashtags_scrape_reraises_login_required():
+    from instagrapi.exceptions import LoginRequired
+
+    class _Dead:
+        def search_hashtags(self, query):
+            raise LoginRequired("login_required")
+
+    try:
+        search_hashtags_scrape(_Dead(), "music")
+    except LoginRequired:
+        return
+    assert False, "LoginRequired must not fail-open to []"
+
+
+def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
+    """A LoginRequired dump must not persist an empty lock — try the next client."""
+    from instagrapi.exceptions import LoginRequired
+    from fanops.ig_hashtag_scrape import scrape_session_path
+
+    cfg = _cfg(tmp_path)
+    live = _SearchClient({"music": [_Hit("oktag", id="1", media_count=2)]})
+
+    class _Dead:
+        def search_hashtags(self, query):
+            raise LoginRequired("login_required")
+
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        return _Dead() if user == "a" else live
+
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    for u in ("a", "b"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener)
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["pile"] == ["#oktag"]
+    assert seen == ["a", "b"]

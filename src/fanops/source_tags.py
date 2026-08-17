@@ -13,7 +13,7 @@ from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import _dedupe_norm, _norm, _num, load_measurements, lock_from_pile
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape, open_client,
-                                     search_hashtags_scrape)
+                                     scrape_session_dead, search_hashtags_scrape)
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
 
@@ -89,6 +89,42 @@ def _researched(table, sid: str) -> bool:
     return isinstance(at, str) and bool(at.strip())
 
 
+def _call_opener(opener, cfg, user=None):
+    """Call a test opener(cfg) or open_client(cfg, user=...)."""
+    if user is not None:
+        try:
+            return opener(cfg, user=user)
+        except TypeError:
+            pass
+    return opener(cfg)
+
+
+def _iter_lock_clients(cfg, *, client, open_client_fn):
+    """Yield clients to try for this lock, one unfrozen session at a time."""
+    if client is not None:
+        yield client
+        return
+    opener = open_client_fn or open_client
+    from fanops.fanops_hashtags import _healthy_scrape_users
+    now = datetime.now(timezone.utc)
+    peers = _healthy_scrape_users(cfg, now, require_budget_room=False)
+    if not peers:
+        try:
+            cli = _call_opener(opener, cfg)
+        except ScrapeUnavailable:
+            return
+        if cli is not None:
+            yield cli
+        return
+    for user in peers:
+        try:
+            cli = _call_opener(opener, cfg, user=user)
+        except ScrapeUnavailable:
+            continue
+        if cli is not None:
+            yield cli
+
+
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None) -> None:
     """Idempotent: research → search all hits onto pile → measure → lock. Never raises."""
@@ -101,18 +137,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             return
         log = get_logger(cfg)
         # Client first: no_scrape writes nothing, so skip the LLM when scrape is down.
-        cli = client
-        if cli is None:
-            opener = open_client_fn or open_client
-            try:
-                cli = opener(cfg)
-            except ScrapeUnavailable:
-                log("source_tags", sid, "no_scrape")
-                return
-            except Exception as exc:
-                log("source_tags", sid, "no_scrape", err=type(exc).__name__)
-                return
-        if cli is None:
+        # Open one identity; rotate to the next only if this dump is rejected.
+        walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
+        first = next(walk, None)
+        if first is None:
             log("source_tags", sid, "no_scrape")
             return
         try:
@@ -124,14 +152,41 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         if not names:
             log("source_tags", sid, "research_empty")
             return
-        pile: list[str] = []
-        seen: set[str] = set()
-        for q in names:
-            for hit in search_hashtags_scrape(cli, q):
-                n = _norm(hit.get("name") if isinstance(hit, dict) else "")
-                if n and n not in seen:
-                    seen.add(n)
-                    pile.append(n)
+        pile: list[str] | None = None
+        cli = None
+        def _clients():
+            yield first
+            yield from walk
+        for cand in _clients():
+            pile_try: list[str] = []
+            seen: set[str] = set()
+            dead = False
+            for q in names:
+                try:
+                    hits = search_hashtags_scrape(cand, q)
+                except Exception as exc:
+                    if scrape_session_dead(exc):
+                        log("source_tags", sid, "rotate_dead", err=type(exc).__name__,
+                            user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
+                        dead = True
+                        break
+                    hits = []
+                for hit in hits:
+                    n = _norm(hit.get("name") if isinstance(hit, dict) else "")
+                    if n and n not in seen:
+                        seen.add(n)
+                        pile_try.append(n)
+            if dead:
+                continue
+            pile = pile_try
+            cli = cand
+            break
+        if pile is None or cli is None:
+            log("source_tags", sid, "no_scrape", err="all_sessions_dead")
+            return
+        if not pile:
+            log("source_tags", sid, "search_empty")
+            return
         measurements = dict(load_measurements(cfg))
         for tag in pile:
             rec = measurements.get(tag)
@@ -141,6 +196,9 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             try:
                 metrics, _cotags = measure_and_harvest_scrape(cli, tag)
             except Exception as exc:
+                if scrape_session_dead(exc):
+                    log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
+                    break
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
                 continue
             if isinstance(metrics, dict):

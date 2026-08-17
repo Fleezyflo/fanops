@@ -51,7 +51,7 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 **Re-authentication is operator-only.** `open_client` defaults to `allow_reauth=False`: a restored
 session is loaded and returned with **no** `account_info()` probe and never `login()` — the first
 work call validates the session (MOL-910). The Layer A tick and doctor use that default. Only
-`fanops hashtags scrape-login` passes `allow_reauth=True` (probe decides whether to `login(relogin=True)`).
+`fanops hashtags scrape-login` passes `allow_reauth=True` (search probe decides whether to password-login with UUIDs kept; never `login(relogin=True)`).
 Cause: under instagrapi≥2.18.12, `login()` escalates `LoginRequired` into a full password re-auth; the
 unattended tick doing that earned the 2026-07-29T22:01Z native Instagram checkpoint. A checkpoint still
 needs in-app verification — no code path can clear it.
