@@ -218,7 +218,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
                            p.platform, src.language if src else None, store=store,
                            corpus=corpus, content=content_tags or None, cfg=cfg,
-                           recent=_recent_tags(led, p.account))
+                           recent=_recent_tags(led, p.account), account=p.account)
     new_caption, new_tags = (item.caption or "").strip(), vetted
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become

@@ -114,6 +114,7 @@
         "hashtag_hygiene",
         "hashtag_vocab",
         "hashtags",
+        "tag_outcomes",
         "ig_hashtag_scrape",
         "meta_graph",
         "tagging"
