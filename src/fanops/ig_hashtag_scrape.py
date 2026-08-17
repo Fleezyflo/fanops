@@ -141,6 +141,66 @@ def _restore_uuids_and_login(client, user: str, password: str) -> None:
     client.login(user, password)
 
 
+def _browser_sessionid_for(ds_user_id: str) -> str | None:
+    """Read a live Instagram sessionid from local Chrome for this ds_user_id. Never logs it.
+
+    Optional: browser_cookie3 may be absent. Fail closed to None.
+    """
+    if not ds_user_id:
+        return None
+    try:
+        import browser_cookie3
+    except ImportError:
+        return None
+    cookie_err = getattr(browser_cookie3, "BrowserCookieError", OSError)
+    from pathlib import Path
+    roots = [Path.home() / "Library/Application Support/Google/Chrome"]
+    files: list = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        files.extend(root.glob("*/Cookies"))
+        files.extend(root.glob("*/Network/Cookies"))
+    seen: set[str] = set()
+    for cookie_file in files:
+        key = str(cookie_file)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            jar = browser_cookie3.chrome(domain_name="instagram.com", cookie_file=key)
+        except (OSError, ValueError, cookie_err):
+            continue
+        got: dict[str, str] = {}
+        for c in jar:
+            if "instagram" in (c.domain or "") and c.name in {"sessionid", "ds_user_id", "ds_user"}:
+                if c.value:
+                    got[c.name] = c.value
+        ds = got.get("ds_user_id") or got.get("ds_user")
+        sid = got.get("sessionid")
+        if ds == ds_user_id and sid:
+            return sid
+    return None
+
+
+def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
+    """Put a browser sessionid onto the loaded client. Keep device/uuids."""
+    auth = dict(getattr(client, "authorization_data", None) or {})
+    auth["sessionid"] = sessionid
+    if ds_user_id:
+        auth["ds_user_id"] = ds_user_id
+    client.authorization_data = auth
+    private = getattr(client, "private", None)
+    cookies = getattr(private, "cookies", None)
+    if cookies is not None and hasattr(cookies, "set"):
+        cookies.set("sessionid", sessionid)
+        if ds_user_id:
+            cookies.set("ds_user_id", ds_user_id)
+    inject = getattr(client, "inject_sessionid_to_public", None)
+    if callable(inject):
+        inject()
+
+
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
@@ -200,8 +260,22 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
                 get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
                 if not scrape_session_needs_restore(e):
                     raise
-                # Failed login raises before dump_settings — the on-disk dump stays untouched.
-                _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
+                ds = str((getattr(client, "authorization_data", None) or {}).get("ds_user_id")
+                         or getattr(client, "user_id", "") or "")
+                browser_sid = _browser_sessionid_for(ds)
+                if browser_sid:
+                    _inject_sessionid(client, browser_sid, ds)
+                    try:
+                        _probe_scrape_session(client)
+                    except Exception as e2:             # noqa: BLE001 — browser dump may also be stale
+                        get_logger(cfg)("hashtags", user, "scrape_reauth",
+                                        err=type(e2).__name__, via="browser")
+                        if not scrape_session_needs_restore(e2):
+                            raise
+                        _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
+                else:
+                    # Failed login raises before dump_settings — the on-disk dump stays untouched.
+                    _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
         # Unattended: load_settings → dump → return (session validated by the first work call).
     else:
         if not allow_reauth:
