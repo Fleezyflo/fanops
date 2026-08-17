@@ -1365,6 +1365,60 @@ def test_per_account_freeze_rotates_via_open_client(tmp_path, monkeypatch):
     assert _read_active_cooldown(cfg, t0) is None   # live peer keeps the tick open
 
 
+def test_open_client_uses_budget_exhausted_unfrozen_session(tmp_path, monkeypatch):
+    """Day budget is not 'no client'. A live session with used>=cap still opens for lock production."""
+    from datetime import datetime, timezone
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _cooldown_path
+    from fanops.controlio import write_json_atomic
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,spent")
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    for u in ("dead", "spent"):
+        sess = scrape_session_path(cfg, u)
+        sess.parent.mkdir(parents=True, exist_ok=True)
+        sess.write_text("{}")
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {
+            "dead": {"until": "2026-07-01T18:00:00+00:00", "streak": 4,
+                     "reason": "LoginRequired", "day": "2026-07-01", "used": 3},
+            "spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET,
+                      "updated_at": "2026-07-01T03:49:33+00:00"},
+        }})
+    seen = []
+    class _Ok:
+        def load_settings(self, p): seen.append(p)
+        def account_info(self): pass
+        def login(self, *_a, **_k): raise AssertionError("must not login")
+        def dump_settings(self, _p): pass
+    c = open_client(cfg, client_factory=_Ok, now=t0)
+    assert getattr(c, "_fanops_scrape_user", None) == "spent"
+    assert str(scrape_session_path(cfg, "spent")) in seen[0]
+
+
+def test_refresh_store_does_not_spend_budget_exhausted_session(tmp_path, monkeypatch):
+    """Layer A remesure still stops at the day cap. open_client ignoring budget must not leak here."""
+    from datetime import datetime, timezone
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store
+    from fanops.controlio import write_json_atomic
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "spent")
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    sess = scrape_session_path(cfg, "spent")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {"spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
+    def boom(*_a, **_k):
+        raise AssertionError("remesure must not open a budget-exhausted session")
+    monkeypatch.setattr(igs, "open_client", boom)
+    out = refresh_store(cfg, now=t0)
+    assert out.get("written") is False
+    assert out.get("aborted") == "budget"
+
+
 def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
     """MOL-858: skip with cooldown only when every scrape peer is frozen/budgeted."""
     from datetime import datetime, timezone, timedelta
