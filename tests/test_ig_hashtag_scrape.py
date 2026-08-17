@@ -2,7 +2,7 @@
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable,
                                        measure_and_harvest_scrape, resolve_hashtag_scrape,
-                                       scrape_configured)
+                                       scrape_configured, search_hashtags_scrape)
 from hashtag_scrape_fakes import _FakeClient, _Media
 
 
@@ -182,3 +182,31 @@ def test_open_client_unavailable_without_user(tmp_path, monkeypatch):
         open_client(cfg); assert False
     except ScrapeUnavailable as e:
         assert "FANOPS_IG_SCRAPE_USER" in str(e)
+
+
+def test_search_hashtags_scrape_maps_incomplete_hits():
+    class _Hit:
+        def __init__(self, name, id=None, media_count=None):
+            self.name = name
+            self.id = id
+            self.media_count = media_count
+
+    class _C:
+        def search_hashtags(self, query):
+            assert query == "music"
+            return [_Hit("alpha"), _Hit("beta", id="1"), _Hit(None),
+                    _Hit("gamma", id="2", media_count=9)]
+
+    rows = search_hashtags_scrape(_C(), "#Music")
+    assert {r["name"] for r in rows} == {"alpha", "beta", "gamma"}
+    alpha = next(r for r in rows if r["name"] == "alpha")
+    assert "id" not in alpha and "media_count" not in alpha
+    assert all("play_count" not in r for r in rows)
+
+
+def test_search_hashtags_scrape_fail_open_on_client_error():
+    class _Boom:
+        def search_hashtags(self, query):
+            raise RuntimeError("network")
+
+    assert search_hashtags_scrape(_Boom(), "music") == []

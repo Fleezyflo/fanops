@@ -134,6 +134,10 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     clip = led.clips.get(p.parent_id)
     moment = led.moments.get(clip.parent_id) if clip else None
     src = led.sources.get(moment.parent_id) if moment else None
+    if src is not None:
+        from fanops.source_tags import ensure_source_lock
+        with fail_open("studio.ensure_source_lock"):
+            ensure_source_lock(cfg, src, excerpt=moment.transcript_excerpt if moment else None)
     base = cfg.context_path.read_text() if cfg.context_path.exists() else ""
     full_guidance = base
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll

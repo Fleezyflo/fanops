@@ -115,6 +115,7 @@
         "hashtag_vocab",
         "hashtags",
         "tag_outcomes",
+        "source_tags",
         "ig_hashtag_scrape",
         "meta_graph",
         "tagging"

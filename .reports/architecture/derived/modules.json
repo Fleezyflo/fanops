@@ -103,6 +103,7 @@
     "fanops.secret_provider",
     "fanops.settings",
     "fanops.signals",
+    "fanops.source_tags",
     "fanops.stage_lock",
     "fanops.stitch_render",
     "fanops.stranded_posts",
@@ -252,6 +253,7 @@
     "fanops.secret_provider": "S02_configuration",
     "fanops.settings": "S02_configuration",
     "fanops.signals": "S06_media_analysis",
+    "fanops.source_tags": "S10_caption_hashtag",
     "fanops.stage_lock": "S01_foundation",
     "fanops.stitch_render": "S09_render",
     "fanops.stranded_posts": "S19_maintenance",
@@ -297,9 +299,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 140,
+    "assigned": 141,
     "ghosts": 0,
-    "modules": 140,
+    "modules": 141,
     "unassigned": 0
   },
   "unassigned_modules": []
