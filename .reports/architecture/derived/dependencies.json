@@ -296,7 +296,6 @@
         "fanops.doctor",
         "fanops.fanops_account_stats",
         "fanops.fanops_hashtags",
-        "fanops.hashtag_vocab",
         "fanops.health",
         "fanops.health_model",
         "fanops.ingest",
@@ -569,7 +568,8 @@
         "fanops.errors",
         "fanops.ig_hashtag_scrape",
         "fanops.persona_research",
-        "fanops.personas"
+        "fanops.personas",
+        "fanops.source_tags"
       ],
       "optional": [],
       "typing": []
@@ -2511,7 +2511,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 254,
+  "lazy_downward_count": 253,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3228,6 +3228,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 4
+    },
+    {
       "from": "fanops.hashtag_vocab",
       "from_level": 2,
       "jump": 1,
@@ -3781,8 +3789,8 @@
     "compile_edges_G1": 606,
     "lazy_edges": 371,
     "lazy_edges_lateral": 43,
-    "lazy_edges_strictly_upward": 74,
-    "lazy_edges_to_equal_or_higher_level": 117,
+    "lazy_edges_strictly_upward": 75,
+    "lazy_edges_to_equal_or_higher_level": 118,
     "modules": 141,
     "optional_edges": 0,
     "typing_only_edges": 7

@@ -26,6 +26,23 @@ def _persona(cfg, *, pid="curator"):
     return pid
 
 
+def _write_sidecar(cfg, names, *, sid="src_1", lock=None):
+    """Persist a source_tag_locks.json row. `names` is the pile; lock defaults to names."""
+    from fanops.source_tags import source_tag_locks_path
+    pile = list(names)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    table = {}
+    if p.exists():
+        try:
+            raw = json.loads(p.read_text())
+            if isinstance(raw, dict):
+                table = raw
+        except (OSError, ValueError):
+            table = {}
+    table[sid] = {"pile": pile, "lock": list(lock if lock is not None else pile),
+                  "researched_at": "2026-08-17T00:00:00Z"}
+    p.write_text(json.dumps(table))
 
 
 def test_refresh_store_atomic_write_preserves_prior_on_crash(tmp_path, monkeypatch):
@@ -230,6 +247,7 @@ def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     assert refresh_store_if_due(cfg)["reason"] == "no scrape session"
     assert not cfg.hashtags_path.exists()
     _persona(cfg)
+    _write_sidecar(cfg, ["#hiphop"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     client = _FakeClient({"#hiphop": 10})
     assert refresh_store_if_due(cfg, scrape_client=client, now=t0)["refreshed"] is True
@@ -328,6 +346,7 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _CHECKPOINT_DELAY_S)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#hiphop"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     opens = {"n": 0}
     from instagrapi.exceptions import ChallengeRequired
@@ -381,6 +400,7 @@ def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch)
     from instagrapi.exceptions import LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#hiphop"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     clients: list[_FakeClient] = []
     def make_client():
@@ -782,6 +802,7 @@ def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
     cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#hiphop"])
     t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
     _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     _cooldown_path(cfg).write_text("{not-json")
@@ -1219,18 +1240,21 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
     assert out.get("written") is False and out.get("reason") == "no personas have a declared niche"
 
 
-def test_refresh_store_if_due_corrupt_personas_reports_reason_never_raises(tmp_path, monkeypatch):
+def test_refresh_store_if_due_corrupt_personas_does_not_abort(tmp_path, monkeypatch):
+    """HV1-PR4: the tick remesures sidecar names and does not load personas.json."""
     from fanops.fanops_hashtags import refresh_store_if_due
     cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#beta"])
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     accrued = json.dumps({"#measured": {"graph_id": "id-measured", METRIC_FIELD: 1.0,
                                         "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
     cfg.hashtags_path.write_text(accrued)
     _write_corrupt_personas(cfg)
     r = refresh_store_if_due(cfg, max_age_s=10, scrape_client=_FakeClient({"#beta": 900}))
-    assert r["refreshed"] is False and r["aborted"] == "corrupt_personas"
-    assert "personas.json invalid:" in r["reason"]
-    assert cfg.hashtags_path.read_text() == accrued
+    assert r.get("aborted") != "corrupt_personas"
+    assert r["refreshed"] is True
+    assert "#beta" in load_measurements(cfg)
+    assert "#measured" in load_measurements(cfg)
 
 
 def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
@@ -1581,4 +1605,111 @@ def test_platform_error_from_open_client_in_multi_account_walk_arms_cooldown(tmp
     rec = cd["accounts"]["u1"]
     assert rec["reason"] == "checkpoint"
     assert rec["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
+
+
+def test_run_once_does_not_expand_vocab():
+    """HV1-PR4: the run loop (_cmd_run_pass, historically _run_once) must not restock vocab."""
+    import inspect
+    from fanops.cli import _cmd_run_pass
+    src = inspect.getsource(_cmd_run_pass)
+    assert "expand_vocab_if_due" not in src
+    assert "hashtag_vocab" not in src
+    assert "refresh_store_if_due" in src
+
+
+def test_refresh_store_if_due_empty_sidecar_is_clean_noop(tmp_path, monkeypatch):
+    """Empty sidecar → refreshed False, not discovery_skip_no_niche, no scrape."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due
+    cfg = Config(root=tmp_path); _persona(cfg)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#hiphop": 10, "#alpha": 9})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0)
+    assert out["refreshed"] is False
+    assert out.get("aborted") != "discovery_skip_no_niche"
+    assert client.media_calls == [] and client.info_calls == []
+    assert not cfg.hashtags_path.exists()
+
+
+def test_refresh_store_if_due_queue_is_sidecar_not_persona_terms(tmp_path, monkeypatch):
+    """Tick visits pile∪lock union only — persona niche is not the queue."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due
+    cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#alpha"], sid="s1", lock=["#beta"])
+    _write_sidecar(cfg, ["#beta", "#gamma"], sid="s2")
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#hiphop": 99, "#alpha": 10, "#beta": 11, "#gamma": 12})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0)
+    assert out["refreshed"] is True
+    assert set(client.media_calls) == {"alpha", "beta", "gamma"}
+    assert "hiphop" not in client.media_calls
+    m = load_measurements(cfg)
+    assert "#alpha" in m and "#beta" in m and "#gamma" in m
+    assert "#hiphop" not in m
+
+
+def test_refresh_store_if_due_does_not_harvest_cotags_or_call_layer_a(tmp_path, monkeypatch):
+    """Cotag / persona discovery must not run from the tick."""
+    from datetime import datetime, timezone
+    import fanops.fanops_hashtags as fh
+    import fanops.persona_research as pr
+    from fanops.fanops_hashtags import refresh_store_if_due
+    cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+
+    def boom(*_a, **_k):
+        raise AssertionError("tick must not call Layer A discovery")
+
+    monkeypatch.setattr(fh, "refresh_store", boom)
+    monkeypatch.setattr(pr, "persona_terms", boom)
+    client = _FakeClient({"#alpha": 10, "#freshco": 50}, cooccur="#freshco")
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0)
+    assert out["refreshed"] is True
+    assert out.get("discovered", 0) == 0
+    assert client.media_calls == ["alpha"]
+    m = load_measurements(cfg)
+    assert "#alpha" in m and "#freshco" not in m
+
+
+def test_refresh_store_if_due_caps_30_unique_names_per_7_days(tmp_path, monkeypatch):
+    """Exact-name quota: at most 30 unique sidecar names remesured in 7 days."""
+    from datetime import datetime, timezone, timedelta
+    from fanops.fanops_hashtags import refresh_store_if_due
+    cfg = Config(root=tmp_path)
+    names = [f"#t{i:02d}" for i in range(35)]
+    _write_sidecar(cfg, names)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    metrics = {n: float(10 + i) for i, n in enumerate(names)}
+    client = _FakeClient(metrics)
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0)
+    assert out["refreshed"] is True
+    assert len(client.media_calls) == 30
+    assert len(load_measurements(cfg)) == 30
+    blob = json.loads(cfg.hashtags_path.read_text())
+    blob["last_complete_pass"] = (t0 - timedelta(hours=13)).isoformat()
+    cfg.hashtags_path.write_text(json.dumps(blob))
+    nxt = _FakeClient(metrics)
+    skip = refresh_store_if_due(cfg, max_age_s=10, scrape_client=nxt, now=t0 + timedelta(hours=13))
+    assert skip["refreshed"] is False and skip["reason"] == "quota"
+    assert nxt.media_calls == []
+    later = _FakeClient(metrics)
+    aged = refresh_store_if_due(cfg, max_age_s=10, scrape_client=later,
+                                now=t0 + timedelta(days=8))
+    assert aged["refreshed"] is True
+    assert len(later.media_calls) == 30
+
+
+def test_caption_request_has_no_content_tags_key():
+    """HV1-PR4 / PR3: request_captions and regen do not import or emit content_tags."""
+    import inspect
+    from fanops.caption import request_captions
+    from fanops.studio.actions import regenerate_caption
+    req = inspect.getsource(request_captions)
+    assert "content_tag_candidates" not in req
+    assert "content_tags" not in req
+    regen = inspect.getsource(regenerate_caption)
+    assert "content_tag_candidates" not in regen
+    assert '"content_tags"' not in regen
 
