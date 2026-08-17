@@ -227,6 +227,11 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
+    if src is not None:
+        from fanops.errors import fail_open
+        from fanops.source_tags import ensure_source_lock
+        with fail_open("caption.ensure_source_lock"):
+            ensure_source_lock(cfg, src, excerpt=moment.transcript_excerpt)
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the

@@ -1,11 +1,14 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
 from fanops.log import get_logger
+
+_log = logging.getLogger(__name__)
 
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
@@ -242,3 +245,32 @@ def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[
         metrics["current_top_reel_play_max_7d"] = float(max(reel_plays))
         metrics["top_reel_sample_n"] = float(len(reel_plays))
     return metrics, cotags
+
+
+def search_hashtags_scrape(client, name) -> list[dict]:
+    """One instagrapi search_hashtags page. Incomplete hits stay; never invent play_count.
+
+    Fail-open: client error → []. Nameless hits are skipped. Cap is the search page.
+    """
+    query = _norm(name).lstrip("#") if isinstance(name, str) else ""
+    if not query:
+        return []
+    try:
+        hits = client.search_hashtags(query)
+    except Exception as exc:
+        _log.warning("search_hashtags_scrape fail-open: %s: %s", type(exc).__name__, str(exc)[:200])
+        return []
+    out: list[dict] = []
+    for h in hits or []:
+        raw = getattr(h, "name", None)
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        row: dict = {"name": raw}
+        hid = getattr(h, "id", None)
+        if hid is not None and hid != "":
+            row["id"] = hid
+        mc = getattr(h, "media_count", None)
+        if mc is not None:
+            row["media_count"] = mc
+        out.append(row)
+    return out
