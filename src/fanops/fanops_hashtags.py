@@ -266,20 +266,45 @@ def _account_rec(blob: dict, user: str) -> dict:
     return {}
 
 
+def _is_frozen(rec: dict, now: datetime) -> bool:
+    """True when accounts[user].until is in the future. Budget is not a freeze."""
+    if not isinstance(rec, dict):
+        return False
+    until = rec.get("until")
+    try:
+        ts = datetime.fromisoformat(until) if isinstance(until, str) else None
+    except ValueError:
+        return False
+    if ts is None:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return now < ts
+
+
 def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> bool:
     """True when this scrape user is frozen or day-budget-exhausted (MOL-858). Fail-open."""
     now = now or datetime.now(timezone.utc)
     return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
 
 
-def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> list[str]:
-    """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak."""
+def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = False,
+                          require_budget_room: bool = True) -> list[str]:
+    """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak.
+
+    `require_budget_room=False` (lock producer / open_client with no user): skip only a live
+    freeze. Day budget stays the Layer A remesure brake (`room` in `_refresh_pass`), not
+    "this session does not exist."
+    """
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
     users = scrape_users(cfg)
     blob = _load_cooldown_blob(cfg)
     eligible: list[str] = []
     for user in users:
-        if scrape_user_blocked(cfg, user, now):
+        rec = _account_rec(blob, user)
+        if _is_frozen(rec, now):
+            continue
+        if require_budget_room and scrape_user_blocked(cfg, user, now):
             continue
         if allow_reauth:
             if scrape_user_usable(cfg, user):
@@ -295,9 +320,11 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
     return sorted(eligible, key=_lru_key)
 
 
-def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False) -> str | None:
+def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False,
+                              require_budget_room: bool = True) -> str | None:
     """LRU-oldest healthy scrape peer, or None."""
-    peers = _healthy_scrape_users(cfg, now, allow_reauth=allow_reauth)
+    peers = _healthy_scrape_users(cfg, now, allow_reauth=allow_reauth,
+                                  require_budget_room=require_budget_room)
     return peers[0] if peers else None
 
 
@@ -888,6 +915,16 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
                 continue
             walk.append((u, min(try_cap, room)))
         if not walk:
+            from fanops.ig_hashtag_scrape import scrape_session_path, scrape_users as _scrape_users
+            listed = _scrape_users(cfg)
+            unfrozen_sess = [u for u in listed
+                             if scrape_session_path(cfg, u).exists()
+                             and not _is_frozen(_account_rec(blob, u), now)]
+            if unfrozen_sess:
+                # Session answers; Layer A is out of day room. Do not open_client() —
+                # the lock producer may ignore budget; remesure must not.
+                return {"written": False, "aborted": "budget", "reason": "budget",
+                        "backend": "scrape"}
             err = _open_single_fallback()
             if err is not None:
                 kind, detail = err

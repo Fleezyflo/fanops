@@ -106,12 +106,13 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         # Lazy import: fanops_hashtags imports open_client inside functions — no cycle at import time.
         from fanops.fanops_hashtags import _pick_healthy_scrape_user
         now = now or datetime.now(timezone.utc)
-        chosen = _pick_healthy_scrape_user(cfg, now, allow_reauth=allow_reauth)
+        chosen = _pick_healthy_scrape_user(cfg, now, allow_reauth=allow_reauth,
+                                          require_budget_room=False)
         if chosen is None:
             if scrape_configured(cfg) and not allow_reauth:
                 # Distinguish "all frozen" from "no session" when any session exists on disk.
                 if any(scrape_session_path(cfg, u).exists() for u in users):
-                    raise ScrapeUnavailable("all scrape accounts frozen or day-budget exhausted")
+                    raise ScrapeUnavailable("all scrape accounts frozen")
                 raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
             raise ScrapeUnavailable("no scrape session or password for any FANOPS_IG_SCRAPE_USER")
         user = chosen
