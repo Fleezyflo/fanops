@@ -29,7 +29,6 @@ from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
 from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements,
                              _dedupe_norm, _norm, _num, CAPTION_TAG_RE)
-from fanops.source_tags import load_source_tag_locks
 from fanops.control import load_guidance
 
 logger = logging.getLogger(__name__)
@@ -187,6 +186,7 @@ def _transferred_hooks(led: Ledger, cfg: Config, accounts,
 
 def _source_lock_tags(cfg: Config, src) -> list[str]:
     """Caption menu = that source's lock. Missing sidecar / empty lock → []. Never the 80-pile."""
+    from fanops.source_tags import load_source_tag_locks
     if src is None:
         return []
     sid = str(getattr(src, "id", "") or "")
