@@ -199,6 +199,28 @@ def test_search_hashtags_scrape_reraises_login_required():
     assert False, "LoginRequired must not fail-open to []"
 
 
+def test_search_hashtags_scrape_reraises_challenge_subclass():
+    from fanops.ig_hashtag_scrape import scrape_session_dead, search_hashtags_scrape
+
+    class ChallengeError(Exception):
+        pass
+
+    class ChallengeRedirection(ChallengeError):
+        pass
+
+    assert scrape_session_dead(ChallengeRedirection("redir"))
+
+    class _Dead:
+        def search_hashtags(self, query):
+            raise ChallengeRedirection("redir")
+
+    try:
+        search_hashtags_scrape(_Dead(), "music")
+    except ChallengeRedirection:
+        return
+    assert False, "Challenge subclass must not fail-open to []"
+
+
 def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
     """A LoginRequired dump must not persist an empty lock — try the next client."""
     from instagrapi.exceptions import LoginRequired
@@ -226,3 +248,25 @@ def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == ["#oktag"]
     assert seen == ["a", "b"]
+
+
+def test_ensure_source_lock_all_dead_writes_nothing(tmp_path, monkeypatch):
+    from instagrapi.exceptions import LoginRequired
+    from fanops.ig_hashtag_scrape import scrape_session_path
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    for u in ("a", "b"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+
+    class _Dead:
+        def search_hashtags(self, query):
+            raise LoginRequired("login_required")
+
+    def opener(_cfg, user=None):
+        return _Dead()
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener)
+    assert not source_tag_locks_path(cfg).exists()

@@ -90,13 +90,19 @@ def _researched(table, sid: str) -> bool:
 
 
 def _call_opener(opener, cfg, user=None):
-    """Call a test opener(cfg) or open_client(cfg, user=...)."""
+    """Call opener(cfg, user=...) when walking, else opener(cfg). Test openers take user=."""
     if user is not None:
-        try:
-            return opener(cfg, user=user)
-        except TypeError:
-            pass
+        return opener(cfg, user=user)
     return opener(cfg)
+
+
+def _remember_dead_dump(cfg, client, exc) -> None:
+    """Freeze this identity so the next source does not re-hit a rejected dump."""
+    user = getattr(client, "_fanops_scrape_user", None)
+    if not isinstance(user, str) or not user:
+        return
+    from fanops.fanops_hashtags import _persist_cooldown
+    _persist_cooldown(cfg, datetime.now(timezone.utc), reason=type(exc).__name__, user=user)
 
 
 def _iter_lock_clients(cfg, *, client, open_client_fn):
@@ -122,6 +128,8 @@ def _iter_lock_clients(cfg, *, client, open_client_fn):
         except ScrapeUnavailable:
             continue
         if cli is not None:
+            if not getattr(cli, "_fanops_scrape_user", None):
+                setattr(cli, "_fanops_scrape_user", user)
             yield cli
 
 
@@ -168,9 +176,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     if scrape_session_dead(exc):
                         log("source_tags", sid, "rotate_dead", err=type(exc).__name__,
                             user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
+                        _remember_dead_dump(cfg, cand, exc)
                         dead = True
                         break
-                    hits = []
+                    raise
                 for hit in hits:
                     n = _norm(hit.get("name") if isinstance(hit, dict) else "")
                     if n and n not in seen:
@@ -188,6 +197,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             log("source_tags", sid, "search_empty")
             return
         measurements = dict(load_measurements(cfg))
+        measure_dead = False
         for tag in pile:
             rec = measurements.get(tag)
             plays = _num(rec.get("play_count")) if isinstance(rec, dict) else None
@@ -198,6 +208,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             except Exception as exc:
                 if scrape_session_dead(exc):
                     log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
+                    _remember_dead_dump(cfg, cli, exc)
+                    measure_dead = True
                     break
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
                 continue
@@ -206,9 +218,13 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                 merged = dict(prev)
                 merged.update(metrics)
                 measurements[tag] = merged
+        lock = lock_from_pile(pile, measurements, _LOCK_N)
+        if not lock and measure_dead:
+            log("source_tags", sid, "search_empty", err="measure_dead")
+            return
         table[sid] = {
             "pile": pile,
-            "lock": lock_from_pile(pile, measurements, _LOCK_N),
+            "lock": lock,
             "researched_at": iso_z(datetime.now(timezone.utc)),
         }
         write_json_atomic(source_tag_locks_path(cfg), table)

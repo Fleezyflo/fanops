@@ -672,25 +672,31 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
 
 
 def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypatch):
-    """Operator path: dead probe → set_settings({}) + set_uuids + login(..., relogin=False)."""
-    from fanops.ig_hashtag_scrape import open_client
+    """Operator path: LoginRequired probe → clear auth/cookies + login(..., relogin=False)."""
+    from types import SimpleNamespace
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     seen = []
     from instagrapi.exceptions import LoginRequired as _LR
+
+    class _Jar:
+        def clear(self):
+            seen.append("cleared")
+
     class _Stale:
+        def __init__(self):
+            self.authorization_data = {"sessionid": "x"}
+            self.private = SimpleNamespace(cookies=_Jar(), headers={"Authorization": "Bearer x"})
+            self.public = SimpleNamespace(cookies=_Jar(), headers={})
+            self.last_login = 1.0
         def load_settings(self, _p): pass
-        def get_settings(self):
-            return {"uuids": {"uuid": "keep-me"}}
         def set_settings(self, s):
             seen.append(("set", s))
-        def set_uuids(self, u):
-            seen.append(("uuids", u))
         def search_hashtags(self, _q):
             raise _LR("login_required")
         def account_info(self):
@@ -700,9 +706,40 @@ def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypat
         def dump_settings(self, _p): pass
     c = open_client(cfg, client_factory=_Stale, allow_reauth=True)
     assert c is not None
-    assert ("uuids", {"uuid": "keep-me"}) in seen
+    assert c.authorization_data == {}
+    assert "Authorization" not in c.private.headers
+    assert seen.count("cleared") >= 1
     assert ("login", "u", "p", False) in seen
-    assert not any(x[0] == "login" and x[-1] is True for x in seen)
+    assert not any(x[0] == "login" and x[-1] is True for x in seen if isinstance(x, tuple))
+    assert not any(x[0] == "set" for x in seen if isinstance(x, tuple))
+
+
+def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
+    """PleaseWait / rate-limit on a live dump must not become a password login."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+
+    class PleaseWaitFewMinutes(Exception):
+        pass
+
+    class _Live:
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise PleaseWaitFewMinutes("wait")
+        def login(self, *_a, **_k):
+            raise AssertionError("throttle must not login")
+        def dump_settings(self, _p):
+            raise AssertionError("throttle must not dump")
+    try:
+        open_client(cfg, client_factory=_Live, allow_reauth=True, user="u")
+    except PleaseWaitFewMinutes:
+        return
+    raise AssertionError("throttle must propagate")
 
 
 def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):

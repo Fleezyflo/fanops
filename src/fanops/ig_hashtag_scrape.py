@@ -79,10 +79,25 @@ def scrape_configured(cfg: Config) -> bool:
     return any(scrape_user_usable(cfg, u) for u in scrape_users(cfg))
 
 
+_SESSION_DEAD_NAMES = frozenset({
+    "LoginRequired", "ClientLoginRequired",
+    "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
+})
+
+
 def scrape_session_dead(exc: BaseException) -> bool:
-    """True when this exception means the loaded dump is rejected — rotate, do not relogin."""
-    return type(exc).__name__ in {"LoginRequired", "ClientLoginRequired",
-                                  "ChallengeError", "ChallengeRequired"}
+    """True when this exception (or any base) means the loaded dump is rejected.
+
+    Match the MRO so ChallengeRedirection / RecaptchaChallengeForm / etc. rotate
+    instead of fail-opening to []. Never used as a password-login trigger for
+    Challenge* — only LoginRequired restores.
+    """
+    return bool({c.__name__ for c in type(exc).__mro__} & _SESSION_DEAD_NAMES)
+
+
+def scrape_session_needs_restore(exc: BaseException) -> bool:
+    """Password restore is only for a rejected session dump, not throttle/network."""
+    return bool({c.__name__ for c in type(exc).__mro__} & {"LoginRequired", "ClientLoginRequired"})
 
 
 def _probe_scrape_session(client) -> None:
@@ -100,18 +115,29 @@ def _probe_scrape_session(client) -> None:
         info()
 
 
-def _restore_uuids_and_login(client, user: str, password: str) -> None:
-    """Password login that keeps device UUIDs. Never login(..., relogin=True).
+def _clear_auth_keep_device(client) -> None:
+    """Drop session auth/cookies so login() does not see a user_id and relogin=True.
 
-    instagrapi login() with user_id set treats LoginRequired as login(relogin=True),
-    which wipes the device and writes a native-checkpoint essay. Clear settings,
-    put the UUIDs back, then login() with a clean user_id.
+    Keep uuids, device_settings, user_agent, mid — set_settings({}) resets those to
+    library defaults and is the more suspicious fingerprint.
     """
-    old = client.get_settings() if hasattr(client, "get_settings") else {}
-    uuids = old.get("uuids") if isinstance(old, dict) else None
-    client.set_settings({})
-    if isinstance(uuids, dict) and uuids and hasattr(client, "set_uuids"):
-        client.set_uuids(uuids)
+    if hasattr(client, "authorization_data"):
+        client.authorization_data = {}
+    for sess_name in ("private", "public"):
+        sess = getattr(client, sess_name, None)
+        cookies = getattr(sess, "cookies", None)
+        if cookies is not None and hasattr(cookies, "clear"):
+            cookies.clear()
+        headers = getattr(sess, "headers", None)
+        if isinstance(headers, dict):
+            headers.pop("Authorization", None)
+    if hasattr(client, "last_login"):
+        client.last_login = None
+
+
+def _restore_uuids_and_login(client, user: str, password: str) -> None:
+    """Password login that keeps the device envelope. Never login(..., relogin=True)."""
+    _clear_auth_keep_device(client)
     client.login(user, password)
 
 
@@ -172,6 +198,8 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
                 _probe_scrape_session(client)
             except Exception as e:                      # noqa: BLE001 — probe surface is opaque
                 get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
+                if not scrape_session_needs_restore(e):
+                    raise
                 # Failed login raises before dump_settings — the on-disk dump stays untouched.
                 _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
         # Unattended: load_settings → dump → return (session validated by the first work call).
