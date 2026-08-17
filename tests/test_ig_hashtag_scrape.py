@@ -61,6 +61,30 @@ def test_open_client_picks_first_usable_user(tmp_path, monkeypatch):
     assert seen[1] == ("dump", str(cfg.control / "ig_scrape_session_live.json"))
 
 
+def test_scrape_login_does_not_login_on_login_required(tmp_path, monkeypatch):
+    """account_info LoginRequired must not call login() — that path invents a checkpoint story."""
+    from instagrapi.exceptions import LoginRequired
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    dumped = []
+    class _Dead:
+        def load_settings(self, _p): pass
+        def account_info(self): raise LoginRequired("login_required")
+        def login(self, *_a, **_k): raise AssertionError("must not login() on LoginRequired")
+        def dump_settings(self, p): dumped.append(p)
+    try:
+        open_client(cfg, client_factory=_Dead, allow_reauth=True, user="u")
+    except LoginRequired:
+        pass
+    else:
+        raise AssertionError("LoginRequired must propagate")
+    assert dumped == []
+
 
 def test_open_client_unattended_prefers_session_over_earlier_password(tmp_path, monkeypatch):
     """Unattended open_client must not stall on a password-only earlier user when a later session exists."""

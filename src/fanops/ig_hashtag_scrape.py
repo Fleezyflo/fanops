@@ -131,11 +131,19 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
     if sess.exists():
         client.load_settings(str(sess))
-        if allow_reauth:                                # operator scrape-login only: the probe DECIDES login()
+        if allow_reauth:                                # operator scrape-login only
             try:
                 client.account_info()
             except Exception as e:                      # noqa: BLE001 — probe surface is opaque
                 get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
+                # login() on LoginRequired is what instagrapi turns into a fake "native
+                # checkpoint / verify in the app" message. Session rejected ≠ account locked.
+                try:
+                    from instagrapi.exceptions import ChallengeError, LoginRequired
+                except ImportError:
+                    LoginRequired = ChallengeError = ()
+                if isinstance(e, (LoginRequired, ChallengeError)):
+                    raise
                 client.login(user, scrape_password_for(user) or "", relogin=True)
         # Unattended: load_settings → dump → return (session validated by the first work call).
     else:
