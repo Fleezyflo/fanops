@@ -12,6 +12,7 @@ from fanops.ledger import Ledger
 from fanops.models import (CaptionItem, CaptionSet, Clip, ClipState, Moment, MomentState,
                            Platform, Post, PostState, Source)
 from fanops.recaption import _journal_path, run_recaption
+from fanops.source_tags import source_tag_locks_path
 from fanops.timeutil import iso_z
 
 NOW = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
@@ -92,13 +93,19 @@ def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
         "#hiphop": {"graph_id": "g2", "play_count": 50, "media_count": 100.0,
                     "measured_at": "2026-07-01T00:00:00+00:00"},
     }))
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#slept", "#hiphop"], "lock": ["#slept", "#hiphop"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     fake = _FakeResponder(hashtags=["#slept", "#junkjunkjunk", "#hiphop"])
     s = run_recaption(cfg, apply=True, responder=fake, now=NOW)
     assert s["done"] == 1 and s["synced"] == 1 and fake.calls == 1
     led = Ledger.load(cfg)
     p = led.posts["p1"]
     assert p.caption == "fresh" and 0 < len(p.hashtags) <= 4   # model sentence, tags stay the vetted array
-    assert "#slept" in p.hashtags                                  # source-measured lead survives the vet
+    assert "#slept" in p.hashtags                                  # lock member survives the vet
     assert "#junkjunkjunk" not in p.hashtags                        # junk cannot reach a post
     assert p.state is PostState.awaiting_approval                   # approval lifecycle untouched
     assert p.edited_at

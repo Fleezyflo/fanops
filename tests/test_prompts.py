@@ -34,12 +34,25 @@ def test_caption_prompt_per_surface_menus_are_distinct():
 
 
 def test_caption_prompt_empty_hashtag_store_renders():
-    # MOL-513: empty / absent menu must not crash; honest empty list in the pick rule.
+    # Empty / absent menu must not crash; honest empty list in the pick rule.
     out = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
                           "surfaces": [{"surface": "a/instagram", "platform": "instagram",
                                         "hashtag_store": []}]})
     assert 'For surface "a/instagram"' in out
-    assert "[]" in out.split('For surface "a/instagram"', 1)[1].split("UNION", 1)[0]
+    after = out.split('For surface "a/instagram"', 1)[1]
+    assert "[]" in after.split(".", 1)[0]
+
+
+def test_caption_prompt_source_has_no_union_corpus():
+    import inspect
+    src = inspect.getsource(caption_prompt)
+    assert "UNION" not in src
+    out = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+                          "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                                        "hashtag_store": ["#locktag"]}]})
+    assert "UNION" not in out
+    assert "prefer the tags in that surface's `corpus`" not in out.lower()
+    assert "play_count" in out
 
 def test_prompt_does_not_ask_for_request_id():
     # MOL-167: the model must never be asked to echo request_id/source_id — the gate stamps both.

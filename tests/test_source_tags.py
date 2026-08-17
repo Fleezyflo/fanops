@@ -151,12 +151,14 @@ def test_research_empty_or_raise_writes_nothing(tmp_path):
     assert client.search_calls == []
 
 
-def test_caption_menu_still_80_pile():
+def test_caption_menu_is_not_80_pile():
     req = inspect.getsource(request_captions)
-    assert "_per_account_hashtag_stores" in req
+    assert "_per_account_hashtag_stores" not in req
+    assert "content_tag_candidates" not in req
     assert "ensure_source_lock" in req
     regen = inspect.getsource(regenerate_caption)
-    assert "_per_account_hashtag_stores" in regen
+    assert "_per_account_hashtag_stores" not in regen
+    assert "content_tag_candidates" not in regen
     assert "ensure_source_lock" in regen
     import fanops.source_tags as st
     assert "content_tag_candidates" not in inspect.getsource(st)

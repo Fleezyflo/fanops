@@ -153,7 +153,7 @@ from fanops.config import Config
 # content tags survive membership. items:[] HOLDs caption_missing_language (no seed manufacture).
 
 def test_request_payload_embeds_content_tags(tmp_path):
-    """request_captions embeds content_tags derived from the transcript (MOL-642)."""
+    """HV1-PR3: request_captions does not embed ASR content_tags."""
     from fanops.agentstep import request_path
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
@@ -163,8 +163,7 @@ def test_request_payload_embeds_content_tags(tmp_path):
     import json
     request_captions(led, cfg, "clip_x", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
-    assert "#loyalty" in payload.get("content_tags", [])
-    assert "#diss" in payload.get("content_tags", [])
+    assert "content_tags" not in payload
 
 
 def test_pipeline_model_pick_content_survives_ingest(tmp_path):
@@ -199,19 +198,17 @@ def test_pipeline_model_pick_content_survives_ingest(tmp_path):
     entry = led.clips["clip_x"].meta_captions["a/instagram"]
     assert entry["caption"] == "loyalty over everything."
     assert "#loyalty" in entry["hashtags"]
-    assert entry["tag_sources"].get("#loyalty") == "content"
+    assert entry["tag_sources"].get("#loyalty") != "content"
 
 
 def test_caption_prompt_renders_content_block(tmp_path):
-    """caption_prompt renders clip-specific content tags when present (MOL-642)."""
+    """HV1-PR3: caption_prompt no longer teaches a content_tags / UNION-corpus menu."""
     from fanops.prompts import caption_prompt
     base = {"surfaces": [{"surface": "a/instagram", "platform": "instagram"}], "language": "en"}
     out_with = caption_prompt({**base, "content_tags": ["#diss", "#loyalty"]})
     out_without = caption_prompt(base)
-    assert "clip-specific" in out_with.lower()
-    assert "#diss" in out_with and "#loyalty" in out_with
-    assert "clip-specific" not in out_without.lower()
-    assert out_with != out_without
+    assert "clip-specific" not in out_with.lower()
+    assert "UNION" not in out_with and "UNION" not in out_without
 
 
 def _seed(led, *, clip_id, mom_id, transcript):
@@ -245,7 +242,7 @@ def test_two_clips_seed_fallback_empty_without_corpus(tmp_path):
         assert "a/instagram" not in c.meta_captions
     pa = json.loads(request_path(cfg, "captions", "clip_a").read_text())
     pb = json.loads(request_path(cfg, "captions", "clip_b").read_text())
-    assert pa.get("content_tags") != pb.get("content_tags")
+    assert "content_tags" not in pa and "content_tags" not in pb
 
 
 def test_seed_fallback_entry_carries_tag_sources(tmp_path):
@@ -267,12 +264,10 @@ _BASE_PAYLOAD = {"surfaces": [{"surface": "a/instagram", "platform": "instagram"
 
 
 def test_prompt_renders_content_tags_key_in_payload():
-    # MOL-642: content_tags in the payload appear as a clip-specific fit signal.
+    # HV1-PR3: leftover content_tags on a payload are not a caption menu.
     out_with = caption_prompt({**_BASE_PAYLOAD, "content_tags": ["#diss", "#loyalty"]})
-    out_without = caption_prompt(_BASE_PAYLOAD)
-    assert out_with != out_without
-    assert "#diss" in out_with and "#loyalty" in out_with
-    assert "clip-specific" in out_with.lower()
+    assert "clip-specific" not in out_with.lower()
+    assert "UNION" not in out_with
 
 
 def test_prompt_byte_identical_without_content():
@@ -304,8 +299,9 @@ def test_prompt_annotates_menu_with_hashtag_metrics():
                                                           "current_top_reel_play_max_7d": 77.0}}})
     assert "media_count" in out and "9000" in out and "77" in out
     assert "BIGGEST FIRST" not in out
-    assert "prefer earlier menu entries when fit is equal" in out
-    assert "keep the earlier entry" in out
+    assert "play_count" in out
+    assert "not the choose-key" in out
+    assert "prefer earlier menu entries when fit is equal" not in out
     assert "do not add or average them" in out.lower()
 
 
@@ -358,8 +354,8 @@ def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
                               hashtag_corpus=["#personaone", "#personatwo", "#personathree"])]
     led = request_captions(led, cfg, "clip_x", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
-    assert "#diss" in payload["surfaces"][0]["corpus"]
-    assert "#personaone" not in payload["surfaces"][0]["corpus"]
+    assert "corpus" not in payload["surfaces"][0]
+    assert "content_tags" not in payload
     rid = latest_request_id(cfg, "captions", "clip_x")
     response_path(cfg, "captions", "clip_x").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_x")

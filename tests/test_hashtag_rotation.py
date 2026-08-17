@@ -8,6 +8,7 @@ from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platfor
 from fanops.agentstep import response_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
 from fanops.hashtags import vet_hashtags
+from fanops.source_tags import source_tag_locks_path
 from fanops.studio.views_results import tag_exposure
 
 
@@ -25,6 +26,14 @@ def _write_meas_tags(cfg, tags):
     cfg.hashtags_path.write_text(json.dumps({
         t: {"graph_id": f"g{t}", "like_count": 100, "media_count": 1000.0,
             "measured_at": "2026-07-01T00:00:00+00:00"} for t in tags
+    }))
+
+
+def _write_lock(cfg, sid, lock):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        sid: {"pile": list(lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
     }))
 
 
@@ -68,6 +77,7 @@ def test_consecutive_ingests_differ(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     corpus = ["#alpha", "#beta", "#gamma", "#delta", "#epsilon"]
     _write_meas_tags(cfg, corpus)
+    _write_lock(cfg, "src_1", corpus)
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -98,6 +108,7 @@ def test_pass_local_same_pass(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     corpus = ["#alpha", "#beta", "#gamma", "#delta", "#epsilon"]
     _write_meas_tags(cfg, corpus)
+    _write_lock(cfg, "src_1", corpus)
     from fanops.accounts import Accounts
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -156,6 +167,7 @@ def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
     transcript = " ".join(f"tag{i:02d}" for i in range(6))
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _write_meas_tags(cfg, corpus)
+    _write_lock(cfg, "src_1", corpus)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active"}]}))

@@ -106,10 +106,12 @@ def test_skill_part2_is_not_mega_relevance_discovery_recipe():
     part2 = _part("Part 2").lower()
     for stale in _STALE_PART2:
         assert stale not in part2, f"Part 2 still teaches stale recipe {stale!r}"
-    assert "size_band" in part2
-    assert "size_rank_key" in part2
+    assert "source lock" in part2
+    assert "play_count" in part2
+    assert "7-day" in part2 or "current_top_reel_play_max_7d" in part2
     assert "mega_slot_max" in part2
-    assert "store" in part2 and "corpus" in part2
+    assert "80-pile" in part2 or "_per_account_hashtag_stores" in part2
+    assert "store ∪ corpus" in part2 or "store u corpus" in part2  # named as the dead caption menu
 
 
 def test_skill_caption_is_sentence_plus_tags_not_tag_line():
@@ -119,14 +121,14 @@ def test_skill_caption_is_sentence_plus_tags_not_tag_line():
     assert re.search(r"3\s*[–-]\s*4\s+tags", text, re.I)
 
 
-def test_skill_operator_rule3_is_banded_membership():
+def test_skill_operator_rule3_is_lock_membership():
     rule3 = _operator_rule(3)
-    assert "play_count preferred" not in rule3
-    assert "else like_count" not in rule3
-    assert "size_band" in rule3
-    assert "size_rank_key" in rule3
-    assert "store" in rule3 and "corpus" in rule3
+    assert "source lock" in rule3.lower()
+    assert "play_count" in rule3
+    assert "7-day" in rule3 or "current_top_reel_play_max_7d" in rule3
+    assert "80-pile" in rule3 or "store ∪ corpus" in rule3 or "store u corpus" in rule3
+    assert "empty lock" in rule3.lower()
     assert re.search(r"at most 1|≤\s*1|<=\s*1", rule3)
-    assert "INT32" in rule3
     assert "VETTED" in rule3 and re.search(r"no `?VETTED", rule3)
     assert re.search(r"no semantic ban", rule3, re.I)
+    assert "size_rank_key" not in rule3          # caption path; Layer B stays in Part 3

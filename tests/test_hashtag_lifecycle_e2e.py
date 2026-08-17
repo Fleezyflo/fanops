@@ -19,6 +19,7 @@ from fanops.hashtags import _metric, load_measurements, ranked_tags
 from fanops.persona_research import derive_corpus
 from fanops.agentstep import response_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
+from fanops.source_tags import source_tag_locks_path
 from hashtag_scrape_fakes import _FakeClient
 
 
@@ -54,6 +55,12 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     assert "#detroitrap" in accts.accounts[0].hashtag_corpus
 
     _clip(led)
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#detroitrap", "#hiphop"], "lock": ["#detroitrap", "#hiphop"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
@@ -64,7 +71,7 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     assert "#invented" not in tags and len(tags) <= 4
     sources = led.clips["clip_1"].meta_captions["a/instagram"]["tag_sources"]
     assert set(sources) == set(tags) and all(sources.values())
-    assert sources["#detroitrap"] == "corpus"
+    assert sources["#detroitrap"] == "graph-reach"
 
     led.add_post(Post(id="post_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption=" ".join(tags), hashtags=tags,
