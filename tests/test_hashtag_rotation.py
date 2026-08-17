@@ -88,7 +88,7 @@ def test_consecutive_ingests_differ(tmp_path):
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     tags1 = list(led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"])
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
@@ -98,7 +98,7 @@ def test_consecutive_ingests_differ(tmp_path):
     request_captions(led, cfg, "clip_2", [("a", Platform.instagram)], accounts=accts)
     rid2 = latest_request_id(cfg, "captions", "clip_2")
     response_path(cfg, "captions", "clip_2").write_text(CaptionSet(request_id=rid2, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_2")
     tags2 = list(led.clips["clip_2"].meta_captions["a/instagram"]["hashtags"])
     assert tags1 != tags2
@@ -118,7 +118,7 @@ def test_pass_local_same_pass(tmp_path):
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     pass_recent: dict[str, list[str]] = {}
     led = ingest_captions(led, cfg, "clip_1", pass_recent=pass_recent)
     tags1 = list(led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"])
@@ -126,7 +126,7 @@ def test_pass_local_same_pass(tmp_path):
     request_captions(led, cfg, "clip_2", [("a", Platform.instagram)], accounts=accts)
     rid2 = latest_request_id(cfg, "captions", "clip_2")
     response_path(cfg, "captions", "clip_2").write_text(CaptionSet(request_id=rid2, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_2", pass_recent=pass_recent)
     tags2 = list(led.clips["clip_2"].meta_captions["a/instagram"]["hashtags"])
     assert tags1 != tags2
@@ -179,7 +179,7 @@ def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
         request_captions(led, cfg, cid, [("a", Platform.instagram)], accounts=accts)
         rid = latest_request_id(cfg, "captions", cid)
         response_path(cfg, "captions", cid).write_text(CaptionSet(request_id=rid, items=[
-            CaptionItem(surface="a/instagram", caption="x", hashtags=["#hiphop"])]).model_dump_json())
+            CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
         led = ingest_captions(led, cfg, cid)
         tags = list(led.clips[cid].meta_captions["a/instagram"]["hashtags"])
         lines.append(tags)
