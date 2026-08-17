@@ -171,6 +171,30 @@ def size_rank_key(tag: str, rec) -> tuple:
     return (_BAND_RANK[size_band(rec)], -size, -(tag_trend(rec) or 0.0), tag)
 
 
+def play_rank_key(tag, rec) -> tuple:
+    """Lock order: play_count DESC, then 7-day reel max DESC, then tag. Plays only — not `_metric`/likes/size."""
+    rec = rec if isinstance(rec, dict) else {}
+    plays = _num(rec.get("play_count")) or 0.0
+    trend = _num(rec.get("current_top_reel_play_max_7d")) or 0.0
+    return (-plays, -trend, _norm(tag) if isinstance(tag, str) else "")
+
+
+def lock_from_pile(names, measurements, n=12) -> list[str]:
+    """Top-n names with a positive play_count, ordered by play_rank_key. Unmeasured stay off the lock."""
+    recs = measurements if isinstance(measurements, dict) else {}
+    kept: list[str] = []
+    for name in _dedupe_norm(names):
+        rec = recs.get(name)
+        if not isinstance(rec, dict):
+            continue
+        plays = _num(rec.get("play_count"))
+        if plays is None or plays <= 0:
+            continue
+        kept.append(name)
+    kept.sort(key=lambda t: play_rank_key(t, recs.get(t)))
+    return kept[:n]
+
+
 def load_measurements(cfg) -> dict[str, dict]:
     """THE reader for the platform measurement cache (00_control/hashtags.json). Retained keys are
     `graph_id`, `measured_at`, `from`, and the RECORD_NUM_FIELDS / RECORD_STR_FIELDS contract.
