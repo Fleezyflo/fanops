@@ -61,29 +61,35 @@ def test_open_client_picks_first_usable_user(tmp_path, monkeypatch):
     assert seen[1] == ("dump", str(cfg.control / "ig_scrape_session_live.json"))
 
 
-def test_scrape_login_does_not_login_on_login_required(tmp_path, monkeypatch):
-    """account_info LoginRequired must not call login() — that path invents a checkpoint story."""
+def test_scrape_login_rebinds_uuids_not_relogin_true(tmp_path, monkeypatch):
+    """Dead dump: keep UUIDs, password login. Never login(..., relogin=True)."""
     from instagrapi.exceptions import LoginRequired
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret")
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    dumped = []
+    calls = []
     class _Dead:
         def load_settings(self, _p): pass
-        def account_info(self): raise LoginRequired("login_required")
-        def login(self, *_a, **_k): raise AssertionError("must not login() on LoginRequired")
-        def dump_settings(self, p): dumped.append(p)
-    try:
-        open_client(cfg, client_factory=_Dead, allow_reauth=True, user="u")
-    except LoginRequired:
-        pass
-    else:
-        raise AssertionError("LoginRequired must propagate")
-    assert dumped == []
+        def get_settings(self):
+            return {"uuids": {"uuid": "keep-me", "phone_id": "ph"}}
+        def set_settings(self, s):
+            calls.append(("set", s))
+        def set_uuids(self, u):
+            calls.append(("uuids", u))
+        def account_info(self):
+            raise LoginRequired("login_required")
+        def login(self, user, password, relogin=False):
+            calls.append(("login", user, password, bool(relogin)))
+        def dump_settings(self, p):
+            calls.append(("dump", p))
+    open_client(cfg, client_factory=_Dead, allow_reauth=True, user="u")
+    assert ("uuids", {"uuid": "keep-me", "phone_id": "ph"}) in calls
+    assert ("login", "u", "secret", False) in calls
+    assert not any(c[0] == "login" and c[-1] is True for c in calls)
 
 
 def test_open_client_unattended_prefers_session_over_earlier_password(tmp_path, monkeypatch):

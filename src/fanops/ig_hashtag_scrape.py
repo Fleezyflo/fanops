@@ -136,15 +136,16 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
                 client.account_info()
             except Exception as e:                      # noqa: BLE001 — probe surface is opaque
                 get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
-                # login() on LoginRequired is what instagrapi turns into a fake "native
-                # checkpoint / verify in the app" message. Session rejected ≠ account locked.
-                try:
-                    from instagrapi.exceptions import ChallengeError, LoginRequired
-                except ImportError:
-                    LoginRequired = ChallengeError = ()
-                if isinstance(e, (LoginRequired, ChallengeError)):
-                    raise
-                client.login(user, scrape_password_for(user) or "", relogin=True)
+                # Dead dump: keep device UUIDs, drop the rest, password login.
+                # Never login(..., relogin=True) — instagrapi escalates that into a
+                # "native checkpoint" essay. Official restore is set_settings({}) + set_uuids + login().
+                pw = scrape_password_for(user) or ""
+                old = client.get_settings() if hasattr(client, "get_settings") else {}
+                uuids = old.get("uuids") if isinstance(old, dict) else None
+                client.set_settings({})
+                if isinstance(uuids, dict) and uuids and hasattr(client, "set_uuids"):
+                    client.set_uuids(uuids)
+                client.login(user, pw)
         # Unattended: load_settings → dump → return (session validated by the first work call).
     else:
         if not allow_reauth:
