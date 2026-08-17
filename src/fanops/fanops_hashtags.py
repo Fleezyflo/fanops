@@ -40,6 +40,8 @@ _COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram platform-stop back
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
 _CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
+_EXACT_NAME_QUOTA = 30              # remesure at most this many unique sidecar names / window (HV1-PR4)
+_EXACT_NAME_WINDOW_DAYS = 7
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Caps come from Config (env overrides); tests set FANOPS_HASHTAG_SCRAPE_*.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
@@ -539,6 +541,56 @@ def _pass_lease(cfg: Config):
         os.close(fd)
 
 
+def _sidecar_tick_names(cfg: Config) -> list[str]:
+    """Union of sidecar pile ∪ lock names, first-seen order. Missing/corrupt sidecar → []."""
+    from fanops.source_tags import load_source_tag_locks
+    table = load_source_tag_locks(cfg)
+    out: list[str] = []
+    seen: set[str] = set()
+    for sid in sorted(k for k in table if isinstance(k, str)):
+        rec = table.get(sid)
+        if not isinstance(rec, dict):
+            continue
+        for key in ("pile", "lock"):
+            raw = rec.get(key)
+            if not isinstance(raw, list):
+                continue
+            for t in raw:
+                n = _norm(t) if isinstance(t, str) else ""
+                if n and n not in seen:
+                    seen.add(n)
+                    out.append(n)
+    return out
+
+
+def _quota_sidecar_names(names: list[str], cache: dict, now: datetime, *,
+                         limit: int = _EXACT_NAME_QUOTA,
+                         window_days: int = _EXACT_NAME_WINDOW_DAYS) -> list[str]:
+    """Names still allowed under the exact-name quota (≤limit unique / window). Oldest first."""
+    cutoff = now - timedelta(days=window_days)
+    recent = 0
+    rest: list[str] = []
+    for n in names:
+        rec = cache.get(n)
+        at = rec.get("measured_at") if isinstance(rec, dict) else None
+        ts = None
+        if isinstance(at, str) and at:
+            try:
+                ts = datetime.fromisoformat(at)
+            except ValueError:
+                ts = None
+        if ts is not None:
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                recent += 1
+                continue
+        rest.append(n)
+    slots = max(0, int(limit) - recent)
+    rest.sort(key=lambda t: _staleness_sort_key(t, cache))
+    return rest[:slots]
+
+
 def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
     """One measurement pass under an EXCLUSIVE writer lease. See `_refresh_pass` for the pass itself.
 
@@ -554,8 +606,11 @@ def refresh_store(cfg: Config, *, scrape_client=None, now=None) -> dict:
         return _refresh_pass(cfg, scrape_client=scrape_client, now=now)
 
 
-def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
+def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None) -> dict:
     """Run one measurement pass and rewrite the cache. Returns a summary dict.
+
+    `known_names` is the HV1-PR4 tick remesure path: measure exactly those names, no
+    persona_terms / cotag harvest / Layer B. Default None is the manual Layer A pass.
 
     Order of work (MOL-855 due tiers — NOT every cached tag every pass):
       1. unmeasured anchors (niche roots never measured)
@@ -600,13 +655,17 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                           open_client, resolve_hashtag_scrape, scrape_users)
-    from fanops.persona_research import persona_terms
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
-    try:
-        personas = _posting_personas(cfg)
-    except ControlFileError as e:                          # corrupt personas.json: ABORT, cache UNTOUCHED
-        return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
+    harvest = known_names is None
+    if harvest:
+        from fanops.persona_research import persona_terms
+        try:
+            personas = _posting_personas(cfg)
+        except ControlFileError as e:                      # corrupt personas.json: ABORT, cache UNTOUCHED
+            return {"written": False, "aborted": "corrupt_personas", "reason": str(e)}
+    else:
+        personas = []
 
     injected = scrape_client is not None
     listed: list[str] = []
@@ -628,31 +687,41 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
     ids: dict[str, str] = {t: r["graph_id"] for t, r in cache.items()}
     attribution: dict[str, dict] = {t: dict(r.get("from") or {}) for t, r in cache.items()}
     anchors: list[str] = []
-    for per in personas:
-        for term in persona_terms(per, cfg):
-            a = _norm("#" + term)
-            if a and a not in anchors:
-                anchors.append(a)
+    if harvest:
+        for per in personas:
+            for term in persona_terms(per, cfg):
+                a = _norm("#" + term)
+                if a and a not in anchors:
+                    anchors.append(a)
+        # MOL-739: Layer A discovery MUST only proceed if niche seeds exist.
+        if not anchors:
+            get_logger(cfg)("hashtags", "-", "discovery_skip_no_niche", level="info")
+            return {"written": False, "aborted": "discovery_skip_no_niche",
+                    "reason": "no personas have a declared niche"}
     anchor_set = set(anchors)
-
-    # MOL-739: hashtag discovery MUST only proceed if niche seeds exist.
-    if not anchors:
-        get_logger(cfg)("hashtags", "-", "discovery_skip_no_niche", level="info")
-        return {"written": False, "aborted": "discovery_skip_no_niche", "reason": "no personas have a declared niche"}
     volume_cutoff = now - timedelta(days=_VOLUME_MAX_AGE_DAYS)
     measure_cutoff = now - timedelta(days=_MEASURE_MAX_AGE_DAYS)
     pre_write = {t: dict(r) for t, r in cache.items()}
-    unmeasured_anchors = [t for t in anchors if t not in cache]
-    queue: list[str] = list(unmeasured_anchors)
-    queued: set[str] = set(queue)
+    if harvest:
+        unmeasured_anchors = [t for t in anchors if t not in cache]
+        queue: list[str] = list(unmeasured_anchors)
+        queued: set[str] = set(queue)
 
-    def _extend_tier(candidates: list[str]) -> None:
-        for t in sorted(candidates, key=lambda x: _staleness_sort_key(x, cache)):
-            if t not in queued:
-                queued.add(t); queue.append(t)
+        def _extend_tier(candidates: list[str]) -> None:
+            for t in sorted(candidates, key=lambda x: _staleness_sort_key(x, cache)):
+                if t not in queued:
+                    queued.add(t); queue.append(t)
 
-    _extend_tier([t for t in cache if _volume_due(cache[t], volume_cutoff)])
-    _extend_tier([t for t in cache if _measured_due(cache[t], measure_cutoff)])
+        _extend_tier([t for t in cache if _volume_due(cache[t], volume_cutoff)])
+        _extend_tier([t for t in cache if _measured_due(cache[t], measure_cutoff)])
+    else:
+        queue = [_norm(t) for t in (known_names or []) if _norm(t)]
+        queued = set(queue)
+
+    def _persist_anchors() -> set[str]:
+        if harvest:
+            return anchor_set
+        return set(cache) | set(queue)
     measured = 0; discovered = 0; throttled = False; tried = 0; cotag_enqueued = 0
     platform_stop = False
     stop_reason_word: str | None = None
@@ -709,16 +778,17 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                 continue
             ids[tag] = hid
             cotags = payload if isinstance(payload, dict) else {}
-            if tag in anchor_set:
+            if harvest and tag in anchor_set:
                 for co, n in cotags.items():
                     if co in anchor_set or co in cache:
                         continue
                     if co not in queued and cotag_enqueued < cotag_cap:
                         queued.add(co); queue.insert(i, co); discovered += 1; cotag_enqueued += 1
-            for co, n in cotags.items():
-                if co in anchor_set and co != tag:
-                    attribution.setdefault(tag, {})
-                    attribution[tag][co] = attribution[tag].get(co, 0) + n
+            if harvest:
+                for co, n in cotags.items():
+                    if co in anchor_set and co != tag:
+                        attribution.setdefault(tag, {})
+                        attribution[tag][co] = attribution[tag].get(co, 0) + n
             if isinstance(metrics, dict) and _metric(metrics) is not None:
                 prev = cache.get(tag) or {}
                 rec = {"graph_id": hid, "measured_at": stamp}
@@ -741,12 +811,15 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     if pv is not None:
                         rec["media_count"] = pv
                         rec["media_count_at"] = prev.get("media_count_at") or prev.get("measured_at") or stamp
-                frm = attribution.get(tag)
-                if frm:
-                    rec["from"] = {k: int(v) for k, v in frm.items()}
+                if harvest:
+                    frm = attribution.get(tag)
+                    if frm:
+                        rec["from"] = {k: int(v) for k, v in frm.items()}
+                elif isinstance(prev.get("from"), dict) and prev["from"]:
+                    rec["from"] = prev["from"]
                 cache[tag] = rec; measured += 1
                 if measured % 5 == 0:
-                    mid = _records_for_write(cache, anchor_set=anchor_set,
+                    mid = _records_for_write(cache, anchor_set=_persist_anchors(),
                                              cutoff=now - timedelta(days=_MAX_AGE_DAYS))
                     if prev_complete:
                         mid[_COMPLETE_KEY] = prev_complete
@@ -874,7 +947,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
                     cap=try_cap)
 
     cutoff = now - timedelta(days=_MAX_AGE_DAYS)
-    fresh = _records_for_write(cache, anchor_set=anchor_set, cutoff=cutoff)
+    fresh = _records_for_write(cache, anchor_set=_persist_anchors(), cutoff=cutoff)
     tag_mutated = fresh != pre_write
     if measured == 0 and not tag_mutated and tried > 0:
         # platform_stop → aborted = _freeze_for reason word; else honest zero-measured (MOL-912).
@@ -900,7 +973,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
         fresh[_COMPLETE_KEY] = prev_complete
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
-    if measured > 0:
+    if measured > 0 and harvest:
         _rederive_posting_corpora(cfg, now=now)
     out = {"written": True, "measured": measured, "discovered": discovered,
            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
@@ -912,22 +985,29 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None) -> dict:
 
 
 
+def _remesure_sidecar(cfg: Config, *, scrape_client=None, now=None, names: list[str]) -> dict:
+    """Tick remesure: measure `names` only. Same lease as refresh_store. No Layer A discovery."""
+    with _pass_lease(cfg) as held:
+        if not held:
+            get_logger(cfg)("hashtags", "-", "pass_busy", reason="another measurement pass holds the lease")
+            return {"written": False, "aborted": "busy",
+                    "reason": "another Layer A measurement pass holds 00_control/hashtags.lock"}
+        return _refresh_pass(cfg, scrape_client=scrape_client, now=now, known_names=names)
+
+
 def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, scrape_client=None,
                          now=None) -> dict:
-    """The constant-update hook the run loop calls each tick: refresh at most once per `max_age_s`
-    (default 12h), gated on `last_complete_pass` inside the cache — NOT file mtime, because a throttled
-    pass still writes and would otherwise buy twelve hours of silence for almost no work. Needs a scrape
-    session (else a clean no-op — the cache is a platform artifact). FAIL-OPEN: any error -> a reason,
-    NEVER raises; it must not crash the unattended run. A corrupt personas.json / no_scrape abort is NOT
-    a refresh: refresh_store aborts (cache untouched) and this REPORTS the abort so the tick never logs a
-    false success on a broken control file.
+    """The constant-update hook the run loop calls each tick: remesure sidecar pile∪lock names
+    at most once per `max_age_s` (default 12h), gated on `last_complete_pass` inside the cache —
+    NOT file mtime. Queue is NEVER `persona_terms` (HV1-PR4). Empty sidecar is a clean no-op
+    (`refreshed: False`), not `discovery_skip_no_niche`. Exact-name quota ≤30 unique / 7 days.
 
+    Needs a scrape session (else a clean no-op). FAIL-OPEN: any error -> a reason, NEVER raises.
     Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
-    MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted; otherwise
-    `refresh_store` rotates to the next healthy under-budget account. A skip under a freeze that has
-    outlived the cadence also emits `scrape_outage` at `_outage_level` (MOL-794), and returns that
-    `level`: the skip is what an ongoing outage LOOKS like from here, so it cannot stay quieter than
-    the arming it repeats."""
+    MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted.
+    A skip under a freeze that has outlived the cadence also emits `scrape_outage` at
+    `_outage_level` (MOL-794). Manual `fanops hashtags refresh` still runs Layer A via
+    `refresh_store` — this tick does not call that path."""
     from fanops.ig_hashtag_scrape import scrape_configured
     if not scrape_configured(cfg) and scrape_client is None:
         return {"refreshed": False, "reason": "no scrape session"}
@@ -949,11 +1029,17 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
                                     reason, "inspect 00_control/" + _COOLDOWN_NAME))
             return {"refreshed": False, "reason": "cooldown", "level": level, "cooldown_reason": reason,
                     "until": cool.get("until"), "streak": cool.get("streak")}
+        names = _sidecar_tick_names(cfg)
+        if not names:
+            return {"refreshed": False}
         age = _complete_pass_age_s(cfg, now_dt)               # None = no readable stamp -> due
         if age is not None and age < max_age_s:
             return {"refreshed": False, "reason": "fresh"}
-        r = refresh_store(cfg, scrape_client=scrape_client, now=now_dt)
-        if not r.get("written"):                              # corrupt/no_scrape/no_progress: preserve, report
+        visit = _quota_sidecar_names(names, load_measurements(cfg), now_dt)
+        if not visit:
+            return {"refreshed": False, "reason": "quota"}
+        r = _remesure_sidecar(cfg, scrape_client=scrape_client, now=now_dt, names=visit)
+        if not r.get("written"):                              # no_scrape/no_progress: preserve, report
             return {"refreshed": False, **r}
         return {"refreshed": True, **r}
     except Exception as exc:                                  # noqa: BLE001 — the tick must never die here
