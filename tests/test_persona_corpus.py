@@ -16,6 +16,7 @@ from fanops.hashtags import vet_hashtags
 from fanops.prompts import caption_prompt
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
+from fanops.source_tags import source_tag_locks_path
 
 STORE = ["#hiphop", "#rap"]        # the measurement cache as an ordered menu
 
@@ -123,8 +124,16 @@ def _accounts_with_corpus(cfg, corpus):
     return a
 
 
+def _write_lock(cfg, sid, lock, pile=None):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        sid: {"pile": list(pile or lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+
+
 def test_request_captions_carries_source_measured_lead_not_persona_corpus(tmp_path):
-    """Clip make leads with size-ranked measured content tags, not persona hashtag_corpus."""
+    """HV1-PR3: request carries no content_tags / no ASR corpus lead (lock only)."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _clip(led, transcript="detroit rap bars fire")
     _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
@@ -132,9 +141,8 @@ def test_request_captions_carries_source_measured_lead_not_persona_corpus(tmp_pa
     accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus", "#gammacorpus"])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    corpus = payload["surfaces"][0]["corpus"]
-    assert "#detroit" in corpus and corpus[0] == "#detroit"   # highest-count related tag leads
-    assert "#alphacorpus" not in corpus                            # persona monopoly is not the lead
+    assert "content_tags" not in payload
+    assert "corpus" not in payload["surfaces"][0]
     assert accts.accounts[0].hashtag_corpus == ["#alphacorpus", "#betacorpus", "#gammacorpus"]
 
 
@@ -164,12 +172,12 @@ def test_ingest_uses_source_corpus_lead_not_persona_monopoly(tmp_path):
 
 # --- the prompt surfaces the corpus rule -------------------------------------------------------
 
-def test_caption_prompt_has_corpus_rule_and_shows_tags():
+def test_caption_prompt_has_no_corpus_preference_rule():
     payload = {"language": "en", "surfaces": [{"surface": "a/instagram", "platform": "instagram",
                                                "corpus": ["#detroitrap"]}]}
     out = caption_prompt(payload)
-    assert "prefer the tags in that surface's `corpus`" in out.lower()   # the explicit rule (not just the JSON key leaking)
-    assert "#detroitrap" in out                             # the corpus reaches the model (in the surfaces JSON)
+    assert "prefer the tags in that surface's `corpus`" not in out.lower()
+    assert "UNION" not in out
 
 
 # --- MOL-513 (C-3): per-surface hashtag_store = persona aligned pool -------------------------
@@ -189,55 +197,10 @@ def _write_meas(cfg, rows):
 
 
 def test_request_captions_carries_per_surface_aligned_store(tmp_path):
-    # Two personas, one global cache: each surface's hashtag_store is THAT persona's aligned pool,
-    # not ranked_tags(load_measurements) (which would be identical on every surface).
+    # HV1-PR3: both surfaces of a source get the SAME lock, not per-persona aligned pools.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
-    pid_a = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
-    pid_b = core.add_persona(cfg, name="Pod", voice="vb", niche=["podcast"], id="pb")
-    _write_meas(cfg, {
-        "#hiphop": (100, None),
-        "#detroitrap": (900, "#hiphop"),   # co-occur with hiphop only
-        "#podcast": (200, None),
-        "#interview": (800, "#podcast"),   # co-occur with podcast only
-        "#globalwinner": (9999, None),     # unaligned to either niche — must NOT enter either menu
-    })
-    a = Accounts(cfg)
-    a.accounts = [
-        Account(handle="a", platforms=[Platform.instagram], persona_id=pid_a),
-        Account(handle="b", platforms=[Platform.instagram], persona_id=pid_b),
-    ]
-    request_captions(led, cfg, "clip_1",
-                     [("a", Platform.instagram), ("b", Platform.instagram)], accounts=a)
-    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    assert "hashtag_store" not in payload                    # root key gone (MOL-513)
-    by = {s["surface"]: s for s in payload["surfaces"]}
-    sa, sb = by["a/instagram"]["hashtag_store"], by["b/instagram"]["hashtag_store"]
-    assert "#detroitrap" in sa and "#hiphop" in sa
-    assert "#interview" not in sa and "#podcast" not in sa and "#globalwinner" not in sa
-    assert "#interview" in sb and "#podcast" in sb
-    assert "#detroitrap" not in sb and "#hiphop" not in sb and "#globalwinner" not in sb
-    # Prompt for the request must not put B-only tags in A's pick rule.
-    prompt = caption_prompt(payload)
-    a_rule = prompt.split('For surface "a/instagram"', 1)[1].split('For surface "b/instagram"', 1)[0]
-    assert "#detroitrap" in a_rule and "#interview" not in a_rule
-
-
-def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
-    # Account with no persona link + empty cache -> no hashtag_store key (parity with empty corpus).
-    accts = _accounts_with_corpus(cfg, [])
-    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
-    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    assert "hashtag_store" not in payload
-    assert "hashtag_store" not in payload["surfaces"][0]
-
-
-# --- MOL-511 (C-1): ingest consumes the per-surface hashtag_store written by C-3 -----------------
-
-def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
-    # End-to-end with request_captions (C-3) writing hashtag_store, then ingest (C-1) reading it.
-    # Two personas + one global cache: A's aligned-only tag must not appear on B's vetted line.
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    lock = ["#lockone", "#locktwo"]
+    _write_lock(cfg, "src_1", lock)
     pid_a = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
     pid_b = core.add_persona(cfg, name="Pod", voice="vb", niche=["podcast"], id="pb")
     _write_meas(cfg, {
@@ -254,6 +217,52 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
     ]
     request_captions(led, cfg, "clip_1",
                      [("a", Platform.instagram), ("b", Platform.instagram)], accounts=a)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload                    # root key gone (MOL-513)
+    by = {s["surface"]: s for s in payload["surfaces"]}
+    sa, sb = by["a/instagram"]["hashtag_store"], by["b/instagram"]["hashtag_store"]
+    assert sa == lock and sb == lock
+    assert "corpus" not in by["a/instagram"] and "content_tags" not in payload
+    prompt = caption_prompt(payload)
+    a_rule = prompt.split('For surface "a/instagram"', 1)[1].split('For surface "b/instagram"', 1)[0]
+    assert "#lockone" in a_rule and "#locktwo" in a_rule
+
+
+def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
+    import inspect
+    from fanops.caption import request_captions as req_fn
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    # No sidecar lock -> empty/absent store. Never fail-open to the 80-pile.
+    accts = _accounts_with_corpus(cfg, [])
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload
+    assert "hashtag_store" not in payload["surfaces"][0]
+    assert "_per_account_hashtag_stores" not in inspect.getsource(req_fn)
+
+
+# --- MOL-511 (C-1): ingest consumes the per-surface hashtag_store written by C-3 -----------------
+
+def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
+    # HV1-PR3: request writes the source lock on every surface; ingest vets that lock.
+    # Off-lock tags die on both surfaces even when they sit in the global cache.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    lock = ["#detroitrap"]
+    _write_lock(cfg, "src_1", lock)
+    _write_meas(cfg, {
+        "#hiphop": (100, None),
+        "#detroitrap": (900, "#hiphop"),
+        "#podcast": (200, None),
+        "#interview": (800, "#podcast"),
+        "#globalwinner": (9999, None),
+    })
+    a = Accounts(cfg)
+    a.accounts = [
+        Account(handle="a", platforms=[Platform.instagram]),
+        Account(handle="b", platforms=[Platform.instagram]),
+    ]
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.instagram)], accounts=a)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface="a/instagram", caption="x",
@@ -264,8 +273,9 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
     ingest_captions(led, cfg, "clip_1")
     ta = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
     tb = led.clips["clip_1"].meta_captions["b/instagram"]["hashtags"]
-    assert "#detroitrap" in ta and "#interview" not in ta and "#globalwinner" not in ta
-    assert "#interview" in tb and "#detroitrap" not in tb and "#globalwinner" not in tb
+    assert ta == tb
+    assert "#detroitrap" in ta
+    assert "#interview" not in ta and "#globalwinner" not in ta
 
 
 # --- MOL-512 (C-2): persona_facts lead_tags use this persona's aligned pool --------------------
@@ -287,3 +297,61 @@ def test_persona_facts_lead_tags_use_aligned_pool_not_global(tmp_path):
     lead = facts["lead_tags"]
     assert "#detroitrap" in lead or "#hiphop" in lead
     assert "#interview" not in lead and "#podcast" not in lead and "#globalwinner" not in lead
+
+
+# --- HV1-PR3: caption menu is the source lock ---------------------------------------------------
+
+def test_request_captions_lock_is_same_on_every_surface(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    lock = ["#alpha", "#beta", "#gamma"]
+    _write_lock(cfg, "src_1", lock)
+    _write_meas_tags(cfg, lock, {"#alpha": 100.0})
+    accts = Accounts(cfg)
+    accts.accounts = [
+        Account(handle="a", platforms=[Platform.instagram]),
+        Account(handle="b", platforms=[Platform.tiktok]),
+    ]
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.tiktok)], accounts=accts)
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "content_tags" not in payload
+    assert "corpus" not in payload
+    for s in payload["surfaces"]:
+        assert s["hashtag_store"] == lock
+        assert "corpus" not in s
+    assert set(payload.get("hashtag_metrics", {})).issubset(set(lock))
+
+
+def test_request_without_lock_drops_invented_tags_sentence_stays(tmp_path):
+    import inspect
+    from fanops.caption import request_captions as req_fn
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload["surfaces"][0]
+    assert "_per_account_hashtag_stores" not in inspect.getsource(req_fn)
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="they slept. not anymore.",
+                    hashtags=["#invented", "#music"]),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.held is False
+    mc = c.meta_captions["a/instagram"]
+    assert mc["caption"] == "they slept. not anymore."
+    assert mc["hashtags"] == []
+
+
+def test_request_without_lock_tags_only_still_holds(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="#invented #music",
+                    hashtags=["#invented", "#music"]),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_tags_only" in (c.held_reason or "")

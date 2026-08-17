@@ -1,6 +1,6 @@
 ---
 name: fanops-hook-hashtag
-description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen from store ∪ corpus (relatedness→candidate, size_band/size_rank_key→rank) — never words the model invents. Evidence-backed; sources cited inline.
+description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen from the source lock (play_count then 7-day reel max) — never words the model invents, never the 80-pile / store∪corpus. Evidence-backed; sources cited inline.
 ---
 
 # FanOps Hooks & Hashtags — researched, platform-measured
@@ -10,9 +10,9 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 > not a reach claim). Band + slot constants live in `hashtags.MEGA_MEDIA_FLOOR`,
 > `MID_MEDIA_FLOOR`, `INT32_MEDIA_COUNT`, `MEGA_SLOT_MAX`. The DRIFT-GUARD blocks
 > below are mirror-tested by `tests/test_skill_drift.py` — if this doc and the
-> code disagree, that test goes red. Edit code + doc together. Corpus membership
-> is derived (relatedness + metric), never a hand-ranked `VETTED` pool. Rank is
-> `size_band` / `size_rank_key`, not Top-grid medians.
+> code disagree, that test goes red. Edit code + doc together. Caption membership
+> is the source lock, never the 80-pile / store ∪ corpus / a hand-ranked `VETTED`
+> pool. Caption rank is `play_count` then 7-day reel max, not `size_rank_key`.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **posted caption** — one hook sentence
@@ -59,10 +59,12 @@ MEGA_SLOT_MAX=1
    ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
    The posted `caption` is one hook sentence; the 3–4 tags live in `hashtags`.
-3. **Hashtags come from store ∪ corpus** — never words the model invents.
-   Relatedness makes a candidate; rank is `size_band` / `size_rank_key` (Part 2).
-   Mega/untrusted occupy at most 1 of 4 slots. INT32-saturated `media_count` is
-   mega/untrusted, not gold. There is no `VETTED` pool and no semantic ban-list.
+3. **Hashtags come from the source lock** — never words the model invents, never
+   the 80-pile / store ∪ corpus. Membership is the lock (`hashtag_store` on every
+   surface of that source). Rank is `play_count` then 7-day reel max
+   (`current_top_reel_play_max_7d`). Empty lock → empty tag line. Invented tags
+   die. Mega/untrusted occupy at most 1 of 4 slots. There is no `VETTED` pool
+   and no semantic ban-list.
 
 ---
 
@@ -183,33 +185,24 @@ field.
 
 ### Membership and rank
 
-Membership = **store ∪ corpus**. Invented tags die. Unmeasured non-corpus tags
-die. Unmeasured **corpus** tags survive. Empty store AND empty corpus (and
-non-AR) → empty line.
+Membership = **the source lock**. Same list on every surface of that source.
+Invented tags die. Off-lock tags die. Empty lock / missing sidecar → empty tag
+line (sentence still ships). **Never** the persona 80-pile
+(`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus.
 
-Rank is `size_band` / `size_rank_key` (F3) — not Top-grid medians:
+Rank / choose-key: `play_count` DESC, then `current_top_reel_play_max_7d`
+(7-day reel max). `media_count` may appear as a number on the metrics row; it
+is **not** the caption menu order. `size_band` / `size_rank_key` are Layer B
+corpus derivation (Part 3), not the caption menu.
 
-| Band | `media_count` |
-|---|---|
-| mid | `MID_MEDIA_FLOOR` ≤ n < `MEGA_MEDIA_FLOOR` (10k–2M) |
-| small | 0 < n < `MID_MEDIA_FLOOR` |
-| mega | `MEGA_MEDIA_FLOOR` ≤ n < `INT32_MEDIA_COUNT` |
-| untrusted | n ≥ `INT32_MEDIA_COUNT` (INT32-saturated; mega for slots) |
-| unknown | missing / unparseable |
+### Shipped line (when a lock exists)
 
-Order: **mid → small → mega/untrusted → unknown**. Within a band: Instagram
-keeps size-then-trend; TikTok prefers `TREND_FIELD` then size. Plays cannot stand
-in for volume.
-
-### Shipped line (when measurements exist)
-
-- hard cap 4
-- mega/untrusted occupy **at most 1** slot (`MEGA_SLOT_MAX`); leftover slots
-  prefer mid
-- INT32-saturated `media_count` is mega/untrusted, not infinite gold
+- pick at most 4 from the lock
+- invented / off-lock tags die at vet
+- empty lock → empty tag line; tags-only HOLD still holds
 - AR region floor (`_ARABIC`) still applies on Arabic-language clips
-- no `VETTED` / `_MEGA` pool, no semantic ban-list (a magnet is limited because
-  it is INT32/mega, not because of its name)
+- mega/untrusted occupy **at most 1** slot (`MEGA_SLOT_MAX`)
+- no `VETTED` / `_MEGA` pool, no semantic ban-list
 - no mega / relevance / discovery-slot recipe
 
 `cfg is None` / no measurements: mega cap and platform reorder do not fire.
@@ -263,7 +256,7 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
   `measure_and_harvest` kept for later).
 - [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` +
   `refresh_store_if_due` (12h stamp gate inside `fanops run`).
-- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface `hashtag_store` + corpus.
+- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface `hashtag_store` is the source lock.
 
 ## Sources
 

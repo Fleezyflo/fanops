@@ -76,27 +76,34 @@ def test_regenerate_rejects_offbrand_without_persisting(tmp_path):
     assert Ledger.load(cfg).posts["p_edit"].caption == "CLEAN"   # unchanged — no guardrail bypass
 
 def test_regenerate_payload_carries_corpus_and_vet_keeps_it(tmp_path):
-    # The two halves of the regen parity gap, pinned closed: (1) the regen prompt carries the account's
-    # curated corpus exactly like the batch payload (caption.request_captions:195-213); (2) the write
-    # runs the SAME vet as ingest — a picked corpus member survives, junk is dropped, the 4-cap holds.
+    # HV1-PR3: regen prompt/vet use the source lock, not the account corpus / 80-pile.
     import json as _json
+    from fanops.source_tags import source_tag_locks_path
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(_json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active",
          "hashtag_corpus": ["#alphacorpus", "#betacorpus"]}]}))
+    lock_path = source_tag_locks_path(cfg)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(_json.dumps({
+        "src_1": {"pile": ["#locktag", "#alphacorpus"], "lock": ["#locktag"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     _seed(cfg)
     seen = {}
     def m(prompt, schema):
         seen["prompt"] = prompt
         return {"items": [{"surface": "a/instagram", "caption": "x", "language": "en",
-                           "hashtags": ["#alphacorpus", "#j1", "#j2", "#j3", "#j4", "#j5", "#j6", "#j7"]}]}
+                           "hashtags": ["#locktag", "#alphacorpus", "#j1", "#j2", "#j3"]}]}
     res = regenerate_caption(cfg, "p_edit", "", model=m, now=NOW)
     assert res.ok is True
-    assert "#alphacorpus" in seen["prompt"]                          # corpus reached the prompt
+    assert "#locktag" in seen["prompt"]
+    assert "UNION" not in seen["prompt"]
     p = Ledger.load(cfg).posts["p_edit"]
-    assert "#alphacorpus" in p.hashtags and len(p.hashtags) <= 4     # corpus member survives the vet
-    assert not any(t.startswith("#j") for t in p.hashtags)           # raw junk can no longer be written
+    assert "#locktag" in p.hashtags and len(p.hashtags) <= 4
+    assert "#alphacorpus" not in p.hashtags
+    assert not any(t.startswith("#j") for t in p.hashtags)
 
 
 def test_regenerate_guards_non_queued(tmp_path):
@@ -196,13 +203,11 @@ def test_review_card_renders_regenerate_button(tmp_path):
 # --- MOL-512 (C-2): regenerate vets from the account's persona aligned pool -------------------
 
 def test_regenerate_vets_from_persona_aligned_store_not_global(tmp_path):
-    """Regen must not accept/backfill another persona's tags just because they sit in the global cache.
-    Account `a` is linked to a hiphop persona; its aligned pool excludes podcast-only + unaligned tags."""
+    """HV1-PR3: regen vets the source lock, not the persona aligned pool or global cache."""
     import json as _json
-    from fanops import personas as core
+    from fanops.source_tags import source_tag_locks_path
     from datetime import timezone as _tz
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
     now = datetime.now(_tz.utc).isoformat()
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(_json.dumps({
@@ -214,9 +219,12 @@ def test_regenerate_vets_from_persona_aligned_store_not_global(tmp_path):
                        "from": {"#podcast": 2}},
         "#globalwinner": {"graph_id": "5", "like_count": 9999, "measured_at": now, "media_count": 50_000.0},
     }))
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(_json.dumps({"accounts": [
-        {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
+    lock_path = source_tag_locks_path(cfg)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(_json.dumps({
+        "src_1": {"pile": ["#detroitrap", "#interview"], "lock": ["#detroitrap"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     _seed(cfg)
     res = regenerate_caption(
         cfg, "p_edit", "",
