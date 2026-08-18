@@ -177,6 +177,37 @@ def _profile_auth_for(cfg: Config, user: str) -> tuple[str, str] | None:
     return None
 
 
+def profile_instagram_cookies(cfg: Config, user: str) -> dict[str, str]:
+    """All Instagram cookies from THIS user's FanOps Chrome profile. Never system Chrome."""
+    if not user:
+        return {}
+    try:
+        import browser_cookie3
+    except ImportError:
+        return {}
+    cookie_err = getattr(browser_cookie3, "BrowserCookieError", OSError)
+    root = scrape_chrome_profile_dir(cfg, user).resolve()
+    for cookie_file in _profile_cookie_files(cfg, user):
+        try:
+            resolved = cookie_file.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if not resolved.is_file():
+            continue
+        try:
+            jar = browser_cookie3.chrome(domain_name="instagram.com", cookie_file=str(resolved))
+        except (OSError, ValueError, cookie_err):
+            continue
+        got: dict[str, str] = {}
+        for c in jar:
+            if "instagram" in (c.domain or "") and c.name and c.value:
+                got[c.name] = c.value
+        if got.get("sessionid"):
+            return got
+    return {}
+
+
 def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
     """Put a FanOps-profile sessionid onto the loaded client. Keep device/uuids."""
     auth = dict(getattr(client, "authorization_data", None) or {})

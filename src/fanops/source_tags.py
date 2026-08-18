@@ -15,8 +15,9 @@ from pathlib import Path
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import _dedupe_norm, _norm, _num, load_measurements, lock_from_pile
-from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape, open_client,
+from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
+from fanops.ig_web_scrape import open_web_session
 from fanops.log import get_logger
 from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
                                measure_and_harvest, resolve_hashtag)
@@ -148,10 +149,10 @@ def _iter_lock_clients(cfg, *, client, open_client_fn):
     if client is not None:
         yield client
         return
-    opener = open_client_fn or open_client
-    from fanops.fanops_hashtags import _healthy_scrape_users
+    opener = open_client_fn or open_web_session
+    from fanops.ig_web_scrape import _lock_web_users
     now = datetime.now(timezone.utc)
-    peers = _healthy_scrape_users(cfg, now, require_budget_room=False)
+    peers = _lock_web_users(cfg, now)
     if not peers:
         try:
             cli = _call_opener(opener, cfg)
