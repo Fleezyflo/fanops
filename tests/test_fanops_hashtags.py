@@ -674,9 +674,11 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
 def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypatch):
     """Operator path: LoginRequired probe → clear auth/cookies + login(..., relogin=False)."""
     from types import SimpleNamespace
+    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: None)
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
@@ -687,6 +689,8 @@ def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypat
     class _Jar:
         def clear(self):
             seen.append("cleared")
+        def set(self, *a, **k):
+            seen.append(("set_cookie", a[0] if a else None))
 
     class _Stale:
         def __init__(self):
@@ -712,6 +716,49 @@ def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypat
     assert ("login", "u", "p", False) in seen
     assert not any(x[0] == "login" and x[-1] is True for x in seen if isinstance(x, tuple))
     assert not any(x[0] == "set" for x in seen if isinstance(x, tuple))
+
+
+def test_open_client_restores_from_browser_session_without_login(tmp_path, monkeypatch):
+    """Dead dump + matching Chrome sessionid → inject and probe; never password-login."""
+    from types import SimpleNamespace
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    from instagrapi.exceptions import LoginRequired as _LR
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: "chrome-sid")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    seen = {"search": 0, "login": 0}
+
+    class _Jar:
+        def set(self, *a, **k):
+            seen.setdefault("cookies", []).append(a[0] if a else None)
+        def clear(self):
+            seen["cleared"] = True
+
+    class _StaleThenLive:
+        def __init__(self):
+            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
+            self.private = SimpleNamespace(cookies=_Jar(), headers={})
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            seen["search"] += 1
+            if seen["search"] == 1:
+                raise _LR("login_required")
+        def login(self, *_a, **_k):
+            seen["login"] += 1
+        def dump_settings(self, _p): pass
+        def inject_sessionid_to_public(self):
+            seen["injected"] = True
+    c = open_client(cfg, client_factory=_StaleThenLive, allow_reauth=True, user="u")
+    assert c is not None
+    assert seen["search"] == 2
+    assert seen["login"] == 0
+    assert seen.get("injected") is True
+    assert c.authorization_data.get("sessionid") == "chrome-sid"
 
 
 def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):

@@ -2180,6 +2180,7 @@
       "werkzeug"
     ],
     "lazy": [
+      "browser_cookie3",
       "certifi",
       "collections",
       "copy",
