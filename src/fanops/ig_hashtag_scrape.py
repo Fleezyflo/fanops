@@ -96,19 +96,22 @@ def scrape_session_dead(exc: BaseException) -> bool:
 
 
 def scrape_session_needs_restore(exc: BaseException) -> bool:
-    """Password restore is only for a rejected session dump, not throttle/network."""
+    """Chrome inject / password restore is only for a rejected dump, not throttle/network."""
     return bool({c.__name__ for c in type(exc).__mro__} & {"LoginRequired", "ClientLoginRequired"})
 
 
-def _probe_scrape_session(client) -> None:
-    """Work-shaped probe for scrape-login. search_hashtags is the lock-producer call.
+def _probe_scrape_session(client, *, allow_account_info: bool = True) -> None:
+    """Work-shaped probe. search_hashtags is the lock-producer call.
 
-    Fall back to account_info only when the client has no search surface (unit fakes).
+    Fall back to account_info only when the client has no search surface (operator-path
+    unit fakes). Unattended passes allow_account_info=False — never account_info.
     Never call login() here.
     """
     search = getattr(client, "search_hashtags", None)
     if callable(search):
         search("music")
+        return
+    if not allow_account_info:
         return
     info = getattr(client, "account_info", None)
     if callable(info):
@@ -201,17 +204,43 @@ def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
         inject()
 
 
+def _try_browser_session_restore(client, cfg: Config, user: str, *,
+                                 allow_account_info: bool = True) -> bool:
+    """Inject a live Chrome sessionid and re-probe. True when the session is live.
+
+    Shared by unattended open and scrape-login (#1021). Never login(). Missing Chrome
+    sid or a still-dead dump → False. Non-LoginRequired probe errors propagate.
+    """
+    ds = str((getattr(client, "authorization_data", None) or {}).get("ds_user_id")
+             or getattr(client, "user_id", "") or "")
+    browser_sid = _browser_sessionid_for(ds)
+    if not browser_sid:
+        return False
+    _inject_sessionid(client, browser_sid, ds)
+    try:
+        _probe_scrape_session(client, allow_account_info=allow_account_info)
+        return True
+    except Exception as e2:                             # noqa: BLE001 — browser dump may also be stale
+        get_logger(cfg)("hashtags", user, "scrape_reauth",
+                        err=type(e2).__name__, via="browser")
+        if not scrape_session_needs_restore(e2):
+            raise
+        return False
+
+
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
     """Open an authenticated instagrapi Client, PACED. Lazy-imports; dumps session after success.
     Never echoes password or session contents. Raises ScrapeUnavailable on miss.
 
-    `allow_reauth` defaults False: unattended open loads a session file and returns — no
-    `account_info()` probe and never `login()`. The first real hashtag call validates the session.
-    Unattended callers (Layer A tick, doctor) MUST leave this False — instagrapi>=2.18.12 escalates
-    LoginRequired inside `login()` into a full password re-auth, which earned the 2026-07-29T22:01Z
-    native checkpoint when the tick still called `login()` every pass.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (search probe decides login).
+    `allow_reauth` defaults False (daemon / lock_ready_sources / Layer A): load_settings →
+    search_hashtags probe (never account_info, never login). Probe ok → dump. LoginRequired →
+    Chrome sessionid inject + re-probe; still dead or no sid → leave the on-disk dump untouched
+    and raise ScrapeUnavailable so callers rotate. Throttle/network propagate without overwrite.
+    Unattended MUST stay False — instagrapi>=2.18.12 escalates LoginRequired inside login() into
+    a password re-auth, which earned the 2026-07-29T22:01Z native checkpoint.
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (same probe + Chrome path,
+    then password-login with UUIDs kept; never login(relogin=True)).
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
     (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
@@ -253,30 +282,20 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
     if sess.exists():
         client.load_settings(str(sess))
-        if allow_reauth:                                # operator scrape-login only: the probe DECIDES login()
-            try:
-                _probe_scrape_session(client)
-            except Exception as e:                      # noqa: BLE001 — probe surface is opaque
-                get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
-                if not scrape_session_needs_restore(e):
-                    raise
-                ds = str((getattr(client, "authorization_data", None) or {}).get("ds_user_id")
-                         or getattr(client, "user_id", "") or "")
-                browser_sid = _browser_sessionid_for(ds)
-                if browser_sid:
-                    _inject_sessionid(client, browser_sid, ds)
-                    try:
-                        _probe_scrape_session(client)
-                    except Exception as e2:             # noqa: BLE001 — browser dump may also be stale
-                        get_logger(cfg)("hashtags", user, "scrape_reauth",
-                                        err=type(e2).__name__, via="browser")
-                        if not scrape_session_needs_restore(e2):
-                            raise
-                        _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
-                else:
-                    # Failed login raises before dump_settings — the on-disk dump stays untouched.
-                    _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
-        # Unattended: load_settings → dump → return (session validated by the first work call).
+        try:
+            _probe_scrape_session(client, allow_account_info=allow_reauth)
+        except Exception as e:                          # noqa: BLE001 — probe surface is opaque
+            get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
+            if not scrape_session_needs_restore(e):
+                raise
+            restored = _try_browser_session_restore(
+                client, cfg, user, allow_account_info=allow_reauth)
+            if not restored:
+                if not allow_reauth:
+                    # Leave the on-disk dump untouched so a rur-only overwrite cannot happen.
+                    raise ScrapeUnavailable(
+                        "scrape session dead — run fanops hashtags scrape-login") from e
+                _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
     else:
         if not allow_reauth:
             raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")

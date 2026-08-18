@@ -188,7 +188,7 @@ def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
 
 
 def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
-    """MOL-910: allow_reauth=False never calls account_info(); login() never called."""
+    """Unattended never calls account_info() or login(); search-probes then dumps."""
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-must-not-leak")
@@ -199,6 +199,9 @@ def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
     calls: list[str] = []
     class _Rec:
         def load_settings(self, _p): calls.append("load_settings")
+        def search_hashtags(self, _q):
+            calls.append("search_hashtags")
+            return []
         def account_info(self):
             calls.append("account_info")
             raise AssertionError("unattended must not probe account_info")
@@ -208,7 +211,7 @@ def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
         def dump_settings(self, _p): calls.append("dump_settings")
     c = open_client(cfg, client_factory=_Rec)
     assert c is not None
-    assert calls == ["load_settings", "dump_settings"]
+    assert calls == ["load_settings", "search_hashtags", "dump_settings"]
     assert (cfg.control / "ig_scrape_session_u.json").exists()
 
 
@@ -631,24 +634,40 @@ def test_instagrapi_floor_validates_saved_sessions(tmp_path):
 
 
 def test_open_client_stale_session_opens_without_probe_or_login(tmp_path, monkeypatch):
-    """MOL-910 unattended: session file → load + dump; no account_info, no login (dead session
-    surfaces later at the first work call)."""
-    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    """Unattended dead dump + no Chrome sid → ScrapeUnavailable; on-disk dump unchanged."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
+    from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: None)
+    def _boom(_u):
+        raise AssertionError("unattended must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
     cfg = Config(root=tmp_path)
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    seen = {"login": 0, "account_info": 0}
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    original = '{"keep": "dead-dump"}'
+    sess.write_text(original)
+    seen = {"login": 0, "account_info": 0, "dump": 0}
+
     class _Stale:
         def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise _LR("login_required")
         def account_info(self): seen["account_info"] += 1
         def login(self, *_a, **_k): seen["login"] += 1
-        def dump_settings(self, _p): pass
-    c = open_client(cfg, client_factory=_Stale)
-    assert c is not None
-    assert seen == {"login": 0, "account_info": 0}
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            from pathlib import Path
+            Path(p).write_text('{"overwritten": true}')
+    try:
+        open_client(cfg, client_factory=_Stale)
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable as e:
+        assert "scrape session dead" in str(e)
+    assert seen == {"login": 0, "account_info": 0, "dump": 0}
+    assert sess.read_text() == original
 
 
 def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
@@ -662,6 +681,7 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
     _sess.write_text("{}")
     class _Ok:
         def load_settings(self, _p): pass
+        def search_hashtags(self, _q): return []
         def account_info(self): raise AssertionError("unattended must not probe")
         def login(self, *_a, **_k): raise AssertionError("login must not run")
         def dump_settings(self, _p): pass
@@ -761,6 +781,131 @@ def test_open_client_restores_from_browser_session_without_login(tmp_path, monke
     assert c.authorization_data.get("sessionid") == "chrome-sid"
 
 
+def test_open_client_unattended_loginrequired_heals_from_chrome(tmp_path, monkeypatch):
+    """Unattended LoginRequired + Chrome sid → inject, no login, dump after second probe."""
+    from types import SimpleNamespace
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    from instagrapi.exceptions import LoginRequired as _LR
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: "chrome-sid")
+    def _boom(_u):
+        raise AssertionError("unattended must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text('{"keep": "dead"}')
+    seen = {"search": 0, "login": 0, "account_info": 0, "dump": 0}
+
+    class _Jar:
+        def set(self, *a, **k):
+            seen.setdefault("cookies", []).append(a[0] if a else None)
+        def clear(self):
+            seen["cleared"] = True
+
+    class _StaleThenLive:
+        def __init__(self):
+            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
+            self.private = SimpleNamespace(cookies=_Jar(), headers={})
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            seen["search"] += 1
+            if seen["search"] == 1:
+                raise _LR("login_required")
+        def account_info(self):
+            seen["account_info"] += 1
+            raise AssertionError("unattended must not probe account_info")
+        def login(self, *_a, **_k):
+            seen["login"] += 1
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            from pathlib import Path
+            Path(p).write_text('{"healed": true}')
+        def inject_sessionid_to_public(self):
+            seen["injected"] = True
+    c = open_client(cfg, client_factory=_StaleThenLive, user="u")
+    assert c is not None
+    assert seen["search"] == 2
+    assert seen["login"] == 0
+    assert seen["account_info"] == 0
+    assert seen["dump"] == 1
+    assert seen.get("injected") is True
+    assert c.authorization_data.get("sessionid") == "chrome-sid"
+    assert '"healed": true' in sess.read_text()
+
+
+def test_open_client_unattended_loginrequired_without_chrome_leaves_dump(tmp_path, monkeypatch):
+    """Unattended LoginRequired + no Chrome sid → no dump write, raises, dump file unchanged."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
+    from instagrapi.exceptions import ClientLoginRequired as _CLR
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: None)
+    def _boom(_u):
+        raise AssertionError("unattended must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    original = '{"keep": true}'
+    sess.write_text(original)
+    seen = {"dump": 0, "login": 0, "account_info": 0}
+
+    class _Dead:
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise _CLR("login_required")
+        def account_info(self):
+            seen["account_info"] += 1
+        def login(self, *_a, **_k):
+            seen["login"] += 1
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            from pathlib import Path
+            Path(p).write_text('{"overwritten": true}')
+    try:
+        open_client(cfg, client_factory=_Dead)
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable as e:
+        assert "scrape session dead" in str(e)
+    assert seen == {"dump": 0, "login": 0, "account_info": 0}
+    assert sess.read_text() == original
+
+
+def test_open_client_unattended_live_dump_search_probes_then_dumps(tmp_path, monkeypatch):
+    """Unattended live dump → search probe once, dump, no login, no account_info."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    def _boom(_u):
+        raise AssertionError("unattended must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    seen = {"search": 0, "login": 0, "account_info": 0, "dump": 0}
+
+    class _Live:
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            seen["search"] += 1
+            return []
+        def account_info(self):
+            seen["account_info"] += 1
+        def login(self, *_a, **_k):
+            seen["login"] += 1
+        def dump_settings(self, _p):
+            seen["dump"] += 1
+    c = open_client(cfg, client_factory=_Live)
+    assert c is not None
+    assert seen == {"search": 1, "login": 0, "account_info": 0, "dump": 1}
+
+
 def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
     """PleaseWait / rate-limit on a live dump must not become a password login."""
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
@@ -785,6 +930,44 @@ def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
     try:
         open_client(cfg, client_factory=_Live, allow_reauth=True, user="u")
     except PleaseWaitFewMinutes:
+        return
+    raise AssertionError("throttle must propagate")
+
+
+def test_open_client_unattended_throttle_does_not_overwrite_dump(tmp_path, monkeypatch):
+    """Unattended PleaseWait / rate-limit must not login, dump, or read the password."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    def _boom(_u):
+        raise AssertionError("unattended must not read scrape password")
+    monkeypatch.setattr(igs, "scrape_password_for", _boom)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    original = '{"keep": "live"}'
+    sess.write_text(original)
+
+    class PleaseWaitFewMinutes(Exception):
+        pass
+
+    class _Live:
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise PleaseWaitFewMinutes("wait")
+        def account_info(self):
+            raise AssertionError("unattended must not probe account_info")
+        def login(self, *_a, **_k):
+            raise AssertionError("throttle must not login")
+        def dump_settings(self, p):
+            from pathlib import Path
+            Path(p).write_text('{"overwritten": true}')
+            raise AssertionError("throttle must not dump")
+    try:
+        open_client(cfg, client_factory=_Live)
+    except PleaseWaitFewMinutes:
+        assert sess.read_text() == original
         return
     raise AssertionError("throttle must propagate")
 
@@ -821,7 +1004,7 @@ def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
 
 
 def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypatch):
-    """Session on disk → return client; login() never called. Operator path may probe; unattended does not."""
+    """Session on disk → search probe then return; login() and account_info() never called."""
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
@@ -830,9 +1013,12 @@ def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypat
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
     for allow in (False, True):
-        seen = {"login": 0, "account_info": 0}
+        seen = {"login": 0, "account_info": 0, "search": 0}
         class _Ok:
             def load_settings(self, _p): pass
+            def search_hashtags(self, _q):
+                seen["search"] += 1
+                return []
             def account_info(self):
                 seen["account_info"] += 1
                 return {"pk": 1}
@@ -840,7 +1026,8 @@ def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypat
             def dump_settings(self, _p): pass
         open_client(cfg, client_factory=_Ok, allow_reauth=allow)
         assert seen["login"] == 0, allow
-        assert seen["account_info"] == (1 if allow else 0), allow
+        assert seen["account_info"] == 0, allow
+        assert seen["search"] == 1, allow
 
 
 def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypatch):
@@ -1442,7 +1629,7 @@ def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
         def account_info(self): seen["delay_at_probe"] = self.delay_range
         def login(self, *_a, **_k): raise AssertionError("valid session must not login")
         def dump_settings(self, _p): pass
-    # Unattended: delay set even though no probe runs.
+    # Unattended: delay is set before any call; this fake has no search so no probe runs.
     c = open_client(cfg, client_factory=_Fake)
     assert c.delay_range == [1.0, 3.0]
     assert "delay_at_probe" not in seen

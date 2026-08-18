@@ -1129,9 +1129,9 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
     out the remaining 12h (MOL-699).
 
-    Sole `allow_reauth=True` call site: the unattended tick loads a restored session with no
-    `account_info()` probe and NEVER calls `login()` (a full password re-auth on a stale session earned
-    the 2026-07-29T22:01Z native checkpoint). Only this verb may re-authenticate.
+    Sole `allow_reauth=True` call site: the unattended tick search-probes the dump and may Chrome-inject,
+    but never calls `account_info()` or `login()` (a full password re-auth on a stale session earned
+    the 2026-07-29T22:01Z native checkpoint). Only this verb may password-login.
 
     Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
