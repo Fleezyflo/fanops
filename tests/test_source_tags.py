@@ -208,12 +208,19 @@ def test_research_empty_or_raise_writes_nothing(tmp_path):
 
 
 def test_caption_menu_is_not_80_pile():
+    from fanops.caption import ingest_captions
     req = inspect.getsource(request_captions)
     assert "_per_account_hashtag_stores" not in req
     assert "content_tag_candidates" not in req
+    assert "ensure_source_lock" not in req
     regen = inspect.getsource(regenerate_caption)
     assert "_per_account_hashtag_stores" not in regen
     assert "content_tag_candidates" not in regen
+    assert "ensure_source_lock" not in regen
+    assert "ship_from_lock" in inspect.getsource(ingest_captions)
+    assert "ship_from_lock" in regen
+    assert "vet_hashtags_traced" not in inspect.getsource(ingest_captions)
+    assert "vet_hashtags_traced" not in regen
     import fanops.source_tags as st
     assert "content_tag_candidates" not in inspect.getsource(st)
     assert "fail_open(\"source_tags.ensure\")" not in inspect.getsource(st)
