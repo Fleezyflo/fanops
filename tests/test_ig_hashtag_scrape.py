@@ -307,7 +307,7 @@ def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_pat
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "scrape session dead" in str(e)
+        assert "profile" in str(e)
     assert seen == {"login": 0, "account_info": 0, "dump": 0, "search": 0}
     assert sess.read_text() == original
 
@@ -511,10 +511,47 @@ def test_scrape_chrome_launch_argv_uses_fanops_profile_not_devtools(tmp_path, mo
     assert "9222" not in joined and "9223" not in joined
     assert "remote-debugging" not in joined
     assert "Application Support/Google/Chrome" not in joined
+    launched = []
     import subprocess
-    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("scrape-login must not spawn Chrome")))
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **_k: launched.append(list(argv)) or object())
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     from fanops.fanops_hashtags import cmd_hashtags_scrape_login
     monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: object())
     assert cmd_hashtags_scrape_login(cfg) == 0
     assert igs.scrape_chrome_profile_dir(cfg, "perca.late").is_dir()
+    assert launched
+    assert launched[0] == argv
+
+
+def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
+    """Wait timeout → no open_client, no dump, no password."""
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.fanops_hashtags import cmd_hashtags_scrape_login
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: None)
+    opened = []
+    monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: opened.append(1))
+    assert cmd_hashtags_scrape_login(cfg) == 2
+    assert opened == []
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    assert not scrape_session_path(cfg, "u").exists()
+
+
+def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeypatch):
+    import fanops.ig_hashtag_scrape as igs
+    cfg = Config(root=tmp_path)
+    hits = {"n": 0}
+
+    def _auth(*_a, **_k):
+        hits["n"] += 1
+        return ("sid", "1") if hits["n"] >= 2 else None
+    monkeypatch.setattr(igs, "_profile_auth_for", _auth)
+    slept = []
+    got = igs.wait_for_scrape_profile_auth(
+        cfg, "u", timeout_s=5, sleep=lambda s: slept.append(s),
+        clock=lambda: 0 if hits["n"] < 2 else 5)
+    assert got == ("sid", "1")
+    assert slept
