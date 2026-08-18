@@ -699,7 +699,11 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.Popen",
-        "line": 232
+        "line": 316
+      },
+      {
+        "call": "subprocess.check_output",
+        "line": 329
       }
     ],
     "fanops.ingest": [
@@ -806,6 +810,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 38
+    "subprocess_sites": 39
   }
 }

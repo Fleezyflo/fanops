@@ -31,6 +31,7 @@
     "network_sites_literal_requests": [
       "fanops.cli",
       "fanops.health_model",
+      "fanops.ig_web_scrape",
       "fanops.post.metrics",
       "fanops.post.postiz",
       "fanops.post.zernio"
@@ -68,7 +69,7 @@
     "env_write_sites": 2,
     "ledger_transaction_sites": 82,
     "mkdtemp_sites": 2,
-    "network_sites_literal_requests": 15,
+    "network_sites_literal_requests": 16,
     "rmtree_sites": 6,
     "subprocess_sites": 40
   },

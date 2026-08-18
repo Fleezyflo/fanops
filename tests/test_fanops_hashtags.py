@@ -607,7 +607,7 @@ def test_scrape_login_loops_comma_users(tmp_path, monkeypatch):
         seen.append(user)
         return object()
     monkeypatch.setattr(igs, "open_client", fake_open)
-    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
     monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0
     assert seen == ["a", "b"]
@@ -626,7 +626,7 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
                       reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
     assert _cooldown_path(cfg).exists()
     monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
-    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
     monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
     # Streak/until/reason cleared; day/used/accounts may remain (MOL-854 day budget).
@@ -1830,12 +1830,12 @@ def test_scrape_login_clears_only_that_user_freeze(tmp_path, monkeypatch):
     _persist_cooldown(cfg, t0, reason="throttle", user="b")
     def fake_open(_cfg, *, allow_reauth=False, user=None, **_k):
         assert allow_reauth is True
-        if user == "a":
-            return object()
-        raise igs.ScrapeUnavailable("skip b")
+        return object()
+    def fake_wait(_cfg, user, **_k):
+        return ("sid", "1") if user == "a" else None
     monkeypatch.setattr(igs, "open_client", fake_open)
-    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", fake_wait)
     assert cmd_hashtags_scrape_login(cfg) == 0
     blob = json.loads(_cooldown_path(cfg).read_text())
     assert "until" not in blob.get("accounts", {}).get("a", {})

@@ -51,6 +51,7 @@
     "fanops.hookscore",
     "fanops.ids",
     "fanops.ig_hashtag_scrape",
+    "fanops.ig_web_scrape",
     "fanops.impact_cut",
     "fanops.ingest",
     "fanops.init_flow",
@@ -201,6 +202,7 @@
     "fanops.hookscore": "S08_selection",
     "fanops.ids": "S01_foundation",
     "fanops.ig_hashtag_scrape": "S10_caption_hashtag",
+    "fanops.ig_web_scrape": "S10_caption_hashtag",
     "fanops.impact_cut": "S09_render",
     "fanops.ingest": "S05_ingestion",
     "fanops.init_flow": "S17_cli_daemon",
@@ -299,9 +301,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 141,
+    "assigned": 142,
     "ghosts": 0,
-    "modules": 141,
+    "modules": 142,
     "unassigned": 0
   },
   "unassigned_modules": []

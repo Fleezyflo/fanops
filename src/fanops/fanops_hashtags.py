@@ -1130,15 +1130,14 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     out the remaining 12h (MOL-699).
 
     Sole `allow_reauth=True` call site. Opens `cfg.control/scrape_chrome/<user>/` (that
-    Instagram account only), waits for a sessionid in THAT profile, then promotes (the only
-    dump_settings / envelope write). Never walks system Chrome, never DevTools, never password
-    login. The unattended tick is a reader: envelope + that profile's sessionid, never login(),
-    never dump_settings.
+    Instagram account only) on a FanOps-owned CDP port (never 9222/9223), waits for a
+    sessionid in THAT Chrome, then best-effort promotes the device envelope. Lock scrape
+    uses the live Chrome page, not the envelope. Never system Chrome, never password login.
 
     Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, promote each envelope. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
     from fanops.ig_hashtag_scrape import (
-        ScrapeUnavailable, launch_scrape_chrome, open_client, scrape_chrome_profile_dir,
+        ensure_scrape_chrome, open_client, scrape_chrome_profile_dir,
         scrape_session_path, scrape_users, wait_for_scrape_profile_auth,
     )
     users = scrape_users(cfg)
@@ -1150,7 +1149,7 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     for user in users:
         profile = scrape_chrome_profile_dir(cfg, user)
         profile.mkdir(parents=True, exist_ok=True)
-        if not launch_scrape_chrome(cfg, user):
+        if not ensure_scrape_chrome(cfg, user, restart=True):
             get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
                             user=user[:40], reason="chrome-missing")
             continue
@@ -1160,14 +1159,9 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
             continue
         try:
             open_client(cfg, allow_reauth=True, user=user)
-        except ScrapeUnavailable as e:
-            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason=str(e))
-            continue
-        except Exception as e:                                  # noqa: BLE001 — platform errors unsliced
-            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason=str(e))
-            continue
+        except Exception as e:                                  # noqa: BLE001 — envelope is best-effort
+            get_logger(cfg)("hashtags", "-", "scrape_login_envelope",
+                            user=user[:40], reason=str(e)[:160])
         _clear_cooldown(cfg, user=user)                    # MOL-858: clear THIS user only
         ok_n += 1
         get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=user[:40],

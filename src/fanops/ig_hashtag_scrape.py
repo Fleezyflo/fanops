@@ -177,6 +177,37 @@ def _profile_auth_for(cfg: Config, user: str) -> tuple[str, str] | None:
     return None
 
 
+def profile_instagram_cookies(cfg: Config, user: str) -> dict[str, str]:
+    """All Instagram cookies from THIS user's FanOps Chrome profile. Never system Chrome."""
+    if not user:
+        return {}
+    try:
+        import browser_cookie3
+    except ImportError:
+        return {}
+    cookie_err = getattr(browser_cookie3, "BrowserCookieError", OSError)
+    root = scrape_chrome_profile_dir(cfg, user).resolve()
+    for cookie_file in _profile_cookie_files(cfg, user):
+        try:
+            resolved = cookie_file.resolve()
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if not resolved.is_file():
+            continue
+        try:
+            jar = browser_cookie3.chrome(domain_name="instagram.com", cookie_file=str(resolved))
+        except (OSError, ValueError, cookie_err):
+            continue
+        got: dict[str, str] = {}
+        for c in jar:
+            if "instagram" in (c.domain or "") and c.name and c.value:
+                got[c.name] = c.value
+        if got.get("sessionid"):
+            return got
+    return {}
+
+
 def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
     """Put a FanOps-profile sessionid onto the loaded client. Keep device/uuids."""
     auth = dict(getattr(client, "authorization_data", None) or {})
@@ -212,37 +243,139 @@ def _chrome_executable() -> str | None:
     return None
 
 
+def scrape_cdp_port(user: str) -> int:
+    """FanOps-owned localhost port for THIS scrape profile. Never 9222/9223."""
+    return 9331 + (sum((user or "").encode()) % 16)
+
+
+def scrape_cdp_endpoint(cfg: Config, user: str) -> str | None:
+    """http://127.0.0.1:<fanops-port> for THIS profile. None if the port is not ours."""
+    profile = scrape_chrome_profile_dir(cfg, user)
+    port = scrape_cdp_port(user)
+    stored = profile / "cdp.port"
+    if stored.is_file():
+        try:
+            port = int(stored.read_text().strip())
+        except ValueError:
+            return None
+    if port in (9222, 9223) or not (9331 <= port <= 9399):
+        return None
+    return f"http://127.0.0.1:{port}"
+
+
+def cdp_alive(cfg: Config, user: str) -> bool:
+    """True when THIS profile's FanOps debug port answers /json/version."""
+    from urllib.request import urlopen
+    endpoint = scrape_cdp_endpoint(cfg, user)
+    if not endpoint:
+        return False
+    try:
+        with urlopen(f"{endpoint}/json/version", timeout=1) as resp:
+            return 200 <= int(resp.status) < 300
+    except (OSError, TimeoutError, ValueError):
+        return False
+
+
 def scrape_chrome_launch_argv(cfg: Config, user: str) -> list[str] | None:
-    """Argv that opens THIS user's FanOps Chrome profile. Never DevTools. Never system Chrome."""
+    """Argv that opens THIS user's FanOps Chrome profile.
+
+    FanOps-owned debug port (9331–9399) so lock scrape can fetch() inside
+    the logged-in page. Never 9222/9223. Never system Chrome.
+    """
     chrome = _chrome_executable()
     if not chrome:
         return None
     profile = scrape_chrome_profile_dir(cfg, user)
-    return [chrome, f"--user-data-dir={profile}", "--no-first-run",
-            "--no-default-browser-check", "https://www.instagram.com/"]
+    port = scrape_cdp_port(user)
+    stored = profile / "cdp.port"
+    if stored.is_file():
+        try:
+            n = int(stored.read_text().strip())
+        except ValueError:
+            n = port
+        else:
+            if 9331 <= n <= 9399 and n not in (9222, 9223):
+                port = n
+    return [chrome, f"--user-data-dir={profile}", f"--remote-debugging-port={port}",
+            "--remote-debugging-address=127.0.0.1", "--remote-allow-origins=*",
+            "--no-first-run", "--no-default-browser-check", "https://www.instagram.com/"]
 
 
 def launch_scrape_chrome(cfg: Config, user: str) -> bool:
-    """Start Chrome on the FanOps profile. Unattended tick never calls this."""
+    """Start Chrome on the FanOps profile with that profile's FanOps CDP port."""
     import subprocess
     argv = scrape_chrome_launch_argv(cfg, user)
     if not argv:
         return False
-    scrape_chrome_profile_dir(cfg, user).mkdir(parents=True, exist_ok=True)
+    profile = scrape_chrome_profile_dir(cfg, user)
+    profile.mkdir(parents=True, exist_ok=True)
+    for arg in argv:
+        if arg.startswith("--remote-debugging-port="):
+            (profile / "cdp.port").write_text(arg.split("=", 1)[1] + "\n")
+            break
     subprocess.Popen(argv, start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
 
 
+def stop_scrape_chrome(cfg: Config, user: str) -> None:
+    """SIGTERM only Google Chrome processes on THIS FanOps profile. Never system Chrome."""
+    import signal
+    import subprocess
+    import time
+    profile = str(scrape_chrome_profile_dir(cfg, user).resolve())
+    needle = f"--user-data-dir={profile}"
+    try:
+        out = subprocess.check_output(["ps", "-axo", "pid=,command="], text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return
+    for line in out.splitlines():
+        if needle not in line or "Google Chrome" not in line:
+            continue
+        parts = line.split(None, 1)
+        if not parts or not parts[0].isdigit():
+            continue
+        try:
+            os.kill(int(parts[0]), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    lock = scrape_chrome_profile_dir(cfg, user) / "SingletonLock"
+    deadline = time.monotonic() + 10
+    while lock.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+
+
+def ensure_scrape_chrome(cfg: Config, user: str, *, restart: bool = False) -> bool:
+    """Make THIS profile's FanOps Chrome answer on its CDP port. Tick may relaunch."""
+    import time
+    if not restart and cdp_alive(cfg, user):
+        return True
+    stop_scrape_chrome(cfg, user)
+    if not launch_scrape_chrome(cfg, user):
+        return False
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if cdp_alive(cfg, user):
+            return True
+        time.sleep(0.25)
+    return cdp_alive(cfg, user)
+
+
 def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 300,
                                  sleep=None, clock=None) -> tuple[str, str] | None:
-    """Poll THIS user's FanOps profile until a sessionid appears. None on timeout."""
+    """Poll THIS user's FanOps Chrome (CDP, then cookie file) until a sessionid appears."""
     import time
+    from fanops.errors import fail_open
     sleep = time.sleep if sleep is None else sleep
     clock = time.monotonic if clock is None else clock
     deadline = clock() + max(float(timeout_s), 0)
     while True:
-        got = _profile_auth_for(cfg, user)
+        got = None
+        with fail_open("ig_hashtag_scrape.cdp_auth"):
+            from fanops.ig_web_scrape import cdp_profile_auth
+            got = cdp_profile_auth(cfg, user)
+        if not (got and got[0]):
+            got = _profile_auth_for(cfg, user)
         if got and got[0]:
             return got
         if clock() >= deadline:
@@ -265,15 +398,14 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
         Write-once at enroll / scrape-login promote. The unattended tick never calls dump_settings.
       live auth — `sessionid` from `cfg.control/scrape_chrome/<user>/` only. Never system Chrome.
 
-    `allow_reauth` defaults False (daemon / lock_ready_sources / Layer A): load envelope if present,
-    inject that user's FanOps-profile sessionid (ds_user_id must match or refuse), search_hashtags
-    probe (never account_info, never login). Live → return, write nothing. Dead / no profile sid /
-    ds mismatch → write nothing, raise ScrapeUnavailable so callers rotate. Throttle/network
-    propagate without overwrite. Unattended MUST stay False — instagrapi>=2.18.12 escalates
-    LoginRequired inside login() into a password re-auth, which earned the 2026-07-29T22:01Z
-    native checkpoint.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True`: profile cookies + probe
-    + dump_settings (the sole envelope write). No password login. No profile sid → refuse.
+    `allow_reauth` defaults False (Layer A remesure): load envelope if present, inject a
+    sessionid only when the private API will accept it, search_hashtags probe (never
+    account_info, never login). Lock scrape does not use this client — see ig_web_scrape.
+    Live → return, write nothing. Dead / no profile sid / ds mismatch → write nothing,
+    raise ScrapeUnavailable so callers rotate. Unattended MUST stay False —
+    instagrapi>=2.18.12 escalates LoginRequired inside login() into a password re-auth.
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (best-effort envelope
+    promote). No password login.
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
     (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
