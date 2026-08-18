@@ -312,3 +312,43 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         "researched_at": iso_z(datetime.now(timezone.utc)),
     }
     write_json_atomic(source_tag_locks_path(cfg), table)
+
+
+def _state_value(source) -> str:
+    state = getattr(source, "state", None)
+    return str(getattr(state, "value", state) or "")
+
+
+def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=None,
+                       resolve_fn=None, measure_fn=None) -> None:
+    """After produce, before reduce. One source per call. Lock-free. Never raises."""
+    log = get_logger(cfg)
+    try:
+        from fanops.ledger import Ledger
+        led = Ledger.load(cfg)
+        table = load_source_tag_locks(cfg)
+        for source in led.sources.values():
+            if getattr(source, "origin_kind", "native") == "third_party":
+                continue
+            sid = str(getattr(source, "id", "") or "")
+            if not sid or _researched(table, sid):
+                continue
+            jp = _transcript_json_path(cfg, source)
+            has_json = bool(jp and jp.exists())
+            if not has_json:
+                if _state_value(source) in ("pending", "discovered", "retired"):
+                    continue
+                log("source_tags", sid, "no_transcript", level="error")
+                return
+            excerpt = _transcript_file_prose(cfg, source) or _prose(source)
+            try:
+                ensure_source_lock(cfg, source, excerpt=excerpt, client=client,
+                                   research_fn=research_fn, open_client_fn=open_client_fn,
+                                   resolve_fn=resolve_fn, measure_fn=measure_fn)
+            except Exception as exc:
+                log("source_tags", sid, "error", level="error",
+                    err=f"{type(exc).__name__}: {exc}"[:160])
+            return
+    except Exception as exc:
+        log("source_tags", "-", "error", level="error",
+            err=f"{type(exc).__name__}: {exc}"[:160])

@@ -9,7 +9,7 @@ from fanops.caption import request_captions
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, search_hashtags_scrape
 from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, load_source_tag_locks,
-                                source_tag_locks_path)
+                                lock_ready_sources, source_tag_locks_path)
 from fanops.studio.actions import regenerate_caption
 from hashtag_scrape_fakes import _FakeClient, _Media
 
@@ -329,6 +329,80 @@ def test_ensure_source_lock_all_dead_writes_nothing(tmp_path, monkeypatch):
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener,
                        **_ok_graph())
     assert not source_tag_locks_path(cfg).exists()
+
+
+def _write_whisper(cfg, stem, text="hello world"):
+    p = cfg.agent_io / "transcripts"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / f"{stem}.json").write_text(json.dumps({
+        "language": "en",
+        "segments": [{"start": 0, "end": 2, "text": text}],
+    }))
+
+
+def test_lock_ready_sources_no_whisper_errors_no_stamp(tmp_path):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.add_source(Source(id="src_2", source_path=str(tmp_path / "b.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "b")
+    lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]}),
+                       research_fn=lambda *_a: ["music"], **_ok_graph())
+    assert not source_tag_locks_path(cfg).exists()
+    assert "no_transcript" in cfg.log_path.read_text()
+
+
+def test_lock_ready_sources_at_most_one(tmp_path):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.add_source(Source(id="src_2", source_path=str(tmp_path / "b.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    _write_whisper(cfg, "b")
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
+    table = load_source_tag_locks(cfg)
+    assert set(table) == {"src_1"}
+    assert table["src_1"]["researched_at"]
+    lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
+    table = load_source_tag_locks(cfg)
+    assert set(table) == {"src_1", "src_2"}
+
+
+def test_lock_ready_sources_skips_pending_without_error_loop(tmp_path):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_p", source_path=str(tmp_path / "p.mp4"),
+                          state=SourceState.pending))
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
+    table = load_source_tag_locks(cfg)
+    assert "src_p" not in table and "src_1" in table
+    assert "src_p" not in cfg.log_path.read_text()
+
+
+def test_advance_calls_lock_ready_after_produce():
+    from fanops.pipeline import advance
+    src = inspect.getsource(advance)
+    assert src.index("produce.run_all") < src.index("lock_ready_sources")
 
 
 def test_graph_refused_writes_nothing(tmp_path):
