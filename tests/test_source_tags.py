@@ -433,11 +433,6 @@ def test_lock_walk_unfrozen_peer_not_loginrequired_freeze(tmp_path, monkeypatch)
                  "reason": "LoginRequired"},
     })
     assert _healthy_scrape_users(cfg, now, require_budget_room=False) == ["cisum"]
-    import fanops.ig_web_scrape as web
-    monkeypatch.setattr(
-        web, "profile_instagram_cookies",
-        lambda _c, u: {"sessionid": "s"} if u == "cisum" else {},
-    )
     seen = []
 
     def opener(_cfg, user=None):
