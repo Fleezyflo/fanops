@@ -16,8 +16,7 @@ from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import _dedupe_norm, _norm, _num, load_measurements, lock_from_pile
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape, open_client,
-                                     scrape_session_dead, scrape_session_path, scrape_users,
-                                     search_hashtags_scrape)
+                                     scrape_session_dead, search_hashtags_scrape)
 from fanops.log import get_logger
 from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
                                measure_and_harvest, resolve_hashtag)
@@ -144,48 +143,15 @@ def _remember_dead_dump(cfg, client, exc) -> None:
     _persist_cooldown(cfg, datetime.now(timezone.utc), reason=type(exc).__name__, user=user)
 
 
-_LOCK_RETRY_FREEZE_REASONS = frozenset({"LoginRequired", "ClientLoginRequired"})
-
-
-def _lock_walk_users(cfg, now: datetime) -> list[str]:
-    """Lock-producer walk: unfrozen sessions first, then LoginRequired dumps for Chrome inject.
-
-    Layer A remesure still uses `_healthy_scrape_users` (skips every freeze). Throttle /
-    checkpoint / Challenge stay skipped here. One open per user per walk.
-    """
-    from fanops.fanops_hashtags import (
-        _account_rec, _healthy_scrape_users, _is_frozen, _load_cooldown_blob,
-    )
-    peers = list(_healthy_scrape_users(cfg, now, require_budget_room=False))
-    seen = set(peers)
-    blob = _load_cooldown_blob(cfg)
-    for user in scrape_users(cfg):
-        if user in seen:
-            continue
-        rec = _account_rec(blob, user)
-        if not _is_frozen(rec, now):
-            continue
-        if rec.get("reason") not in _LOCK_RETRY_FREEZE_REASONS:
-            continue
-        if not scrape_session_path(cfg, user).exists():
-            continue
-        peers.append(user)
-        seen.add(user)
-    return peers
-
-
 def _iter_lock_clients(cfg, *, client, open_client_fn):
-    """Yield clients to try for this lock, one session at a time.
-
-    Unfrozen dumps first. A LoginRequired / ClientLoginRequired freeze with a
-    session file is still opened so unattended `open_client` can probe + Chrome-inject.
-    """
+    """Yield clients to try for this lock, one unfrozen session at a time."""
     if client is not None:
         yield client
         return
     opener = open_client_fn or open_client
+    from fanops.fanops_hashtags import _healthy_scrape_users
     now = datetime.now(timezone.utc)
-    peers = _lock_walk_users(cfg, now)
+    peers = _healthy_scrape_users(cfg, now, require_budget_room=False)
     if not peers:
         try:
             cli = _call_opener(opener, cfg)
