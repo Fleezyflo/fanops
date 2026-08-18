@@ -479,8 +479,8 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
 
 
 _OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy blob aliases
-    "LoginRequired": "run fanops hashtags scrape-login",
-    "login_required": "run fanops hashtags scrape-login",
+    "LoginRequired": "run fanops hashtags scrape-login (FanOps Chrome profile, not system Chrome)",
+    "login_required": "run fanops hashtags scrape-login (FanOps Chrome profile, not system Chrome)",
     "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
     "RateLimitError": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "PleaseWaitFewMinutes": "Instagram is rate-limiting; the ladder clears it, no operator action does",
@@ -1122,20 +1122,25 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
-    """`fanops hashtags scrape-login` — open instagrapi, login, dump session. Never prints the password.
+    """`fanops hashtags scrape-login` — open the FanOps Chrome profile, promote the envelope.
 
     The operator escape hatch: it deliberately IGNORES an active cooldown (an explicit human act, run
     after clearing a challenge in the app — the freeze exists to stop the unattended pump, not the
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
     out the remaining 12h (MOL-699).
 
-    Sole `allow_reauth=True` call site: the unattended tick search-probes the dump and may Chrome-inject,
-    but never calls `account_info()` or `login()` (a full password re-auth on a stale session earned
-    the 2026-07-29T22:01Z native checkpoint). Only this verb may password-login.
+    Sole `allow_reauth=True` call site. Ensures `cfg.control/scrape_chrome/<user>/` exists (that
+    Instagram account only), logs the Chrome argv for a normal login into THAT profile, then
+    promotes (the only dump_settings / envelope write). Never walks system Chrome, never DevTools.
+    The unattended tick is a reader: envelope + that profile's sessionid, never login(),
+    never dump_settings.
 
-    Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, dump each session. Clears THAT
+    Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, promote each envelope. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path, scrape_users
+    from fanops.ig_hashtag_scrape import (
+        ScrapeUnavailable, _wait_for_operator_scrape_login, open_client,
+        scrape_chrome_launch_argv, scrape_chrome_profile_dir, scrape_session_path, scrape_users,
+    )
     users = scrape_users(cfg)
     if not users:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
@@ -1143,6 +1148,13 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
         return 2
     ok_n = 0
     for user in users:
+        profile = scrape_chrome_profile_dir(cfg, user)
+        profile.mkdir(parents=True, exist_ok=True)
+        argv = scrape_chrome_launch_argv(cfg, user)
+        get_logger(cfg)("hashtags", user[:40], "scrape_login_profile",
+                        profile=str(profile),
+                        chrome_cmd=" ".join(argv) if argv else "chrome-missing")
+        _wait_for_operator_scrape_login()
         try:
             open_client(cfg, allow_reauth=True, user=user)
         except ScrapeUnavailable as e:

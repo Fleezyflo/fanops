@@ -378,12 +378,12 @@ def _freeze_accounts(cfg, accounts: dict) -> None:
     write_json_atomic(_cooldown_path(cfg), {"accounts": accounts})
 
 
-def test_lock_walk_includes_loginrequired_freeze_excludes_throttle(tmp_path, monkeypatch):
-    """Lock walk retries a LoginRequired dump; throttle / checkpoint stay skipped."""
+def test_lock_walk_skips_loginrequired_freeze(tmp_path, monkeypatch):
+    """Lock walk uses healthy peers only — a LoginRequired freeze is not retried."""
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import _healthy_scrape_users
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from fanops.source_tags import _iter_lock_clients, _lock_walk_users
+    from fanops.source_tags import _iter_lock_clients
 
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,cisum,perca.late,wolf,ghost")
@@ -400,9 +400,39 @@ def test_lock_walk_includes_loginrequired_freeze_excludes_throttle(tmp_path, mon
         "wolf": {"until": until, "streak": 1, "reason": "ClientLoginRequired"},
         "ghost": {"until": until, "streak": 1, "reason": "ClientLoginRequired"},
     })
-    assert _lock_walk_users(cfg, now) == ["mark", "wolf"]
     assert _healthy_scrape_users(cfg, now) == []
     assert _healthy_scrape_users(cfg, now, require_budget_room=False) == []
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise ScrapeUnavailable("all frozen")
+
+    opened = [getattr(c, "_fanops_scrape_user", None)
+              for c in _iter_lock_clients(cfg, client=None, open_client_fn=opener)]
+    assert opened == []
+    assert seen == [None]  # empty healthy set falls through to opener(cfg); no frozen user passed
+
+
+def test_lock_walk_unfrozen_peer_not_loginrequired_freeze(tmp_path, monkeypatch):
+    """One unfrozen session is walked; a LoginRequired-frozen peer is not."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _healthy_scrape_users
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.source_tags import _iter_lock_clients
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,cisum")
+    now = datetime(2026, 8, 18, 14, 0, tzinfo=timezone.utc)
+    for u in ("mark", "cisum"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    _freeze_accounts(cfg, {
+        "mark": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                 "reason": "LoginRequired"},
+    })
+    assert _healthy_scrape_users(cfg, now, require_budget_room=False) == ["cisum"]
     seen = []
 
     def opener(_cfg, user=None):
@@ -411,82 +441,8 @@ def test_lock_walk_includes_loginrequired_freeze_excludes_throttle(tmp_path, mon
 
     opened = [getattr(c, "_fanops_scrape_user", None)
               for c in _iter_lock_clients(cfg, client=None, open_client_fn=opener)]
-    assert opened == ["mark", "wolf"]
-    assert seen == ["mark", "wolf"]
-
-
-def test_lock_walk_loginrequired_freeze_uses_chrome_open(tmp_path, monkeypatch):
-    """Lock walk open of a LoginRequired-frozen dump uses unattended Chrome inject (#1023)."""
-    import fanops.ig_hashtag_scrape as igs
-    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
-    from fanops.source_tags import _iter_lock_clients
-    from instagrapi.exceptions import LoginRequired as _LR
-
-    cfg = _cfg(tmp_path)
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    monkeypatch.setattr(igs, "_browser_sessionid_for", lambda _ds: "chrome-sid")
-
-    def _boom(_u):
-        raise AssertionError("unattended must not read scrape password")
-
-    monkeypatch.setattr(igs, "scrape_password_for", _boom)
-    sess = scrape_session_path(cfg, "mark")
-    sess.parent.mkdir(parents=True, exist_ok=True)
-    sess.write_text("{}")
-    _freeze_accounts(cfg, {
-        "mark": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
-                 "reason": "LoginRequired"},
-    })
-    seen = {"search": 0, "login": 0, "account_info": 0, "users": []}
-
-    class _Jar:
-        def set(self, *a, **k):
-            seen.setdefault("cookies", []).append(a[0] if a else None)
-
-        def clear(self):
-            seen["cleared"] = True
-
-    class _StaleThenLive:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={})
-
-        def load_settings(self, _p):
-            pass
-
-        def search_hashtags(self, _q):
-            seen["search"] += 1
-            if seen["search"] == 1:
-                raise _LR("login_required")
-
-        def account_info(self):
-            seen["account_info"] += 1
-            raise AssertionError("unattended must not probe account_info")
-
-        def login(self, *_a, **_k):
-            seen["login"] += 1
-
-        def dump_settings(self, _p):
-            seen["dump"] = True
-
-        def inject_sessionid_to_public(self):
-            seen["injected"] = True
-
-    def opener(_cfg, user=None):
-        seen["users"].append(user)
-        return open_client(_cfg, user=user, client_factory=_StaleThenLive)
-
-    clients = list(_iter_lock_clients(cfg, client=None, open_client_fn=opener))
-    assert seen["users"] == ["mark"]
-    assert len(clients) == 1
-    assert seen["search"] == 2
-    assert seen["login"] == 0
-    assert seen["account_info"] == 0
-    assert seen.get("injected") is True
-    assert seen.get("dump") is True
-    assert clients[0].authorization_data.get("sessionid") == "chrome-sid"
-    assert getattr(clients[0], "_fanops_scrape_user", None) == "mark"
+    assert opened == ["cisum"]
+    assert seen == ["cisum"]
 
 
 def _write_whisper(cfg, stem, text="hello world"):

@@ -1030,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
     p_hash = sub.add_parser("hashtags", help="the platform hashtag measurement cache (instagrapi like_count)")
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
     hash_sub.add_parser("refresh", help="measure each persona's niche now (resolve->measure->harvest); needs scrape session")
-    hash_sub.add_parser("scrape-login", help="login via instagrapi and dump 00_control/ig_scrape_session.json")
+    hash_sub.add_parser("scrape-login", help="open the FanOps Chrome profile and promote the device envelope")
     hash_sub.add_parser("discover", help="report each persona's measured niche from the cache (read-only, zero network)")
     p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
     lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
