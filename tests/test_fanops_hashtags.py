@@ -1111,6 +1111,31 @@ def test_healthy_scrape_users_lru_oldest_updated_at_first(tmp_path, monkeypatch)
     assert open_client(cfg, client_factory=_C, now=t0)._fanops_scrape_user == "c"
 
 
+def test_healthy_scrape_users_default_skips_loginrequired_freeze(tmp_path, monkeypatch):
+    """Layer A remesure must still skip a LoginRequired freeze (lock walk is the only retry)."""
+    from datetime import datetime, timezone
+    from fanops.controlio import write_json_atomic
+    from fanops.fanops_hashtags import _cooldown_path, _healthy_scrape_users
+    from fanops.ig_hashtag_scrape import scrape_session_path
+    cfg = Config(root=tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,cisum")
+    t0 = datetime(2026, 8, 18, 14, 0, tzinfo=timezone.utc)
+    for u in ("mark", "cisum"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {
+            "mark": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                     "reason": "LoginRequired"},
+            "cisum": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                      "reason": "throttle"},
+        }})
+    assert _healthy_scrape_users(cfg, t0) == []
+    assert _healthy_scrape_users(cfg, t0, require_budget_room=True) == []
+    assert _healthy_scrape_users(cfg, t0, require_budget_room=False) == []
+
+
 def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
