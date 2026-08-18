@@ -8,14 +8,14 @@ network."""
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState
-from fanops.timeutil import parse_iso, operator_local_day, next_operator_local_midnight
+from fanops.timeutil import parse_iso
 
 _log = logging.getLogger("fanops.studio.views_common")
 
@@ -131,12 +131,6 @@ _REALISTIC_JITTER_MAX_MIN = 60     # M2: up to +1h jitter -> the band reaches ~3
 # Operator product invariant: consecutive same-account slots must not drift more than 9h apart
 # on the walk (step+jitter is clamped). Overnight after a full day still rolls to the next open.
 _MAX_GAP_MIN = 540
-# MOL-708: per-account DAILY ceiling, in OPERATOR-LOCAL calendar days. Cap is 3 — more than three
-# queued/published posts on one operator-local day per account is not acceptable. A module
-# constant, not an env knob (product invariant, not a per-run dial).
-_DAILY_ACCOUNT_CAP = 3
-
-
 def _cadence_for(cfg: Config) -> "tuple[int, int]":
     """M2: resolve (STEP, JITTER_MAX) from cfg. Realistic ON -> 2-3h band; default -> M4 30-min
     floor. Pure read. Honors the operator's FANOPS_REALISTIC_CADENCE product call."""
@@ -145,23 +139,7 @@ def _cadence_for(cfg: Config) -> "tuple[int, int]":
     return (_BULK_APPROVE_MIN_GAP_MIN, _BULK_APPROVE_JITTER_MAX_MIN)
 
 
-def _occupancy_by_day(occupied, cfg) -> "dict[tuple[str, str], int]":
-    """MOL-710: {(account, operator-local day): slots already taken} for posts holding a slot OUTSIDE the
-    batch being allocated. Counts DAYS only — it deliberately does not reserve individual minutes, since
-    the pre-existing posts sit on their own cadence and the capacity question is about volume. A post with
-    no/garbage scheduled_time occupies no day (operator_local_day -> None) and is skipped: an untimed post
-    has not claimed a slot. Pure; tolerant of anything post-shaped (getattr, never an attribute error)."""
-    out: "dict[tuple[str, str], int]" = {}
-    for p in (occupied or ()):
-        day = operator_local_day(getattr(p, "scheduled_time", None), cfg)
-        if day is None:
-            continue
-        key = (getattr(p, "account", "") or "", day)
-        out[key] = out.get(key, 0) + 1
-    return out
-
-
-def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None) -> dict[str, str]:
+def suggest_times_for_batch(cfg: Config, posts, *, now: datetime) -> dict[str, str]:
     """M4 — ONE batch-aware spread for N posts. Returns {post_id: ISO-Z}, strictly-future,
     pairwise-distinct across the whole batch, and obeying a per-account minimum gap.
 
@@ -182,35 +160,25 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
     that band — a candidate that falls outside is rolled forward to the next open hour. Window
     is in OPERATOR-LOCAL hours (cfg.operator_tz); None == 24h open.
 
-    MOL-708: at most `_DAILY_ACCOUNT_CAP` slots land on any one OPERATOR-LOCAL day per account. The
-    cadence floor bounds the GAP, not the VOLUME, so before this an approve of a large backlog walked
-    through midnight at cadence and piled 47/43/16 on three days. When a local day is full the cursor
-    jumps to the next local midnight and the candidate is re-tested (reusing the same window roll), so
-    the overflow spills onto following days instead of being dropped: every post still gets a slot,
-    gaps stay >= STEP, timestamps stay pairwise distinct, and accounts stay independent (`day_used` is
-    per-account, inside the per-account loop).
-
-    MOL-710: `occupied` is the posts already holding a slot OUTSIDE this batch — without it the cap only
-    ever bounds the batch in hand, so approving batch A (3/day) then batch B (3/day) put 6 on one day.
-    It seeds each account's day tally, so an already-full day is skipped rather than refilled. Default
-    None keeps every existing caller byte-identical. The caller supplies it because this function is pure
-    and lock-free: making it load the ledger would put I/O and a second lock acquisition inside the three
-    open transactions that call it. `accept_suggested_account` passes nothing by design — its batch is
-    ALREADY every queued post for the account, so its own posts would be double-counted as occupancy.
+    After the window roll, a per-handle daily cap (`cfg.max_posts_per_account_per_day`, default 2)
+    rolls leftover slots to the next operator-local day. 0 = unlimited. Without the cap, a 2–3h
+    gap on a 24h-open window lays ~8–12 posts/account/day and platforms flag the accounts.
 
     Pure (no I/O beyond cfg.account_window which is a JSON read at the seam). Pinned by
     tests/test_bulk_approve_spread.py + tests/test_operator_timezone_cadence_window.py."""
     import hashlib, random
-    from fanops.timeutil import iso_z
+    from fanops.timeutil import iso_z, _operator_zone
     step, jitter_max = _cadence_for(cfg)
+    cap = int(getattr(cfg, "max_posts_per_account_per_day", 2) or 0)
+    zone = _operator_zone(cfg) or timezone.utc
     # Stable account order (deterministic across processes, no Python hash() salt).
     by_account: dict[str, list] = {}
     for p in posts:
         by_account.setdefault(p.account, []).append(p)
     accounts_sorted = sorted(by_account)
     date_str = now.date().isoformat()
-    occ = _occupancy_by_day(occupied, cfg)        # MOL-710: slots taken outside this batch
     out: dict[str, str] = {}
+    used: set[str] = set()
     for ai, handle in enumerate(accounts_sorted):
         rng = random.Random(int(hashlib.sha1(f"{handle}|{date_str}".encode(), usedforsecurity=False).hexdigest()[:8], 16))
         # Per-account anchor offset: a small minute offset (< STEP) keyed on the account so two
@@ -226,32 +194,35 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
         # would re-open the floor as a probabilistic property guarded by tests rather than an
         # invariant. The cumulative form makes the bad path unconstructable.
         cursor_min = anchor_offset + cfg.publish_lead_minutes
-        # MOL-708 slots laid per operator-local day, SEEDED (MOL-710) with this account's out-of-batch load.
-        day_used: dict[str, int] = {d: n for (h, d), n in occ.items() if h == handle}
+        slots_on_day = 0
+        day_key = None
         for p in sorted(by_account[handle], key=lambda q: q.id):
-            while True:
-                t = now + timedelta(minutes=cursor_min)
-                if t <= now:                   # belt-and-braces (lead_minutes < 0 hand-edit)
-                    t = now + timedelta(seconds=1)
-                t = _roll_into_window(t, window, cfg)    # M7: roll forward to the next open hour if outside
-                day = operator_local_day(t, cfg)
-                if day is None or day_used.get(day, 0) < _DAILY_ACCOUNT_CAP:
-                    break
-                # MOL-708: this local day is FULL -> jump the cursor to the next local midnight and
-                # re-test (the window roll may push it further still, and that day may be full too).
-                # Terminates because each jump is strictly forward past the current candidate.
-                nxt = next_operator_local_midnight(t, cfg)
-                if nxt is None:
-                    break                      # unresolvable tz -> keep today's behaviour, never spin
-                # Re-apply the per-account anchor at the new day's open, for the SAME reason it exists
-                # at the batch's open: without it every account's first post-rollover slot lands on the
-                # identical minute (midnight+1), which would break the pairwise-distinctness contract
-                # across accounts. anchor_offset < step, so the slot stays inside the new local day.
-                cursor_min = int((nxt - now).total_seconds() // 60) + 1 + anchor_offset
-            out[p.id] = iso_z(t)
-            if day is not None:
-                day_used[day] = day_used.get(day, 0) + 1
-            # Window / day-cap roll can snap `t` far ahead of cursor_min (e.g. midnight → 09:00
+            t = now + timedelta(minutes=cursor_min)
+            if t <= now:                   # belt-and-braces (lead_minutes < 0 hand-edit)
+                t = now + timedelta(seconds=1)
+            t = _roll_into_window(t, window, cfg)    # M7: roll forward to the next open hour if outside
+            if cap > 0:
+                local_day = t.astimezone(zone).date()
+                if day_key is None:
+                    day_key = local_day
+                    slots_on_day = 0
+                if slots_on_day >= cap:
+                    t = _start_of_next_local_day(t, zone, window, cfg, minute=anchor_offset)
+                    day_key = t.astimezone(zone).date()
+                    slots_on_day = 0
+                    cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
+                    t = now + timedelta(minutes=cursor_min)
+                    if t <= now:
+                        t = now + timedelta(seconds=1)
+                    t = _roll_into_window(t, window, cfg)
+                slots_on_day += 1
+            stamp = iso_z(t)
+            while stamp in used:
+                t = t + timedelta(minutes=1)
+                stamp = iso_z(t)
+            used.add(stamp)
+            out[p.id] = stamp
+            # Window roll can snap `t` far ahead of cursor_min (e.g. before open → 09:00
             # open). Without syncing, the next N candidates stay pre-open and all collapse onto
             # the same local open minute — Re-spread's overflow-day 09:00 pile.
             cursor_min = max(cursor_min, int((t - now).total_seconds() // 60))
@@ -259,6 +230,17 @@ def suggest_times_for_batch(cfg: Config, posts, *, now: datetime, occupied=None)
             # gap >= STEP by construction; also gap <= _MAX_GAP_MIN (operator: never more than 9h apart)
             cursor_min += min(step + jitter, _MAX_GAP_MIN)
     return out
+
+
+def _start_of_next_local_day(t: datetime, zone, window, cfg, *, minute: int = 0) -> datetime:
+    """First legal slot on the next operator-local day (window open, or local midnight if 24h).
+    `minute` keeps the per-account anchor so two handles do not lockstep at :00."""
+    local = t.astimezone(zone)
+    nxt = (local + timedelta(days=1)).replace(
+        hour=0, minute=int(minute) % 60, second=0, microsecond=0)
+    if window is not None:
+        nxt = nxt.replace(hour=int(window[0]) % 24)
+    return nxt.astimezone(t.tzinfo or timezone.utc)
 
 
 def _roll_into_window(t: datetime, window, cfg) -> datetime:

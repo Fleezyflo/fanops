@@ -19,6 +19,7 @@ from fanops.hashtags import _metric, load_measurements, ranked_tags
 from fanops.persona_research import derive_corpus
 from fanops.agentstep import response_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
+from fanops.source_tags import source_tag_locks_path
 from hashtag_scrape_fakes import _FakeClient
 
 
@@ -37,13 +38,13 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
 
-    # #hiphop is the LOUDER tag (higher Top-grid median) but #detroitrap is the BIGGER one, so
-    # size-first rank (MOL-692) must lead with #detroitrap all the way to the shipped line.
+    # #hiphop is the LOUDER tag (higher Top-grid median) but #detroitrap is the BIGGER one, both
+    # mid-band — size-not-median must lead with #detroitrap all the way to the shipped line (MOL-977).
     client = _FakeClient({"#hiphop": 990, "#detroitrap": 500}, cooccur="#detroitrap",
-                         media_count_by_tag={"#hiphop": 10_000, "#detroitrap": 4_000_000})
+                         media_count_by_tag={"#hiphop": 10_000, "#detroitrap": 1_500_000})
     refresh_store(cfg, scrape_client=client)
     cache = load_measurements(cfg)
-    assert _metric(cache["#detroitrap"]) == 500 and cache["#detroitrap"]["media_count"] == 4_000_000.0
+    assert _metric(cache["#detroitrap"]) == 500 and cache["#detroitrap"]["media_count"] == 1_500_000.0
     assert cache["#detroitrap"]["from"] == {"#hiphop": 2}
     assert ranked_tags(cache)[0] == "#detroitrap"
 
@@ -54,17 +55,21 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     assert "#detroitrap" in accts.accounts[0].hashtag_corpus
 
     _clip(led)
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#detroitrap", "#hiphop"], "lock": ["#detroitrap", "#hiphop"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#invented"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x",
+                    hashtags=["#detroitrap", "#invented"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     tags = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert tags[0] == "#detroitrap"
+    assert tags == ["#detroitrap"]
     assert "#invented" not in tags and len(tags) <= 4
-    sources = led.clips["clip_1"].meta_captions["a/instagram"]["tag_sources"]
-    assert set(sources) == set(tags) and all(sources.values())
-    assert sources["#detroitrap"] == "corpus"
 
     led.add_post(Post(id="post_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption=" ".join(tags), hashtags=tags,

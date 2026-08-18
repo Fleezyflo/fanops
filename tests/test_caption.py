@@ -5,7 +5,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, SourceState, MomentState, ClipState, Platform,
                            CaptionSet, CaptionItem)
 from fanops.agentstep import response_path, request_path, latest_request_id
-from fanops.caption import brand_risk_flag, request_captions, ingest_captions
+from fanops.caption import brand_risk_flag, request_captions, ingest_captions, is_tags_only_caption
 
 def _clip(led, cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
@@ -45,6 +45,7 @@ def test_ingest_captions_clean_advances_and_stores(tmp_path):
     assert led.clips["clip_1"].state is ClipState.captioned
     assert led.clips["clip_1"].held is False
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
+    assert mc["caption"] == "no warning. just impact."          # stored sentence, not join(tags)
     assert len(mc["hashtags"]) <= 4 and all(t.startswith("#") for t in mc["hashtags"])   # vetted, capped
 
 def test_ingest_captions_records_raw_model_hashtags(tmp_path):
@@ -61,13 +62,18 @@ def test_ingest_captions_records_raw_model_hashtags(tmp_path):
     assert mc["hashtags_raw"] == ["#mohflow", "#somerandomword"]   # raw picks preserved verbatim
     assert "#somerandomword" not in mc["hashtags"]                 # but the vetted line still drops it
 
+def test_is_tags_only_caption():
+    assert is_tags_only_caption("") is True
+    assert is_tags_only_caption("   ") is True
+    assert is_tags_only_caption("#hiphop #rap") is True
+    assert is_tags_only_caption("#hiphop, #rap!") is True
+    assert is_tags_only_caption("they slept. not anymore.") is False
+    assert is_tags_only_caption("they slept. #hiphop") is False
+
+
 def test_ingest_captions_missing_surface_falls_back_to_seed_not_held(tmp_path):
-    # CHANGED from the old F74 hold: for hashtags-ONLY fan captions, a response missing a requested
-    # surface (commonly a model SOFT-REFUSAL on edgy lyrics -> items:[]) must NOT permanently bury the
-    # clip. Synthesize a fallback entry + NO hook for the missing surface and let the clip through to
-    # the operator's Review queue (logged). With no corpus/store the vetted line is honest-empty
-    # (discovery floor deleted). The approval gate is the real review, so this is not an unreviewed
-    # default reaching publish (F74's actual concern).
+    # Seed-tag manufacture is gone: a missing requested surface HOLDs caption_missing_language.
+    # Brand-risk on a present item still wins (see test_ingest_captions_brandrisk_wins_over_missing).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram), ("a", Platform.tiktok)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -75,15 +81,14 @@ def test_ingest_captions_missing_surface_falls_back_to_seed_not_held(tmp_path):
         CaptionItem(surface="a/instagram", caption="only IG was answered")]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
-    assert c.held is False and c.state is ClipState.captioned         # NOT buried
-    fb = c.meta_captions["a/tiktok"]                                 # the missing surface got a fallback
-    assert fb["hook"] is None and fb.get("fallback") is True
-    assert fb["hashtags"] == []                                      # cold: no corpus/store -> empty line
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert c.meta_captions["a/instagram"]["caption"] == "only IG was answered"
+    assert "a/tiktok" not in c.meta_captions                      # no manufactured seed line
+
 
 def test_ingest_captions_empty_items_falls_back_all_surfaces(tmp_path):
-    # The exact production failure: the model soft-refuses an edgy clip and returns items:[]. EVERY
-    # requested surface must get a fallback entry and the clip must reach Review, not vanish held
-    # (83% of music clips were being lost to this silent hold). Cold path: no corpus/store -> [].
+    # items:[] is missing language — HOLD, do not synthesize a tag-line caption.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -91,8 +96,25 @@ def test_ingest_captions_empty_items_falls_back_all_surfaces(tmp_path):
         CaptionSet(request_id=rid, items=[]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
-    assert c.held is False and c.state is ClipState.captioned
-    assert c.meta_captions["a/instagram"]["hashtags"] == [] and c.meta_captions["a/instagram"]["hook"] is None
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_missing_language" in (c.held_reason or "")
+    assert "a/instagram" not in c.meta_captions
+
+
+def test_ingest_captions_tags_only_holds(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="#hiphop #rap",
+                    hashtags=["#hiphop", "#rap"])]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    c = led.clips["clip_1"]
+    assert c.held is True and c.state is ClipState.held
+    assert "caption_tags_only" in (c.held_reason or "")
+    mc = c.meta_captions["a/instagram"]
+    assert mc["caption"] == "#hiphop #rap"                        # model text, not join(vetted)
+    assert mc["caption"] != " ".join(mc["hashtags"])              # cold vet is [] — not stored as language
 
 def test_ingest_captions_offbrand_holds(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
@@ -137,18 +159,19 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
+    sentence = "they slept. not anymore."
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="#hiphop #rap #rapper #bars #newmusic #mohflow",
+        CaptionItem(surface="a/instagram", caption=sentence,
                     hashtags=["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"])]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
+    assert mc["caption"] == sentence                      # stored sentence, never join(hashtags)
     assert len(mc["hashtags"]) <= 4                       # hard cap
     assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
     assert mc["hashtags"] == []                           # cold cache -> empty (no discovery pad)
     # every survivor traces to a real signal — a tag is never a sourceless junk word.
     assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach"}
     assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
-    assert mc["caption"] == " ".join(mc["hashtags"])      # posted caption == the vetted tag line
 
 def test_ingest_captions_noop_without_response(tmp_path):
     # No response on disk -> ledger untouched, not held (stale/pending guard).
@@ -612,20 +635,22 @@ def test_platform_coerce_gone():
     assert "_platform_of" not in text
 
 def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
-    # End to end: a request whose surface KEY tail diverges from its recorded platform must vet under the
-    # RECORDED platform. (Synthetic divergence: the normal request path keys surface==handle/platform.value,
-    # so we hand-diverge the on-disk request to prove the request is authoritative, not the parsed string.)
+    # Ingest no longer vets; request platform is still required. A diverged key/platform
+    # must not raise, and ingest must not call vet_hashtags_traced.
+    import inspect
+    from fanops.caption import ingest_captions as ingest_fn
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    req["surfaces"][0]["platform"] = "tiktok"                 # diverge: key stays @a/instagram, platform now tiktok
-    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))   # preserves request_id -> response still matches
+    req["surfaces"][0]["platform"] = "tiktok"
+    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(
-        request_id=rid, items=[CaptionItem(surface="a/instagram", caption="#hiphop")]).model_dump_json())
-    import fanops.caption as capmod
-    real = capmod.vet_hashtags_traced; captured = {}
-    def spy(tags, plat, *a, **k): captured["plat"] = plat; return real(tags, plat, *a, **k)
-    mocker.patch("fanops.caption.vet_hashtags_traced", side_effect=spy)
+        request_id=rid, items=[CaptionItem(surface="a/instagram", caption="a sentence",
+                                           hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    assert captured["plat"] == Platform.tiktok               # vetted under the REQUESTED platform, not the parsed @a/instagram
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
+    src = inspect.getsource(ingest_fn)
+    assert "vet_hashtags_traced" not in src
+    assert "_platform_for_surface" in src
+    assert "ship_from_lock" in src

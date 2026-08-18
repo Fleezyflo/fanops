@@ -2,7 +2,7 @@
 
 The builder is a PURE function (no clip.py / ledger dependency): given source-time segments and
 a clip window, it rebases each segment into clip time, drops non-overlapping ones, and emits a
-styled ASS file (subtitle style bottom-third, optional hook top-third). The path-escaping helper
+styled ASS file (subtitle style bottom-third, optional hook centered Alignment 5). The path-escaping helper
 and the cached capability probe are likewise standalone so a clip render probes ffmpeg once.
 """
 from __future__ import annotations
@@ -68,20 +68,49 @@ def _hook_style_fields(ass: str) -> list[str]:
 
 def test_build_ass_hook_is_clean_outline_not_boxed():
     # The hook is the same CLEAN look as the captions — big WHITE bold text with a thick black
-    # OUTLINE (BorderStyle 1), NOT an amber-on-box template card (that read as AI slop). Top-centred.
+    # OUTLINE (BorderStyle 1), NOT an amber-on-box template card (that read as AI slop). Centered.
     a = build_ass([], hook="WATCH THIS", clip_start=0.0, clip_end=6.0)
     f = _hook_style_fields(a)
     assert f[15] == "1"                              # BorderStyle 1 = outline+shadow, NOT a box (3)
     assert f[3] == "&H00FFFFFF"                      # PrimaryColour white (no amber)
     assert f[5] == "&H00000000"                      # OutlineColour solid black (no scrim box)
-    assert f[18] == "8"                              # Alignment 8 = top-centre
+    assert f[18] == "5"                              # Alignment 5 = middle-centre
+    assert f[21] == "0"                              # MarginV 0 (libass ignores MarginV on the middle row)
 
-def test_build_ass_hook_fades_in_and_out():
-    # An opener should pop in/out, not hard-cut — a produced touch on the first ~2s card.
+
+def test_build_ass_hook_fades_in_from_opaque():
+    # Fade-in from opaque (\\fad(0,200)), not a 200ms dissolve-in. Out remains 200. Starts at t=0.
     a = build_ass([], hook="WATCH THIS", clip_start=0.0, clip_end=6.0)
     hook_line = [ln for ln in a.splitlines() if ",HOOK," in ln][0]
-    assert "\\fad(" in hook_line                     # ASS fade override present
+    assert "\\fad(0," in hook_line                     # fade-in from opaque
+    assert "\\fad(200," not in hook_line               # must not dissolve-in
+    assert "\\fad(0,200)" in hook_line                 # out remains 200
+    assert "0:00:00.00" in hook_line                   # Dialogue start is _fmt_ts(0.0)
     assert hook_line.rstrip().endswith("WATCH THIS")  # the hook text survives after the override tag
+
+
+def _caption_style_fields(ass: str) -> list[str]:
+    """The comma-split fields of the `Style: CAPTION,...` row (V4+ Format order)."""
+    line = [ln for ln in ass.splitlines() if ln.startswith("Style: CAPTION,")][0]
+    return line.split(",")
+
+
+def test_build_ass_caption_stays_bottom_centre():
+    a = build_ass([{"start": 0.0, "end": 2.0, "text": "hi"}], clip_start=0.0, clip_end=6.0)
+    assert _caption_style_fields(a)[18] == "2"        # Alignment 2 = bottom-centre (unchanged)
+
+
+def test_builders_share_hook_style_and_event():
+    # Seam: both builders call the shared helpers — identical HOOK style+event for the same inputs.
+    hook, w, h, font = "WATCH THIS", 1080, 1920, "Arial Unicode MS"
+    style = overlay._hook_style_line(font, hook, w, h)
+    event = overlay._hook_event(hook, 6.0)
+    a = build_ass([], hook=hook, clip_start=0.0, clip_end=6.0, width=w, height=h, font=font)
+    s = overlay.build_supercut_ass([], spans=[(0.0, 6.0)], hook=hook, width=w, height=h, font=font)
+    assert style in a and style in s
+    assert event in a and event in s
+    assert style.split(",")[18] == "5" and style.split(",")[21] == "0"
+    assert "\\fad(0," in event and "0:00:00.00" in event
 
 
 def _caption_dialogues(ass_text: str) -> list[str]:
@@ -331,7 +360,7 @@ def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
 
 # --- P1 T2: burned-hook legibility guard --------------------------------------------------------
 # The hook already burns white with a thick black outline (reads on any footage), so the remaining
-# legibility risk is a hook too long to read in its ~2.5s top-card window. hook_legibility_warnings
+# legibility risk is a hook too long to read in its ~2.5s centered card. hook_legibility_warnings
 # is a PURE, fail-open heuristic: it never blocks a clip — the caller logs once and renders anyway.
 
 def test_hook_legibility_clean_for_a_short_hook():
@@ -351,7 +380,7 @@ def test_hook_legibility_warns_on_unbreakable_long_word():
     assert warns, "a single word too wide to fit should warn"
 
 
-# --- round-3: auto-fit hook font (a 5-6 word hook must FIT 2 lines, not spill 3 lines off the top) ---
+# --- round-3: auto-fit hook font (a 5-6 word hook must FIT 2 lines, not spill 3 lines) ---
 def test_hook_fontsize_caps_for_short_hooks():
     cap = int(round(1920 * overlay._HOOK_FONTSIZE_RATIO))
     assert overlay._hook_fontsize("wait for the drop", 1080, 1920) == cap   # short -> the full big cap

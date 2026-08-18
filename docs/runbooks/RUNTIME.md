@@ -45,7 +45,7 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `FANOPS_RESPONDER` | `llm` (only) | Gates are answered ONLY by the LLM responder via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). Leave unset (resolves to `llm`) or set `llm`; **any other value is a hard refuse** (`doctor`/`advance`/`run` exit non-zero). `advance`/`run` also **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
 | `claude` (CLI, logged in) | — | ALWAYS required — gates are answered only by the LLM. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
-| `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | Burn the transcript-derived subtitles + top-third hook into each rendered clip. **DEFAULT ON** — an unset env burns subs, so the feature is live with no operator action; only the explicit off-words `0`/`false`/`no`/`off` (case-insensitive) disable it. **Fail-open**: if this ffmpeg lacks the text filter or the source has no transcript, the clip still renders (plain), logging one `subs_skipped` line. Requires a **text-capable ffmpeg (libass)** — see the note below. |
+| `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | **Legacy** transcript-caption toggle — **ignored at render since PR 994** (hook-only overlay). Render always burns the retention hook (`Moment.hook`) when present; transcript captions are never layered. Kept for settings/doctor registration parity only. See `docs/CONFIG.md`. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
 | `FANOPS_ASR_MODEL` | string (default **`medium`**) | faster-whisper model for the `[asr]` extra (`python -m fanops._fwrun`). An explicit pin wins verbatim; short sources may upgrade to `large-v3` on the legacy `whisper` CLI fallback only. See `docs/CONFIG.md`. |
 | `FANOPS_ASR_LANGUAGE` | string (default **`en,ar`**) | Whisper **candidate languages**. A **comma list** (e.g. `en,ar`) enables per-segment detection (`multilingual=True`) so English directing lines and Arabic verses in the **same** source both transcribe. A **single value** (e.g. `ar`) **forces** that language for the whole source — faster and often more coherent on Arabic-primary rap, but wrong if the track is genuinely bilingual. Unset/empty in code falls back to `en,ar`; see *ASR language pinning — code-switched rap* below before changing the default. |
@@ -744,15 +744,15 @@ deferred from the original plan, and surfaced during the build.
 
 **Deferred from the plan**
 
-- **Burned-in subtitle / hook overlay rendering — DONE.** `overlay.py` builds a styled
-  `.ass` from the source transcript (rebased into clip time, Arabic/RTL-safe) plus a
-  top-third hook (`Moment.hook`); `clip.py` burns it via the ffmpeg `subtitles` filter
-  chained AFTER the reframe. Gated by `FANOPS_BURN_SUBS` (default **ON**). **Fail-open**:
-  if this ffmpeg lacks the text filter or the source has no transcript, the clip renders
-  plain (one `subs_skipped` log line) — a clip is never blocked on subtitles. **Requires a
-  text-capable ffmpeg (libass)** — the project's `ffmpeg-full` build has the `subtitles`/`ass`
-  filter; a stripped ffmpeg without it falls open (no on-screen text, logged). Font is
-  `FANOPS_SUBTITLE_FONT` (default `"Arial Unicode MS"`).
+- **Burned-in hook overlay rendering — DONE (hook-only since PR 994).** `overlay.py` builds a
+  styled hook-only `.ass` (top-third `Moment.hook`, Arabic/RTL-safe); `clip.py` burns it via
+  the ffmpeg `subtitles` filter chained AFTER the reframe. Transcript captions are **not**
+  burned at render (`_transcript_burn_enabled` is always False). **Fail-open**: if this ffmpeg
+  lacks the text filter or the hook is empty, the clip renders plain (one `subs_skipped` log
+  line) — a clip is never blocked on on-screen text. **Requires a text-capable ffmpeg
+  (libass)** — the project's `ffmpeg-full` build has the `subtitles`/`ass` filter; a stripped
+  ffmpeg without it falls open (no on-screen text, logged). Font is `FANOPS_SUBTITLE_FONT`
+  (default `"Arial Unicode MS"`). `FANOPS_BURN_SUBS` is legacy (ignored at render).
 - **Trending-audio selection** — no automatic choice of trending sounds per platform.
 - **Timezone / daypart scheduling optimization** — staggering is opsec spread, not
   audience-time-of-day tuning.

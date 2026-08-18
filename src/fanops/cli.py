@@ -904,6 +904,11 @@ def main(argv: list[str] | None = None) -> int:
     p_reframe.add_argument("--rollback", metavar="RUN_ID", help="restore the original bytes (whole run, or --clip)")
     p_reframe.add_argument("--clip", metavar="CLIP_ID", help="--rollback: restore just this clip")
     p_reframe.add_argument("--cleanup", metavar="RUN_ID", help="delete a terminal run's backups (explicit, refused otherwise)")
+    p_or = sub.add_parser("overlay-reburn", help="recut awaiting-only Review clips in place (ass-only). Reuses reframe.lock; stale lock = operator unlink. fanops reframe --status will not understand or_ run dirs.")
+    p_or.add_argument("--dry-run", action="store_true", help="READ-ONLY classify (the default)")
+    p_or.add_argument("--apply", action="store_true", help="MUTATE: stage-then-replace eligible clips (pauses the pump)")
+    p_or.add_argument("--limit", type=int, help="classify/apply at most N awaiting clips")
+    p_or.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL prove writes land here.")
     p_rec = sub.add_parser("recover", help="delivery recovery read-models")
     rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
     rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
@@ -957,6 +962,10 @@ def main(argv: list[str] | None = None) -> int:
     p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
                       "snapshot first; resumable via 00_control/.recaption_progress.json")
     p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
+    p_rc.add_argument("--limit", type=int, default=None,
+                      help="max seed clips after --account filter (positive int; omit = all)")
+    p_rc.add_argument("--account", default=None,
+                      help="exact handle filter; unknown handle lists 0")
     posts_sub.add_parser("census-retired", help="census: posts under a RETIRED lineage "
                          "(read-only; suppression is derived, never written; "
                          "renamed from reconcile-retired)")
@@ -1299,31 +1308,18 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
         except Exception:
             with fail_open("cli._run_once timing_bias degrade:"):
                 raise
-    # MOL-644: LLM niche-vocab expand (search roots only) — before Layer A so new seeds measure this tick.
-    # expand_vocab_if_due is input-driven + fail-open (gates are always answered by the LLM). MOL-693: not
-    # periodic — a persona is asked only when its (name, voice, niche) fingerprint moves, so calling this
-    # every tick is free for unchanged personas and picks an edit up on the very next tick.
-    try:
-        from fanops.hashtag_vocab import expand_vocab_if_due
-        vr = expand_vocab_if_due(cfg)
-        if vr.get("refreshed"):
-            get_logger(cfg)("hashtag_vocab", "-", "expanded", ok=vr.get("ok", 0), fail=vr.get("fail", 0))
-        elif vr.get("reason") and vr.get("reason") != "fresh":
-            get_logger(cfg)("hashtag_vocab", "-", "expand_skipped", reason=vr.get("reason", ""))
-    except Exception:
-        with fail_open("cli._run_once hashtag_vocab expand degrade:"):
-            raise
-    # WS2: constant hashtag store update (instagrapi Layer A) — refresh at most once per cadence (12h),
-    # gated on last_complete_pass (not file mtime) so a throttled write cannot buy silence. NOT gated on
-    # is_live_backend (a hashtag's worth is its live platform reach, independent of whether WE publish) —
-    # only on scrape session, handled inside the helper. Its OWN try/except; refresh_store_if_due never
-    # raises, so the unattended run can never break on a hashtag refresh. Non-fresh skips log (MOL-525):
-    # a missing scrape session must not look identical to a correctly-throttled tick.
+    # HV1-PR4: vocab expand is not called from the run loop (it restocked persona search seeds).
+    # Module stays on disk; the tick remesures sidecar pile∪lock names only.
+    # WS2: remesure sidecar names at most once per cadence (12h), gated on last_complete_pass (not
+    # file mtime) so a throttled write cannot buy silence. NOT gated on is_live_backend — only on
+    # scrape session, handled inside the helper. Its OWN try/except; refresh_store_if_due never
+    # raises. Non-fresh skips log (MOL-525): a missing scrape session must not look identical to a
+    # correctly-throttled tick.
     try:
         from fanops.fanops_hashtags import refresh_store_if_due
         r = refresh_store_if_due(cfg)
-        if r.get("aborted"):     # corrupt personas.json: refresh_store preserved the store — report the abort LOUDLY,
-                                 # never the false-success store_refreshed (a bad control file stripping strategy is not routine)
+        if r.get("aborted"):     # no_scrape / freeze / busy: report the abort LOUDLY, never a false
+                                 # store_refreshed (a skipped remesure is not a refresh)
             get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
         elif r.get("refreshed"):
             get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
@@ -1457,6 +1453,23 @@ def _reframe_mutation(paths, args) -> int:
     return 0
 
 
+def cmd_overlay_reburn(cfg: Config, args) -> int:
+    """In-place ass-only recut of awaiting Review clips. Reuses reframe.lock (stale lock = operator
+    unlink). `fanops reframe --status` will not understand or_ run dirs."""
+    from fanops import overlay_reburn as ob
+    from fanops.reframe_apply import MigrationLockHeld
+    try:
+        if args.apply:
+            cmd_pause(cfg, on=True)
+            summary = ob.run_apply(cfg, limit=args.limit, scratch=args.scratch)
+        else:
+            summary = ob.run_dry_run(cfg, limit=args.limit, scratch=args.scratch)
+    except MigrationLockHeld as exc:
+        get_logger(cfg)("overlay_reburn", "-", "lock_held", reason=str(exc)[:200])
+        return 2
+    return 1 if summary.get("aborted") else 0
+
+
 def cmd_reframe(cfg: Config, args) -> int:
     """Classify (--dry-run) or migrate (--apply) the corpus framing.
 
@@ -1515,6 +1528,7 @@ def cmd_reframe(cfg: Config, args) -> int:
 
 def _dispatch(cfg: Config, args) -> int:
     if args.cmd == "reframe":  return cmd_reframe(cfg, args)
+    if args.cmd == "overlay-reburn": return cmd_overlay_reburn(cfg, args)
     if args.cmd == "status":   return cmd_status(cfg)
     if args.cmd == "pause":    return cmd_pause(cfg, on=True)
     if args.cmd == "resume":   return cmd_pause(cfg, on=False)

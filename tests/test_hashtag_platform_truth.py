@@ -447,7 +447,7 @@ def test_derivation_is_zero_network(tmp_path, monkeypatch):
 
 def test_corpus_is_ranked_by_tag_size_not_by_post_medians(tmp_path, monkeypatch):
     """End-to-end through a real Layer A pass: `#smallbutloud` has ~900x the Top-grid median plays of
-    `#bignichetag`, and must still rank BELOW it because it carries ~78x fewer posts (MOL-692)."""
+    `#bignichetag`, and must still rank BELOW it inside the same mid band (52k vs ~1.5M, MOL-977)."""
     cfg = Config(root=tmp_path)
     pid = _persona(cfg, voice="hiphop"); _link_active(cfg, pid)
     media = {"#hiphop": [{"caption": "#smallbutloud #bignichetag", "like_count": 500}],
@@ -458,7 +458,7 @@ def test_corpus_is_ranked_by_tag_size_not_by_post_medians(tmp_path, monkeypatch)
     # Both stay UNDER CATEGORY_MEDIA_FLOOR so the single-root relatedness they have is enough to admit —
     # this test is about ORDER, not the category admission bar (proved separately above).
     refresh_store(cfg, scrape_client=_client(
-        media, media_count_by_tag={"#hiphop": 10, "#smallbutloud": 52_228, "#bignichetag": 4_095_289}))
+        media, media_count_by_tag={"#hiphop": 10, "#smallbutloud": 52_228, "#bignichetag": 1_500_000}))
     derive_corpus(cfg, pid)
     corpus = Personas.load(cfg).get(pid).hashtag_corpus
     assert corpus.index("#bignichetag") < corpus.index("#smallbutloud")
@@ -492,29 +492,26 @@ def test_category_scale_tag_needs_multi_root_relatedness(tmp_path):
 
 
 def test_category_scale_tag_that_earned_its_seat_ranks_BY_SIZE(tmp_path):
-    """MOL-692 inverts MOL-685's rank tier. The category ADMISSION bar stays (test above), but an admitted
-    large tag must now lead on volume. The old demotion sent every whale behind every niche tag, which
-    capped the corpus just under CATEGORY_MEDIA_FLOOR — the opposite of ranking on scale."""
+    """Within one mid band, size-not-median still holds: the bigger admitted tag leads even when the
+    smaller one has ~8000x the Top-grid median plays (MOL-977)."""
     from fanops.personas import Persona
-    from fanops.persona_research import CATEGORY_MEDIA_FLOOR, _aligned_pool
+    from fanops.persona_research import _aligned_pool
     per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
-    whale = CATEGORY_MEDIA_FLOOR + 1
-    cache = {"#remix": _cat_rec(120, frm={"#syrianrap": 3, "#arabicdrill": 2}, media_count=whale),
+    cache = {"#remix": _cat_rec(120, frm={"#syrianrap": 3, "#arabicdrill": 2}, media_count=1_500_000),
              "#nichetag": _cat_rec(999999, frm={"#syrianrap": 2}, media_count=50_000)}
     pool = _aligned_pool(per, cache)
     order = [t for t, _v, _s in pool]
     assert order.index("#remix") < order.index("#nichetag"), "the bigger admitted tag leads"
-    # ...and it leads DESPITE the niche tag having ~8000x the Top-grid median plays.
-    assert dict((t, v) for t, v, _s in pool)["#remix"] == float(whale)   # verbatim media_count, no blend
+    assert dict((t, v) for t, v, _s in pool)["#remix"] == 1_500_000.0   # verbatim media_count, no blend
 
 
 def test_bigger_tag_outranks_smaller_even_when_the_smaller_trends_harder(tmp_path):
-    """The user-facing contract: media_count is the HIGHER signal, 7d Top-Reel max only the tie-break."""
+    """Inside one band, media_count is the higher signal; 7d Top-Reel max is only the tie-break."""
     from fanops.personas import Persona
     from fanops.persona_research import _aligned_pool
     per = Persona(id="craft", name="Craft", voice="x", niche=["syrianrap", "arabicdrill"])
-    big = _cat_rec(10, frm={"#syrianrap": 2, "#arabicdrill": 2}, media_count=20_000_000)
-    small = _cat_rec(10, frm={"#syrianrap": 2}, media_count=1_000_000)
+    big = _cat_rec(10, frm={"#syrianrap": 2, "#arabicdrill": 2}, media_count=1_500_000)
+    small = _cat_rec(10, frm={"#syrianrap": 2}, media_count=200_000)
     small["current_top_reel_play_max_7d"] = 50_000_000.0        # trending hard, still smaller
     order = [t for t, _v, _s in _aligned_pool(per, {"#big": big, "#small": small})]
     assert order == ["#big", "#small"]
@@ -646,14 +643,131 @@ def test_model_cannot_ship_a_tag_outside_the_cache_or_corpus(tmp_path):
 
 
 def test_ranked_tags_orders_by_size_then_trend_then_tag(tmp_path):
-    """The menu order `vet_hashtags` inherits wholesale (MOL-692)."""
+    """Within one mid band, menu order is size DESC, then 7d trend, then tag (MOL-977)."""
     from fanops.hashtags import SIZE_FIELD, TREND_FIELD
-    m = {"#small": {SIZE_FIELD: 52_228, METRIC_FIELD: 45_355},      # loud but tiny -> last of the sized
-         "#huge": {SIZE_FIELD: 20_923_125, METRIC_FIELD: 1_272},    # quiet but enormous -> first
+    m = {"#small": {SIZE_FIELD: 52_228, METRIC_FIELD: 45_355},      # loud but smallest mid -> last of the sized
+         "#huge": {SIZE_FIELD: 1_800_000, METRIC_FIELD: 1_272},     # quiet but biggest mid -> first
          "#tie_cold": {SIZE_FIELD: 1_000_000},
          "#tie_hot": {SIZE_FIELD: 1_000_000, TREND_FIELD: 900_000},
          "#novolume": {METRIC_FIELD: 99_999_999}}                   # plays cannot fake volume -> last
     assert ranked_tags(m) == ["#huge", "#tie_hot", "#tie_cold", "#small", "#novolume"]
+
+
+def test_size_band_classifies_media_count():
+    from fanops.hashtags import (INT32_MEDIA_COUNT, MEGA_MEDIA_FLOOR, MID_MEDIA_FLOOR, SIZE_FIELD,
+                                 size_band)
+    assert MEGA_MEDIA_FLOOR == 2_000_000
+    assert MID_MEDIA_FLOOR == 10_000
+    assert INT32_MEDIA_COUNT == 2_147_483_647
+    assert size_band({SIZE_FIELD: MID_MEDIA_FLOOR}) == "mid"
+    assert size_band({SIZE_FIELD: MEGA_MEDIA_FLOOR - 1}) == "mid"
+    assert size_band({SIZE_FIELD: MEGA_MEDIA_FLOOR}) == "mega"
+    assert size_band({SIZE_FIELD: INT32_MEDIA_COUNT - 1}) == "mega"
+    assert size_band({SIZE_FIELD: INT32_MEDIA_COUNT}) == "untrusted"
+    assert size_band({SIZE_FIELD: 1}) == "small"
+    assert size_band({SIZE_FIELD: MID_MEDIA_FLOOR - 1}) == "small"
+    assert size_band({}) == "unknown"
+    assert size_band({SIZE_FIELD: 0}) == "unknown"
+    assert size_band(None) == "unknown"
+    assert set(size_band(r) for r in (
+        {SIZE_FIELD: 50_000}, {SIZE_FIELD: 1}, {SIZE_FIELD: MEGA_MEDIA_FLOOR},
+        {SIZE_FIELD: INT32_MEDIA_COUNT}, {},
+    )) == {"mid", "small", "mega", "untrusted", "unknown"}
+
+
+def test_int32_saturated_media_count_sorts_after_mid_band():
+    """#love-shaped INT32 saturation is untrusted mega, not the menu leader (MOL-977)."""
+    from fanops.hashtags import INT32_MEDIA_COUNT, SIZE_FIELD, size_band
+    love = {SIZE_FIELD: 2147483647}
+    mid = {SIZE_FIELD: 50_000}
+    assert size_band(love) == "untrusted"
+    assert size_band({SIZE_FIELD: 2147483647.0}) == "untrusted"
+    assert size_band({SIZE_FIELD: INT32_MEDIA_COUNT}) == "untrusted"
+    assert size_band(mid) == "mid"
+    assert ranked_tags({"#love": love, "#craft": mid}) == ["#craft", "#love"]
+
+
+def _volume_cache(cfg, rows):
+    """Layer A cache with graph_id + measured_at so load_measurements keeps the rows."""
+    from fanops.hashtags import SIZE_FIELD, TREND_FIELD
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    blob = {}
+    for i, (tag, rec) in enumerate(rows.items()):
+        item = {"graph_id": f"id-{i}", "measured_at": "2026-08-17T00:00:00+00:00",
+                SIZE_FIELD: rec[SIZE_FIELD]}
+        if TREND_FIELD in rec:
+            item[TREND_FIELD] = rec[TREND_FIELD]
+        blob[tag] = item
+    cfg.hashtags_path.write_text(json.dumps(blob))
+
+
+def test_vet_hashtags_mega_occupies_at_most_one_slot(tmp_path):
+    """4 mega + 3 mid + measurements: ship ≤1 mega/untrusted and fill the rest from mid."""
+    from fanops.hashtags import INT32_MEDIA_COUNT, MEGA_SLOT_MAX, SIZE_FIELD, size_band
+    assert MEGA_SLOT_MAX == 1
+    cfg = Config(root=tmp_path)
+    megas = ["#mega1", "#mega2", "#mega3", "#love"]
+    mids = ["#mid1", "#mid2", "#mid3"]
+    rows = {
+        "#mega1": {SIZE_FIELD: 3_000_000},
+        "#mega2": {SIZE_FIELD: 4_000_000},
+        "#mega3": {SIZE_FIELD: 5_000_000},
+        "#love": {SIZE_FIELD: INT32_MEDIA_COUNT},          # untrusted counts as the magnet slot
+        "#mid1": {SIZE_FIELD: 50_000},
+        "#mid2": {SIZE_FIELD: 80_000},
+        "#mid3": {SIZE_FIELD: 120_000},
+    }
+    _volume_cache(cfg, rows)
+    store = megas + mids
+    out = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg)
+    ms = load_measurements(cfg)
+    assert len(out) == 4
+    magnet = [t for t in out if size_band(ms[t]) in ("mega", "untrusted")]
+    mid_shipped = [t for t in out if size_band(ms[t]) == "mid"]
+    assert len(magnet) <= MEGA_SLOT_MAX
+    assert len(mid_shipped) == 3
+    assert set(mid_shipped) == set(mids)
+
+
+def test_vet_hashtags_ig_and_tiktok_disagree_inside_mid_band(tmp_path):
+    """Same store: IG mid order is size-then-trend; TT prefers TREND_FIELD then size."""
+    from fanops.hashtags import SIZE_FIELD, TREND_FIELD
+    cfg = Config(root=tmp_path)
+    rows = {
+        "#bigsize": {SIZE_FIELD: 1_500_000, TREND_FIELD: 1_000},     # bigger, colder
+        "#hottrend": {SIZE_FIELD: 80_000, TREND_FIELD: 900_000},     # smaller, hotter
+        "#midmid": {SIZE_FIELD: 200_000, TREND_FIELD: 50_000},
+        "#smallmid": {SIZE_FIELD: 20_000, TREND_FIELD: 5_000},
+    }
+    _volume_cache(cfg, rows)
+    store = ["#bigsize", "#hottrend", "#midmid", "#smallmid"]
+    ig = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg)
+    tt = vet_hashtags(store, Platform.tiktok, "en", store=store, cfg=cfg)
+    assert ig != tt
+    assert ig.index("#bigsize") < ig.index("#hottrend")
+    assert tt.index("#hottrend") < tt.index("#bigsize")
+
+
+def test_vet_hashtags_cfg_none_or_empty_measurements_skips_compose(tmp_path):
+    """cfg is None / no measurements: mega cap and platform reorder do not fire."""
+    megas = ["#mega1", "#mega2", "#mega3", "#mega4"]
+    mids = ["#mid1", "#mid2", "#mid3"]
+    store = megas + mids
+    assert vet_hashtags(store, Platform.instagram, "en", store=store, cfg=None) == megas
+    cfg = Config(root=tmp_path)
+    assert vet_hashtags(store, Platform.instagram, "en", store=store, cfg=cfg) == megas
+    ig = vet_hashtags(store, Platform.instagram, "en", store=store, cfg=None)
+    tt = vet_hashtags(store, Platform.tiktok, "en", store=store, cfg=None)
+    assert ig == tt == megas
+
+
+def test_vet_hashtags_reads_platform():
+    """platform must stay a live input — a later unused-parameter grep must fail."""
+    import inspect
+    from fanops import hashtags as h
+    src = inspect.getsource(h.vet_hashtags)
+    assert "_compose_shipped(pool, platform," in src
+    assert h.MEGA_SLOT_MAX == 1
 
 
 # ---------------------------------------------------------------- 7. refusals are the only governor

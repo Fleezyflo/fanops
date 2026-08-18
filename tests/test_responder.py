@@ -979,7 +979,7 @@ def test_permanent_gate_failure_zero_llm_on_subsequent_run(tmp_path, monkeypatch
 
 
 def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatch):
-    # Test 2 (part b): captions fail-open (items=[]) -> ingest_captions seed-tag fallback -> captioned
+    # Test 2 (part b): captions fail-open (items=[]) -> ingest HOLDs caption_missing_language.
     from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
     from fanops.llm import LlmToolchainError
     from fanops.models import ClipState
@@ -994,7 +994,8 @@ def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatc
         r.answer_pending(cfg)
     led = Ledger.load(cfg)
     led = ingest_captions(led, cfg, "clip_1")
-    assert led.clips["clip_1"].state is ClipState.captioned
+    assert led.clips["clip_1"].state is ClipState.held
+    assert "caption_missing_language" in (led.clips["clip_1"].held_reason or "")
     assert led.sources["src_1"].degraded_reason and "fail-open clean" in led.sources["src_1"].degraded_reason
 
 

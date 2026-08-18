@@ -15,7 +15,7 @@ without labelling it, so the operator's clock was wrong. Storage stays canonical
 module is the single web-boundary conversion layer."""
 from __future__ import annotations
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 _log = logging.getLogger("fanops.timeutil")
 try:
@@ -70,12 +70,12 @@ def publish_buckets(ts: str, cfg) -> "tuple[int, int] | tuple[None, None]":
 
 
 def operator_local_day(ts, cfg) -> "str | None":
-    """MOL-708: the OPERATOR-LOCAL calendar day ('YYYY-MM-DD') of an ISO stamp or an aware datetime.
-    The day-scoped sibling of publish_buckets' operator-local (hour, weekday) — one tz home, so the
-    schedule allocator and the publish-side quota can never disagree on which day a post belongs to
-    (a UTC-bucketed day splits an operator's evening across two 'days' at any non-zero offset).
-    Fail-SAFE in publish_buckets' shape: empty/None/unparseable -> None, never raises. cfg=None (no
-    operator tz resolvable) falls back to the stamp's own UTC day rather than guessing a system tz."""
+    """The OPERATOR-LOCAL calendar day ('YYYY-MM-DD') of an ISO stamp or an aware datetime.
+    The day-scoped sibling of publish_buckets' operator-local (hour, weekday) — one tz home so
+    schedule and archive paths agree on which day a post belongs to (a UTC-bucketed day splits an
+    operator's evening across two 'days' at any non-zero offset). Fail-SAFE in publish_buckets'
+    shape: empty/None/unparseable -> None, never raises. cfg=None (no operator tz resolvable) falls
+    back to the stamp's own UTC day rather than guessing a system tz."""
     dt = ts if isinstance(ts, datetime) else _aware_utc(ts)
     if dt is None:
         return None
@@ -84,23 +84,6 @@ def operator_local_day(ts, cfg) -> "str | None":
     zone = _operator_zone(cfg)
     loc = dt.astimezone(zone) if zone is not None else dt.astimezone(timezone.utc)
     return loc.date().isoformat()
-
-
-def next_operator_local_midnight(ts, cfg) -> "datetime | None":
-    """MOL-708: the aware UTC instant of the NEXT operator-local midnight strictly after `ts` — what
-    the allocator advances its cursor to when a local day has reached capacity. Built with
-    datetime.combine(date, min-time, tzinfo=zone) rather than `+ timedelta(days=1)` on an aware value
-    so the offset is re-resolved for the target date (naive day-arithmetic on an aware datetime keeps
-    the OLD offset and lands an hour off across a DST edge). Fail-SAFE: unparseable -> None."""
-    dt = ts if isinstance(ts, datetime) else _aware_utc(ts)
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    zone = _operator_zone(cfg) or timezone.utc
-    loc = dt.astimezone(zone)
-    nxt = datetime.combine(loc.date() + timedelta(days=1), datetime.min.time(), tzinfo=zone)
-    return nxt.astimezone(timezone.utc)
 
 
 def is_due_or_past(scheduled_time, now: datetime) -> bool:

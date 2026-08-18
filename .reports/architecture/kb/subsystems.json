@@ -114,6 +114,8 @@
         "hashtag_hygiene",
         "hashtag_vocab",
         "hashtags",
+        "tag_outcomes",
+        "source_tags",
         "ig_hashtag_scrape",
         "meta_graph",
         "tagging"
@@ -226,10 +228,12 @@
       "modules": [
         "ledger_wipe",
         "lever_docs",
+        "overlay_reburn",
         "paths_rebase",
         "reframe_apply",
         "stranded_posts"
       ],
+      "overlay_reburn_assignment": "overlay_reburn — `fanops overlay-reburn`, an out-of-band ass-only recut of existing Review files. Assigned here, not to S09_render, for the same reason as reframe_apply: it is not the production pipeline that turns a moment into a new clip; it CALLS the renderer to rewrite files that already exist. Dry-run and apply live in one module because the prove step is not a separate report verb.",
       "stranded_posts_assignment": "stranded_posts — `fanops posts census-retired` (renamed from the prior reconcile verb), a READ-ONLY census of posts under a RETIRED lineage. Assigned here, not to S13_reconcile_metrics, because S13 reconciles LEDGER-vs-REMOTE state by polling a backend, and this touches no network at all: suppression is DERIVED by `Ledger.is_suppressed` at every read, and the verb writes nothing. Kept in S19 beside `paths_rebase` / `reframe_apply` as the out-of-band corpus operator surface for dead lineage, even though those siblings still mutate.",
       "cycle_7_assignment": "reframe_apply (added by #635) — `fanops reframe --apply`, the MUTATION phase of the reframe migration: a plan-driven, resumable, rollback-able re-render of clips that ALREADY EXIST. Assigned here, not to S09_render, because S09's members (clip, compose, produce, stitch_render) are the PRODUCTION PIPELINE that turns a moment into a new clip, and this is not in that pipeline — it is an out-of-band corpus migration that CALLS the renderer. Its closest analogue is `paths_rebase`: a one-off, careful, reversible rewrite of stored state across the whole corpus. That is S19's remit exactly. (The read-only dry-run REPORT stays in S18_health_diag; see the note there.)"
     }

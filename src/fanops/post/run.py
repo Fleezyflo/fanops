@@ -14,11 +14,11 @@ from datetime import datetime, timezone
 import requests
 from pathlib import Path
 from fanops.config import Config
-from fanops.accounts import Accounts
+from fanops.accounts import Account, AccountStatus, Accounts
 from fanops.controlio import write_text_atomic
 from fanops.errors import AuthError, redact
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, PostState, is_real_submission_id
+from fanops.models import ErrorKind, Post, PostState, is_real_submission_id, validate_account_handle
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
@@ -246,6 +246,22 @@ def _unclaim_no_integration(cfg: Config, post_id: str, post: Post, *, unclaim: b
     get_logger(cfg)("publish", post_id, "no_integration_id", account=post.account, platform=post.platform.value)
 
 
+def _non_active_row(accounts: Accounts | None, handle: str) -> Account | None:
+    """Row iff a registry entry exists and is not AccountStatus.active. None when accounts is None,
+    the handle has no row, or the row is active — a missing row must not apply this guard
+    (empty-registry / unknown-handle parity with channel_provider_if_ready)."""
+    if accounts is None:
+        return None
+    try:
+        want = validate_account_handle(handle)
+    except ValueError:
+        return None
+    for a in accounts.accounts:
+        if a.handle == want:
+            return None if a.status is AccountStatus.active else a
+    return None
+
+
 def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts | None" = None,
                  account_id: str | None = None,
                  _tally: dict | None = None, due_cutoff: datetime | None = None) -> str | None:
@@ -275,6 +291,16 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             return None                                # lost the race / not eligible — no-op (F11)
         if due_cutoff is not None and not is_scheduled_due(post, due_cutoff):   # M08: re-check dueness under lock
             return None
+        # F6-I / MOL-980: a row that exists and is not active must never enter submitting. Missing row
+        # does NOT apply this guard (empty-registry / unknown-handle parity). accounts is None skips
+        # the check (internal test callers that exercise the network path).
+        row = _non_active_row(accounts, post.account)
+        if row is not None:
+            get_logger(cfg)("publish", post_id, "skip_account_not_active",
+                            account=post.account, platform=post.platform.value, status=row.status.value)
+            if _tally is not None:
+                _tally["skipped_not_active"] = _tally.get("skipped_not_active", 0) + 1
+            return None                                # leave it `queued` — planned/warming/retired do not ship
         # RC-3b (S07): the producer and the SOLE consumer of `submitting` must agree on backend capability.
         # A post may enter `submitting` ONLY on a channel `channel_provider_if_ready` ADMITS — the exact
         # per-channel predicate `is_live_backend`/`live_ready_channels` gate reconcile (the sole resolver of
@@ -488,8 +514,6 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
     (halt the queue, H8). Returns a small summary."""
-    from fanops.timeutil import operator_local_day
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
@@ -511,18 +535,24 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     for pid, p in stranded.items():
         get_logger(cfg)("publish", pid, "skipped_retired_lineage", account=p.account)
     due = [p for p in due if p.id not in stranded]
+    # F6-I / MOL-980: park non-active handles BEFORE ensure_up so an all-dead due queue does not start
+    # Postiz. Same predicate as the _publish_one claim (row exists AND status is not active). Missing
+    # row is a no-op — empty registry / unknown handle keeps today's path.
+    parked_not_active: dict[str, tuple[Post, Account]] = {}
+    for p in due:
+        row = _non_active_row(accounts, p.account)
+        if row is not None:
+            parked_not_active[p.id] = (p, row)
+    for pid, (p, row) in parked_not_active.items():
+        get_logger(cfg)("publish", pid, "skip_account_not_active",
+                        account=p.account, platform=p.platform.value, status=row.status.value)
+    due = [p for p in due if p.id not in parked_not_active]
     if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
     log = get_logger(cfg)
-    # MOL-712: operator-local-day outbound ceiling. Cap lives in views_common (MOL-708); this is the
-    # backstop for schedules the allocator never touched. Pre-count spent slots, then skip (leave
-    # queued) anything that would push a day past the cap. Reserve a slot BEFORE _publish_one so a
-    # single pass of 20 due posts ships 10, not 20 — under-count on a lost-race claim is fail-safe.
-    spent = _outbound_spent_by_day(led, cfg)
-    today = operator_local_day(cutoff, cfg)
     published = no_provider = no_integration_id = not_distributed = skipped_existing_id = not_live_ready = 0
-    quota_skipped = 0
+    skipped_not_active = len(parked_not_active)
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -539,13 +569,6 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
-        if today is not None:
-            key = (post.account, today)
-            if spent.get(key, 0) >= _DAILY_ACCOUNT_CAP:
-                quota_skipped += 1
-                log("publish", post.id, "daily_quota", account=post.account, day=today, cap=_DAILY_ACCOUNT_CAP)
-                continue
-            spent[key] = spent.get(key, 0) + 1         # reserve before claim; lost-race under-count is fail-safe
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         tally: dict = {}
         if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,
@@ -554,36 +577,11 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
         not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued
+        skipped_not_active += tally.get("skipped_not_active", 0)           # F6-I: non-active row, left queued
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed,
             "skipped_existing_id": skipped_existing_id, "not_live_ready": not_live_ready,
-            "quota_skipped": quota_skipped, "skipped_retired_lineage": len(stranded)}
-
-
-_IN_FLIGHT_STATES = frozenset({PostState.submitting, PostState.submitted, PostState.needs_reconcile})
-
-
-def _outbound_spent_by_day(led: Ledger, cfg: Config) -> dict:
-    """MOL-712: {(account, operator-local day): outbound slots already spent}. Conservative: a post
-    counts against a day if it was published that local day (`published_at`) OR claimed that local day
-    and still in flight (`submission_started_at` + submitting/submitted/needs_reconcile). Old rows with
-    neither stamp fall back to `scheduled_time` rather than counting as zero (a legacy hand-edited
-    schedule must not walk past the cap by looking empty). Pure; never raises."""
-    from fanops.timeutil import operator_local_day
-    out: dict = {}
-    for p in led.posts.values():
-        day = None
-        if p.published_at:
-            day = operator_local_day(p.published_at, cfg)
-        elif p.submission_started_at and p.state in _IN_FLIGHT_STATES:
-            day = operator_local_day(p.submission_started_at, cfg)
-        elif p.state is PostState.published or p.state in _IN_FLIGHT_STATES:
-            day = operator_local_day(p.scheduled_time, cfg)   # pre-MOL-709 row: intent day is the best we have
-        if day is None:
-            continue
-        key = (p.account, day)
-        out[key] = out.get(key, 0) + 1
-    return out
+            "skipped_retired_lineage": len(stranded), "skipped_not_active": skipped_not_active}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:

@@ -154,9 +154,9 @@ def test_amplify_then_ingest_then_render_produces_new_clip(tmp_path, monkeypatch
     rid = latest_request_id(cfg, "moments", "src_1")
     response_path(cfg, "moments", "src_1").write_text(MomentDecision(
         source_id="src_1", request_id=rid,
-        picks=[MomentPick(start=20.0, end=26.0, reason="second wave like the first")]).model_dump_json())
+        picks=[MomentPick(start=20.0, end=27.0, reason="second wave like the first")]).model_dump_json())
     led = ingest_moments(led, cfg, "src_1")
-    new = [m for m in led.moments_of("src_1") if m.content_token == "20.00-26.00"]
+    new = [m for m in led.moments_of("src_1") if m.content_token == "20.00-27.00"]
     assert len(new) == 1
     led, clips = render_aspects_for(led, cfg, new[0].id, aspects={Fmt.r9x16})  # REAL ffmpeg (integration)
     # The amplified moment is wired up for rendering and survives the render pass.
@@ -234,7 +234,7 @@ def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
     rid = latest_request_id(cfg, "moments", "s1")
     response_path(cfg, "moments", "s1").write_text(MomentDecision(
         source_id="s1", request_id=rid,
-        picks=[MomentPick(start=20.0, end=26.0, reason="second wave")]).model_dump_json())
+        picks=[MomentPick(start=20.0, end=27.0, reason="second wave")]).model_dump_json())
     led = ingest_moments(led, cfg, "s1")
     # the winning published post + its clip MUST survive (still trackable on-platform)
     assert "p1" in led.posts and led.posts["p1"].state is PostState.published
@@ -242,7 +242,7 @@ def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
     # its moment is RETIRED (suppressed from future work) but not erased
     assert led.moments["m1"].state is MomentState.retired
     # the NEW amplify moment was still created
-    assert any(m.content_token == "20.00-26.00" for m in led.moments_of("s1"))
+    assert any(m.content_token == "20.00-27.00" for m in led.moments_of("s1"))
 
 
 def test_amplify_default_guidance_unchanged_without_extra(tmp_path, monkeypatch):

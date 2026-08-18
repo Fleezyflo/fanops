@@ -223,9 +223,8 @@ def test_ffmpeg_clip_cmd_appends_extra_vf():
     assert _vf_of(plain) == reframe_filter("9:16", 1920, 1080)
 
 
-def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
-    # source WITH a transcript + a moment; burn_subs ON; ffmpeg HAS the text filter ->
-    # the -vf must chain "subtitles=" after the reframe AND an .ass file is written to disk.
+def test_render_burns_hook_not_transcript(tmp_path, mocker, monkeypatch):
+    # source WITH a transcript + a hook; FANOPS_BURN_SUBS ON -> hook burns, transcript does NOT.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -248,16 +247,18 @@ def test_render_burns_subtitles_when_enabled(tmp_path, mocker, monkeypatch):
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
     vf = _vf_of(captured["cmd"])
-    assert "subtitles=" in vf                               # the burn filter was chained
+    assert "subtitles=" in vf                               # the hook burn filter was chained
     assert reframe_filter("9:16", 1920, 1080) in vf         # ... after the reframe
-    # an .ass file was written adjacent to the clip
     ass_files = list(cfg.clips.glob("*.ass"))
     assert ass_files, "expected a written .ass subtitle file"
-    assert ass_files[0].read_text(encoding="utf-8").startswith("[Script Info]")
+    ass = ass_files[0].read_text(encoding="utf-8")
+    assert ass.startswith("[Script Info]")
+    assert "big hook" in ass
+    assert "hello world" not in ass and "second line" not in ass
 
 
-def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monkeypatch):
-    # L03: a transcript segment with null start/end must fail-open — clip renders, caption events skipped.
+def test_render_hook_only_when_transcript_has_null_segments(tmp_path, mocker, monkeypatch):
+    # Transcript segments are never burned; hook-only .ass when a hook is present.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -278,10 +279,11 @@ def test_render_null_transcript_start_skips_sub_captions(tmp_path, mocker, monke
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
     ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    assert "good line" in ass and "bad segment" not in ass
+    assert "hook" in ass
+    assert "good line" not in ass and "bad segment" not in ass
 
 
-def test_render_subs_exclude_junk_segments(tmp_path, mocker, monkeypatch):
+def test_render_never_burns_transcript_even_with_trusted_segments(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -301,8 +303,8 @@ def test_render_subs_exclude_junk_segments(tmp_path, mocker, monkeypatch):
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
-    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    assert "trusted line here" in ass and "background noise" not in ass
+    assert "subtitles=" not in _vf_of(captured["cmd"])
+    assert not list(cfg.clips.glob("*.ass"))
 
 
 def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
@@ -357,26 +359,22 @@ def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_b
     assert clip.state is ClipState.rendered
     return _vf_of(captured["cmd"]), cfg
 
-def test_batch_burn_subs_true_overrides_global_off(tmp_path, mocker, monkeypatch):
-    # GLOBAL burn_subs OFF, but the source's Batch sets burn_subs=True -> transcript IS burned for
-    # this talk batch (the override turns subs ON over a global default of OFF).
+def test_batch_burn_subs_true_does_not_restore_transcript_burn(tmp_path, mocker, monkeypatch):
+    # Batch burn_subs=True no longer forces transcript burn — hookless -> clean clip.
     vf, cfg = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=False, batch_burn=True)
-    assert "subtitles=" in vf                                # batch override forced transcript on
-    assert list(cfg.clips.glob("*.ass")), "expected an .ass written from the transcript"
+    assert "subtitles=" not in vf
+    assert vf == reframe_filter("9:16", 1920, 1080)
+    assert not list(cfg.clips.glob("*.ass"))
 
-def test_batch_burn_subs_false_overrides_global_on(tmp_path, mocker, monkeypatch):
-    # GLOBAL burn_subs ON, but the source's Batch sets burn_subs=False -> transcript is SUPPRESSED for
-    # this music batch (lyric subs hurt). Hookless source -> the clip carries no burned text at all.
+def test_batch_burn_subs_false_suppresses_transcript(tmp_path, mocker, monkeypatch):
     vf, cfg = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=True, batch_burn=False)
-    assert "subtitles=" not in vf                            # batch override suppressed transcript
-    assert vf == reframe_filter("9:16", 1920, 1080)         # plain reframe only
-    assert not list(cfg.clips.glob("*.ass"))                # no .ass written
+    assert "subtitles=" not in vf
+    assert vf == reframe_filter("9:16", 1920, 1080)
+    assert not list(cfg.clips.glob("*.ass"))
 
-def test_batch_burn_subs_none_falls_back_to_global(tmp_path, mocker, monkeypatch):
-    # A Batch with burn_subs=None defers to the global: global ON -> transcript burns; the None case
-    # must NOT suppress (proves the override is None-aware, not just truthy-aware).
+def test_batch_burn_subs_none_does_not_burn_transcript(tmp_path, mocker, monkeypatch):
     vf, _ = _render_with_batch_subs(tmp_path, mocker, monkeypatch, global_on=True, batch_burn=None)
-    assert "subtitles=" in vf                                # None -> global ON -> burned
+    assert "subtitles=" not in vf
 
 
 def _fake_run_writing_clip(captured):
@@ -446,9 +444,27 @@ def test_hook_burn_failed_true_when_ass_empty_despite_hook(tmp_path, mocker, mon
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered and clip.hook_burn_failed is True
 
+def test_render_clean_when_no_hook_even_if_burn_subs_on(tmp_path, mocker, monkeypatch):
+    # No hook -> clean clip even when FANOPS_BURN_SUBS=1 and the source has a transcript.
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080,
+                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook=None))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert "subtitles=" not in _vf_of(captured["cmd"])
+    assert not list(cfg.clips.glob("*.ass"))
+
+
 def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
-    # No hook AND transcript captions not opted in -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")        # explicit OFF
+    # No hook AND transcript captions not burned -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")        # explicit OFF (same render outcome)
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -948,26 +964,24 @@ def test_supercut_first_frame_kind_none_ok(tmp_path, mocker, monkeypatch):
     _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.first_frame_kind is None                       # visual_start bypassed on supercut
 
-def test_supercut_subtitles_rebased_to_assembled_timeline(tmp_path, mocker, monkeypatch):
+def test_supercut_hook_burns_without_transcript_layer(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    spans = [(10.0, 15.0), (30.0, 35.0)]                      # span2 offset = 5s in assembled timeline
+    spans = [(10.0, 15.0), (30.0, 35.0)]
     tr = [talk_seg("span two line", start=31.0, end=34.0),
-          talk_seg("gap line", start=20.0, end=25.0),          # in the GAP between spans -> dropped
+          talk_seg("gap line", start=20.0, end=25.0),
           talk_seg("span one", start=11.0, end=13.0)]
     cfg, led = _supercut_moment_led(tmp_path, segments=spans, transcript=tr, hook="hook")
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
     render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     ass = list(cfg.clips.glob("*.ass"))
-    assert ass, "expected supercut .ass"
+    assert ass, "expected supercut .ass for hook"
     text = ass[0].read_text(encoding="utf-8")
-    assert "gap line" not in text                              # gap transcript dropped
-    assert "span two line" in text
-    # span-2 line at source 31s -> assembled 31-30+5 = 6s (within the 5-10s assembled window)
-    assert ",0:00:06." in text or ",0:00:05." in text        # rebased onto assembled timeline
+    assert "hook" in text
+    assert "gap line" not in text and "span two line" not in text and "span one" not in text
 
 def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
@@ -1049,7 +1063,8 @@ def test_native_default_render_has_no_template_overlay(tmp_path, mocker, monkeyp
 # These GUARD the refactor — they do not test the dry-run itself (that is test_reframe_dryrun.py).
 # ---------------------------------------------------------------------------------------------------
 from fanops.clip import (_build_ass_text, _render_fingerprint, _render_fingerprint_payload,   # noqa: E402
-                         _REFRAME_GEOM_V, fingerprint_of_payload, fingerprint_payload_bytes)
+                         _REFRAME_GEOM_V,
+                         fingerprint_of_payload, fingerprint_payload_bytes)
 
 _FP_KW = dict(src_path="/s.mp4", cs=1.0, ce=11.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="X")
 _FOCUS4 = (0.61, 0.44, 0.30, 0.38)          # subject lock: zooms  -> geom True
@@ -1126,8 +1141,8 @@ def test_build_ass_text_golden_per_aspect(tmp_path, monkeypatch, aspect):
     assert f"PlayResX: {tw}" in text and f"PlayResY: {th}" in text
 
 
-def test_build_ass_text_hook_only_transcript_only_and_both(tmp_path, monkeypatch):
-    seg = [talk_seg("hello there", start=11.0, end=13.0)]   # trusted_segments needs the full quality metadata
+def test_build_ass_text_hook_only_never_transcript(tmp_path, monkeypatch):
+    seg = [talk_seg("hello there", start=11.0, end=13.0)]   # present but never burned
     hook_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "a", monkeypatch, hook="H", burn="0"),
                                    "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     tx_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "b", monkeypatch, transcript=seg),
@@ -1135,8 +1150,8 @@ def test_build_ass_text_hook_only_transcript_only_and_both(tmp_path, monkeypatch
     both, _ = _build_ass_text(*_ass_corpus(tmp_path / "c", monkeypatch, hook="H", transcript=seg),
                               "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     assert hook_only and "H" in hook_only
-    assert tx_only and "hello there" in tx_only and "H" not in tx_only.split("Dialogue")[-1]
-    assert both and "H" in both and "hello there" in both
+    assert tx_only is None
+    assert both and "H" in both and "hello there" not in both
 
 
 def test_build_ass_text_none_when_nothing_wanted_and_is_NOT_a_failure(tmp_path, monkeypatch):
@@ -1153,11 +1168,55 @@ def test_build_ass_text_flags_a_wanted_but_unburnable_hook(tmp_path, monkeypatch
     assert text is None and hbf is True            # WANTED but unburnable -> the F9 flag, unchanged
 
 
-def test_build_ass_text_batch_burn_subs_override_still_wins(tmp_path, monkeypatch):
-    seg = [talk_seg("lyrics", start=11.0, end=13.0)]
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, transcript=seg, burn="1", batch_burn=False)
+def test_build_ass_text_keeps_hook_without_transcript(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    seg = [talk_seg("already on screen", start=11.0, end=13.0)]
+    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="watch this", transcript=seg, burn="1", batch_burn=False)
     text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert text is None and hbf is False           # the music batch opted OUT, and cfg.burn_subs=1 loses
+    assert hbf is False
+    assert text and "watch this" in text
+    assert "already on screen" not in text.lower()
+
+
+def test_render_drop_batch_keeps_hook_not_transcript(tmp_path, mocker, monkeypatch):
+    """Drop batch + FANOPS_BURN_SUBS ON: hook burns, transcript never layered."""
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_batch(Batch(id="drop_1", name="drop-2026-08-15", burn_subs=None))
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, batch_id="drop_1",
+                          transcript=[talk_seg("on screen lyrics", start=0.0, end=3.0)]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook="the drop"))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    vf = _vf_of(captured["cmd"])
+    assert "subtitles=" in vf
+    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
+    assert "the drop" in ass and "on screen lyrics" not in ass.lower()
+
+
+def test_render_never_burns_transcript_on_talk_source(tmp_path, mocker, monkeypatch):
+    """Talk source, no hook, global burn_subs ON: no transcript layer."""
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080,
+                          transcript=[talk_seg("spoken line", start=0.0, end=3.0)]))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided, hook=""))
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
+    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert clip.state is ClipState.rendered
+    assert "subtitles=" not in _vf_of(captured["cmd"])
+    assert not list(cfg.clips.glob("*.ass"))
 
 
 def test_a_stale_ass_on_disk_does_not_affect_the_newly_derived_text(tmp_path, monkeypatch):

@@ -19,11 +19,11 @@ def _mom1(led, mid="mom_1"):
                           state=MomentState.clipped))
 
 
-def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z"):
+def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z", account="a"):
     f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
-    led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
+    led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="98432",
                       platform=Platform.instagram, caption="ship it",
                       scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()                                          # persist so the self-loading publish_due sees it
@@ -666,15 +666,7 @@ def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
     reset_publish_throttle()
 
 
-# ---- MOL-712: publish_due daily outbound quota (backstop for schedules the allocator never touched) ----
-# published_at is stamped with wall-clock UTC at the claim→publish transition, so a test that PUBLISHES
-# inside the pass must pass the quota day's `now=` on that same calendar day — a frozen historical `now=`
-# makes spent land on today while the check looks at 2026-06-02 and the second pass under-counts.
-# MOL-732: the converse also holds. A test in which NOTHING publishes stamps no wall-clock published_at,
-# so its fixture must be FROZEN (`_QUOTA_FROZEN_NOW`) and its tz pinned — deriving a "claimed earlier
-# today" stamp as `datetime.now() - 1h` puts it on the PREVIOUS operator-local day for the first hour
-# after every local midnight, where publish_due correctly declines to count it and the assertion flips.
-# Use _quota_now() only when the pass really publishes; freeze otherwise.
+# ---- publish_due: no per-account daily outbound quota ----
 
 def _quota_now():
     from datetime import datetime, timezone
@@ -682,134 +674,35 @@ def _quota_now():
     return iso_z(datetime.now(timezone.utc))
 
 
-# Midday, so a "-1h" fixture is unambiguously the SAME operator-local day and a "-13h" one is
-# unambiguously the PREVIOUS one — no wall clock, hence no hour-of-day in which either flips.
-_QUOTA_FROZEN_NOW = "2026-06-02T12:00:00Z"
+def test_daily_account_cap_constant_is_gone():
+    import fanops.studio.views_common as vc
+    assert not hasattr(vc, "_DAILY_ACCOUNT_CAP")
 
 
-def test_publish_due_caps_at_ten_per_account_per_local_day(tmp_path, monkeypatch, mocker):
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
+def test_publish_due_publishes_fourth_post_same_local_day(tmp_path, monkeypatch, mocker):
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    n = _DAILY_ACCOUNT_CAP + 10
-    for i in range(n):
+    for i in range(4):
         _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, *[f"q{i}" for i in range(n)]); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    now = _quota_now()
-    summary = publish_due(cfg, now=now)
-    led = Ledger.load(cfg)
-    shipped = [p for p in led.posts.values() if p.state is PostState.published]
-    held = [p for p in led.posts.values() if p.state is PostState.queued]
-    assert len(shipped) == _DAILY_ACCOUNT_CAP
-    assert len(held) == 10
-    assert summary["published"] == _DAILY_ACCOUNT_CAP and summary["quota_skipped"] == 10
-    for p in held:                                     # ZERO mutation on a quota skip
-        assert p.scheduled_time == "2020-01-01T00:00:00Z" and p.submission_started_at is None
-
-def test_publish_due_second_pass_publishes_zero_more_at_cap(tmp_path, monkeypatch, mocker):
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for i in range(_DAILY_ACCOUNT_CAP + 5):
-        _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, *[f"q{i}" for i in range(_DAILY_ACCOUNT_CAP + 5)]); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    now = _quota_now()
-    publish_due(cfg, now=now)
-    summary = publish_due(cfg, now=now)               # same local day, immediate re-run
-    assert summary["published"] == 0 and summary["quota_skipped"] == 5
-    assert sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.published) == _DAILY_ACCOUNT_CAP
-
-def test_publish_due_in_flight_claim_counts_against_today(tmp_path, monkeypatch, mocker):
-    # A crash-stranded submitting post claimed TODAY still occupies a slot — otherwise a crash-and-retry
-    # loop walks past the cap by treating in-flight as free.
-    # MOL-732: `now` is FROZEN and the claim is derived FROM it (never from the wall clock), tz pinned.
-    # Nothing publishes here (published == 0), so no wall-clock published_at is stamped and the whole
-    # fixture is inside the frozen day — this proves the quota rule, not what hour CI happens to run at.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z, parse_iso
-    from datetime import timedelta
-    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")   # the day bucket is operator-local on BOTH sides
-    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    claim = iso_z(parse_iso(_QUOTA_FROZEN_NOW) - timedelta(hours=1))   # claimed earlier the SAME local day
-    for i in range(_DAILY_ACCOUNT_CAP):
-        _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"inf{i}"] = led.posts[f"inf{i}"].model_copy(update={"state": PostState.submitting})
-        led.posts[f"inf{i}"].submission_started_at = claim
-    for i in range(3):
-        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, "new0", "new1", "new2"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
-    assert summary["published"] == 0 and summary["quota_skipped"] == 3
-    assert all(Ledger.load(cfg).posts[f"new{i}"].state is PostState.queued for i in range(3))
-
-def test_publish_due_in_flight_claim_on_previous_local_day_leaves_today_free(tmp_path, monkeypatch, mocker):
-    # MOL-732 negative control for the test above — the half of the day-bucketing rule nothing pinned,
-    # and the half the wall-clock fixture used to hit by accident for one hour after every local midnight.
-    # The SAME cap-filling in-flight claims, moved one hour EARLIER so they land on YESTERDAY: they must
-    # NOT consume today's quota, so all three due posts ship. Together the two tests prove publish_due
-    # buckets `now` and the claim stamps by the same operator-local day, not merely "counts in-flight".
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z, parse_iso, operator_local_day
-    from datetime import timedelta
-    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
-    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    claim = iso_z(parse_iso(_QUOTA_FROZEN_NOW) - timedelta(hours=13))   # 23:00 the PREVIOUS local day
-    assert operator_local_day(claim, cfg) != operator_local_day(_QUOTA_FROZEN_NOW, cfg)   # fixture precondition
-    for i in range(_DAILY_ACCOUNT_CAP):
-        _queued(led, cfg, pid=f"inf{i}", cid=f"cinf{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"inf{i}"] = led.posts[f"inf{i}"].model_copy(update={"state": PostState.submitting})
-        led.posts[f"inf{i}"].submission_started_at = claim
-    for i in range(3):
-        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, "new0", "new1", "new2"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
-    assert summary["published"] == 3 and summary["quota_skipped"] == 0
-    assert all(Ledger.load(cfg).posts[f"new{i}"].state is PostState.published for i in range(3))
-
-def test_publish_due_old_row_without_stamps_falls_back_to_scheduled_time(tmp_path, monkeypatch, mocker):
-    # Pre-MOL-709 published rows have neither published_at nor submission_started_at on some fixtures;
-    # counting them as zero would let a legacy hand-edited schedule walk past the cap.
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    from fanops.timeutil import iso_z, parse_iso
-    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
-    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    # scheduled_time on the frozen day so the fallback attributes the spent slot to the day the run checks.
-    # MOL-732: nothing publishes here either, so freeze it too — `datetime.now().replace(hour=10)` agreed
-    # with `now` only while the ambient tz was UTC (under UTC-8 it is the NEXT local day for 8h a day).
-    today_slot = iso_z(parse_iso(_QUOTA_FROZEN_NOW).replace(hour=10))
-    for i in range(_DAILY_ACCOUNT_CAP):
-        _queued(led, cfg, pid=f"old{i}", cid=f"cold{i}", when=today_slot)
-        p = led.posts[f"old{i}"].model_copy(update={"state": PostState.published,
-                                                      "public_url": _LIVE_PERMALINK,
-                                                      "published_at": None})
-        led.posts[f"old{i}"] = p
-        p.submission_started_at = None
-    for i in range(2):
-        _queued(led, cfg, pid=f"new{i}", cid=f"cnew{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, "new0", "new1"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    summary = publish_due(cfg, now=_QUOTA_FROZEN_NOW)
-    assert summary["published"] == 0 and summary["quota_skipped"] == 2
-
-def test_publish_due_quota_is_per_account(tmp_path, monkeypatch, mocker):
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
-    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for i in range(_DAILY_ACCOUNT_CAP + 2):
-        _queued(led, cfg, pid=f"a{i}", cid=f"ca{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"a{i}"].account = "alpha"
-    for i in range(3):
-        _queued(led, cfg, pid=f"b{i}", cid=f"cb{i}", when="2020-01-01T00:00:00Z")
-        led.posts[f"b{i}"].account = "beta"
-    ids = [f"a{i}" for i in range(_DAILY_ACCOUNT_CAP + 2)] + [f"b{i}" for i in range(3)]
-    _http_media(led, *ids); _stub_ok_poster(mocker, cfg)
+    _http_media(led, *[f"q{i}" for i in range(4)]); _stub_ok_poster(mocker, cfg)
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     summary = publish_due(cfg, now=_quota_now())
-    led = Ledger.load(cfg)
-    assert sum(1 for p in led.posts.values() if p.account == "alpha" and p.state is PostState.published) == _DAILY_ACCOUNT_CAP
-    assert sum(1 for p in led.posts.values() if p.account == "beta" and p.state is PostState.published) == 3
-    assert summary["quota_skipped"] == 2
+    assert summary["published"] == 4
+    assert "quota_skipped" not in summary
+    assert all(Ledger.load(cfg).posts[f"q{i}"].state is PostState.published for i in range(4))
+
+
+def test_publish_due_second_pass_still_publishes_without_daily_quota(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for i in range(8):
+        _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
+    _http_media(led, *[f"q{i}" for i in range(8)]); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    now = _quota_now()
+    first = publish_due(cfg, now=now)
+    second = publish_due(cfg, now=now)
+    assert first["published"] == 8 and second["published"] == 0
+    assert "quota_skipped" not in first and "quota_skipped" not in second
+    assert sum(1 for p in Ledger.load(cfg).posts.values() if p.state is PostState.published) == 8
 
 def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch, mocker):
     # THE publish-side lineage guard, now asking `Ledger.can_promote` (the owner) instead of hand-copying the
@@ -837,3 +730,122 @@ def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch,
     assert led.posts["p_ok"].state is PostState.published           # the control still ships
     for pid in ("p_clip", "p_mom", "p_gone"):                       # refused, and ZERO mutation on the skip
         assert led.posts[pid].state is PostState.queued and led.posts[pid].submission_started_at is None
+
+
+# ---- F6-I / F6-T (MOL-980 / MOL-982): non-active handles stay queued ----
+
+def _acct_row(handle, status, account_id="98432"):
+    """Explicit accounts.json row. F6-T PIN: write status; do not rely on the model default."""
+    return {"handle": handle, "account_id": account_id, "platforms": ["instagram"],
+            "status": status, "backends": {"instagram": "postiz"},
+            "integrations": {"instagram": account_id}}
+
+
+def _write_accounts(cfg, rows):
+    import json
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
+
+
+def test_publish_due_planned_live_creds_stay_queued(tmp_path, monkeypatch, mocker):
+    # F6-T: queued + planned + live Postiz creds → skip, left queued. Poster must not run.
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_plan", cid="c_plan", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_plan")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["skipped_not_active"] >= 1
+    assert "quota_skipped" not in summary
+    p = Ledger.load(cfg).posts["p_plan"]
+    assert p.state is PostState.queued and p.submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+    poster.assert_not_called()
+    ensure.assert_not_called()                                 # all-dead due list must not start Postiz
+
+
+def test_publish_due_active_handle_still_ships(tmp_path, monkeypatch, mocker):
+    # F6-T sibling: same fixture with status=active still ships (happy path with an explicit row).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "active")])
+    _queued(led, cfg, pid="p_ok", cid="c_ok", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_ok"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] == 0
+    assert "quota_skipped" not in summary
+    assert Ledger.load(cfg).posts["p_ok"].state is PostState.published
+
+
+def test_publish_due_mixed_planned_and_active(tmp_path, monkeypatch, mocker):
+    # F6-T: one planned + one active in the same pass → only the active handle publishes.
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@dead", "planned"), _acct_row("@live", "active")])
+    _queued(led, cfg, pid="p_dead", cid="c_dead", when="2020-01-01T00:00:00Z", account="dead")
+    _queued(led, cfg, pid="p_live", cid="c_live", when="2020-01-01T00:00:00Z", account="live")
+    _http_media(led, "p_dead", "p_live"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] >= 1
+    assert "quota_skipped" not in summary
+    led = Ledger.load(cfg)
+    assert led.posts["p_live"].state is PostState.published
+    assert led.posts["p_dead"].state is PostState.queued and led.posts["p_dead"].submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+
+
+def test_publish_due_warming_and_retired_stay_queued(tmp_path, monkeypatch, mocker):
+    # F6-I: still skip warming / retired when a row exists (same path as planned).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@warm", "warming"), _acct_row("@gone", "retired")])
+    _queued(led, cfg, pid="p_warm", cid="c_warm", when="2020-01-01T00:00:00Z", account="warm")
+    _queued(led, cfg, pid="p_gone", cid="c_gone", when="2020-01-01T00:00:00Z", account="gone")
+    _http_media(led, "p_warm", "p_gone")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["skipped_not_active"] == 2
+    led = Ledger.load(cfg)
+    assert led.posts["p_warm"].state is PostState.queued and led.posts["p_gone"].state is PostState.queued
+    poster.assert_not_called()
+
+
+def test_publish_post_planned_does_not_claim(tmp_path, monkeypatch, mocker):
+    # F6-T: Studio Publish-now inherits the claim guard via _publish_one.
+    from fanops.post.run import publish_post
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_now", cid="c_now", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_now")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    assert publish_post(cfg, "p_now") is None
+    p = Ledger.load(cfg).posts["p_now"]
+    assert p.state is PostState.queued and p.submission_started_at is None
+    assert "skip_account_not_active" in cfg.log_path.read_text()
+    poster.assert_not_called()
+
+
+def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, mocker):
+    # F6-I PIN: missing / unknown handle → do not apply this guard (empty-registry parity).
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@other", "planned")])   # a row exists, but not for this post's handle
+    _queued(led, cfg, pid="p_unk", cid="c_unk", when="2020-01-01T00:00:00Z", account="a")
+    _http_media(led, "p_unk"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 1 and summary["skipped_not_active"] == 0
+    assert Ledger.load(cfg).posts["p_unk"].state is PostState.published
+
+
+def test_publish_one_accounts_none_skips_status_guard(tmp_path, monkeypatch, mocker):
+    # F6-I PIN: accounts is None (internal test callers) must not apply the status check.
+    from fanops.post.run import _publish_one
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p_int", cid="c_int", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p_int"); _stub_ok_poster(mocker, cfg)
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    assert _publish_one(cfg, "p_int", "postiz", accounts=None) == PostState.published.value
+    assert Ledger.load(cfg).posts["p_int"].state is PostState.published

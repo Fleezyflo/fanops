@@ -56,8 +56,6 @@ def _guard_editable_post(led: Ledger, post_id: str, now: datetime) -> tuple[Opti
 
 
 def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[datetime] = None) -> ActionResult:
-    from fanops.timeutil import operator_local_day
-    from fanops.studio.views_common import _DAILY_ACCOUNT_CAP
     now = _now(now)
     try:
         z = _normalize_z(new_time)                 # OUTSIDE the lock: reject bad input early
@@ -69,19 +67,6 @@ def reschedule_post(cfg: Config, post_id: str, new_time: str, *, now: Optional[d
         p, err = _guard_editable_post(led, post_id, now)
         if err:
             return ActionResult(ok=False, error=err)
-        # MOL-711: refuse an 11th queued post on a full operator-local day. Count OTHER queued posts
-        # only (self-moves on a full day leave the total unchanged; awaiting has not claimed a slot).
-        # Refuse loudly — silently rolling the operator's chosen time to another day is the same class
-        # of surprise as the original incident. Cap + day helper land in views_common/timeutil (MOL-708).
-        day = operator_local_day(z, cfg)
-        if day is not None:
-            n = sum(1 for q in led.posts.values()
-                    if q.id != post_id and q.account == p.account and q.state is PostState.queued
-                    and operator_local_day(q.scheduled_time, cfg) == day)
-            if n >= _DAILY_ACCOUNT_CAP:
-                return ActionResult(ok=False, error=(
-                    f"account {p.account} already has {_DAILY_ACCOUNT_CAP} queued posts on {day} "
-                    f"(operator-local) — pick another day"))
         p.scheduled_time = z
     return ActionResult(ok=True, detail={"post_id": post_id, "scheduled_time": z})
 
@@ -138,8 +123,8 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     `claude -p` the llm responder uses. Bounded to ONE model call per click (PRD cost mitigation).
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
-    from fanops.caption import brand_risk_flag, _per_account_hashtag_stores
-    from fanops.hashtags import RECORD_NUM_FIELDS, content_tag_candidates, load_measurements, _norm, _num
+    from fanops.caption import brand_risk_flag, _hashtag_metrics_for, _source_lock_tags
+    from fanops.hashtags import load_measurements
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
@@ -154,43 +139,22 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
         full_guidance = (base + "\n\nOPERATOR INSTRUCTION FOR THIS REGENERATION (highest priority): "
                          + guidance.strip())
-    # Parity with the batch payload (caption.request_captions): the regen prompt carries the SAME
-    # per-surface persona/corpus/hashtag_store the pipeline prompts with — a corpus-blind regen invents
-    # tags (MOL-86 class). MOL-513: hashtag_store lives ON the surface (persona aligned pool), not root.
+    # Parity with the batch payload (caption.request_captions): regen menu = the source lock.
+    # Empty lock → empty store. Never the 80-pile / persona corpus / ASR content tags.
     from fanops.accounts import Accounts
     from fanops.personas import caption_directive
     accts = Accounts.load(cfg)
     acct = next((a for a in accts.accounts if a.handle == p.account), None)
     persona = caption_directive(acct) if acct is not None else None
-    corpus = list(getattr(acct, "hashtag_corpus", []) or []) if acct is not None else []
-    stores = _per_account_hashtag_stores(cfg, accts)
-    sv = stores.get(p.account) if acct is not None else None
-    # MOL-642 / MOL-636: same content_tags + hashtag_metrics sidecar as request_captions.
     excerpt = moment.transcript_excerpt if moment else ""
-    content_tags = content_tag_candidates(excerpt)
-    metric_tags: set[str] = set(sv or [])
-    metric_tags.update(_norm(t) for t in corpus if isinstance(t, str))
-    meas = load_measurements(cfg)
-    hashtag_metrics: dict = {}
-    for t in metric_tags:
-        rec = meas.get(t)
-        if not isinstance(rec, dict):
-            continue
-        row = {}
-        for k in RECORD_NUM_FIELDS:                      # MOL-692: same contract as request_captions
-            v = _num(rec.get(k))
-            if v is not None:
-                row[k] = v
-        if row:
-            hashtag_metrics[t] = row
+    lock = _source_lock_tags(cfg, src)
+    hashtag_metrics = _hashtag_metrics_for(load_measurements(cfg), lock)
     payload = {"clip_id": p.parent_id, "language": src.language if src else None,
                "transcript_excerpt": excerpt,
                "guidance": full_guidance,
                "surfaces": [{"surface": surface, "platform": p.platform.value,
                              **({"persona": persona} if persona else {}),
-                             **({"corpus": corpus} if corpus else {}),
-                             **({"hashtag_store": sv} if sv else {})}],
-               **({"content_tags": content_tags} if content_tags else {}),
+                             **({"hashtag_store": lock} if lock else {})}],
                **({"hashtag_metrics": hashtag_metrics} if hashtag_metrics else {})}
     if model is None:
         # Gates are answered ONLY by the LLM, so Regenerate always uses the LLM (an injected `model` is the
@@ -218,20 +182,13 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if flag:
         return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
                             "Edit it by hand or regenerate again.")
-    # Parity with ingest_captions (the one true vet): the model's picks are vetted under the post's platform
-    # with corpus + recency threading, and the POSTED caption IS the vetted <=4-tag line — regenerate can no
-    # longer write raw model tags past the cap/membership gates.
-    from fanops.caption import _recent_tags, _tags_in
-    # MOL-512 (C-2): vet from this account's persona aligned pool (same menu the regen prompt carried),
-    # never the global ranked_tags(load_measurements) cache — so regen cannot accept/backfill another
-    # persona's tags.
-    from fanops.hashtags import vet_hashtags_traced
-    store = sv  # from stores.get(p.account) above; None when no persona / empty pool
-    vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
-                           p.platform, src.language if src else None, store=store,
-                           corpus=corpus, content=content_tags or None, cfg=cfg,
-                           recent=_recent_tags(led, p.account))
-    new_caption, new_tags = " ".join(vetted), vetted
+    from fanops.caption import _tags_in, is_tags_only_caption
+    if is_tags_only_caption(item.caption):
+        return ActionResult(ok=False, error="regenerated caption rejected — caption_tags_only. "
+                            "Edit it by hand or regenerate again.")
+    from fanops.hashtags import ship_from_lock
+    picks = list(item.hashtags or []) or _tags_in(item.caption)
+    new_caption, new_tags = (item.caption or "").strip(), ship_from_lock(picks, lock)
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become
         # imminent/due — re-check against real wall-clock (fail-safe), not the stale entry-time now.
@@ -440,8 +397,6 @@ def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime
     try:
         with Ledger.transaction(cfg) as led:
             posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
-            # MOL-710: no `occupied` here BY DESIGN — this batch is ALREADY every queued post for the
-            # account, so passing it as occupancy would double-count the very posts being re-timed.
             sched = suggest_times_for_batch(cfg, posts, now=now)
             for pid, t in sched.items():
                 p = led.posts[pid]
@@ -825,11 +780,7 @@ def reschedule_bucket(cfg: Config, *, now: Optional[datetime] = None, handle: Op
                    and not _seconds_away(p.scheduled_time, now)
                    and (handle is None or p.account == handle)]
             due.sort(key=lambda p: (p.scheduled_time or "", p.account, p.platform.value, p.id))  # stable order in
-            # MOL-710: a `_seconds_away` post is deliberately NOT respread, but it still consumes a slot on
-            # its day — count it as occupancy so the respread doesn't lay a fresh post on top of it.
-            due_ids = {p.id for p in due}
-            occupied = [p for p in led.posts.values() if p.state is PostState.queued and p.id not in due_ids]
-            sched = suggest_times_for_batch(cfg, due, now=now, occupied=occupied)
+            sched = suggest_times_for_batch(cfg, due, now=now)
             for p in due:
                 p.scheduled_time = sched[p.id]
     except Exception as exc:

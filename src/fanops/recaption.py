@@ -4,8 +4,8 @@
 `fanops posts recaption` drives the EXISTING stages over every awaiting_approval / non-imminent
 queued post — it implements NO caption logic of its own: caption.request_captions (fresh payload =
 current persona/corpus/genre by construction) -> responder.answer_pending(kinds=captions, parallel)
--> caption.ingest_captions (brand-risk, vet_hashtags_traced, tag_sources,
-seed-fallback — the one true vet) with ONE shared pass_recent in schedule order (mirrors
+-> caption.ingest_captions (brand-risk, ship_from_lock from the source sidecar —
+recaption reads the lock and does not produce it) with ONE shared pass_recent in schedule order (mirrors
 pipeline._stage_ingest_captions) -> a short transaction syncing each linked post's caption/hashtags
 from the seed clip's meta_captions.
 
@@ -74,12 +74,13 @@ def _seed_clip_id(led: Ledger, post) -> str | None:
     return (best or clip).id
 
 
-def _targets(led: Ledger) -> list[tuple[str, list[str]]]:
+def _targets(led: Ledger, account: str | None = None) -> list[tuple[str, list[str]]]:
     """[(seed_clip_id, [post_id, ...])] in schedule order (earliest linked post first); posts within
-    a clip likewise schedule-ordered. Targets = awaiting_approval + queued only."""
+    a clip likewise schedule-ordered. Targets = awaiting_approval + queued only. `account` is an
+    exact handle filter applied BEFORE grouping; None keeps every handle."""
     groups: dict[str, list] = {}
     for p in led.posts.values():
-        if p.state in _TARGET_STATES:
+        if p.state in _TARGET_STATES and (account is None or p.account == account):
             cid = _seed_clip_id(led, p)
             if cid is not None:
                 groups.setdefault(cid, []).append(p)
@@ -117,7 +118,8 @@ def _sync_posts(led: Ledger, cfg: Config, clip, post_ids: list[str], now: dateti
     return synced, skipped
 
 
-def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: datetime | None = None) -> dict:
+def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: datetime | None = None,
+                  limit: int | None = None, account: str | None = None) -> dict:
     """Drive the original caption pipeline over the backlog. Dry-run (default) is a pure read.
 
     Apply is THREE phases (not one-clip-at-a-time LLM):
@@ -125,13 +127,18 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
       2) ONE captions-only parallel answer_pending (never moments/hooks; forced pool)
       3) ingest+sync+restore in schedule order (pass_recent / vet stay serial)
 
-    `responder` is injectable for tests (default: configured llm responder)."""
+    `responder` is injectable for tests (default: configured llm responder).
+    `account` filters posts by exact handle before grouping. `limit` is max seed clips
+    processed after that filter (and after the journal skip on apply). None keeps today's set."""
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be a positive integer")
     now = now or datetime.now(timezone.utc)
     led = Ledger.load(cfg)
-    targets = _targets(led)
-    summary = {"clips": len(targets), "posts": sum(len(ps) for _, ps in targets),
+    targets = _targets(led, account=account)
+    listed = targets if apply or limit is None else targets[:limit]
+    summary = {"clips": len(listed), "posts": sum(len(ps) for _, ps in listed),
                "done": 0, "synced": 0, "skipped_imminent": 0, "held": 0, "pending": 0, "rows": []}
-    for cid, pids in targets:
+    for cid, pids in listed:
         c = led.clips.get(cid)
         summary["rows"].append({"clip": cid, "state": c.state.value if c else "?", "posts": len(pids),
                                 "earliest": min((led.posts[i].scheduled_time or led.posts[i].created_at or "") for i in pids)})
@@ -139,6 +146,8 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
         return summary
     journal = _load_journal(cfg)
     pending_clips = [(cid, pids) for cid, pids in targets if cid not in journal["done"]]
+    if limit is not None:
+        pending_clips = pending_clips[:limit]
     if not pending_clips:
         return summary
     snap = Ledger.snapshot(cfg)                          # the existing backup mechanism — once, before any write
@@ -208,11 +217,14 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
 
 
 def cmd_posts_recaption(cfg: Config, args) -> int:
-    """`fanops posts recaption [--apply]` — default is the read-only dry-run listing."""
+    """`fanops posts recaption [--apply] [--limit N] [--account HANDLE]` — default is the read-only dry-run listing."""
     apply = bool(getattr(args, "apply", False))
     if apply and getattr(args, "dry_run", False):
         print("--apply and --dry-run are mutually exclusive"); return 2
-    s = run_recaption(cfg, apply=apply)
+    limit = getattr(args, "limit", None)
+    if limit is not None and limit <= 0:
+        print("--limit must be a positive integer"); return 2
+    s = run_recaption(cfg, apply=apply, limit=limit, account=getattr(args, "account", None))
     for r in s["rows"]:
         print(f"[{r['state']:>10}] clip {r['clip']}  posts={r['posts']}  earliest={r['earliest']}")
     if not apply:

@@ -789,11 +789,10 @@ class Config:
 
     @property
     def burn_subs(self) -> bool:
-        # Toggle for burning the TRANSCRIPT as captions (clip._subtitles_vf). DEFAULT ON: transcript
-        # subs ship live with no operator action; music batches opt out per-batch (Batch.burn_subs=False).
-        # The on-screen RETENTION HOOK (m.hook) is a SEPARATE layer that burns regardless of this flag;
-        # this only adds the transcript on top. Only the explicit off-words "0"/"false"/"no"/"off"
-        # disable it; unset/blank/anything else stays ON. Mirrors isolate_vocals' default-on shape.
+        # Legacy env toggle — render no longer burns transcript captions (hook-only overlay since PR 994).
+        # Batch.burn_subs and this flag are ignored at render; the
+        # retention hook (m.hook) burns regardless. Kept for settings/doctor parity and any future
+        # opt-in path; only explicit off-words disable the registered default.
         return env_bool(os.getenv("FANOPS_BURN_SUBS"), default=True)
 
     @property
@@ -1132,6 +1131,20 @@ class Config:
         M4 30-min floor — byte-identical to today's behaviour. Mirrors concurrent_sources's
         explicit-on-words pattern. Set via FANOPS_REALISTIC_CADENCE."""
         return env_bool(os.getenv("FANOPS_REALISTIC_CADENCE"), default=False)
+
+    @property
+    def max_posts_per_account_per_day(self) -> int:
+        # Hard cap of queued slots per handle per operator-local day. Default 2 — IG/TT fan
+        # accounts get spam-flagged at the 2–3h-gap × 24h-open density (~8–12/day). 0 disables
+        # the cap (escape hatch). Negative or garbage env → default 2, never unlimited-by-typo.
+        raw = os.getenv("FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY")
+        if raw is None or not str(raw).strip():
+            return 2
+        try:
+            v = int(str(raw).strip())
+        except ValueError:
+            return 2
+        return v if v >= 0 else 2
 
     def account_window(self, handle: str) -> "tuple[int, int] | None":
         """M7 seam: the per-account daily posting window (open_hour, close_hour) in operator-local

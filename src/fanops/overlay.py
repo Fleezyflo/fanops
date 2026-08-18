@@ -6,7 +6,7 @@ build_ass() takes SOURCE-time segments ([{start,end,text}], the source transcrip
 window [clip_start, clip_end] in source time. Each segment is REBASED into clip time and any
 segment that does not overlap the window is dropped, so the .ass timeline starts at 0 and lines
 up with the cut clip. The file carries two styles — a bold centered SUBTITLE (bottom third,
-white + black outline for legibility) and a punchier HOOK (top third, larger) — and, when a hook
+white + black outline for legibility) and a punchier HOOK (centered Alignment 5, larger) — and, when a hook
 string is given, ONE hook Dialogue spanning the clip's first min(2.5, clip_len) seconds.
 
 subtitles_vf() returns the ffmpeg `-vf` token that burns the .ass (the caller chains it after the
@@ -22,10 +22,10 @@ from pathlib import Path
 
 # ASS colours are &HAABBGGRR (alpha+BGR, hex). White text + heavy black outline reads on ANY footage
 # without a coloured box — the old amber-on-scrim hook card looked like a template (AI slop), so the
-# hook now uses the same clean white-bold-outline treatment as the captions, just bigger and on top.
+# hook now uses the same clean white-bold-outline treatment as the captions, just bigger and centered.
 _WHITE = "&H00FFFFFF"
 _BLACK = "&H00000000"
-# Fade the opener in/out (milliseconds) so the first-~2s hook pops instead of hard-cutting.
+# Fade-out the opener (milliseconds). Fade-in is 0 — from opaque, not a dissolve-in (`\fad(0,200)`).
 _HOOK_FADE_MS = 200
 
 # Active captions (the "produced" short-form look — CapCut/Submagic style): show a FEW words at a
@@ -72,10 +72,10 @@ def _escape_text(text: str) -> str:
 
 
 # P1 T2 legibility guard (heuristic, fail-open). The hook burns white over a thick black outline (reads
-# on any footage), so the residual legibility risk is a hook too LONG to read in its ~2.5s top card. With
-# no font metrics available we estimate the rendered line width from a conservative em ratio and WARN —
+# on any footage), so the residual legibility risk is a hook too LONG to read in its ~2.5s centered card.
+# With no font metrics available we estimate the rendered line width from a conservative em ratio and WARN —
 # never block — when the line would need more than _MAX_HOOK_LINES to fit, or one unbreakable word
-# overflows the card. The ratios MUST track build_ass's hook style (fontsize + MarginL/R).
+# overflows the card. The ratios MUST track the shared HOOK style (fontsize + MarginL/R; Alignment 5, MarginV 0).
 _HOOK_EM_RATIO = 0.45
 _MAX_HOOK_LINES = 2
 _HOOK_FONTSIZE_RATIO = 0.072        # the CAP hook font ratio (big opener, ~138 at 1920 tall)
@@ -86,8 +86,8 @@ def _hook_fontsize(hook: str | None, width: int, height: int) -> int:
     """Largest hook font (<= the _HOOK_FONTSIZE_RATIO cap) that wraps `hook` to <=_MAX_HOOK_LINES lines
     within the usable card width, floored (_HOOK_FONTSIZE_FLOOR) so a long hook never shrinks to
     unreadable. A short hook keeps the big cap; a 5-6 word hook drops just enough to fit 2 lines -> no
-    3-line top-safe-area spill and no lost wording. PURE; build_ass AND hook_legibility_warnings size
-    from this so they always agree (the warning's ratios MUST track build_ass's hook style)."""
+    3-line spill and no lost wording. PURE; the shared HOOK style AND hook_legibility_warnings size
+    from this so they always agree (the warning's ratios MUST track the HOOK style: Alignment 5, MarginV 0)."""
     cap = max(44, int(round(height * _HOOK_FONTSIZE_RATIO)))
     text = (hook or "").strip()
     if not text:
@@ -113,7 +113,7 @@ def hook_legibility_warnings(hook: str | None, *, width: int, height: int) -> li
     warns: list[str] = []
     est_lines = int(math.ceil(len(text) * glyph / usable))
     if est_lines > _MAX_HOOK_LINES:
-        warns.append(f"hook '{text}' likely needs ~{est_lines} lines at {fontsize}px — may spill the top safe area")
+        warns.append(f"hook '{text}' likely needs ~{est_lines} lines at {fontsize}px — may spill a centered Alignment-5 card")
     longest = max((len(w) for w in text.split()), default=0)
     if longest * glyph > usable:
         warns.append(f"hook '{text}' has a word too wide ({longest} chars) for the {usable}px card")
@@ -190,14 +190,25 @@ def supercut_caption_events(seg: dict, span_start: float, span_end: float, assem
     return [(assembled_offset + s, assembled_offset + e, t) for s, e, t in local]
 
 
-def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: str | None = None,
-                       width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS",
-                       max_words: int = _CAPTION_MAX_WORDS) -> str:
-    """ASS for a supercut: transcript rebased onto the ASSEMBLED timeline (sum of span lengths).
-    Lines in the GAPS between spans are dropped. The HOOK (t=0) is unchanged from build_ass."""
-    assembled_len = max(0.0, sum(float(e) - float(s) for s, e in spans))
-    lines: list[str] = []
-    lines += [
+def _hook_style_line(font: str, hook: str | None, width: int, height: int) -> str:
+    """HOOK V4+ style: Alignment 5 (middle-centre), MarginV 0. libass ignores MarginV on the middle row."""
+    hook_fontsize = _hook_fontsize(hook, width, height)
+    return (f"Style: HOOK,{font},{hook_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
+            f"-1,0,0,0,100,100,0,0,1,4,2,5,60,60,0,1")
+
+
+def _hook_event(hook: str, duration: float) -> str:
+    """HOOK Dialogue starting at 0:00:00.00 with \\fad(0,200) — fade-in from opaque, 200ms out."""
+    hook_end = min(2.5, duration)
+    fade = f"{{\\fad(0,{_HOOK_FADE_MS})}}"
+    return f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}"
+
+
+def _ass_preamble(width: int, height: int, font: str, hook: str | None) -> list[str]:
+    """Shared [Script Info] + [V4+ Styles] + [Events] header. CAPTION Alignment 2; HOOK via _hook_style_line."""
+    cap_fontsize = max(48, int(round(height * 0.075)))   # BIG active caption, ~144 at 1920 tall
+    cap_margin_v = max(10, int(round(height * 0.16)))    # lower third, raised off the edge
+    return [
         "[Script Info]",
         "ScriptType: v4.00+",
         "WrapStyle: 0",
@@ -205,29 +216,29 @@ def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: st
         f"PlayResX: {width}",
         f"PlayResY: {height}",
         "",
-    ]
-    cap_fontsize = max(48, int(round(height * 0.075)))
-    cap_margin_v = max(10, int(round(height * 0.16)))
-    hook_fontsize = _hook_fontsize(hook, width, height)
-    hook_margin_v = max(10, int(round(height * 0.14)))
-    lines += [
         "[V4+ Styles]",
         ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
          "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
          "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"),
         (f"Style: CAPTION,{font},{cap_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
          f"-1,0,0,0,100,100,0,0,1,4,2,2,80,80,{cap_margin_v},1"),
-        (f"Style: HOOK,{font},{hook_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,1,4,2,8,60,60,{hook_margin_v},1"),
+        _hook_style_line(font, hook, width, height),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
+
+
+def build_supercut_ass(transcript, *, spans: list[tuple[float, float]], hook: str | None = None,
+                       width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS",
+                       max_words: int = _CAPTION_MAX_WORDS) -> str:
+    """ASS for a supercut: transcript rebased onto the ASSEMBLED timeline (sum of span lengths).
+    Lines in the GAPS between spans are dropped. The HOOK (t=0) is the shared helper — same as build_ass."""
+    assembled_len = max(0.0, sum(float(e) - float(s) for s, e in spans))
+    lines = _ass_preamble(width, height, font, hook)
     events: list[str] = []
     if hook and hook.strip():
-        hook_end = min(2.5, assembled_len)
-        fade = f"{{\\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"
-        events.append(f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}")
+        events.append(_hook_event(hook, assembled_len))
     cap_fade = f"{{\\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"
     offset = 0.0
     for span_start, span_end in spans:
@@ -250,55 +261,15 @@ def build_ass(segments, *, hook: str | None = None, clip_start: float, clip_end:
     (source time). `segments` is the SOURCE-time transcript: list[{start,end,text[,words]}]. Each
     segment is rebased to clip time, dropped if it does not overlap, and rendered as ACTIVE CAPTIONS
     (a few words at a time, synced to speech — see caption_events), NOT one bulk line. If `hook` is a
-    non-empty string, one clean top-third HOOK line (the retention opener) spans the clip's first
-    min(2.5, clip_len) seconds. The default clip path passes the moment's retention hook; the
-    transcript captions are layered in only when the caller opts in (clip._subtitles_vf / burn_subs)."""
+    non-empty string, one centered HOOK line (Alignment 5, MarginV 0, \\fad(0,200); the retention
+    opener) spans the clip's first min(2.5, clip_len) seconds. The default clip path passes the
+    moment's retention hook; the transcript captions are never layered at render
+    (hook-only overlay since PR 994); only the retention hook burns when present."""
     clip_len = max(0.0, clip_end - clip_start)
-
-    lines: list[str] = []
-    # --- [Script Info] : PlayRes drives libass coordinate scaling; must match the render size ---
-    lines += [
-        "[Script Info]",
-        "ScriptType: v4.00+",
-        "WrapStyle: 0",
-        "ScaledBorderAndShadow: yes",
-        f"PlayResX: {width}",
-        f"PlayResY: {height}",
-        "",
-    ]
-    # --- [V4+ Styles] : a big bold CAPTION (active, lower-third) and a punchier HOOK (top third) ---
-    # Format columns are the standard libass V4+ set; field order is load-bearing.
-    cap_fontsize = max(48, int(round(height * 0.075)))   # BIG active caption, ~144 at 1920 tall
-    cap_margin_v = max(10, int(round(height * 0.16)))    # sit it in the lower third, raised off the edge
-    hook_fontsize = _hook_fontsize(hook, width, height)  # auto-fit: big for short hooks, shrinks long ones to 2 lines
-    hook_margin_v = max(10, int(round(height * 0.14)))   # sit it in the top third, off the edge
-    lines += [
-        "[V4+ Styles]",
-        ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
-         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
-         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"),
-        # CAPTION: BIG white BOLD text, thick black outline + drop shadow (reads on any footage),
-        # Alignment=2 (bottom-centre), lower-third margin. Outline=4 thick, Shadow=2.
-        (f"Style: CAPTION,{font},{cap_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,1,4,2,2,80,80,{cap_margin_v},1"),
-        # HOOK: same clean BIG white BOLD + thick black outline as the caption (NO amber, NO box —
-        # that read as a template), Alignment=8 (top-centre), top-third margin. Outline=4, Shadow=2.
-        (f"Style: HOOK,{font},{hook_fontsize},{_WHITE},{_WHITE},{_BLACK},{_BLACK},"
-         f"-1,0,0,0,100,100,0,0,1,4,2,8,60,60,{hook_margin_v},1"),
-        "",
-    ]
-    # --- [Events] : the optional hook card first, then the active-caption groups ---
-    lines += [
-        "[Events]",
-        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-    ]
+    lines = _ass_preamble(width, height, font, hook)
     events: list[str] = []
     if hook and hook.strip():
-        hook_end = min(2.5, clip_len)
-        fade = f"{{\\fad({_HOOK_FADE_MS},{_HOOK_FADE_MS})}}"   # ASS \fad(in,out) ms — produced pop
-        events.append(
-            f"Dialogue: 0,{_fmt_ts(0.0)},{_fmt_ts(hook_end)},HOOK,,0,0,0,,{fade}{_escape_text(hook)}"
-        )
+        events.append(_hook_event(hook, clip_len))
     cap_fade = f"{{\\fad({_CAP_FADE_IN_MS},{_CAP_FADE_OUT_MS})}}"   # snappy active-caption pop-in
     for seg in segments:
         for ev_start, ev_end, text in caption_events(seg, clip_start, clip_end, max_words=max_words):
@@ -364,7 +335,7 @@ def ffmpeg_has_textfilter() -> bool:
 
 def burn_hook_only(base_clip_path: str, out_path: str, hook: str, *,
                    width: int = 1080, height: int = 1920, font: str = "Arial Unicode MS") -> bool:
-    """Burn ONLY a hook (top-third) onto an already-rendered base clip -> out_path. Returns True if
+    """Burn ONLY a hook (centered Alignment 5, MarginV 0, \\fad(0,200)) onto an already-rendered base clip -> out_path. Returns True if
     the hook was burned, False if it FAILED OPEN (no text filter or empty hook) — in which case
     out_path is a byte copy of the base clip (the caller still gets a usable per-account file).
     Cheap second pass for per-account creative variation: the base reframe+subtitle render is done

@@ -11,21 +11,21 @@
     {
       "evidence": "os.getenv",
       "kind": "computed_env_key",
-      "line": 1261,
+      "line": 1274,
       "module": "fanops.config",
       "why": "env key is not a string literal; the variable name is not statically known"
     },
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 281,
+      "line": 291,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     },
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 301,
+      "line": 311,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     }

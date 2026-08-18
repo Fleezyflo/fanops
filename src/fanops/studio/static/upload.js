@@ -89,7 +89,6 @@
               if (extra) {
                 if (extra.batch_name) fd.append("batch_name", extra.batch_name);
                 (extra.target_accounts || []).forEach(function (h) { fd.append("target_accounts", h); });
-                if (extra.no_subs) fd.append("no_subs", "1");
               }
               return postFinalize(fd);
             });
@@ -103,8 +102,7 @@
     var el = form(); if (!el) return;
     var extra = {
       batch_name: (el.querySelector('[name="batch_name"]') || {}).value || "",
-      target_accounts: Array.prototype.map.call(el.querySelectorAll('[name="target_accounts"]:checked'), function (c) { return c.value; }),
-      no_subs: !!(el.querySelector('[name="no_subs"]') && el.querySelector('[name="no_subs"]').checked)
+      target_accounts: Array.prototype.map.call(el.querySelectorAll('[name="target_accounts"]:checked'), function (c) { return c.value; })
     };
     setProgress(0, "Preparing…");
     var chain = Promise.resolve();

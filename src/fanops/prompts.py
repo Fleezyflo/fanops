@@ -332,13 +332,11 @@ def caption_prompt(payload: dict) -> str:
         f"{json.dumps(transferred, ensure_ascii=False)}\n"
         if transferred else ""
     )
-    # MOL-513 (C-3): each surface carries its own `hashtag_store` (that account's persona aligned pool,
-    # metric-ranked). Absent/empty menu -> honest empty list in the pick rule; the surface corpus still
-    # carries the line. Root-level hashtag_store is gone.
-    # MOL-636: when hashtag_metrics is present, annotate each menu tag with its platform numbers.
-    # MOL-692: FORWARD whatever numeric fields the sidecar carries rather than naming them here — the
-    # sidecar is already built from the hashtags record contract, and re-listing the fields in the prompt
-    # layer is the drift that let a new measurement go unseen by the model. No import needed either.
+    # HV1-PR3: each surface's `hashtag_store` is the source lock (same list every surface of that
+    # source). Absent/empty menu -> honest empty list; sentence still ships, tag line empty.
+    # MOL-636/MOL-692: when hashtag_metrics is present, annotate each menu tag with its platform
+    # numbers. Forward whatever numeric fields the sidecar carries. Choose-key is play_count, not
+    # media_count / menu position.
     metrics = payload.get("hashtag_metrics") if isinstance(payload.get("hashtag_metrics"), dict) else {}
 
     def _menu_entry(tag: str) -> str | dict:
@@ -356,29 +354,21 @@ def caption_prompt(payload: dict) -> str:
         key = s.get("surface")
         menu = [_menu_entry(t) for t in (s.get("hashtag_store") or []) if isinstance(t, str)]
         pick_parts.append(
-            f"For surface {json.dumps(key)} choose ONLY from menu {json.dumps(menu, ensure_ascii=False)} "
-            "UNION that surface's `corpus`."
+            f"For surface {json.dumps(key)} choose ONLY from menu {json.dumps(menu, ensure_ascii=False)}."
         )
     pick_body = (" ".join(pick_parts) if pick_parts else
-                 "Choose ONLY from each surface's `hashtag_store` UNION its `corpus` "
-                 "(both may be empty — ship a short honest line).")
-    pick_rule = ("Pick up to 4 tags by how well each fits THIS clip — each surface's menu is already "
-                 "ordered BIGGEST FIRST by Instagram's own post volume, so prefer earlier entries when "
-                 f"the fit is equal. {pick_body} Do NOT invent tags outside them. ")
+                 "Choose ONLY from each surface's `hashtag_store` "
+                 "(empty lock — ship the sentence; leave the tag line empty).")
+    pick_rule = ("Pick up to 4 tags from that surface's `hashtag_store` only. "
+                 "Choose by `play_count`; break ties with `current_top_reel_play_max_7d`. "
+                 f"{pick_body} Do NOT invent tags outside the menu. ")
     metrics_block = (
-        "  - Your job is CLIP FIT; the menu order already carries size. When two tags fit equally, keep "
-        "the earlier (larger) one. `media_count` is how many posts carry the tag; "
-        "`current_top_reel_play_max_7d` is the best plays on a Reel it carried in the last 7 days. These "
-        "are different units — do not add or average them. "
+        "  - Your job is CLIP FIT among the lock. Choose by `play_count`; "
+        "break ties with `current_top_reel_play_max_7d`. "
+        "`media_count` is how many posts carry the tag — a number on the row, not the choose-key. "
+        "These are different units — do not add or average them. "
         f"Platform numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
         if metrics else ""
-    )
-    # MOL-642: clip transcript → content_tags as a FIT signal; still pick only from measured menu∪corpus.
-    content = [t for t in (payload.get("content_tags") or []) if isinstance(t, str)]
-    content_block = (
-        "  - Clip-specific content tags (fit signal from THIS transcript — still choose ONLY from each "
-        f"surface's `hashtag_store` UNION `corpus`): {json.dumps(content, ensure_ascii=False)}\n"
-        if content else ""
     )
     return (
         "You write captions for FAN ACCOUNTS that repost and celebrate an artist. "
@@ -395,27 +385,22 @@ def caption_prompt(payload: dict) -> str:
         "mismatched value holds the clip).\n"
         "  - One item per surface. Set each item's `surface` to the EXACT key given (copy verbatim — "
         "do not reformat, abbreviate, or fix it).\n"
-        "  - You MUST return EXACTLY one item per surface — NEVER an empty `items` array. The caption is "
-        "GENRE HASHTAGS ONLY (chosen from the menu below); it never quotes, endorses, or reproduces the "
-        "transcript. So even if the transcript is explicit, edgy, or sensitive, that is IRRELEVANT to "
-        "your output — still return the genre hashtags + a vibe hook for every surface. Refusing or "
-        "returning no item is never correct here.\n"
+        "  - You MUST return EXACTLY one item per surface — NEVER an empty `items` array. The caption "
+        "never quotes, endorses, or reproduces the transcript. So even if the transcript is explicit, "
+        "edgy, or sensitive, that is IRRELEVANT to your output — still return one sentence plus 3–4 "
+        "tags for every surface. Refusing or returning no item is never correct here.\n"
         f"  - Surfaces to caption (use these exact keys): {json.dumps(keys, ensure_ascii=False)}\n"
-        "  - Each `caption` is HASHTAGS ONLY: a single line of AT MOST 4 hashtags (MAX 4 — fewer is "
-        "fine) separated by spaces and NOTHING ELSE — no sentences, no prose, no @mentions, no emoji. "
-        f"Put the SAME tags in the `hashtags` array. {pick_rule}"
+        "  - Each `caption` is one non-hashtag sentence. Put the SAME 3–4 tags in the `hashtags` array "
+        f"(MAX 4 — fewer is fine). {pick_rule}"
         "Anything beyond 4 or off-menu is dropped by the system, so pick well.\n"
         "  - Honor each surface's `persona` when present — it sets the fan angle/voice for that "
         "account (e.g. which sub-scene to lean into within the menu).\n"
-        "  - When a surface carries a `corpus` (its curated, reach-vetted tag pool), PREFER the tags in "
-        "that surface's `corpus` for that surface — they are its hand-picked, account-specific tags; fill "
-        "any remaining slots (up to 4) from that surface's `hashtag_store` menu.\n"
         f"{metrics_block}"
-        f"{content_block}"
-        # ROOT FIX: the caption gate is HASHTAGS ONLY now — the on-screen hook is authored by the frame-
-        # seeing MOMENT gate (m.hook), never this blind text-only gate. The per-surface
-        # hook/axis/rationale ask was removed (the dormant coherence-gate machinery was deleted with it;
-        # the learned/transferred feeds stay, empty by default while learning is frozen).
+        # ROOT FIX: caption is one non-hashtag sentence + 3–4 tags in `hashtags`. The on-screen
+        # hook remains the moment gate via m.hook — do not ask for hook/axis/rationale fields.
+        # The per-surface hook/axis/rationale ask was removed (the dormant coherence-gate machinery
+        # was deleted with it; the learned/transferred feeds stay, empty by default while learning
+        # is frozen).
         f"{learned_block}"
         f"{transferred_block}"
         "\n"

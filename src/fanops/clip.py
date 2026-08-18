@@ -10,7 +10,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
-from fanops.bands import band_for, TALK
+from fanops.bands import TALK
 from fanops import overlay, frames, framing
 from fanops.log import get_logger
 from fanops.errors import ToolchainMissingError
@@ -687,19 +687,9 @@ def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: 
 
     READ-ONLY BY CONSTRUCTION: calls overlay.build_ass / build_supercut_ass, never overlay.write_ass."""
     m = led.moments[moment_id]
-    src = led.sources[m.parent_id]
     hook = ((m.hook or "").strip() or None)
-    # Subtitle burn follows GLOBAL cfg.burn_subs (default ON), with a PER-BATCH override (Batch.burn_subs): a music
-    # batch can skip lyric subs (burn_subs=False) while talk stays on, or vice-versa. None override -> global.
-    batch = led.get_batch(src.batch_id) if getattr(src, "batch_id", None) else None
-    burn = batch.burn_subs if (batch is not None and batch.burn_subs is not None) else cfg.burn_subs
-    raw = src.transcript or []
-    if burn:
-        from fanops.transcribe import trusted_segments
-        segments = trusted_segments(raw, src_lang=src.language)
-    else:
-        segments = []
-    if not hook and not segments:                        # no hook, no opted-in transcript -> clean clip
+    segments: list = []                                # transcript captions never burned (hook-only since PR 994)
+    if not hook and not segments:                        # no hook -> clean clip (transcript never burned)
         return None, False                               # nothing wanted -> not a failure
     if not overlay.ffmpeg_has_textfilter():
         # Text was asked for but the toolchain can't burn it. Don't block the clip — log once and
@@ -740,11 +730,10 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
         watch-through (NOT a transcript). Burned whenever the moment has a hook. SUPPRESSED here when
         a per-account burn_hook_only pass burns a per-surface hook, and
         burning the moment hook too would STACK two hooks on one clip.
-      • the TRANSCRIPT captions — gated by burn_subs (default ON). Showing what the audio says is
-        redundant (the viewer hears it) and only as good as the auto-transcription; useful for
-        talking-head content, wrong for music — music batches opt out via Batch.burn_subs=False.
+      • the TRANSCRIPT captions — never burned (hook-only overlay since PR 994). The retention hook
+        still burns regardless.
     Returns (vf_fragment_or_None, hook_burn_failed). hook_burn_failed is True when on-screen text WAS
-    wanted (a hook, or opted-in transcript) but could NOT be burned — ffmpeg lacks the text filter, or
+    wanted (a hook) but could NOT be burned — ffmpeg lacks the text filter, or
     build_ass yielded empty — so render_moment flags the clip (F9) instead of shipping a fine-looking
     clip that silently lost its text. False when there was nothing to burn (clean clip) or it burned.
 

@@ -59,7 +59,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | `FANOPS_ASR_MODEL` | duration-aware | faster-whisper model pin; unset = large-v3→medium→… by timeout budget. A pin wins verbatim and DISABLES the timeout downgrade — the 2026-07-12 subtitle-garbage incident was a stale `small` pin | .env |
 | `FANOPS_ASR_LANGUAGE` | `en,ar` | Comma list enables faster-whisper `multilingual=True` (per-segment detection over all languages — NOT restricted to listed langs); a single value FORCES that language | .env |
 | `FANOPS_ISOLATE_VOCALS` | on | Demucs beat-stripping before Whisper | .env |
-| `FANOPS_BURN_SUBS` | on | Burn transcript captions (the on-screen hook is a separate layer) | .env |
+| `FANOPS_BURN_SUBS` | on | Legacy transcript-caption toggle (render is hook-only since PR 994; flag ignored at render) | .env |
 | `FANOPS_SUBTITLE_FONT` | `Arial Unicode MS` | .ass subtitle font | .env |
 | `FANOPS_IMPACT_CUT` | off | Impact-cut stitch producer | .env |
 | `FANOPS_INTRO_TEASE` | off | Intro-tease stitch producer | .env |
@@ -130,6 +130,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 |---|---|---|---|
 | `FANOPS_OPERATOR_TZ` | `UTC` | Operator timezone for scheduling/buckets (fails closed to UTC) | .env |
 | `FANOPS_REALISTIC_CADENCE` | off | 2–3h jittered cadence band | .env |
+| `FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY` | 2 | Hard cap of queued slots per handle per operator-local day (Approve + Re-spread). `0` = unlimited. Stops a bulk-approve from laying 8–12 posts/day on a 2–3h gap × 24h window | .env |
 | `FANOPS_PUBLISH_LEAD_MINUTES` | 0 | Editorial lead window (clamped ≥0) | .env |
 | `FANOPS_CONCURRENT_SOURCES` | off | Parallel per-source pipeline | .env |
 | `FANOPS_CONCURRENT_WORKERS` | 4 | Concurrency pool size (clamped ≥1) | .env |

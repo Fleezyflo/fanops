@@ -3,19 +3,22 @@
 into the <=4-tag line a post ships.
 
 Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape). RANK is
-SIZE-FIRST (`size_rank_key`, MOL-692): Instagram's own `media_count` DESC, then `current_top_reel_play_max_7d`
-as a tie-break within equal size. The Top-grid MEDIANS (`play_count`/`like_count`) remain stored evidence
-and still admit a legacy row, but they are no longer the cross-tag order — under them a 52k-post tag
-outranked a 20.9M-post tag by ~36x. Nothing here blends the two axes into one invented score.
+banded (`size_rank_key`, MOL-977): mid (10k–2M) first, then small, then mega/untrusted, then unknown.
+INT32-saturated `media_count` is untrusted mega, not infinite gold. Within a band: Instagram's own
+`media_count` DESC, then `current_top_reel_play_max_7d` as a tie-break. The Top-grid MEDIANS
+(`play_count`/`like_count`) remain stored evidence and still admit a legacy row, but they are not the
+cross-tag order. Nothing here blends the two axes into one invented score.
 The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
 
-What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, the
-persona's curated corpus leads but may not monopolise the line (`_CORPUS_LEAD_MAX`), graded-LRU rotation,
-and a region tag on Arabic-language clips (`_ARABIC`).
+What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, at most
+one mega/untrusted slot (`MEGA_SLOT_MAX`), mid-band order that splits IG (size-then-trend) from TikTok
+(trend-then-size), the persona's curated corpus leads but may not monopolise the line
+(`_CORPUS_LEAD_MAX`), graded-LRU rotation, and a region tag on Arabic-language clips (`_ARABIC`).
+`cfg is None` / no measurements skips mega cap and the platform split (byte-identical).
 
-Membership is the cache UNION the surface's corpus (content may LABEL a measured tag for provenance):
-a tag the model invents cannot ship, and a tag nobody measured cannot ship either. A cold cache therefore yields an empty line, not a
-padded one."""
+Membership is store ∪ corpus (content may LABEL a measured tag for provenance): invented tags die;
+unmeasured non-corpus tags die; unmeasured corpus tags survive; empty store AND empty corpus
+(and non-AR) → empty line."""
 from __future__ import annotations
 import json, re
 from fanops.models import Platform
@@ -24,8 +27,13 @@ from fanops.models import Platform
 # collection, but NO LONGER the cross-tag rank — see `size_rank_key` (MOL-692).
 RANK_FIELDS = ("play_count", "like_count")
 METRIC_FIELD = "play_count"        # which median `_metric` prefers, for provenance/UI honesty only
-SIZE_FIELD = "media_count"                          # primary rank: Instagram's own tag volume
+SIZE_FIELD = "media_count"                          # within-band rank: Instagram's own tag volume
 TREND_FIELD = "current_top_reel_play_max_7d"        # secondary rank: current Reels popularity
+# Volume bands for `size_rank_key` (MOL-977). Compare via `tag_size` so 2147483647.0 matches.
+MEGA_MEDIA_FLOOR = 2_000_000
+MID_MEDIA_FLOOR = 10_000
+INT32_MEDIA_COUNT = 2_147_483_647
+MEGA_SLOT_MAX = 1                 # shipped line: at most one mega/untrusted (MOL-978)
 
 # THE record shape Layer A persists (MOL-691). `refresh_store` seeds its working cache from
 # `load_measurements` and then rewrites hashtags.json WHOLE, so a field absent from these tuples is
@@ -99,8 +107,9 @@ def _rank_field(rec) -> str | None:
 
 
 def tag_size(rec) -> float | None:
-    """SCALE: Instagram's own `media_count` — lifetime posts carrying the tag. The PRIMARY rank (MOL-692).
-    None when volume was never served; a volumeless tag is not "small", it is unmeasured on this axis."""
+    """SCALE: Instagram's own `media_count` — lifetime posts carrying the tag. Within-band rank
+    after `size_band` (MOL-977). None when volume was never served; a volumeless tag is not "small",
+    it is unmeasured on this axis."""
     if not isinstance(rec, dict): return None
     v = _num(rec.get("media_count"))
     return v if (v or 0) > 0 else None
@@ -108,8 +117,8 @@ def tag_size(rec) -> float | None:
 
 def tag_trend(rec) -> float | None:
     """CURRENT REELS POPULARITY: max plays among Top rows Instagram dated inside 7 days. A strictly
-    SECONDARY tie-break (MOL-692) — it refines the size order and can never promote a smaller tag over a
-    larger one. Different unit from `tag_size`; the two are never summed or blended."""
+    SECONDARY tie-break — it refines the size order WITHIN a band and cannot promote a smaller tag
+    over a larger one in the same band. Different unit from `tag_size`; the two are never summed or blended."""
     if not isinstance(rec, dict): return None
     v = _num(rec.get("current_top_reel_play_max_7d"))
     return v if (v or 0) > 0 else None
@@ -122,19 +131,96 @@ def has_evidence(rec) -> bool:
     return tag_size(rec) is not None or tag_trend(rec) is not None or _metric(rec) is not None
 
 
+def size_band(rec) -> str:
+    """Volume band for one measurement record. Compare via `tag_size` so INT32 floats match.
+
+    mid:        MID_MEDIA_FLOOR <= size < MEGA_MEDIA_FLOOR
+    small:      0 < size < MID_MEDIA_FLOOR
+    mega:       MEGA_MEDIA_FLOOR <= size < INT32_MEDIA_COUNT
+    untrusted:  size >= INT32_MEDIA_COUNT
+    unknown:    missing / unparseable
+    """
+    size = tag_size(rec)
+    if size is None:
+        return "unknown"
+    if size >= INT32_MEDIA_COUNT:
+        return "untrusted"
+    if size >= MEGA_MEDIA_FLOOR:
+        return "mega"
+    if size >= MID_MEDIA_FLOOR:
+        return "mid"
+    return "small"
+
+
+# mid first, then small, then mega/untrusted, then unknown. mega and untrusted share a rank.
+_BAND_RANK = {"mid": 0, "small": 1, "mega": 2, "untrusted": 2, "unknown": 3}
+
+
 def size_rank_key(tag: str, rec) -> tuple:
-    """THE menu order (MOL-692): size first, lexicographic — NOT a weighted score.
+    """THE menu order (MOL-977): band first, then size-then-trend within the band — NOT a weighted score.
 
-    1. a positive `media_count` outranks every record lacking one (plays cannot stand in for volume);
-    2. `media_count` DESC — the dominant ordering;
-    3. `current_top_reel_play_max_7d` DESC — a tie-break WITHIN equal size only;
-    4. tag string, so the order is total and stable.
+    1. band: mid, then small, then mega/untrusted, then unknown;
+    2. a positive `media_count` still outranks a volumeless peer (plays cannot stand in for volume);
+    3. `media_count` DESC — the dominant ordering inside a band;
+    4. `current_top_reel_play_max_7d` DESC — a tie-break WITHIN equal size only;
+    5. tag string, so the order is total and stable.
 
-    The old order was the MEDIAN of a handful of Top posts, under which a 52k-post tag outranked a
-    20.9M-post tag by ~36x. Volumeless-but-evidenced tags sort after every sized tag and use their 7-day
-    plays only among themselves."""
+    INT32-saturated `media_count` is untrusted mega, not the largest gold. Volumeless-but-evidenced
+    tags sort last (unknown) and use their 7-day plays only among themselves."""
     size = tag_size(rec) or 0.0
-    return (0 if size > 0 else 1, -size, -(tag_trend(rec) or 0.0), tag)
+    return (_BAND_RANK[size_band(rec)], -size, -(tag_trend(rec) or 0.0), tag)
+
+
+def play_rank_key(tag, rec) -> tuple:
+    """Lock order: play_count DESC, then 7-day reel max DESC, then tag. Plays only — not `_metric`/likes/size."""
+    rec = rec if isinstance(rec, dict) else {}
+    plays = _num(rec.get("play_count")) or 0.0
+    trend = _num(rec.get("current_top_reel_play_max_7d")) or 0.0
+    return (-plays, -trend, _norm(tag) if isinstance(tag, str) else "")
+
+
+def _scrape_number(rec) -> float | None:
+    """Positive scrape meter: play_count or like_count. graph_metric is a separate axis."""
+    if not isinstance(rec, dict):
+        return None
+    for k in RANK_FIELDS:
+        v = _num(rec.get(k))
+        if v is not None and v > 0:
+            return v
+    return None
+
+
+def lock_from_pile(names, measurements, n=15) -> list[str]:
+    """First-n names that clear BOTH meters (scrape number AND graph_metric > 0), input order.
+
+    `graph_metric` is in-memory on the rec — never a hashtags.json field. Do not sort by
+    play_rank_key: the pile arrives in LLM order and the lock keeps that order."""
+    recs = measurements if isinstance(measurements, dict) else {}
+    kept: list[str] = []
+    for name in _dedupe_norm(names):
+        rec = recs.get(name)
+        if not isinstance(rec, dict):
+            continue
+        scrape = _scrape_number(rec)
+        graph = _num(rec.get("graph_metric"))
+        if scrape is None or scrape <= 0 or graph is None or graph <= 0:
+            continue
+        kept.append(name)
+        if len(kept) >= n:
+            break
+    return kept
+
+
+def ship_from_lock(picks, lock, n=4) -> list[str]:
+    """Caption ship: picks ∩ lock, pick order, cap n. Empty lock → []. No floors, no backfill."""
+    allowed = set(_dedupe_norm(lock))
+    out: list[str] = []
+    for t in _dedupe_norm(picks):
+        if t in allowed:
+            out.append(t)
+        if len(out) >= n:
+            break
+    return out
 
 
 def load_measurements(cfg) -> dict[str, dict]:
@@ -183,9 +269,8 @@ def load_measurements(cfg) -> dict[str, dict]:
 
 
 def ranked_tags(measurements: dict[str, dict]) -> list[str]:
-    """The cache as one ordered menu, SIZE-FIRST: `media_count` DESC, then the 7-day Top-Reel max as a
-    tie-break, then tag (`size_rank_key`). `vet_hashtags` takes its whole metric rank from this order, so
-    this function is where "which tags are the biggest" is decided."""
+    """The cache as one ordered menu via `size_rank_key` (band, then size, then 7-day trend, then tag).
+    `vet_hashtags` takes its whole metric rank from this order."""
     return sorted(measurements, key=lambda t: size_rank_key(t, measurements[t]))
 
 
@@ -224,6 +309,75 @@ def content_tag_candidates(text: str | None, *, max_n: int = 6) -> list[str]:
     return out
 
 
+def _mid_rank_key(tag: str, rec, platform: Platform, outcome=None) -> tuple:
+    """Within the mid band: own-outcome p50 when n≥K; else IG size-then-trend / TT trend-then-size."""
+    from fanops.tag_outcomes import qualifies
+    if qualifies(outcome):
+        return (-float(outcome["p50"]), *size_rank_key(tag, rec), -(tag_size(rec) or 0.0))
+    if platform is Platform.tiktok:
+        return (-(tag_trend(rec) or 0.0), -(tag_size(rec) or 0.0), tag)
+    return size_rank_key(tag, rec)
+
+
+def _selection_rank(tag: str, rec, platform: Platform, outcome=None) -> tuple:
+    """Metric order for one tag. n≥K → p50 DESC, then size_rank_key, then media_count. Else size/band."""
+    from fanops.tag_outcomes import qualifies
+    if qualifies(outcome):
+        return (0, -float(outcome["p50"]), *size_rank_key(tag, rec), -(tag_size(rec) or 0.0))
+    return (1, 0.0, *_mid_rank_key(tag, rec, platform), 0.0)
+
+
+def _account_outcomes(cfg, platform: Platform, account) -> dict:
+    """This account+platform's outcome rows, or {}. Fail-open (load never raises)."""
+    if cfg is None or not account or not str(account).strip():
+        return {}
+    from fanops.tag_outcomes import load_tag_outcomes
+    table = load_tag_outcomes(cfg)
+    by_acc = table.get(platform.value) if isinstance(table, dict) else None
+    if not isinstance(by_acc, dict):
+        return {}
+    rows = by_acc.get(str(account))
+    return rows if isinstance(rows, dict) else {}
+
+
+def _compose_shipped(candidates, platform: Platform, measurements: dict, max_tags: int,
+                     outcomes=None) -> list[str]:
+    """Slot hygiene after membership/sort/corpus-lead: mega/untrusted ≤ MEGA_SLOT_MAX; leftover
+    slots prefer mid. Mid-band order is platform-split. No semantic tag-name list — `#love` is
+    limited because it is INT32/mega, not because it is named `#love`."""
+    def rec(t): return measurements.get(t) or {}
+    def band(t): return size_band(rec(t))
+    def oc(t): return (outcomes or {}).get(t)
+    uniq: list[str] = []; seen: set[str] = set()
+    for t in candidates:
+        if t and t not in seen:
+            seen.add(t); uniq.append(t)
+    mid_pos = [i for i, t in enumerate(uniq) if band(t) == "mid"]
+    mids = sorted((uniq[i] for i in mid_pos), key=lambda t: _mid_rank_key(t, rec(t), platform, oc(t)))
+    for i, t in zip(mid_pos, mids):
+        uniq[i] = t
+    out: list[str] = []; leftover: list[str] = []; mega_n = 0
+    for t in uniq:
+        magnet = band(t) in ("mega", "untrusted")
+        if len(out) < max_tags and not (magnet and mega_n >= MEGA_SLOT_MAX):
+            out.append(t)
+            if magnet: mega_n += 1
+        else:
+            leftover.append(t)
+    if len(out) < max_tags:
+        prefer = [t for t in leftover if band(t) == "mid"]
+        rest = [t for t in leftover if band(t) not in ("mid", "mega", "untrusted")]
+        magnets = [t for t in leftover if band(t) in ("mega", "untrusted")]
+        for t in prefer + rest + (magnets if mega_n < MEGA_SLOT_MAX else []):
+            if len(out) >= max_tags: break
+            if t in out: continue
+            if band(t) in ("mega", "untrusted"):
+                if mega_n >= MEGA_SLOT_MAX: continue
+                mega_n += 1
+            out.append(t)
+    return out[:max_tags]
+
+
 def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
     """MOL-76: drop any content-derived candidate that trips brand_risk_flag — the SAME off-brand guard
     caption.py runs on the model's caption/hook — BEFORE it can join the membership or win the content
@@ -239,23 +393,34 @@ def _screen_content(content_norm: list[str], cfg=None) -> list[str]:
 def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | None = None,
                  max_tags: int = 4, *, store: list[str] | None = None,
                  corpus: list[str] | None = None, content: list[str] | None = None,
-                 cfg=None, recent: list[str] | None = None) -> list[str]:
+                 cfg=None, recent: list[str] | None = None, account=None) -> list[str]:
     """Return at most `max_tags` tags for one surface, composed from PLATFORM-MEASURED material only.
 
     `store` is the measurement cache as an ordered menu (`ranked_tags(load_measurements(cfg))`) — it is
     both the membership set and the rank. `corpus` is the surface's derived per-persona pool; it JOINS the
     membership (a corpus tag is by construction already measured, but joining keeps the gate honest if a
-    cache entry expires between derivation and selection) and leads the line. A tag the model invented is
-    in neither set and dies here.
+    cache entry expires between derivation and selection) and leads the line. Invented tags die;
+    unmeasured non-corpus tags die; unmeasured corpus tags survive.
 
     Order: corpus tier, then the clip's own picks, then graded LRU (`recent`, oldest-first — never-used
-    leads), then the platform metric rank. Floors take the TAIL slots so the corpus/metric lead survives:
+    leads), then the platform metric rank. After sort + corpus-lead cap: when `cfg` has measurements, at most `MEGA_SLOT_MAX` mega/untrusted tags occupy the shipped line and leftover slots prefer mid; within mid, IG keeps size-then-trend and TikTok prefers `TREND_FIELD` then size. `cfg is None` / empty measurements skip that layer (byte-identical). Floors take the TAIL slots so the corpus/metric lead survives:
     one `_ARABIC` tag on an Arabic-language clip. Backfill is corpus -> the measured menu (content is preference only).
+    Optional `account=`: when that account+platform has n≥OUTCOME_MIN_N for a tag, metric rank is p50
+    DESC then `size_rank_key`. `account=None` is the size path (byte-identical).
 
-    Cold cache + no corpus -> an empty line. That is the honest floor: there is no hand-ranked pool and no
-    discovery pad left to invent reach with."""
+    Empty store AND empty corpus (and non-AR) -> an empty line. That is the honest floor: there is no
+    hand-ranked pool and no discovery pad left to invent reach with."""
     corpus_norm = _dedupe_norm(corpus)
     store_norm = _dedupe_norm(store)                   # the measured menu, already metric-ranked
+    acct_out = _account_outcomes(cfg, platform, account)
+    measurements = None
+    if acct_out and cfg is not None:
+        try:
+            measurements = load_measurements(cfg) or {}
+        except OSError:
+            measurements = {}
+        store_norm.sort(key=lambda t: _selection_rank(
+            t, measurements.get(t) or {}, platform, acct_out.get(t)))
     # MOL-635 residual / MOL-642 tighten: content is a FIT signal among MEASURED tags only
     # (store ∪ corpus). Unmeasured ASR tokens must not pad a cold/empty line (no content floor).
     measured = set(store_norm) | set(corpus_norm)
@@ -317,7 +482,22 @@ def vet_hashtags(tags: list[str] | None, platform: Platform, language: str | Non
         if len(kept) >= max_tags: break
         if h not in seen:
             seen.add(h); kept.append(h)
-    return kept[:max_tags]
+    # MOL-978: mega ≤ 1 and IG/TT mid split. Fail-open when cfg/measurements are missing so
+    # clip-signal tests (cfg=None) stay byte-identical. `platform` is read here.
+    # load_measurements never raises; OSError covers monkeypatched/unreadable cache (persona_facts).
+    if measurements is None:
+        try:
+            measurements = {} if cfg is None else (load_measurements(cfg) or {})
+        except OSError:
+            measurements = {}
+    if not measurements:
+        return kept[:max_tags]
+    pool = list(kept)
+    seen_p = set(pool)
+    for h in corpus_norm + store_norm:
+        if h not in seen_p:
+            seen_p.add(h); pool.append(h)
+    return _compose_shipped(pool, platform, measurements, max_tags, outcomes=acct_out)
 
 
 _ARABIC_SET = set(_ARABIC)
@@ -338,12 +518,14 @@ def _tag_source(tag: str, *, content_set: set, corpus_set: set, store_set: set) 
 def vet_hashtags_traced(tags: list[str] | None, platform: Platform, language: str | None = None,
                         max_tags: int = 4, *, store: list[str] | None = None,
                         corpus: list[str] | None = None, content: list[str] | None = None,
-                        cfg=None, recent: list[str] | None = None) -> tuple[list[str], dict[str, str]]:
+                        cfg=None, recent: list[str] | None = None,
+                        account=None) -> tuple[list[str], dict[str, str]]:
     """vet_hashtags + a provenance `source` per shipped tag. SAME selection (DRY — it calls it), then
     labels each kept tag by the signal it traces to (content|corpus|region|graph-reach). This proves every
     shipped tag is evidence-backed — no tag can ride a claim we invented."""
     out = vet_hashtags(tags, platform, language, max_tags,
-                       store=store, corpus=corpus, content=content, cfg=cfg, recent=recent)
+                       store=store, corpus=corpus, content=content, cfg=cfg, recent=recent,
+                       account=account)
     content_set = set(_dedupe_norm(content)); corpus_set = set(_dedupe_norm(corpus))
     store_set = set(_dedupe_norm(store))
     sources = {t: _tag_source(t, content_set=content_set, corpus_set=corpus_set, store_set=store_set) for t in out}
