@@ -607,6 +607,8 @@ def test_scrape_login_loops_comma_users(tmp_path, monkeypatch):
         seen.append(user)
         return object()
     monkeypatch.setattr(igs, "open_client", fake_open)
+    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0
     assert seen == ["a", "b"]
 
@@ -624,6 +626,8 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
                       reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
     assert _cooldown_path(cfg).exists()
     monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
+    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
     # Streak/until/reason cleared; day/used/accounts may remain (MOL-854 day budget).
     if _cooldown_path(cfg).exists():
@@ -699,51 +703,35 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
     open_client(cfg, client_factory=_Ok)
 
 
-def test_open_client_allow_reauth_official_login_not_relogin(tmp_path, monkeypatch):
-    """Operator path: LoginRequired probe → clear auth/cookies + login(..., relogin=False)."""
-    from types import SimpleNamespace
+def test_open_client_allow_reauth_without_profile_does_not_password_login(tmp_path, monkeypatch):
+    """scrape-login with no FanOps profile sid refuses. Never password-login. Envelope untouched."""
     import fanops.ig_hashtag_scrape as igs
-    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: None)
     cfg = Config(root=tmp_path)
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    seen = []
-    from instagrapi.exceptions import LoginRequired as _LR
-
-    class _Jar:
-        def clear(self):
-            seen.append("cleared")
-        def set(self, *a, **k):
-            seen.append(("set_cookie", a[0] if a else None))
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    original = '{"keep": true}'
+    sess.write_text(original)
+    seen = {"login": 0, "dump": 0}
 
     class _Stale:
-        def __init__(self):
-            self.authorization_data = {"sessionid": "x"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={"Authorization": "Bearer x"})
-            self.public = SimpleNamespace(cookies=_Jar(), headers={})
-            self.last_login = 1.0
         def load_settings(self, _p): pass
-        def set_settings(self, s):
-            seen.append(("set", s))
         def search_hashtags(self, _q):
-            raise _LR("login_required")
-        def account_info(self):
-            raise AssertionError("search probe must run before account_info")
-        def login(self, user, pw, relogin=False):
-            seen.append(("login", user, pw, relogin))
-        def dump_settings(self, _p): pass
-    c = open_client(cfg, client_factory=_Stale, allow_reauth=True)
-    assert c is not None
-    assert c.authorization_data == {}
-    assert "Authorization" not in c.private.headers
-    assert seen.count("cleared") >= 1
-    assert ("login", "u", "p", False) in seen
-    assert not any(x[0] == "login" and x[-1] is True for x in seen if isinstance(x, tuple))
-    assert not any(x[0] == "set" for x in seen if isinstance(x, tuple))
+            raise AssertionError("no profile sid — must not probe dump auth")
+        def login(self, *_a, **_k):
+            seen["login"] += 1
+        def dump_settings(self, _p):
+            seen["dump"] += 1
+    try:
+        open_client(cfg, client_factory=_Stale, allow_reauth=True, user="u")
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable as e:
+        assert "profile" in str(e)
+    assert seen == {"login": 0, "dump": 0}
+    assert sess.read_text() == original
 
 
 def test_open_client_restores_from_browser_session_without_login(tmp_path, monkeypatch):
@@ -916,6 +904,7 @@ def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -979,33 +968,32 @@ def test_open_client_unattended_throttle_does_not_overwrite_dump(tmp_path, monke
 
 
 def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
-    """A failed password restore must not overwrite the on-disk dump."""
-    from instagrapi.exceptions import LoginRequired, BadPassword
-    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    """A rejected profile probe must not overwrite the on-disk envelope or password-login."""
+    from instagrapi.exceptions import LoginRequired
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text('{"keep": true}')
+    seen = {"login": 0}
+
     class _Fail:
         def load_settings(self, _p): pass
-        def get_settings(self):
-            return {"uuids": {"uuid": "keep-me"}}
-        def set_settings(self, _s): pass
-        def set_uuids(self, _u): pass
         def search_hashtags(self, _q):
             raise LoginRequired("login_required")
         def login(self, *_a, **_k):
-            raise BadPassword("bad")
+            seen["login"] += 1
         def dump_settings(self, _p):
-            raise AssertionError("must not dump after failed login")
+            raise AssertionError("must not dump after failed profile probe")
     try:
         open_client(cfg, client_factory=_Fail, allow_reauth=True, user="u")
-    except BadPassword:
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable:
         pass
-    else:
-        raise AssertionError("failed login must propagate")
+    assert seen["login"] == 0
     assert '"keep": true' in sess.read_text()
 
 
@@ -1846,6 +1834,8 @@ def test_scrape_login_clears_only_that_user_freeze(tmp_path, monkeypatch):
             return object()
         raise igs.ScrapeUnavailable("skip b")
     monkeypatch.setattr(igs, "open_client", fake_open)
+    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0
     blob = json.loads(_cooldown_path(cfg).read_text())
     assert "until" not in blob.get("accounts", {}).get("a", {})

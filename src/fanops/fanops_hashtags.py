@@ -1129,17 +1129,17 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
     out the remaining 12h (MOL-699).
 
-    Sole `allow_reauth=True` call site. Ensures `cfg.control/scrape_chrome/<user>/` exists (that
-    Instagram account only), logs the Chrome argv for a normal login into THAT profile, then
-    promotes (the only dump_settings / envelope write). Never walks system Chrome, never DevTools.
-    The unattended tick is a reader: envelope + that profile's sessionid, never login(),
+    Sole `allow_reauth=True` call site. Opens `cfg.control/scrape_chrome/<user>/` (that
+    Instagram account only), waits for a sessionid in THAT profile, then promotes (the only
+    dump_settings / envelope write). Never walks system Chrome, never DevTools, never password
+    login. The unattended tick is a reader: envelope + that profile's sessionid, never login(),
     never dump_settings.
 
     Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, promote each envelope. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
     from fanops.ig_hashtag_scrape import (
-        ScrapeUnavailable, _wait_for_operator_scrape_login, open_client,
-        scrape_chrome_launch_argv, scrape_chrome_profile_dir, scrape_session_path, scrape_users,
+        ScrapeUnavailable, launch_scrape_chrome, open_client, scrape_chrome_profile_dir,
+        scrape_session_path, scrape_users, wait_for_scrape_profile_auth,
     )
     users = scrape_users(cfg)
     if not users:
@@ -1150,11 +1150,14 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
     for user in users:
         profile = scrape_chrome_profile_dir(cfg, user)
         profile.mkdir(parents=True, exist_ok=True)
-        argv = scrape_chrome_launch_argv(cfg, user)
-        get_logger(cfg)("hashtags", user[:40], "scrape_login_profile",
-                        profile=str(profile),
-                        chrome_cmd=" ".join(argv) if argv else "chrome-missing")
-        _wait_for_operator_scrape_login()
+        if not launch_scrape_chrome(cfg, user):
+            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
+                            user=user[:40], reason="chrome-missing")
+            continue
+        if wait_for_scrape_profile_auth(cfg, user) is None:
+            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
+                            user=user[:40], reason="no profile session")
+            continue
         try:
             open_client(cfg, allow_reauth=True, user=user)
         except ScrapeUnavailable as e:

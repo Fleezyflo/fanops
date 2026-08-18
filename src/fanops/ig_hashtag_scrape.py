@@ -119,32 +119,6 @@ def _probe_scrape_session(client, *, allow_account_info: bool = True) -> None:
         info()
 
 
-def _clear_auth_keep_device(client) -> None:
-    """Drop session auth/cookies so login() does not see a user_id and relogin=True.
-
-    Keep uuids, device_settings, user_agent, mid — set_settings({}) resets those to
-    library defaults and is the more suspicious fingerprint.
-    """
-    if hasattr(client, "authorization_data"):
-        client.authorization_data = {}
-    for sess_name in ("private", "public"):
-        sess = getattr(client, sess_name, None)
-        cookies = getattr(sess, "cookies", None)
-        if cookies is not None and hasattr(cookies, "clear"):
-            cookies.clear()
-        headers = getattr(sess, "headers", None)
-        if isinstance(headers, dict):
-            headers.pop("Authorization", None)
-    if hasattr(client, "last_login"):
-        client.last_login = None
-
-
-def _restore_uuids_and_login(client, user: str, password: str) -> None:
-    """Password login that keeps the device envelope. Never login(..., relogin=True)."""
-    _clear_auth_keep_device(client)
-    client.login(user, password)
-
-
 def scrape_chrome_profile_dir(cfg: Config, user: str) -> Path:
     """FanOps-owned Chrome profile for this scrape user. Never a system Chrome path."""
     return cfg.control / "scrape_chrome" / user
@@ -239,10 +213,7 @@ def _chrome_executable() -> str | None:
 
 
 def scrape_chrome_launch_argv(cfg: Config, user: str) -> list[str] | None:
-    """Argv that opens THIS user's FanOps Chrome profile. Never DevTools. Never system Chrome.
-
-    scrape-login logs this; the operator runs it. The unattended tick never launches a browser.
-    """
+    """Argv that opens THIS user's FanOps Chrome profile. Never DevTools. Never system Chrome."""
     chrome = _chrome_executable()
     if not chrome:
         return None
@@ -251,21 +222,32 @@ def scrape_chrome_launch_argv(cfg: Config, user: str) -> list[str] | None:
             "--no-default-browser-check", "https://www.instagram.com/"]
 
 
-def _operator_interactive() -> bool:
-    try:
-        return os.isatty(0)
-    except OSError:
+def launch_scrape_chrome(cfg: Config, user: str) -> bool:
+    """Start Chrome on the FanOps profile. Unattended tick never calls this."""
+    import subprocess
+    argv = scrape_chrome_launch_argv(cfg, user)
+    if not argv:
         return False
+    scrape_chrome_profile_dir(cfg, user).mkdir(parents=True, exist_ok=True)
+    subprocess.Popen(argv, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
 
 
-def _wait_for_operator_scrape_login() -> None:
-    """TTY-only pause so the operator can log into the FanOps profile before promote."""
-    if not _operator_interactive():
-        return
-    try:
-        input()
-    except EOFError:
-        return
+def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 300,
+                                 sleep=None, clock=None) -> tuple[str, str] | None:
+    """Poll THIS user's FanOps profile until a sessionid appears. None on timeout."""
+    import time
+    sleep = time.sleep if sleep is None else sleep
+    clock = time.monotonic if clock is None else clock
+    deadline = clock() + max(float(timeout_s), 0)
+    while True:
+        got = _profile_auth_for(cfg, user)
+        if got and got[0]:
+            return got
+        if clock() >= deadline:
+            return None
+        sleep(min(1.0, max(deadline - clock(), 0)))
 
 
 def _promote_envelope(client, dump_sess: Path) -> None:
@@ -290,9 +272,8 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     propagate without overwrite. Unattended MUST stay False — instagrapi>=2.18.12 escalates
     LoginRequired inside login() into a password re-auth, which earned the 2026-07-29T22:01Z
     native checkpoint.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True`: prefer profile cookies + probe
-    + dump_settings (the sole envelope write). Password-login is the leftover operator fallback
-    (never login(relogin=True)).
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True`: profile cookies + probe
+    + dump_settings (the sole envelope write). No password login. No profile sid → refuse.
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
     (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
@@ -349,29 +330,13 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
             get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__, via="profile")
             if not scrape_session_needs_restore(e):
                 raise
-            if not allow_reauth:
-                raise ScrapeUnavailable(
-                    "scrape session dead — run fanops hashtags scrape-login") from e
-            _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
+            raise ScrapeUnavailable(
+                "scrape session dead — run fanops hashtags scrape-login") from e
         if allow_reauth:
             _promote_envelope(client, dump_sess)
         setattr(client, "_fanops_scrape_user", user)
         return client
-    if not allow_reauth:
-        raise ScrapeUnavailable("scrape session dead — run fanops hashtags scrape-login")
-    if sess.exists():
-        try:
-            _probe_scrape_session(client, allow_account_info=True)
-        except Exception as e:                          # noqa: BLE001 — probe surface is opaque
-            get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__)
-            if not scrape_session_needs_restore(e):
-                raise
-            _restore_uuids_and_login(client, user, scrape_password_for(user) or "")
-    else:
-        client.login(user, scrape_password_for(user) or "")  # cold-start: operator scrape-login only
-    _promote_envelope(client, dump_sess)
-    setattr(client, "_fanops_scrape_user", user)
-    return client
+    raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
 
 
 # `session_client` — a Client cloned from the dumped session, no login — lived here until MOL-698.
