@@ -714,7 +714,9 @@
         "fanops.log"
       ],
       "lazy": [
+        "fanops.errors",
         "fanops.fanops_hashtags",
+        "fanops.ig_web_scrape",
         "fanops.secret_provider"
       ],
       "optional": [],
@@ -2196,6 +2198,7 @@
       "werkzeug"
     ],
     "lazy": [
+      "base64",
       "browser_cookie3",
       "certifi",
       "collections",
@@ -2225,6 +2228,7 @@
       "requests",
       "secrets",
       "shutil",
+      "signal",
       "socket",
       "sqlite3",
       "subprocess",
@@ -2533,7 +2537,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 256,
+  "lazy_downward_count": 257,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3306,6 +3310,14 @@
       "to_level": 2
     },
     {
+      "from": "fanops.ig_hashtag_scrape",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ig_web_scrape",
+      "to_level": 4
+    },
+    {
       "from": "fanops.ledger",
       "from_level": 2,
       "jump": 1,
@@ -3819,10 +3831,10 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 375,
+    "lazy_edges": 377,
     "lazy_edges_lateral": 44,
-    "lazy_edges_strictly_upward": 75,
-    "lazy_edges_to_equal_or_higher_level": 119,
+    "lazy_edges_strictly_upward": 76,
+    "lazy_edges_to_equal_or_higher_level": 120,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7

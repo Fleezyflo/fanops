@@ -497,8 +497,8 @@ def test_scrape_login_promote_writes_envelope_from_profile_sid(tmp_path, monkeyp
     assert '"promoted": true' in sess.read_text()
 
 
-def test_scrape_chrome_launch_argv_uses_fanops_profile_not_devtools(tmp_path, monkeypatch):
-    """Operator Chrome argv is that user's FanOps profile; no DevTools port."""
+def test_scrape_chrome_launch_argv_uses_fanops_profile_not_system_devtools(tmp_path, monkeypatch):
+    """Operator Chrome argv is that user's FanOps profile; FanOps port, never 9222/9223."""
     import fanops.ig_hashtag_scrape as igs
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
     cfg = Config(root=tmp_path)
@@ -509,18 +509,17 @@ def test_scrape_chrome_launch_argv_uses_fanops_profile_not_devtools(tmp_path, mo
     assert argv[0] == "/fake/chrome"
     assert f"--user-data-dir={igs.scrape_chrome_profile_dir(cfg, 'perca.late')}" in argv
     assert "9222" not in joined and "9223" not in joined
-    assert "remote-debugging" not in joined
+    assert "--remote-debugging-port=" in joined
+    assert "--remote-debugging-address=127.0.0.1" in joined
     assert "Application Support/Google/Chrome" not in joined
-    launched = []
-    import subprocess
-    monkeypatch.setattr(subprocess, "Popen", lambda argv, **_k: launched.append(list(argv)) or object())
+    port = igs.scrape_cdp_port("perca.late")
+    assert f"--remote-debugging-port={port}" in argv
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
     monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     from fanops.fanops_hashtags import cmd_hashtags_scrape_login
     monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: object())
     assert cmd_hashtags_scrape_login(cfg) == 0
     assert igs.scrape_chrome_profile_dir(cfg, "perca.late").is_dir()
-    assert launched
-    assert launched[0] == argv
 
 
 def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
@@ -530,7 +529,7 @@ def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(igs, "launch_scrape_chrome", lambda *_a, **_k: True)
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
     monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: None)
     opened = []
     monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: opened.append(1))

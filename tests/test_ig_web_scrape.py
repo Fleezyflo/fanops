@@ -1,4 +1,4 @@
-"""Lock scrape uses FanOps Chrome *web* cookies, not instagrapi private API."""
+"""Lock scrape fetches inside FanOps Chrome, not instagrapi / exported cookies."""
 from types import SimpleNamespace
 
 from fanops.config import Config
@@ -7,31 +7,25 @@ from fanops.ig_web_scrape import IgWebSession, LoginRequired, open_web_session
 from fanops.source_tags import _iter_lock_clients
 
 
-class _Resp:
-    def __init__(self, payload, status=200):
-        self._payload = payload
-        self.status_code = status
-
-    def json(self):
-        return self._payload
-
-
-def test_web_search_exact_name(monkeypatch):
-    sess = IgWebSession(
-        "u",
-        {"sessionid": "x" * 40, "csrftoken": "t", "ds_user_id": "1"},
-        get=lambda *_a, **_k: _Resp({
-            "hashtags": [{"hashtag": {"name": "music", "id": "9", "media_count": 3}}],
-        }),
-    )
+def test_web_search_exact_name():
+    def fetch(method, url, body=None):
+        assert method == "GET"
+        assert "/tags/music/info/" in url
+        return {"name": "music", "id": "9", "media_count": 3, "status": "ok"}
+    sess = IgWebSession("u", fetch=fetch)
     hits = search_hashtags_scrape(sess, "music")
     assert [h["name"] for h in hits] == ["music"]
 
 
+def test_web_search_invented_name_is_empty():
+    sess = IgWebSession("u", fetch=lambda *_a, **_k: {"name": "nope", "media_count": 0, "status": "ok"})
+    assert search_hashtags_scrape(sess, "nope") == []
+
+
 def test_web_403_is_login_required():
-    def _forbid(*_a, **_k):
-        return _Resp({}, status=403)
-    sess = IgWebSession("u", {"sessionid": "x" * 40}, get=_forbid)
+    def fetch(method, url, body=None):
+        raise LoginRequired("web 403")
+    sess = IgWebSession("u", fetch=fetch)
     try:
         sess.search_hashtags("music")
         raise AssertionError("expected LoginRequired")
@@ -56,11 +50,7 @@ def test_web_measure_reads_play_and_like():
             }
         }]
     }
-    sess = IgWebSession(
-        "u",
-        {"sessionid": "x" * 40, "csrftoken": "t"},
-        post=lambda *_a, **_k: _Resp(payload),
-    )
+    sess = IgWebSession("u", fetch=lambda *_a, **_k: payload)
     metrics, cotags = measure_and_harvest_scrape(sess, "#music")
     assert metrics is not None
     assert metrics["like_count"] == 10
@@ -68,10 +58,10 @@ def test_web_measure_reads_play_and_like():
     assert "#music" in cotags or "#live" in cotags
 
 
-def test_open_web_session_refuses_without_profile_sid(tmp_path, monkeypatch):
+def test_open_web_session_refuses_without_live_chrome(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     import fanops.ig_hashtag_scrape as igs
-    monkeypatch.setattr(igs, "profile_instagram_cookies", lambda *_a, **_k: {})
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: False)
     cfg = Config(root=tmp_path)
     try:
         open_web_session(cfg, "u")
@@ -80,11 +70,8 @@ def test_open_web_session_refuses_without_profile_sid(tmp_path, monkeypatch):
         assert "profile" in str(e)
 
 
-def test_lock_walk_uses_web_opener(tmp_path, monkeypatch):
+def test_lock_walk_uses_unfrozen_users(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,wolf")
-    import fanops.ig_web_scrape as web
-    monkeypatch.setattr(web, "profile_instagram_cookies",
-                        lambda _c, u: {"sessionid": "s"} if u == "mark" else {})
     cfg = Config(root=tmp_path)
     seen = []
 
@@ -93,5 +80,20 @@ def test_lock_walk_uses_web_opener(tmp_path, monkeypatch):
         return SimpleNamespace(_fanops_scrape_user=user)
 
     clients = list(_iter_lock_clients(cfg, client=None, open_client_fn=opener))
-    assert seen == ["mark"]
-    assert [c._fanops_scrape_user for c in clients] == ["mark"]
+    assert seen == ["mark", "wolf"]
+    assert [c._fanops_scrape_user for c in clients] == ["mark", "wolf"]
+
+
+def test_cdp_port_is_fanops_owned_not_system_devtools():
+    from fanops.ig_hashtag_scrape import scrape_cdp_port
+    from fanops.ig_web_scrape import _Ws
+    for user in ("markmakmouly", "perca.late", "cisumwolfhom"):
+        port = scrape_cdp_port(user)
+        assert 9331 <= port <= 9399
+        assert port not in (9222, 9223)
+    for url in ("ws://127.0.0.1:9222/devtools/page/x", "ws://10.0.0.1:9331/devtools/page/x"):
+        try:
+            _Ws.connect(url)
+            raise AssertionError(url)
+        except RuntimeError:
+            pass
