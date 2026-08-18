@@ -111,7 +111,8 @@ def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
     assert p.edited_at
     clip = led.clips["clip_1"]
     assert clip.state is ClipState.queued                           # RESTORED — never left `captioned`
-    assert clip.meta_captions["a/instagram"]["tag_sources"]         # provenance stamped by ingest
+    assert clip.meta_captions["a/instagram"]["hashtags"]
+    assert "#slept" in clip.meta_captions["a/instagram"]["hashtags"]
     assert "clip_1" in json.loads(_journal_path(cfg).read_text())["done"]
 
 

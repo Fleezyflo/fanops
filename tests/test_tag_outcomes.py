@@ -230,8 +230,10 @@ def test_ingest_and_regen_pass_account_none():
     from fanops.studio.actions import regenerate_caption
     ingest_src = inspect.getsource(ingest_captions)
     regen_src = inspect.getsource(regenerate_caption)
-    assert "account=None" in ingest_src
-    assert "account=None" in regen_src
+    assert "ship_from_lock" in ingest_src
+    assert "ship_from_lock" in regen_src
+    assert "vet_hashtags_traced" not in ingest_src
+    assert "vet_hashtags_traced" not in regen_src
     assert "account=handle" not in ingest_src
     assert "account=p.account" not in regen_src
     assert "account" in inspect.getsource(vet_hashtags)

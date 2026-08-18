@@ -73,7 +73,7 @@ def test_recency_demotes_within_corpus_tier():
     assert "#alpha" in rotated
 
 
-def test_consecutive_ingests_differ(tmp_path):
+def test_consecutive_ingests_same_picks_same_lock(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     corpus = ["#alpha", "#beta", "#gamma", "#delta", "#epsilon"]
     _write_meas_tags(cfg, corpus)
@@ -101,7 +101,8 @@ def test_consecutive_ingests_differ(tmp_path):
         CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_2")
     tags2 = list(led.clips["clip_2"].meta_captions["a/instagram"]["hashtags"])
-    assert tags1 != tags2
+    assert tags1 == tags2
+    assert tags1 == corpus[:4]
 
 
 def test_pass_local_same_pass(tmp_path):
@@ -129,8 +130,9 @@ def test_pass_local_same_pass(tmp_path):
         CaptionItem(surface="a/instagram", caption="x", hashtags=list(corpus))]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_2", pass_recent=pass_recent)
     tags2 = list(led.clips["clip_2"].meta_captions["a/instagram"]["hashtags"])
-    assert tags1 != tags2
-    assert pass_recent.get("a")
+    assert tags1 == tags2
+    assert tags1 == corpus[:4]
+    assert pass_recent.get("a") == corpus[:4] + corpus[:4]
 
 
 def test_ar_floor_survives_rotation():
@@ -186,26 +188,26 @@ def test_twelve_tag_corpus_three_passes_disjoint_leaning(tmp_path):
         led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                           caption=" ".join(tags), hashtags=tags, state=PostState.queued,
                           created_at=f"2026-07-0{i+1}T12:00:00+00:00"))
-        if i:
-            assert lines[i] != lines[i - 1]
-    assert len({tuple(x) for x in lines}) >= 2
+        assert tags == corpus[:4]
+    assert len({tuple(x) for x in lines}) == 1
 
 
 
 def test_ingest_rotation_uses_surface_hashtag_store(tmp_path):
-    """MOL-511: rotation ingest fills from the surface hashtag_store, never a foreign persona's tags
-    even when those tags sit in the global measurements cache."""
+    """Request hashtag_store is not membership. Sidecar lock is. A 141-tag request
+    plus a foreign request store cannot ship off-lock tags."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
         "#alpha": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
         "#foreign": {"graph_id": "2", "like_count": 9999, "measured_at": "2026-07-01T00:00:00+00:00"},
     }))
+    _write_lock(cfg, "src_1", ["#alpha"])
     _clip(led, "clip_1")
     led = _ingest(cfg, led, "clip_1", hashtags=["#alpha", "#foreign"],
-                  hashtag_store=["#alpha"])
+                  hashtag_store=["#foreign"] + [f"#req{i}" for i in range(140)])
     tags = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert "#alpha" in tags
+    assert tags == ["#alpha"]
     assert "#foreign" not in tags
 
 

@@ -207,6 +207,40 @@ def test_research_empty_or_raise_writes_nothing(tmp_path):
     assert client.search_calls == []
 
 
+def test_ingest_141_request_12_sidecar_ships_subset(tmp_path):
+    from fanops.agentstep import latest_request_id, request_path, response_path
+    from fanops.caption import ingest_captions
+    from fanops.ledger import Ledger
+    from fanops.models import CaptionItem, CaptionSet, Clip, ClipState, Moment, MomentState, Platform, Source
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    lock = [f"#lock{i:02d}" for i in range(12)]
+    pile = [f"#req{i:03d}" for i in range(141)]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": pile, "lock": lock, "researched_at": "2026-08-18T00:00:00Z"},
+    }))
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    req_path = request_path(cfg, "captions", "clip_1")
+    req = json.loads(req_path.read_text())
+    req["surfaces"][0]["hashtag_store"] = pile
+    req_path.write_text(json.dumps(req))
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="x",
+                    hashtags=lock[:6] + pile[:8])]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    shipped = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
+    assert shipped == lock[:4]
+    assert set(shipped) <= set(lock)
+    assert not any(t.startswith("#req") for t in shipped)
+
+
 def test_caption_menu_is_not_80_pile():
     from fanops.caption import ingest_captions
     req = inspect.getsource(request_captions)
