@@ -4,8 +4,8 @@
 `fanops posts recaption` drives the EXISTING stages over every awaiting_approval / non-imminent
 queued post — it implements NO caption logic of its own: caption.request_captions (fresh payload =
 current persona/corpus/genre by construction) -> responder.answer_pending(kinds=captions, parallel)
--> caption.ingest_captions (brand-risk, vet_hashtags_traced, tag_sources,
-seed-fallback — the one true vet) with ONE shared pass_recent in schedule order (mirrors
+-> caption.ingest_captions (brand-risk, ship_from_lock from the source sidecar —
+recaption reads the lock and does not produce it) with ONE shared pass_recent in schedule order (mirrors
 pipeline._stage_ingest_captions) -> a short transaction syncing each linked post's caption/hashtags
 from the seed clip's meta_captions.
 

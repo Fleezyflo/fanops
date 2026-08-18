@@ -134,10 +134,6 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     clip = led.clips.get(p.parent_id)
     moment = led.moments.get(clip.parent_id) if clip else None
     src = led.sources.get(moment.parent_id) if moment else None
-    if src is not None:
-        from fanops.source_tags import ensure_source_lock
-        with fail_open("studio.ensure_source_lock"):
-            ensure_source_lock(cfg, src, excerpt=moment.transcript_excerpt if moment else None)
     base = cfg.context_path.read_text() if cfg.context_path.exists() else ""
     full_guidance = base
     if (guidance or "").strip():                        # operator hint is highest priority for this re-roll
@@ -186,21 +182,13 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if flag:
         return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
                             "Edit it by hand or regenerate again.")
-    from fanops.caption import _recent_tags, _tags_in, is_tags_only_caption
+    from fanops.caption import _tags_in, is_tags_only_caption
     if is_tags_only_caption(item.caption):
         return ActionResult(ok=False, error="regenerated caption rejected — caption_tags_only. "
                             "Edit it by hand or regenerate again.")
-    # Parity with ingest_captions: persist the stripped model sentence + the vetted <=4-tag array.
-    # Tags-only / empty sentence is rejected above (same stem as ingest HOLD). An empty tag line
-    # after vet is honest; an empty sentence is not.
-    # HV1-PR3: vet from the source lock (same menu the regen prompt carried). No 80-pile, no
-    # corpus/content, no account-outcomes on this path.
-    from fanops.hashtags import vet_hashtags_traced
-    vetted, _sources = vet_hashtags_traced(list(item.hashtags or []) or _tags_in(item.caption),
-                           p.platform, src.language if src else None, store=lock,
-                           corpus=None, content=None, account=None, cfg=cfg,
-                           recent=_recent_tags(led, p.account))
-    new_caption, new_tags = (item.caption or "").strip(), vetted
+    from fanops.hashtags import ship_from_lock
+    picks = list(item.hashtags or []) or _tags_in(item.caption)
+    new_caption, new_tags = (item.caption or "").strip(), ship_from_lock(picks, lock)
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become
         # imminent/due — re-check against real wall-clock (fail-safe), not the stale entry-time now.

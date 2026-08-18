@@ -64,14 +64,12 @@ def test_hashtag_lifecycle_end_to_end(tmp_path, monkeypatch):
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x", hashtags=["#invented"])]).model_dump_json())
+        CaptionItem(surface="a/instagram", caption="x",
+                    hashtags=["#detroitrap", "#invented"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     tags = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert tags[0] == "#detroitrap"
+    assert tags == ["#detroitrap"]
     assert "#invented" not in tags and len(tags) <= 4
-    sources = led.clips["clip_1"].meta_captions["a/instagram"]["tag_sources"]
-    assert set(sources) == set(tags) and all(sources.values())
-    assert sources["#detroitrap"] == "graph-reach"
 
     led.add_post(Post(id="post_1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption=" ".join(tags), hashtags=tags,

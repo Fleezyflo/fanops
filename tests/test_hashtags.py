@@ -175,8 +175,8 @@ def test_corpus_only_does_not_pad_with_discovery():
 # --- MOL-511 (C-1): ingest vets from per-surface hashtag_store (not the global cache) -----------
 
 def test_ingest_scopes_vet_store_per_surface(tmp_path):
-    """Tag only under surface X's hashtag_store cannot land on Y; empty store -> empty line.
-    A global measurements cache that WOULD have admitted X's tag onto Y proves we no longer read it."""
+    """Request hashtag_store is not membership. Sidecar lock is. 141-tag request + 12-tag lock
+    ships ⊆ lock. Per-surface request stores cannot sneak a tag onto another surface."""
     import json
     from fanops.config import Config
     from fanops.ledger import Ledger
@@ -184,47 +184,48 @@ def test_ingest_scopes_vet_store_per_surface(tmp_path):
                                CaptionSet, CaptionItem)
     from fanops.agentstep import response_path, request_path, latest_request_id
     from fanops.caption import request_captions, ingest_captions
+    from fanops.source_tags import source_tag_locks_path
 
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
-    # Global cache contains EVERY tag — pre-MOL-511 ingest would fill BOTH surfaces from it.
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({
-        "#alphaonly": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
-        "#betaonly": {"graph_id": "2", "like_count": 800, "measured_at": "2026-07-01T00:00:00+00:00"},
-        "#globalwinner": {"graph_id": "3", "like_count": 9999, "measured_at": "2026-07-01T00:00:00+00:00"},
+    lock = [f"#lock{i:02d}" for i in range(12)]
+    request_pile = [f"#req{i:03d}" for i in range(141)]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": request_pile, "lock": lock, "researched_at": "2026-08-18T00:00:00Z"},
     }))
     request_captions(led, cfg, "clip_1",
                      [("a", Platform.instagram), ("b", Platform.instagram), ("c", Platform.instagram)])
     req_path = request_path(cfg, "captions", "clip_1")
     req = json.loads(req_path.read_text())
     by = {s["surface"]: s for s in req["surfaces"]}
-    by["a/instagram"]["hashtag_store"] = ["#alphaonly"]
+    by["a/instagram"]["hashtag_store"] = request_pile
     by["b/instagram"]["hashtag_store"] = ["#betaonly"]
-    by["c/instagram"]["hashtag_store"] = []                 # empty pool -> short line
+    by["c/instagram"]["hashtag_store"] = []
     req_path.write_text(json.dumps(req))
     rid = latest_request_id(cfg, "captions", "clip_1")
+    picks_a = lock[:3] + ["#req000", "#betaonly"]
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
-        CaptionItem(surface="a/instagram", caption="x",
-                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+        CaptionItem(surface="a/instagram", caption="x", hashtags=picks_a),
         CaptionItem(surface="b/instagram", caption="x",
-                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+                    hashtags=["#betaonly", "#lock00", "#req140"]),
         CaptionItem(surface="c/instagram", caption="x",
-                    hashtags=["#alphaonly", "#betaonly", "#globalwinner"]),
+                    hashtags=["#req000", "#globalwinner"]),
     ]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     a = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
     b = led.clips["clip_1"].meta_captions["b/instagram"]["hashtags"]
     c = led.clips["clip_1"].meta_captions["c/instagram"]["hashtags"]
-    assert "#alphaonly" in a and "#betaonly" not in a and "#globalwinner" not in a
-    assert "#betaonly" in b and "#alphaonly" not in b and "#globalwinner" not in b
-    assert a != b
-    # empty hashtag_store: model picks die; cold path ships empty (honest floor, no discovery pad)
+    assert a == lock[:3]
+    assert set(a) <= set(lock) and len(a) <= 4
+    assert b == ["#lock00"]
+    assert "#betaonly" not in a and "#betaonly" not in b
+    assert "#req000" not in a and "#req140" not in b
     assert c == []
-    assert "#alphaonly" not in c and "#globalwinner" not in c
 
 
 def test_ingest_absent_hashtag_store_is_short_not_global(tmp_path):

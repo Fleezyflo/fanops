@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import (RECORD_NUM_FIELDS, vet_hashtags_traced, load_measurements,
+from fanops.hashtags import (RECORD_NUM_FIELDS, ship_from_lock, load_measurements,
                              _dedupe_norm, _norm, _num, CAPTION_TAG_RE)
 from fanops.control import load_guidance
 
@@ -223,11 +223,6 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
-    if src is not None:
-        from fanops.errors import fail_open
-        from fanops.source_tags import ensure_source_lock
-        with fail_open("caption.ensure_source_lock"):
-            ensure_source_lock(cfg, src, excerpt=moment.transcript_excerpt)
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
@@ -321,7 +316,7 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
     # the clip's source language is the contract the caption must match (AUDIT H5).
     src = led.sources.get(led.moments[clip.parent_id].parent_id)
     # what surfaces did we ask for, and their per-surface lock store? (the request is the truth)
-    requested, _surface_corpus, surface_platform, surface_store, _content_tags = _request_surfaces(cfg, clip_id)
+    requested, _surface_corpus, surface_platform, _surface_store, _content_tags = _request_surfaces(cfg, clip_id)
     # AUDIT H6: a caption targeting a surface we never requested (e.g. a typo'd key) is held with
     # a SPECIFIC reason NAMING the bad surface(s) — diagnosed before the generic missing-caption
     # logic so a typo'd-but-present caption is not mislabelled "missing".
@@ -355,19 +350,15 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
         # brand-risk runs on the ORIGINAL caption (the guardrail stays on what the model wrote);
         if reason and held_reason is None:
             held_reason = reason
-        # ...THEN the hashtags are vetted against the source lock on the request (empty lock → empty
-        # tag line). No 80-pile / corpus / content / account-outcomes on this path. Cap 4.
-        plat = _platform_for_surface(item.surface, surface_platform)   # AGENT-6: vet under the REQUESTED platform
+        # ...THEN ship picks ∩ sidecar lock. Request hashtag_store is the menu, not membership.
+        _platform_for_surface(item.surface, surface_platform)   # AGENT-6: request platform still required
         handle = item.surface.split("/", 1)[0]
-        recent = _recent_tags(led, handle) + (pass_recent or {}).get(handle, [])
-        tags, sources = vet_hashtags_traced(item.hashtags or _tags_in(item.caption), plat,
-                            src.language if src else None, store=surface_store.get(item.surface),
-                            corpus=None, content=None, account=None,
-                            cfg=cfg, recent=recent)
+        picks = item.hashtags or _tags_in(item.caption)
+        tags = ship_from_lock(picks, _source_lock_tags(cfg, src))
         if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[item.surface] = _caption_entry(
             tags, [str(h) for h in (item.hashtags or [])],
-            caption=(item.caption or "").strip(), tag_sources=sources)
+            caption=(item.caption or "").strip(), tag_sources={})
         if is_tags_only_caption(item.caption, item.hashtags):
             tags_only = True
     answered = {item.surface for item in cs.items}
