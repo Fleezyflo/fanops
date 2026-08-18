@@ -246,7 +246,6 @@
         "fanops.variant_transfer"
       ],
       "lazy": [
-        "fanops.errors",
         "fanops.source_tags",
         "fanops.validation_gate"
       ],
@@ -1102,6 +1101,7 @@
         "fanops.responder",
         "fanops.router",
         "fanops.signals",
+        "fanops.source_tags",
         "fanops.stitch_render",
         "fanops.timeutil",
         "fanops.transcribe"
@@ -1465,11 +1465,14 @@
         "fanops.hashtags",
         "fanops.ig_hashtag_scrape",
         "fanops.log",
+        "fanops.meta_graph",
         "fanops.timeutil"
       ],
       "lazy": [
         "fanops.fanops_hashtags",
-        "fanops.llm"
+        "fanops.ledger",
+        "fanops.llm",
+        "fanops.models"
       ],
       "optional": [],
       "typing": []
@@ -1556,7 +1559,6 @@
         "fanops.postiz_lifecycle",
         "fanops.prompts",
         "fanops.reconcile",
-        "fanops.source_tags",
         "fanops.studio.actions_run",
         "fanops.studio.views_common",
         "fanops.studio.views_results",
@@ -2283,7 +2285,7 @@
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
     "fanops.log": 44,
-    "fanops.meta_graph": 1,
+    "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
     "fanops.models": 52,
     "fanops.moment_hook_learning": 1,
@@ -2322,7 +2324,7 @@
     "fanops.secret_provider": 2,
     "fanops.settings": 2,
     "fanops.signals": 2,
-    "fanops.source_tags": 0,
+    "fanops.source_tags": 1,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 2,
     "fanops.stranded_posts": 0,
@@ -2440,7 +2442,7 @@
     "fanops.persona_research": 3,
     "fanops.persona_store": 4,
     "fanops.personas": 6,
-    "fanops.pipeline": 27,
+    "fanops.pipeline": 28,
     "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 8,
     "fanops.post": 2,
@@ -2465,7 +2467,7 @@
     "fanops.secret_provider": 0,
     "fanops.settings": 1,
     "fanops.signals": 7,
-    "fanops.source_tags": 6,
+    "fanops.source_tags": 7,
     "fanops.stage_lock": 2,
     "fanops.stitch_render": 7,
     "fanops.stranded_posts": 2,
@@ -3788,7 +3790,7 @@
     "G2_largest_scc_size": 74,
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 606,
+    "compile_edges_G1": 608,
     "lazy_edges": 372,
     "lazy_edges_lateral": 43,
     "lazy_edges_strictly_upward": 75,
