@@ -53,7 +53,8 @@ def test_open_client_picks_first_usable_user(tmp_path, monkeypatch):
     seen = []
     class _Ok:
         def load_settings(self, p): seen.append(p)
-        def account_info(self): pass
+        def search_hashtags(self, _q): return []
+        def account_info(self): raise AssertionError("unattended must not probe account_info")
         def login(self, *_a, **_k): raise AssertionError("valid session must not login")
         def dump_settings(self, p): seen.append(("dump", p))
     open_client(cfg, client_factory=_Ok)
@@ -75,7 +76,8 @@ def test_open_client_unattended_prefers_session_over_earlier_password(tmp_path, 
     seen = []
     class _Ok:
         def load_settings(self, p): seen.append(p)
-        def account_info(self): pass
+        def search_hashtags(self, _q): return []
+        def account_info(self): raise AssertionError("unattended must not probe account_info")
         def login(self, *_a, **_k): raise AssertionError("must not login")
         def dump_settings(self, _p): pass
     open_client(cfg, client_factory=_Ok)

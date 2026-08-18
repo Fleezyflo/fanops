@@ -48,10 +48,14 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 (`written:False`, `aborted:no_scrape`) — there is **no silent Graph fallback**. Graph hashtag helpers
 (`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later.
 
-**Re-authentication is operator-only.** `open_client` defaults to `allow_reauth=False`: a restored
-session is loaded and returned with **no** `account_info()` probe and never `login()` — the first
-work call validates the session (MOL-910). The Layer A tick and doctor use that default. Only
-`fanops hashtags scrape-login` passes `allow_reauth=True` (search probe decides whether to password-login with UUIDs kept; never `login(relogin=True)`).
+**Password re-authentication is operator-only.** `open_client` defaults to `allow_reauth=False`:
+`load_settings` → `search_hashtags` probe (never `account_info()`, never `login()`). Probe ok →
+`dump_settings`. `LoginRequired` → inject Chrome `sessionid` if the operator is already logged in,
+re-probe, dump. Still dead or no Chrome sid → leave the on-disk dump untouched and raise
+`ScrapeUnavailable` so lock production rotates. Throttle/network errors propagate without overwrite.
+The Layer A tick, doctor, and `lock_ready_sources` use that default. Only
+`fanops hashtags scrape-login` passes `allow_reauth=True` (same probe + Chrome path, then
+password-login with UUIDs kept; never `login(relogin=True)`).
 Cause: under instagrapi≥2.18.12, `login()` escalates `LoginRequired` into a full password re-auth; the
 unattended tick doing that earned the 2026-07-29T22:01Z native Instagram checkpoint. A checkpoint still
 needs in-app verification — no code path can clear it.
