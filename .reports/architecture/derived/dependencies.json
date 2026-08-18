@@ -722,6 +722,7 @@
     },
     "fanops.ig_web_scrape": {
       "compile": [
+        "fanops.config",
         "fanops.hashtags",
         "fanops.ig_hashtag_scrape"
       ],
@@ -2259,7 +2260,7 @@
     "fanops.cli": 0,
     "fanops.clip": 7,
     "fanops.compose": 1,
-    "fanops.config": 91,
+    "fanops.config": 92,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 14,
@@ -2431,7 +2432,7 @@
     "fanops.hookscore": 1,
     "fanops.ids": 0,
     "fanops.ig_hashtag_scrape": 3,
-    "fanops.ig_web_scrape": 2,
+    "fanops.ig_web_scrape": 3,
     "fanops.impact_cut": 1,
     "fanops.ingest": 7,
     "fanops.init_flow": 2,
@@ -3817,7 +3818,7 @@
     "G2_largest_scc_size": 75,
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 611,
+    "compile_edges_G1": 612,
     "lazy_edges": 375,
     "lazy_edges_lateral": 44,
     "lazy_edges_strictly_upward": 75,

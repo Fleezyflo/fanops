@@ -150,7 +150,7 @@
     "fanops.vocals"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -202,7 +202,7 @@
     "fanops.hookscore": "S08_selection",
     "fanops.ids": "S01_foundation",
     "fanops.ig_hashtag_scrape": "S10_caption_hashtag",
-    "fanops.ig_web_scrape": null,
+    "fanops.ig_web_scrape": "S10_caption_hashtag",
     "fanops.impact_cut": "S09_render",
     "fanops.ingest": "S05_ingestion",
     "fanops.init_flow": "S17_cli_daemon",
@@ -301,12 +301,10 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 141,
+    "assigned": 142,
     "ghosts": 0,
     "modules": 142,
-    "unassigned": 1
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.ig_web_scrape"
-  ]
+  "unassigned_modules": []
 }

@@ -117,6 +117,7 @@
         "tag_outcomes",
         "source_tags",
         "ig_hashtag_scrape",
+        "ig_web_scrape",
         "meta_graph",
         "tagging"
       ]
