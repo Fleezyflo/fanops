@@ -179,20 +179,48 @@ def play_rank_key(tag, rec) -> tuple:
     return (-plays, -trend, _norm(tag) if isinstance(tag, str) else "")
 
 
-def lock_from_pile(names, measurements, n=12) -> list[str]:
-    """Top-n names with a positive play_count, ordered by play_rank_key. Unmeasured stay off the lock."""
+def _scrape_number(rec) -> float | None:
+    """Positive scrape meter: play_count or like_count. graph_metric is a separate axis."""
+    if not isinstance(rec, dict):
+        return None
+    for k in RANK_FIELDS:
+        v = _num(rec.get(k))
+        if v is not None and v > 0:
+            return v
+    return None
+
+
+def lock_from_pile(names, measurements, n=15) -> list[str]:
+    """First-n names that clear BOTH meters (scrape number AND graph_metric > 0), input order.
+
+    `graph_metric` is in-memory on the rec — never a hashtags.json field. Do not sort by
+    play_rank_key: the pile arrives in LLM order and the lock keeps that order."""
     recs = measurements if isinstance(measurements, dict) else {}
     kept: list[str] = []
     for name in _dedupe_norm(names):
         rec = recs.get(name)
         if not isinstance(rec, dict):
             continue
-        plays = _num(rec.get("play_count"))
-        if plays is None or plays <= 0:
+        scrape = _scrape_number(rec)
+        graph = _num(rec.get("graph_metric"))
+        if scrape is None or scrape <= 0 or graph is None or graph <= 0:
             continue
         kept.append(name)
-    kept.sort(key=lambda t: play_rank_key(t, recs.get(t)))
-    return kept[:n]
+        if len(kept) >= n:
+            break
+    return kept
+
+
+def ship_from_lock(picks, lock, n=4) -> list[str]:
+    """Caption ship: picks ∩ lock, pick order, cap n. Empty lock → []. No floors, no backfill."""
+    allowed = set(_dedupe_norm(lock))
+    out: list[str] = []
+    for t in _dedupe_norm(picks):
+        if t in allowed:
+            out.append(t)
+        if len(out) >= n:
+            break
+    return out
 
 
 def load_measurements(cfg) -> dict[str, dict]:

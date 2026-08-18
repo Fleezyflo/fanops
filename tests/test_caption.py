@@ -635,20 +635,22 @@ def test_platform_coerce_gone():
     assert "_platform_of" not in text
 
 def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
-    # End to end: a request whose surface KEY tail diverges from its recorded platform must vet under the
-    # RECORDED platform. (Synthetic divergence: the normal request path keys surface==handle/platform.value,
-    # so we hand-diverge the on-disk request to prove the request is authoritative, not the parsed string.)
+    # Ingest no longer vets; request platform is still required. A diverged key/platform
+    # must not raise, and ingest must not call vet_hashtags_traced.
+    import inspect
+    from fanops.caption import ingest_captions as ingest_fn
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
-    req["surfaces"][0]["platform"] = "tiktok"                 # diverge: key stays @a/instagram, platform now tiktok
-    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))   # preserves request_id -> response still matches
+    req["surfaces"][0]["platform"] = "tiktok"
+    request_path(cfg, "captions", "clip_1").write_text(json.dumps(req))
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(
-        request_id=rid, items=[CaptionItem(surface="a/instagram", caption="#hiphop")]).model_dump_json())
-    import fanops.caption as capmod
-    real = capmod.vet_hashtags_traced; captured = {}
-    def spy(tags, plat, *a, **k): captured["plat"] = plat; return real(tags, plat, *a, **k)
-    mocker.patch("fanops.caption.vet_hashtags_traced", side_effect=spy)
+        request_id=rid, items=[CaptionItem(surface="a/instagram", caption="a sentence",
+                                           hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
-    assert captured["plat"] == Platform.tiktok               # vetted under the REQUESTED platform, not the parsed @a/instagram
+    assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
+    src = inspect.getsource(ingest_fn)
+    assert "vet_hashtags_traced" not in src
+    assert "_platform_for_surface" in src
+    assert "ship_from_lock" in src

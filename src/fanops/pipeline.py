@@ -32,6 +32,7 @@ from fanops.responder import _SCHEMA as _RESPONDER_SCHEMA   # the answerable-gat
 from fanops.timeutil import _aware_utc
 from fanops import produce
 from fanops.pipeline_run import note_stage
+from fanops.source_tags import lock_ready_sources
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
@@ -496,6 +497,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # re-runs the slow stages and they short-circuit on the warm artifacts (M1 + M2 caches).
     # Lock-free; saves nothing; fail-open per source.
     produce.run_all(cfg, aspects, log)
+    lock_ready_sources(cfg)
 
     # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
     # BEFORE load and the single save happens on clean exit. This closes the lost-update window the

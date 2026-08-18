@@ -1,13 +1,16 @@
 # src/fanops/source_tags.py
-"""Source hashtag lock producer (HV1-PR2).
+"""Source hashtag lock producer.
 
-One research call → search_hashtags pile → measure → lock_from_pile (plays, ≤12).
+Source-entry run: whisper, scrape, and Graph are required. LLM names THIS video
+(mild→provocative). Search verifies the exact name (no siblings on the pile).
+Every name is dual-measured; lock is the first 15 that clear both meters, LLM order.
+Caption / regen / recaption read the sidecar; they do not produce it.
 Sidecar is cfg.control / source_tag_locks.json — not a Config field, not hashtags.json.
-Never raises. Caption still reads the 80-pile until PR3.
 """
 from __future__ import annotations
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
@@ -15,11 +18,13 @@ from fanops.hashtags import _dedupe_norm, _norm, _num, load_measurements, lock_f
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape, open_client,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.log import get_logger
+from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
+                               measure_and_harvest, resolve_hashtag)
 from fanops.timeutil import iso_z
 
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
-_LOCK_N = 12
-_RESEARCH_CAP = 30
+_LOCK_N = 15
+_RESEARCH_CAP = 20
 _RESEARCH_SCHEMA = {
     "type": "object",
     "properties": {"names": {"type": "array", "items": {"type": "string"}}},
@@ -63,16 +68,49 @@ def _prose(source, excerpt=None) -> str:
     return " ".join(parts)
 
 
+def _transcript_json_path(cfg, source):
+    raw = getattr(source, "source_path", None) or ""
+    if not raw:
+        return None
+    return cfg.agent_io / "transcripts" / f"{Path(raw).stem}.json"
+
+
+def _transcript_file_prose(cfg, source) -> str:
+    """Whisper JSON when the ledger transcript is not adopted yet."""
+    p = _transcript_json_path(cfg, source)
+    if p is None or not p.exists():
+        return ""
+    try:
+        data = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    segs = data.get("segments") if isinstance(data, dict) else None
+    if not isinstance(segs, list):
+        return ""
+    parts: list[str] = []
+    for seg in segs:
+        t = seg.get("text") if isinstance(seg, dict) else None
+        if isinstance(t, str) and t.strip():
+            parts.append(t.strip())
+    return " ".join(parts)
+
+
 def _default_research(source, excerpt) -> list[str]:
     from fanops.llm import claude_json_meta
-    title = getattr(source, "title", None) or ""
+    from fanops.models import source_display_title
+    raw_title = getattr(source, "title", None)
+    if isinstance(raw_title, str) and raw_title.strip():
+        title = raw_title.strip()
+    else:
+        title = source_display_title(source)
     language = getattr(source, "language", None) or ""
     prompt = (
-        "Propose Instagram hashtag names for this video source.\n"
+        "Propose Instagram hashtag names for THIS video only.\n"
+        "Range from mild to provocative. Do not name sibling tracks or other videos.\n"
         f"title: {title}\n"
         f"language: {language}\n"
         f"transcript: {excerpt or ''}\n"
-        "Return at most 30 names. Names only."
+        "Return about 20 names. Names only."
     )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
     names = data.get("names") if isinstance(data, dict) else None
@@ -133,98 +171,184 @@ def _iter_lock_clients(cfg, *, client, open_client_fn):
             yield cli
 
 
-def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
-                       open_client_fn=None) -> None:
-    """Idempotent: research → search all hits onto pile → measure → lock. Never raises."""
-    with fail_open("source_tags.ensure"):
-        sid = str(getattr(source, "id", "") or "")
-        if not sid:
-            return
-        table = load_source_tag_locks(cfg)
-        if _researched(table, sid):
-            return
-        log = get_logger(cfg)
-        # Client first: no_scrape writes nothing, so skip the LLM when scrape is down.
-        # Open one identity; rotate to the next only if this dump is rejected.
-        walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
-        first = next(walk, None)
-        if first is None:
-            log("source_tags", sid, "no_scrape")
-            return
+def _graph_ready(cfg, resolve_fn) -> bool:
+    if resolve_fn is not None:
+        return True
+    return bool(getattr(cfg, "meta_graph_token", None) and getattr(cfg, "meta_ig_user_id", None))
+
+
+def _graph_message(exc) -> str:
+    if isinstance(exc, GraphRefused):
+        return (exc.message or str(exc))[:160]
+    if isinstance(exc, GraphUnreachable):
+        return (exc.reason or str(exc))[:160]
+    return str(exc)[:160]
+
+
+def _search_verify(cli, names: list[str]) -> tuple[list[str] | None, Exception | None]:
+    """Exact-name verify. Returns (verified, dead_exc). dead_exc set → rotate."""
+    verified: list[str] = []
+    seen: set[str] = set()
+    for q in names:
         try:
-            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
+            hits = search_hashtags_scrape(cli, q)
         except Exception as exc:
-            log("source_tags", sid, "research_fail", err=type(exc).__name__)
-            return
-        names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
-        if not names:
-            log("source_tags", sid, "research_empty")
-            return
-        pile: list[str] | None = None
-        cli = None
-        def _clients():
-            yield first
-            yield from walk
-        for cand in _clients():
-            pile_try: list[str] = []
-            seen: set[str] = set()
-            dead = False
-            for q in names:
-                try:
-                    hits = search_hashtags_scrape(cand, q)
-                except Exception as exc:
-                    if scrape_session_dead(exc):
-                        log("source_tags", sid, "rotate_dead", err=type(exc).__name__,
-                            user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
-                        _remember_dead_dump(cfg, cand, exc)
-                        dead = True
-                        break
-                    raise
-                for hit in hits:
-                    n = _norm(hit.get("name") if isinstance(hit, dict) else "")
-                    if n and n not in seen:
-                        seen.add(n)
-                        pile_try.append(n)
-            if dead:
+            if scrape_session_dead(exc):
+                return None, exc
+            raise
+        want = _norm(q)
+        if any(_norm(hit.get("name") if isinstance(hit, dict) else "") == want for hit in hits):
+            if want and want not in seen:
+                seen.add(want)
+                verified.append(want)
+    return verified, None
+
+
+def _apply_scrape_metrics(measurements: dict, tag: str, metrics) -> None:
+    if not isinstance(metrics, dict):
+        return
+    prev = measurements.get(tag)
+    merged = dict(prev) if isinstance(prev, dict) else {}
+    merged.update(metrics)
+    measurements[tag] = merged
+
+
+def _set_graph_metric(measurements: dict, tag: str, metric) -> None:
+    rec = measurements.get(tag)
+    rec = dict(rec) if isinstance(rec, dict) else {}
+    v = _num(metric)
+    if v is not None and v > 0:
+        rec["graph_metric"] = v
+    measurements[tag] = rec
+
+
+def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
+                       open_client_fn=None, resolve_fn=None, measure_fn=None) -> None:
+    """Research → exact-name verify → dual scrape+Graph measure → lock. Abort source on tool death."""
+    sid = str(getattr(source, "id", "") or "")
+    if not sid:
+        return
+    table = load_source_tag_locks(cfg)
+    if _researched(table, sid):
+        return
+    log = get_logger(cfg)
+    walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
+    first = next(walk, None)
+    if first is None:
+        log("source_tags", sid, "no_scrape", level="error")
+        return
+    if not _graph_ready(cfg, resolve_fn):
+        log("source_tags", sid, "no_graph", level="error")
+        return
+    try:
+        raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
+    except Exception as exc:
+        log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
+        return
+    llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+    if not llm_names:
+        log("source_tags", sid, "research_fail", level="error", err="research_empty")
+        return
+    verified: list[str] | None = None
+    cli = None
+
+    def _clients():
+        yield first
+        yield from walk
+
+    for cand in _clients():
+        got, dead_exc = _search_verify(cand, llm_names)
+        if dead_exc is not None:
+            log("source_tags", sid, "rotate_dead", err=type(dead_exc).__name__,
+                user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
+            _remember_dead_dump(cfg, cand, dead_exc)
+            continue
+        verified = got
+        cli = cand
+        break
+    if verified is None or cli is None:
+        log("source_tags", sid, "no_scrape", level="error", err="all_sessions_dead")
+        return
+    measurements = dict(load_measurements(cfg))
+    remaining = list(verified)
+    spare = iter(walk)
+    current = cli
+    while remaining:
+        tag = remaining[0]
+        try:
+            metrics, _cotags = measure_and_harvest_scrape(current, tag)
+        except Exception as exc:
+            if scrape_session_dead(exc):
+                log("source_tags", sid, "rotate_dead", tag=tag, err=type(exc).__name__,
+                    user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
+                _remember_dead_dump(cfg, current, exc)
+                nxt = next(spare, None)
+                if nxt is None:
+                    log("source_tags", sid, "no_scrape", level="error", err="measure_dead")
+                    return
+                current = nxt
                 continue
-            pile = pile_try
-            cli = cand
-            break
-        if pile is None or cli is None:
-            log("source_tags", sid, "no_scrape", err="all_sessions_dead")
+            log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
+            remaining.pop(0)
+            continue
+        _apply_scrape_metrics(measurements, tag, metrics)
+        try:
+            hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
+            if hid:
+                raw = measure_fn(cfg, hid) if measure_fn is not None else measure_and_harvest(cfg, hid)
+                gmetric = raw[0] if isinstance(raw, tuple) and raw else raw
+                _set_graph_metric(measurements, tag, gmetric)
+        except GraphThrottled as exc:
+            log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
             return
-        if not pile:
-            log("source_tags", sid, "search_empty")
+        except (GraphRefused, GraphUnreachable) as exc:
+            log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
             return
-        measurements = dict(load_measurements(cfg))
-        measure_dead = False
-        for tag in pile:
-            rec = measurements.get(tag)
-            plays = _num(rec.get("play_count")) if isinstance(rec, dict) else None
-            if plays is not None and plays > 0:
+        remaining.pop(0)
+    lock = lock_from_pile(verified, measurements, _LOCK_N)
+    table[sid] = {
+        "pile": llm_names,
+        "lock": lock,
+        "researched_at": iso_z(datetime.now(timezone.utc)),
+    }
+    write_json_atomic(source_tag_locks_path(cfg), table)
+
+
+def _state_value(source) -> str:
+    state = getattr(source, "state", None)
+    return str(getattr(state, "value", state) or "")
+
+
+def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=None,
+                       resolve_fn=None, measure_fn=None) -> None:
+    """After produce, before reduce. One source per call. Lock-free. Never raises."""
+    log = get_logger(cfg)
+    try:
+        from fanops.ledger import Ledger
+        led = Ledger.load(cfg)
+        table = load_source_tag_locks(cfg)
+        for source in led.sources.values():
+            if getattr(source, "origin_kind", "native") == "third_party":
                 continue
+            sid = str(getattr(source, "id", "") or "")
+            if not sid or _researched(table, sid):
+                continue
+            jp = _transcript_json_path(cfg, source)
+            has_json = bool(jp and jp.exists())
+            if not has_json:
+                if _state_value(source) in ("pending", "discovered", "retired"):
+                    continue
+                log("source_tags", sid, "no_transcript", level="error")
+                return
+            excerpt = _transcript_file_prose(cfg, source) or _prose(source)
             try:
-                metrics, _cotags = measure_and_harvest_scrape(cli, tag)
+                ensure_source_lock(cfg, source, excerpt=excerpt, client=client,
+                                   research_fn=research_fn, open_client_fn=open_client_fn,
+                                   resolve_fn=resolve_fn, measure_fn=measure_fn)
             except Exception as exc:
-                if scrape_session_dead(exc):
-                    log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
-                    _remember_dead_dump(cfg, cli, exc)
-                    measure_dead = True
-                    break
-                log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
-                continue
-            if isinstance(metrics, dict):
-                prev = rec if isinstance(rec, dict) else {}
-                merged = dict(prev)
-                merged.update(metrics)
-                measurements[tag] = merged
-        lock = lock_from_pile(pile, measurements, _LOCK_N)
-        if not lock and measure_dead:
-            log("source_tags", sid, "search_empty", err="measure_dead")
+                log("source_tags", sid, "error", level="error",
+                    err=f"{type(exc).__name__}: {exc}"[:160])
             return
-        table[sid] = {
-            "pile": pile,
-            "lock": lock,
-            "researched_at": iso_z(datetime.now(timezone.utc)),
-        }
-        write_json_atomic(source_tag_locks_path(cfg), table)
+    except Exception as exc:
+        log("source_tags", "-", "error", level="error",
+            err=f"{type(exc).__name__}: {exc}"[:160])

@@ -181,9 +181,14 @@ def test_pipeline_model_pick_content_survives_ingest(tmp_path):
     led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
                           reason="r", transcript_excerpt="fiery diss track about loyalty"))
     led.add_clip(Clip(id="clip_x", parent_id="mom_x", path="/c.mp4", state=ClipState.rendered))
-    # Seed a surface store so membership includes #loyalty (persona-aligned menus normally do).
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#loyalty", "#hiphop"], "lock": ["#loyalty", "#hiphop"],
+                  "researched_at": "2026-08-18T00:00:00Z"},
+    }))
     led = request_captions(led, cfg, "clip_x", [("a", Platform.instagram)])
-    # Patch the request surface store to the measured menu (no persona → store omitted).
     from fanops.agentstep import request_path
     req = json.loads(request_path(cfg, "captions", "clip_x").read_text())
     for s in req["surfaces"]:
@@ -198,6 +203,7 @@ def test_pipeline_model_pick_content_survives_ingest(tmp_path):
     entry = led.clips["clip_x"].meta_captions["a/instagram"]
     assert entry["caption"] == "loyalty over everything."
     assert "#loyalty" in entry["hashtags"]
+    assert set(entry["hashtags"]) <= {"#loyalty", "#hiphop"}
     assert entry["tag_sources"].get("#loyalty") != "content"
 
 
