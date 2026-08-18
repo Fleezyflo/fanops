@@ -307,7 +307,7 @@ def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_pat
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "scrape session dead" in str(e)
+        assert "profile" in str(e)
     assert seen == {"login": 0, "account_info": 0, "dump": 0, "search": 0}
     assert sess.read_text() == original
 

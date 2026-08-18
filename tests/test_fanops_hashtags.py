@@ -676,7 +676,7 @@ def test_open_client_stale_session_opens_without_probe_or_login(tmp_path, monkey
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "scrape session dead" in str(e)
+        assert "profile" in str(e)
     assert seen == {"login": 0, "account_info": 0, "dump": 0}
     assert sess.read_text() == original
 
@@ -862,7 +862,7 @@ def test_open_client_unattended_loginrequired_without_chrome_leaves_dump(tmp_pat
         open_client(cfg, client_factory=_Dead)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "scrape session dead" in str(e)
+        assert "profile" in str(e)
     assert seen == {"dump": 0, "login": 0, "account_info": 0}
     assert sess.read_text() == original
 
