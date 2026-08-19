@@ -262,6 +262,8 @@ def test_caption_menu_is_not_80_pile():
     import fanops.source_tags as st
     st_src = inspect.getsource(st)
     assert "content_tag_candidates" not in st_src
+    assert "_aligned_pool" not in st_src
+    assert "_per_account_hashtag_stores" not in st_src
     assert "fail_open(\"source_tags.ensure\")" not in st_src
     assert "sleep" not in st_src
     assert "_SCRAPE_DAY_BUDGET" not in st_src
@@ -1006,3 +1008,127 @@ def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
     assert not rec2.get("researched_at")
     assert rec2.get("remaining") == ["#t1", "#t2"]
     assert seen == []
+
+
+def _write_meas(cfg, tags):
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        t: {"graph_id": f"g-{t}", "measured_at": "2026-08-01T00:00:00Z",
+            "play_count": play, "like_count": 2.0}
+        for t, play in tags.items()
+    }))
+
+
+def _seed_source_with_tags(cfg, sid, tags, *, title="a session"):
+    from fanops.ledger import Ledger
+    from fanops.models import (Clip, ClipState, Moment, MomentState, Platform, Post,
+                               Source, SourceState)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id=sid, source_path=str(cfg.root / f"{sid}.mp4"),
+                          title=title, state=SourceState.catalogued))
+    led.add_moment(Moment(id=f"mom_{sid}", parent_id=sid, content_token="0-7",
+                          start=0, end=7, reason="r", state=MomentState.decided))
+    led.add_clip(Clip(id=f"clip_{sid}", parent_id=f"mom_{sid}", path="/c.mp4",
+                      state=ClipState.rendered,
+                      meta_captions={"a/instagram": {"caption": "x", "hashtags": list(tags)}}))
+    led.add_post(Post(id=f"post_{sid}", parent_id=f"clip_{sid}", account="a",
+                      account_id="id", platform=Platform.instagram, caption="x",
+                      hashtags=list(tags)))
+    led.save()
+    return Ledger.load(cfg)
+
+
+def test_hydrate_used_measured_stamps_without_safari(tmp_path):
+    from fanops.caption import posted_text_for
+    from fanops.ledger import Ledger
+    from fanops.source_tags import hydrate_locks_from_known
+    cfg = _cfg(tmp_path)
+    _write_meas(cfg, {"#hiphop": 90.0, "#lyrics": 50.0, "#rap": 999.0})
+    led = _seed_source_with_tags(cfg, "src_1", ["#lyrics", "#hiphop", "#storeonly"])
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("used∩measured must not open Safari")
+
+    n = hydrate_locks_from_known(cfg, led)
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert n == 1
+    assert rec["researched_at"]
+    assert rec["lock"][0] == "#hiphop"
+    assert "#lyrics" in rec["lock"]
+    assert "#rap" not in rec["lock"]
+    assert "#storeonly" not in rec["lock"]
+    lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
+    assert seen == []
+    post = Ledger.load(cfg).posts["post_src_1"]
+    text = posted_text_for(cfg, Ledger.load(cfg), post)
+    assert "#hiphop" in text or "#lyrics" in text
+
+
+def test_hydrate_store_tag_not_on_source_stays_out(tmp_path):
+    from fanops.source_tags import hydrate_locks_from_known
+    cfg = _cfg(tmp_path)
+    _write_meas(cfg, {"#hiphop": 90.0, "#rap": 999.0})
+    led = _seed_source_with_tags(cfg, "src_1", ["#hiphop"])
+    hydrate_locks_from_known(cfg, led)
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#hiphop"]
+
+
+def test_hydrate_merges_used_into_completed_lock(tmp_path):
+    from fanops.source_tags import hydrate_locks_from_known
+    cfg = _cfg(tmp_path)
+    _write_meas(cfg, {"#hiphop": 90.0})
+    led = _seed_source_with_tags(cfg, "src_1", ["#hiphop"])
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#jussiesmollett"], "lock": ["#jussiesmollett"],
+                  "researched_at": "2026-08-19T00:00:00Z"},
+    }))
+    hydrate_locks_from_known(cfg, led)
+    lock = load_source_tag_locks(cfg)["src_1"]["lock"]
+    assert lock[0] == "#hiphop"
+    assert "#jussiesmollett" in lock
+
+
+def test_pile_cache_hit_stamps_without_safari(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {"pile": ["#music"], "verified": [], "remaining": ["#music"], "lock": []},
+    }))
+    _write_meas(cfg, {"#music": 8.0})
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("cache hit must not open Safari")
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: (_ for _ in ()).throw(
+        AssertionError("must not re-LLM")), open_client_fn=opener, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#music"]
+    assert seen == []
+
+
+def test_lock_ready_hydrates_every_used_source_in_one_tick(tmp_path):
+    from fanops.source_tags import hydrate_locks_from_known
+    cfg = _cfg(tmp_path)
+    _write_meas(cfg, {"#hiphop": 90.0, "#lyrics": 50.0})
+    _seed_source_with_tags(cfg, "src_a", ["#hiphop"])
+    _seed_source_with_tags(cfg, "src_b", ["#lyrics"])
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("hydrate must stamp both without Safari")
+
+    lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
+    table = load_source_tag_locks(cfg)
+    assert table["src_a"]["lock"] == ["#hiphop"]
+    assert table["src_b"]["lock"] == ["#lyrics"]
+    assert table["src_a"]["researched_at"] and table["src_b"]["researched_at"]
+    assert seen == []
+    assert hydrate_locks_from_known(cfg, __import__("fanops.ledger", fromlist=["Ledger"]).Ledger.load(cfg)) == 0
