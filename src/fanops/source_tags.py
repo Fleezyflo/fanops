@@ -242,47 +242,24 @@ def _restore_meters(measurements: dict, snap) -> None:
         measurements[n] = merged
 
 
-def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining, quota=False) -> None:
-    rec = {
+def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining) -> None:
+    table[sid] = {
         "pile": list(pile),
         "verified": list(verified),
         "measurements": _snapshot_meters(measurements, list(verified) or list(pile)),
         "remaining": list(remaining),
         "lock": [],
     }
-    if quota:
-        rec["quota_exhausted_at"] = iso_z(datetime.now(timezone.utc))
-    table[sid] = rec
     write_json_atomic(source_tag_locks_path(cfg), table)
 
 
-def _remaining_needs_novel(cfg, rec) -> bool:
-    names = rec.get("remaining") if isinstance(rec, dict) else None
-    if not isinstance(names, list) or not names:
-        names = []
-        if isinstance(rec, dict):
-            for key in ("verified", "pile"):
-                raw = rec.get(key)
-                if isinstance(raw, list) and raw:
-                    names = raw
-                    break
-    for raw in names:
-        n = _norm(raw) if isinstance(raw, str) else ""
-        if n and _cache_lookup(cfg, n) is None:
-            return True
-    return False
-
-
-def _source_quota_stuck(cfg, rec) -> bool:
-    """True when this source already hit quota and still needs a novel ig_hashtag_search."""
-    if not isinstance(rec, dict):
+def _scrape_already_done(search_needed, pending, verified, measurements) -> bool:
+    """True when a prior Safari walk already finished. Graph quota is not membership."""
+    if search_needed:
         return False
-    qat = rec.get("quota_exhausted_at")
-    if not (isinstance(qat, str) and qat.strip()):
-        return False
-    if not graph_search_quota_status(cfg)[2]:
-        return False
-    return _remaining_needs_novel(cfg, rec)
+    if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+        return True
+    return not pending
 
 
 def _prose(source, excerpt=None) -> str:
@@ -492,12 +469,54 @@ def _stamp_source(cfg, table, sid, pile, lock) -> None:
     write_json_atomic(source_tag_locks_path(cfg), table)
 
 
+def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
+                     resolve_fn, measure_fn, log) -> None:
+    """Graph ranks scrape admits when it can; Graph death still stamps."""
+    if _graph_ready(cfg, resolve_fn):
+        for tag in verified:
+            if _graph_confirmed_n(verified, measurements) >= _LOCK_N:
+                break
+            if _scrape_number(measurements.get(tag)) is None:
+                continue
+            cached = _cache_lookup(cfg, tag)
+            gm = _cached_metric(cached)
+            if gm is not None:
+                _set_graph_metric(measurements, tag, gm)
+                continue
+            try:
+                if isinstance(cached, dict) and "id" in cached:
+                    hid = cached.get("id")
+                    if not (isinstance(hid, str) and hid):
+                        continue
+                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+                    continue
+                if graph_search_quota_status(cfg)[2]:
+                    _mark_quota_exhausted(cfg)
+                    log("source_tags", sid, "quota_exhausted", level="error", err="ration",
+                        spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                    break
+                hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
+                _note_graph_id(cfg, tag, hid)
+                if hid:
+                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+            except GraphQuotaExhausted as exc:
+                _mark_quota_exhausted(cfg)
+                log("source_tags", sid, "quota_exhausted", level="error", err=_graph_message(exc),
+                    spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                break
+            except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
+                log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
+                break
+    _stamp_source(cfg, table, sid, pile, lock_from_pile(verified, measurements, _LOCK_N))
+
+
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> None:
     """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
 
     Charge + rotate via `_day_room` / `_charge_scrape_user`. All peers at cap / dead /
-    missing → no researched_at. Empty finished scrape → lock [] + researched_at.
+    missing → no researched_at unless a prior walk already finished. Empty finished
+    scrape → lock [] + researched_at. Graph quota never withholds a finished scrape.
     """
     sid = str(getattr(source, "id", "") or "")
     if not sid:
@@ -507,11 +526,6 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         return
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
-    walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
-    first = next(walk, None)
-    if first is None:
-        log("source_tags", sid, "no_scrape", level="error")
-        return
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     if pile_prior:
         llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP]
@@ -541,6 +555,15 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         search_needed = True
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
+    if _scrape_already_done(search_needed, pending, verified, measurements):
+        _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
+                         resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
+        return
+    walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
+    first = next(walk, None)
+    if first is None:
+        log("source_tags", sid, "no_scrape", level="error")
+        return
     already: dict[str, int] = {}
     spare = iter(walk)
     current = first
@@ -591,42 +614,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending)
         return
-    if _graph_ready(cfg, resolve_fn):
-        for tag in verified:
-            if _graph_confirmed_n(verified, measurements) >= _LOCK_N:
-                break
-            if _scrape_number(measurements.get(tag)) is None:
-                continue
-            cached = _cache_lookup(cfg, tag)
-            gm = _cached_metric(cached)
-            if gm is not None:
-                _set_graph_metric(measurements, tag, gm)
-                continue
-            try:
-                if isinstance(cached, dict) and "id" in cached:
-                    hid = cached.get("id")
-                    if not (isinstance(hid, str) and hid):
-                        continue
-                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
-                    continue
-                if graph_search_quota_status(cfg)[2]:
-                    _mark_quota_exhausted(cfg)
-                    log("source_tags", sid, "quota_exhausted", level="error", err="ration",
-                        spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
-                    break
-                hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
-                _note_graph_id(cfg, tag, hid)
-                if hid:
-                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
-            except GraphQuotaExhausted as exc:
-                _mark_quota_exhausted(cfg)
-                log("source_tags", sid, "quota_exhausted", level="error", err=_graph_message(exc),
-                    spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
-                break
-            except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
-                log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
-                break
-    _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N))
+    _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
+                     resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
 
 
 def _state_value(source) -> str:
@@ -639,8 +628,8 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     """After produce, before reduce. One source per real lock attempt. Never raises.
 
     Missing whisper JSON on a produce-eligible source logs no_transcript and continues
-    (must not starve a later ready source). After quota-block on A, skip A when it still
-    needs a novel search and try B whose remaining names are already cached.
+    (must not starve a later ready source). Graph quota does not skip a source —
+    leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
     """
     log = get_logger(cfg)
     try:
@@ -659,9 +648,6 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 if _state_value(source) in ("pending", "discovered", "retired"):
                     continue
                 log("source_tags", sid, "no_transcript", level="error")
-                continue
-            rec = table.get(sid)
-            if _source_quota_stuck(cfg, rec):
                 continue
             excerpt = _transcript_file_prose(cfg, source) or _prose(source)
             try:
