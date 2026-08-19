@@ -243,6 +243,12 @@ def test_ingest_absent_hashtag_store_is_short_not_global(tmp_path):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
         "#hiphop": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},

@@ -146,6 +146,16 @@ from fanops.models import Clip, Moment, Source, ClipState, CaptionSet
 from fanops.agentstep import response_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
 from fanops.config import Config
+from fanops.source_tags import source_tag_locks_path
+
+
+def _completed_lock(cfg, sid="src_1", lock=()):
+    import json
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        sid: {"pile": list(lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+    }))
 
 
 # ---- MOL-642: content_tags wired through request / prompt / ingest ---------------------------------
@@ -161,6 +171,7 @@ def test_request_payload_embeds_content_tags(tmp_path):
                           reason="r", transcript_excerpt="fiery diss track about loyalty"))
     led.add_clip(Clip(id="clip_x", parent_id="mom_x", path="/c.mp4", state=ClipState.rendered))
     import json
+    _completed_lock(cfg)
     request_captions(led, cfg, "clip_x", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
     assert "content_tags" not in payload
@@ -225,6 +236,7 @@ def _seed(led, *, clip_id, mom_id, transcript):
 
 def _ingest_empty(led, cfg, clip_id):
     # items:[] is missing language — HOLD, no seed-tag manufacture.
+    _completed_lock(cfg)
     led = request_captions(led, cfg, clip_id, [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", clip_id)
     response_path(cfg, "captions", clip_id).write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
@@ -324,6 +336,7 @@ def test_request_payload_hashtag_metrics_sidecar(tmp_path):
     led.add_moment(Moment(id="mom_x", parent_id="src_1", content_token="mom_x", start=0, end=7,
                           reason="r", transcript_excerpt="bars"))
     led.add_clip(Clip(id="clip_x", parent_id="mom_x", path="/c.mp4", state=ClipState.rendered))
+    _completed_lock(cfg)
     # No persona aligned store → metrics may be empty; still store stays list type when present.
     request_captions(led, cfg, "clip_x", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
@@ -358,6 +371,7 @@ def test_clip_make_tag_sources_from_source_not_persona_corpus(tmp_path):
     accts = Accounts(cfg)
     accts.accounts = [Account(handle="a", platforms=[Platform.instagram],
                               hashtag_corpus=["#personaone", "#personatwo", "#personathree"])]
+    _completed_lock(cfg)
     led = request_captions(led, cfg, "clip_x", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_x").read_text())
     assert "corpus" not in payload["surfaces"][0]

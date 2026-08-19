@@ -107,6 +107,14 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     response_path(cfg, "moment_hooks", hook_key).write_text(
         MomentHookDecision(request_id=hrid, hook="wait for the beat switch").model_dump_json())
 
+    # HV1-WALK: caption gate stays closed until the source has a completed lock row.
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        src_id: {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+
     # answering the hook gate promotes the moment to decided -> the clip renders, captions are requested.
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")
     assert s["moments"] == 1 and s["clips"] >= 1 and s["awaiting"]["captions"] == 1

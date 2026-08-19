@@ -101,11 +101,21 @@ def test_unlinked_account_corpus_is_empty(tmp_path):
 
 # --- caption request/ingest carry + apply the corpus -------------------------------------------
 
-def _clip(led, transcript="they slept on me"):
+def _write_lock(cfg, sid, lock, pile=None):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        sid: {"pile": list(pile or lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+
+
+def _clip(led, transcript="they slept on me", cfg=None):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt=transcript, state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    if cfg is not None:
+        _write_lock(cfg, "src_1", [])
 
 
 def _write_meas_tags(cfg, tags, sizes=None):
@@ -124,18 +134,10 @@ def _accounts_with_corpus(cfg, corpus):
     return a
 
 
-def _write_lock(cfg, sid, lock, pile=None):
-    p = source_tag_locks_path(cfg)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({
-        sid: {"pile": list(pile or lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
-    }))
-
-
 def test_request_captions_carries_source_measured_lead_not_persona_corpus(tmp_path):
     """HV1-PR3: request carries no content_tags / no ASR corpus lead (lock only)."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _clip(led, transcript="detroit rap bars fire")
+    _clip(led, transcript="detroit rap bars fire", cfg=cfg)
     _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
                      {"#detroit": 5000.0, "#alphacorpus": 10.0})
     accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus", "#gammacorpus"])
@@ -147,7 +149,7 @@ def test_request_captions_carries_source_measured_lead_not_persona_corpus(tmp_pa
 
 
 def test_request_captions_omits_corpus_when_no_measured_overlap(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     accts = _accounts_with_corpus(cfg, ["#detroitrap"])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -156,7 +158,7 @@ def test_request_captions_omits_corpus_when_no_measured_overlap(tmp_path):
 
 def test_ingest_uses_source_corpus_lead_not_persona_monopoly(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _clip(led, transcript="detroit rap bars fire")
+    _clip(led, transcript="detroit rap bars fire", cfg=cfg)
     _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
                      {"#detroit": 9000.0, "#alphacorpus": 5.0})
     accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus"])
@@ -198,7 +200,7 @@ def _write_meas(cfg, rows):
 
 def test_request_captions_carries_per_surface_aligned_store(tmp_path):
     # HV1-PR3: both surfaces of a source get the SAME lock, not per-persona aligned pools.
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     lock = ["#lockone", "#locktwo"]
     _write_lock(cfg, "src_1", lock)
     pid_a = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
@@ -231,8 +233,8 @@ def test_request_captions_carries_per_surface_aligned_store(tmp_path):
 def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
     import inspect
     from fanops.caption import request_captions as req_fn
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
-    # No sidecar lock -> empty/absent store. Never fail-open to the 80-pile.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
+    # Empty completed lock -> empty/absent store. Never fail-open to the 80-pile.
     accts = _accounts_with_corpus(cfg, [])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -246,7 +248,7 @@ def test_request_captions_omits_hashtag_store_when_no_aligned_pool(tmp_path):
 def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
     # HV1-PR3: request writes the source lock on every surface; ingest vets that lock.
     # Off-lock tags die on both surfaces even when they sit in the global cache.
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     lock = ["#detroitrap"]
     _write_lock(cfg, "src_1", lock)
     _write_meas(cfg, {
@@ -302,7 +304,7 @@ def test_persona_facts_lead_tags_use_aligned_pool_not_global(tmp_path):
 # --- HV1-PR3: caption menu is the source lock ---------------------------------------------------
 
 def test_request_captions_lock_is_same_on_every_surface(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     lock = ["#alpha", "#beta", "#gamma"]
     _write_lock(cfg, "src_1", lock)
     _write_meas_tags(cfg, lock, {"#alpha": 100.0})
@@ -325,7 +327,7 @@ def test_request_captions_lock_is_same_on_every_surface(tmp_path):
 def test_request_without_lock_drops_invented_tags_sentence_stays(tmp_path):
     import inspect
     from fanops.caption import request_captions as req_fn
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "hashtag_store" not in payload["surfaces"][0]
@@ -344,7 +346,7 @@ def test_request_without_lock_drops_invented_tags_sentence_stays(tmp_path):
 
 
 def test_request_without_lock_tags_only_still_holds(tmp_path):
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[

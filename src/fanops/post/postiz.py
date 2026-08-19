@@ -448,8 +448,12 @@ class PostizPoster:
                 f"— refusing to guess post|story"
             )
         _validate_ledger_media(post, declared, media_urls)
+        # IG/TT: compose sentence + lock tags at send. YouTube keeps the sentence as description
+        # and ships tags via settings.tags (`_youtube_tags`) — never dump the IG composed string.
+        from fanops.caption import posted_text_for
+        content = post.caption if post.platform is Platform.youtube else posted_text_for(self.cfg, led, post)
         payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
-                                       content=post.caption, media_urls=media_urls,
+                                       content=content, media_urls=media_urls,
                                        scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)
         delay, last = 1.0, None
