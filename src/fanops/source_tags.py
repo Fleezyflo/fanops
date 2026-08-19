@@ -527,21 +527,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
-    if pile_prior:
-        llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP]
-    else:
-        try:
-            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
-        except Exception as exc:
-            log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
-            return
-        llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
-        if not llm_names:
-            log("source_tags", sid, "research_fail", level="error", err="research_empty")
-            return
-    if not llm_names:
-        log("source_tags", sid, "research_fail", level="error", err="research_empty")
-        return
+    llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
     measurements = dict(load_measurements(cfg))
     _restore_meters(measurements, prior.get("measurements"))
     verified_prior = prior.get("verified") if isinstance(prior.get("verified"), list) else None
@@ -555,7 +541,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         search_needed = True
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
-    if _scrape_already_done(search_needed, pending, verified, measurements):
+    if llm_names and _scrape_already_done(search_needed, pending, verified, measurements):
         _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
                          resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
         return
@@ -564,6 +550,18 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if first is None:
         log("source_tags", sid, "no_scrape", level="error")
         return
+    if not llm_names:
+        try:
+            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
+        except Exception as exc:
+            log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
+            return
+        llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+        if not llm_names:
+            log("source_tags", sid, "research_fail", level="error", err="research_empty")
+            return
+        pending = list(llm_names)
+        search_needed = True
     already: dict[str, int] = {}
     spare = iter(walk)
     current = first
