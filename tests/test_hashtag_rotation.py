@@ -12,13 +12,20 @@ from fanops.source_tags import source_tag_locks_path
 from fanops.studio.views_results import tag_exposure
 
 
-def _clip(led, clip_id="clip_1", moment_id="mom_1", transcript="they slept on me"):
+def _clip(led, clip_id="clip_1", moment_id="mom_1", transcript="they slept on me", cfg=None):
     if "src_1" not in led.sources:
         led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     if moment_id not in led.moments:
         led.add_moment(Moment(id=moment_id, parent_id="src_1", content_token="0-7", start=0, end=7,
                               reason="r", transcript_excerpt=transcript, state=MomentState.decided))
     led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"/{clip_id}.mp4", state=ClipState.rendered))
+    if cfg is not None:
+        p = source_tag_locks_path(cfg)
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({
+                "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+            }))
 
 
 def _write_meas_tags(cfg, tags):
@@ -218,7 +225,7 @@ def test_ingest_empty_surface_store_short_line(tmp_path):
     cfg.hashtags_path.write_text(json.dumps({
         "#hiphop": {"graph_id": "1", "like_count": 900, "measured_at": "2026-07-01T00:00:00+00:00"},
     }))
-    _clip(led, "clip_1")
+    _clip(led, "clip_1", cfg=cfg)
     led = _ingest(cfg, led, "clip_1", hashtags=["#hiphop", "#rap"], hashtag_store=[])
     assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
 

@@ -184,21 +184,75 @@ def _transferred_hooks(led: Ledger, cfg: Config, accounts,
         return []
 
 
-def _source_lock_tags(cfg: Config, src) -> list[str]:
-    """Caption menu = that source's lock. Missing sidecar / empty lock → []. Never the 80-pile."""
+def _source_lock_record(cfg: Config, src) -> dict | None:
+    """Sidecar row for this source, or None. Missing / corrupt sidecar → None."""
     from fanops.source_tags import load_source_tag_locks
     if src is None:
-        return []
+        return None
     sid = str(getattr(src, "id", "") or "")
     if not sid:
-        return []
+        return None
     rec = load_source_tag_locks(cfg).get(sid)
-    if not isinstance(rec, dict):
+    return rec if isinstance(rec, dict) else None
+
+
+def _source_lock_completed(cfg: Config, src) -> bool:
+    """True when the source has a completed lock row (`researched_at` set). Empty `lock: []` is completed."""
+    rec = _source_lock_record(cfg, src)
+    if rec is None:
+        return False
+    at = rec.get("researched_at")
+    return isinstance(at, str) and bool(at.strip())
+
+
+def _source_lock_tags(cfg: Config, src) -> list[str]:
+    """Caption menu = that source's lock. Missing sidecar / empty lock → []. Never the 80-pile."""
+    rec = _source_lock_record(cfg, src)
+    if rec is None:
         return []
     raw = rec.get("lock")
     if not isinstance(raw, list):
         return []
     return _dedupe_norm(t for t in raw if isinstance(t, str))
+
+
+def compose_posted_caption(sentence, tags) -> str:
+    """Ship/display caption: sentence + lock tags. Stored Post.caption stays the sentence.
+
+    Strips `CAPTION_TAG_RE` matches and leftover `#` tokens from `sentence` so a previously
+    composed string is idempotent. If tags: `sentence + "\\n" + " ".join(tags[:4])`; else sentence.
+    Empty/missing tags → sentence only.
+    """
+    text = sentence or ""
+    text = CAPTION_TAG_RE.sub("", text)
+    text = re.sub(r"#\S*", "", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    line: list[str] = []
+    for raw in (tags or []):
+        tok = str(raw).strip() if raw is not None else ""
+        if tok:
+            line.append(tok)
+        if len(line) >= 4:
+            break
+    if line:
+        return f"{text}\n{' '.join(line)}" if text else " ".join(line)
+    return text
+
+
+def posted_text_for(cfg: Config, led: Ledger, post) -> str:
+    """The string IG/TT actually ship: sentence + (picks ∩ source lock, cap 4). Empty/missing lock → sentence only."""
+    sentence = (getattr(post, "caption", None) or "") if post is not None else ""
+    src = None
+    if led is not None and post is not None:
+        clip = led.clips.get(getattr(post, "parent_id", None))
+        moment = led.moments.get(clip.parent_id) if clip is not None else None
+        src = led.sources.get(moment.parent_id) if moment is not None else None
+    picks = getattr(post, "hashtags", None) if post is not None else None
+    tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4)
+    return compose_posted_caption(sentence, tags)
 
 
 def _hashtag_metrics_for(meas: dict, tags: list[str]) -> dict:
@@ -223,6 +277,11 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
+    # HV1-WALK: do not open the caption gate until this source has a completed lock row.
+    # Empty completed lock (`researched_at` + `lock: []`) DOES open and ships empty tags.
+    # Missing sidecar / no researched_at → clip stays rendered; no request file.
+    if not _source_lock_completed(cfg, src):
+        return led
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the

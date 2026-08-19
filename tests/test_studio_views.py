@@ -909,6 +909,31 @@ def test_review_surface_length_label_absent_when_no_profile(tmp_path):
     assert sp.length_label is None and sp.is_account_cut is False
 
 
+def test_review_surface_caption_is_posted_text_for(tmp_path):
+    from fanops.caption import posted_text_for
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.studio.views_review import _surface
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg); _lineage(led)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#keep", "#also"], "lock": ["#keep", "#also"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    post = Post(id="p_ship", parent_id="clip_1", account="a", account_id="1",
+                platform=Platform.instagram, caption="hello there",
+                hashtags=["#keep", "#invented"], state=PostState.awaiting_approval,
+                scheduled_time=_z(NOW + timedelta(hours=3)))
+    led.add_post(post)
+    s = _surface(post, persona=None, now=NOW, cfg=cfg, led=led)
+    want = posted_text_for(cfg, led, post)
+    assert want == "hello there\n#keep"
+    assert s.caption == want
+    assert post.caption == "hello there"
+    assert s.hashtags == ["#keep", "#invented"]
+
+
 # ---- Production redesign: classify_post_delivery + schedule inflight lane ----
 from fanops.studio.views_results import classify_post_delivery, schedule_lanes
 from fanops.models import PostState as PS

@@ -42,6 +42,12 @@ def _seed_on_disk(cfg: Config) -> None:
         for i, (hook, lift) in enumerate(rows):
             _add_analyzed(led, f"{acct}{i}", acct, hook, lift)
     led.save()
+    from fanops.source_tags import source_tag_locks_path
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
 
 
 def test_transferred_prior_reaches_caption_request_on_disk(tmp_path, monkeypatch):

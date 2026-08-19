@@ -81,6 +81,37 @@ def test_get_poster_returns_zernio(tmp_path, monkeypatch):
     assert isinstance(get_poster(_cfg(tmp_path, monkeypatch)), ZernioPoster)
 
 
+def test_zernio_content_is_posted_text_for(tmp_path, monkeypatch, mocker):
+    import json
+    from fanops.caption import posted_text_for
+    from fanops.models import Clip, ClipState, Moment, MomentState, Source
+    from fanops.source_tags import source_tag_locks_path
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#keep", "#also"], "lock": ["#keep", "#also"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    post = _post()
+    post.caption = "hello there"
+    post.hashtags = ["#keep", "#invented"]
+    led.add_post(post)
+    cap = {}
+    mocker.patch("fanops.post.zernio.requests.post",
+                 side_effect=lambda *a, **kw: cap.update(json=kw.get("json")) or _R(201, {"_id": "z_1"}))
+    ZernioPoster(cfg).publish(led, "p1")
+    want = posted_text_for(cfg, led, led.posts["p1"])
+    assert want == "hello there\n#keep"
+    assert cap["json"]["content"] == want
+    assert led.posts["p1"].caption == "hello there"
+
+
 # ---- publish state machine (mirrors Postiz safety) ----
 def test_publish_submitted_on_2xx_with_id(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())

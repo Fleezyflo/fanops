@@ -35,9 +35,17 @@ def _seed_personas(cfg, *, hooks=True, two_clips=False):
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped,
                           hook=("WATCH THE CRAFT" if hooks else None)))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#marktag", "#perctag"], "lock": ["#marktag", "#perctag"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     def _post(pid, acct):
+        tag = f"#{acct[:4]}tag"
         return Post(id=pid, parent_id="clip_1", account=acct, account_id="", platform=Platform.instagram,
-                    caption=f"#{acct[:4]}tag", state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=5)),
+                    caption=tag, hashtags=[tag], state=PostState.awaiting_approval, scheduled_time=_z(NOW + timedelta(hours=5)),
                     media_urls=([f"file://{va}"] if hooks else []))
     led.add_post(_post("p_mark", "markmakmouly"))
     led.add_post(_post("p_perc", "perca.late"))

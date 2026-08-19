@@ -3,15 +3,36 @@ import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, SourceState, MomentState, ClipState, Platform,
-                           CaptionSet, CaptionItem)
+                           CaptionSet, CaptionItem, Post, PostState)
 from fanops.agentstep import response_path, request_path, latest_request_id
-from fanops.caption import brand_risk_flag, request_captions, ingest_captions, is_tags_only_caption
+from fanops.caption import (brand_risk_flag, request_captions, ingest_captions, is_tags_only_caption,
+                            compose_posted_caption, posted_text_for)
+from fanops.source_tags import source_tag_locks_path
+
+def _ensure_completed_lock(cfg, sid="src_1", lock=()):
+    """HV1-WALK: completed sidecar (researched_at + lock list). Empty list is a completed empty lock."""
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    table = {}
+    if p.exists():
+        try:
+            raw = json.loads(p.read_text())
+            table = raw if isinstance(raw, dict) else {}
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            table = {}
+    rec = table.get(sid)
+    if isinstance(rec, dict) and isinstance(rec.get("researched_at"), str) and rec.get("researched_at", "").strip():
+        return
+    tags = list(lock)
+    table[sid] = {"pile": tags, "lock": tags, "researched_at": "2026-08-17T00:00:00Z"}
+    p.write_text(json.dumps(table))
 
 def _clip(led, cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me"))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    _ensure_completed_lock(cfg, "src_1")
 
 def test_brand_risk_flags_offbrand_english():
     assert brand_risk_flag("sorry pls stream my song 🥺") is not None
@@ -188,6 +209,7 @@ def _seed_clip_awaiting_captions(tmp_path, src_lang="en"):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-4", start=0, end=4,
                           reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.rendered))
+    _ensure_completed_lock(cfg, "s1")
     led = request_captions(led, cfg, "c1", [("a", Platform.instagram)])
     return cfg, led
 
@@ -273,7 +295,6 @@ def test_defaults_unchanged_without_tuning_json(tmp_path):
 # posts AND beating the runner-up by >= MIN_GAP) is fed back into the next caption request payload
 # (as `learned_hooks`, which caption_prompt renders — variation v2 Task 3). Gated OFF by default,
 # fail-open: any error building the hint -> no hint, and the clip STILL advances (request written).
-from fanops.models import Post, PostState
 
 def _seed_variant_posts_for_at_a(led):
     # 3 "WIN" posts at lift 90 + 3 "LOSE" posts at lift 10 on @a/instagram -> best_hooks -> ["WIN"]
@@ -472,6 +493,7 @@ def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
                           reason="r", state=MomentState.decided))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.captions_requested))
     from fanops import caption as capmod
+    _ensure_completed_lock(cfg, "s1")
     led = capmod.request_captions(led, cfg, "c1", [("a", Platform.instagram)])
     # write a response carrying a hook (raw dict — CaptionItem.hook is optional)
     rid = json.loads(request_path(cfg, "captions", "c1").read_text())["request_id"]
@@ -654,3 +676,64 @@ def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
     assert "vet_hashtags_traced" not in src
     assert "_platform_for_surface" in src
     assert "ship_from_lock" in src
+
+
+# --- HV1-SHIP: compose sentence + lock tags at send/display only --------------------------------
+
+def test_compose_posted_caption_joins_sentence_and_lock_tags():
+    assert compose_posted_caption("hello there", ["#keep", "#also"]) == "hello there\n#keep #also"
+
+
+def test_compose_posted_caption_strips_hashes_from_sentence():
+    assert compose_posted_caption("hello #keep #also", ["#keep", "#also"]) == "hello\n#keep #also"
+    assert compose_posted_caption("hello #orphan", ["#keep"]) == "hello\n#keep"
+
+
+def test_compose_posted_caption_empty_lock_is_sentence_only():
+    assert compose_posted_caption("hello there", []) == "hello there"
+    assert compose_posted_caption("hello #keep", []) == "hello"
+    assert compose_posted_caption("hello there", None) == "hello there"
+
+
+def test_compose_posted_caption_drops_off_lock_and_invented(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    p = source_tag_locks_path(cfg)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#keep", "#also"], "lock": ["#keep", "#also"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="hello there",
+                      hashtags=["#keep", "#invented", "#offlock"]))
+    assert posted_text_for(cfg, led, led.posts["p1"]) == "hello there\n#keep"
+    assert led.posts["p1"].caption == "hello there"          # stored sentence unchanged
+    assert led.posts["p1"].hashtags == ["#keep", "#invented", "#offlock"]
+
+
+def test_compose_posted_caption_idempotent():
+    once = compose_posted_caption("hello there", ["#keep", "#also"])
+    assert once == "hello there\n#keep #also"
+    assert compose_posted_caption(once, ["#keep", "#also"]) == once
+    assert compose_posted_caption(once + " #extra", ["#keep"]) == "hello there\n#keep"
+
+
+# --- HV1-WALK B: caption gate stays closed until the source lock row is completed ----------------
+
+def test_request_captions_no_sidecar_does_not_open(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    assert not request_path(cfg, "captions", "clip_1").exists()
+    assert led.clips["clip_1"].state is ClipState.rendered
+
+
+def test_request_captions_empty_completed_lock_opens(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)   # researched_at + lock: []
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    assert request_path(cfg, "captions", "clip_1").exists()
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload["surfaces"][0]     # empty lock omits the menu key

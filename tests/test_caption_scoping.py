@@ -100,6 +100,12 @@ def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mock
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
     led.add_moment(_moment(affinities=["a"]))                               # cast to @a only
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     accts = Accounts.load(cfg)
     # the owner-scoped request the pipeline would build (P10 wiring uses this exact call)
     led = request_captions(led, cfg, "clip_1", _owner_caption_surfaces(cfg, led.moments["mom_1"], accts),
