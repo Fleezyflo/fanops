@@ -353,6 +353,7 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     LONG freeze (not the rate-limit ladder) and the next tick must not open a client at all."""
     from datetime import datetime, timezone, timedelta
     import fanops.ig_hashtag_scrape as igs
+    import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _CHECKPOINT_DELAY_S)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -360,10 +361,13 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     opens = {"n": 0}
     from instagrapi.exceptions import ChallengeRequired
-    def locked(_cfg, **_k):
+    def locked(_cfg, user=None, **_k):
         opens["n"] += 1
         raise ChallengeRequired("challenge_required")
-    monkeypatch.setattr(igs, "open_client", locked)
+    def boom_client(*_a, **_k):
+        raise AssertionError("tick remesure must open Safari, not open_client")
+    monkeypatch.setattr(iws, "open_web_session", locked)
+    monkeypatch.setattr(igs, "open_client", boom_client)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is False and out["aborted"] == "checkpoint"
     assert opens["n"] == 1
@@ -2149,4 +2153,203 @@ def test_caption_request_has_no_content_tags_key():
     regen = inspect.getsource(regenerate_caption)
     assert "content_tag_candidates" not in regen
     assert '"content_tags"' not in regen
+
+
+def _web_fetch_for(tag: str, *, hid=None, media_count=50_000, like=10, play=100):
+    """Safari XHR stub: GET tags/info + POST tags/sections for one remesure visit."""
+    name = tag.lstrip("#")
+    hid = hid or f"id-{name}"
+
+    def fetch(method, url, body=None):
+        q = name
+        if "/tags/" in url:
+            q = url.split("/tags/", 1)[1].split("/", 1)[0] or name
+        if "/info/" in url:
+            return {"name": q, "id": hid if q == name else f"id-{q}",
+                    "media_count": media_count, "status": "ok"}
+        return {"sections": [{"layout_content": {"medias": [{"media": {
+            "pk": "1", "like_count": like, "play_count": play,
+            "product_type": "clips", "taken_at": 1_783_000_000,
+            "caption": {"text": f"#{q}"},
+        }}]}}]}
+    return fetch
+
+
+def _boom_chrome_tick(monkeypatch):
+    """Tick remesure must not touch instagrapi / Chrome dumps / Chrome launch."""
+    import fanops.ig_hashtag_scrape as igs
+
+    def boom(*_a, **_k):
+        raise AssertionError("tick remesure must not use open_client / Chrome dumps")
+    monkeypatch.setattr(igs, "open_client", boom)
+    monkeypatch.setattr(igs, "_profile_auth_for", boom)
+    monkeypatch.setattr(igs, "launch_scrape_chrome", boom)
+    monkeypatch.setattr(igs, "ensure_scrape_chrome", boom)
+    monkeypatch.setattr(igs, "ensure_scrape_safari", boom)
+
+
+def test_tick_remesure_safari_no_envelope_not_no_scrape(tmp_path, monkeypatch):
+    """HV1-LAYERA: sidecar + Safari stub, no chrome dumps, no envelope → remesure writes."""
+    from datetime import datetime, timezone
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.hashtags import RECORD_NUM_FIELDS, RECORD_STR_FIELDS, load_measurements
+    from fanops.ig_web_scrape import IgWebSession
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")  # must not steer the opener
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    _boom_chrome_tick(monkeypatch)
+    opened = []
+
+    def fake_open(_cfg, user=None, **_k):
+        opened.append(user)
+        return IgWebSession(user or "u", fetch=_web_fetch_for("alpha"))
+
+    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out.get("aborted") != "no_scrape"
+    assert out["refreshed"] is True
+    assert opened == ["u"]
+    rec = load_measurements(cfg)["#alpha"]
+    assert rec["graph_id"] == "id-alpha" and rec["measured_at"]
+    assert rec["media_count"] == 50_000.0
+    assert rec["play_count"] == 100.0 and rec["like_count"] == 10.0
+    extra = set(rec) - {"graph_id", "measured_at", "from"}
+    assert extra <= set(RECORD_NUM_FIELDS) | set(RECORD_STR_FIELDS)
+
+
+def test_tick_remesure_dumps_and_envelope_still_use_safari(tmp_path, monkeypatch):
+    """Chrome dumps + session json present must not open_client or launch Chrome on the tick."""
+    from datetime import datetime, timezone
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.ig_hashtag_scrape import scrape_chrome_profile_dir, scrape_session_path
+    from fanops.ig_web_scrape import IgWebSession
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    chrome = scrape_chrome_profile_dir(cfg, "u")
+    chrome.mkdir(parents=True, exist_ok=True)
+    (chrome / "Cookies").write_text("not-a-real-dump")
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    _boom_chrome_tick(monkeypatch)
+    monkeypatch.setattr(iws, "open_web_session",
+                        lambda _c, user=None, **_k: IgWebSession(user or "u",
+                                                                 fetch=_web_fetch_for("alpha")))
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out["refreshed"] is True and out.get("aborted") != "no_scrape"
+
+
+def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, monkeypatch):
+    """Password / dumps without FANOPS_IG_SCRAPE_USER is not configured."""
+    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.ig_hashtag_scrape import scrape_chrome_profile_dir, scrape_session_path
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
+    scrape_chrome_profile_dir(cfg, "u").mkdir(parents=True, exist_ok=True)
+    out = refresh_store_if_due(cfg, max_age_s=1)
+    assert out["refreshed"] is False and out["reason"] == "no scrape session"
+    assert out.get("aborted") != "no_scrape"
+
+
+def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monkeypatch):
+    """Day budget still aborts remesure without an envelope; lock walk still opens."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    import fanops.ig_web_scrape as iws
+    from fanops.controlio import write_json_atomic
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due)
+    from fanops.source_tags import _iter_lock_clients
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {"u": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
+    opens = []
+
+    def fake_open(_cfg, user=None, **_k):
+        opens.append(("web", user))
+        raise AssertionError("remesure must not open when day budget is exhausted")
+
+    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    _boom_chrome_tick(monkeypatch)
+    skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert skip["refreshed"] is False
+    assert skip.get("aborted") == "budget" or skip.get("reason") == "budget"
+    assert opens == []
+    lock_seen = []
+
+    def lock_opener(_cfg, user=None, **_k):
+        lock_seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener))
+    assert lock_seen == ["u"]
+    assert [getattr(c, "_fanops_scrape_user", None) for c in opened] == ["u"]
+
+
+def test_tick_remesure_source_has_no_dump_login_or_chrome():
+    """Tick path source must not dump_settings, login(), or name Google Chrome."""
+    import inspect
+    import fanops.fanops_hashtags as fh
+    src = inspect.getsource(fh._refresh_pass) + inspect.getsource(fh.refresh_store_if_due)
+    assert "open_web_session" in src
+    assert "dump_settings" not in src
+    assert "login(" not in src
+    assert "Google Chrome" not in src
+
+
+def test_tick_remesure_igwebsession_fetch_writes_measurement_fields(tmp_path, monkeypatch):
+    """Remesure _fetch on IgWebSession persists the load_measurements contract."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.hashtags import RECORD_NUM_FIELDS, RECORD_STR_FIELDS, load_measurements
+    from fanops.ig_web_scrape import IgWebSession
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    sess = IgWebSession("u", fetch=_web_fetch_for("alpha", hid="1784", media_count=12_345))
+    out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=sess, now=t0)
+    assert out["refreshed"] is True
+    rec = load_measurements(cfg)["#alpha"]
+    assert rec["graph_id"] == "1784"
+    assert rec["media_count"] == 12_345.0
+    assert rec.get("media_count_at")
+    assert rec["play_count"] == 100.0
+    extra = set(rec) - {"graph_id", "measured_at", "from"}
+    assert extra <= set(RECORD_NUM_FIELDS) | set(RECORD_STR_FIELDS)
+
+
+def test_tick_remesure_opens_web_session_per_listed_user(tmp_path, monkeypatch):
+    """#1029 profile map: tick remesure calls open_web_session(cfg, user=u)."""
+    from datetime import datetime, timezone
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.ig_web_scrape import IgWebSession
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "markmakmouly,cisumwolfhom")
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    seen = []
+    _boom_chrome_tick(monkeypatch)
+
+    def fake_open(_cfg, user=None, **_k):
+        seen.append(user)
+        return IgWebSession(user or "markmakmouly", fetch=_web_fetch_for("alpha"))
+
+    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out["refreshed"] is True
+    assert seen == ["markmakmouly"]
 

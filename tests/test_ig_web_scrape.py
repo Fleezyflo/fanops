@@ -96,3 +96,33 @@ def test_scrape_launch_never_names_google_chrome():
     assert safari_profile_name("cisumwolfhom") == "Personal"
     assert safari_profile_name("markmakmouly") == "mark"
     assert safari_profile_name("perca.late") == "perca"
+
+
+def test_web_hashtag_info_returns_id_and_media_count():
+    def fetch(method, url, body=None):
+        assert method == "GET"
+        assert "/tags/music/info/" in url
+        return {"name": "music", "id": "9", "media_count": 3, "status": "ok"}
+    sess = IgWebSession("u", fetch=fetch)
+    info = sess.hashtag_info("music")
+    assert info.id == "9"
+    assert info.media_count == 3
+
+
+def test_resolve_hashtag_scrape_uses_web_hashtag_info():
+    from fanops.ig_hashtag_scrape import resolve_hashtag_scrape
+    sess = IgWebSession("u", fetch=lambda *_a, **_k: {
+        "name": "music", "id": "9", "media_count": 3, "status": "ok"})
+    hid, mc = resolve_hashtag_scrape(sess, "#music")
+    assert hid == "9" and mc == 3.0
+
+
+def test_open_web_session_passes_user_keyword(tmp_path, monkeypatch):
+    """#1029 profile map: open_web_session(cfg, user=u) binds that Safari profile."""
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "markmakmouly,cisumwolfhom")
+    import fanops.ig_hashtag_scrape as igs
+    monkeypatch.setattr(igs, "ensure_scrape_safari", lambda *_a, **_k: True)
+    monkeypatch.setattr("fanops.ig_web_scrape.safari_logged_in", lambda _u: True)
+    cfg = Config(root=tmp_path)
+    sess = open_web_session(cfg, user="cisumwolfhom", fetch=lambda *_a, **_k: {})
+    assert sess._fanops_scrape_user == "cisumwolfhom"
