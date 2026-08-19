@@ -970,7 +970,7 @@
     {
       "decorator": "app.get",
       "handler": "hashtags_view",
-      "line": 19,
+      "line": 18,
       "methods": [
         "GET"
       ],

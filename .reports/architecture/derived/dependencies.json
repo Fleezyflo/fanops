@@ -1939,7 +1939,8 @@
         "fanops.studio.views_results"
       ],
       "lazy": [
-        "fanops.fanops_hashtags"
+        "fanops.fanops_hashtags",
+        "fanops.source_tags"
       ],
       "optional": [],
       "typing": []
@@ -2012,6 +2013,8 @@
       ],
       "lazy": [
         "fanops.caption",
+        "fanops.hashtags",
+        "fanops.source_tags",
         "fanops.studio.views_results"
       ],
       "optional": [],
@@ -2543,7 +2546,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 257,
+  "lazy_downward_count": 258,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2874,6 +2877,14 @@
       "to_level": 9
     },
     {
+      "from": "fanops.studio.views_hashtags",
+      "from_level": 5,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 5
+    },
+    {
       "from": "fanops.studio.views_results",
       "from_level": 4,
       "jump": 0,
@@ -2895,6 +2906,14 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.caption",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.studio.views_review",
+      "from_level": 5,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.source_tags",
       "to_level": 5
     },
     {
@@ -3885,10 +3904,10 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 383,
-    "lazy_edges_lateral": 46,
+    "lazy_edges": 386,
+    "lazy_edges_lateral": 48,
     "lazy_edges_strictly_upward": 80,
-    "lazy_edges_to_equal_or_higher_level": 126,
+    "lazy_edges_to_equal_or_higher_level": 128,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7
