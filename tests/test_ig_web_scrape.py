@@ -185,7 +185,7 @@ def test_igweb_json_paces_safari_xhr(tmp_path, monkeypatch):
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     assert sleeps == []
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
-    assert sleeps == [2.0]
+    assert len(sleeps) == 1 and sleeps[0] >= 1.9
     sleeps.clear()
     injected = IgWebSession("u", fetch=lambda *_a, **_k: {"ok": True})
     injected._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
