@@ -48,21 +48,20 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 (`written:False`, `aborted:no_scrape`) — there is **no silent Graph fallback**. Graph hashtag helpers
 (`meta_graph.resolve_hashtag` / `measure_and_harvest`) stay in tree for later.
 
-**Password re-authentication is operator-only.** Two consumers, one FanOps Chrome profile
-(`00_control/scrape_chrome/<user>/`):
+**Password re-authentication is operator-only.** Two consumers:
 
-- **Lock scrape** (`ig_web_scrape`) runs `fetch()` inside that Chrome via a FanOps-owned
-  localhost port (9331–9399). Never 9222/9223, never system Chrome, never cookie export
-  into Python — Instagram rejects the exported web sessionid (login redirect).
-- **Layer A remesure** still uses instagrapi `open_client(allow_reauth=False)`: load the
-  device envelope, inject a sessionid only when the private API accepts it, write nothing.
-  A web login is not an app-API session.
+- **Lock scrape** (`ig_web_scrape`) runs a same-origin XHR inside **Safari's**
+  Instagram tab. Never Google Chrome (a FanOps `--user-data-dir` instance hijacks
+  the Dock / daily Chrome). Never cookie export into Python — Instagram rejects
+  the exported web sessionid (login redirect).
+- **Layer A remesure** still uses instagrapi `open_client(allow_reauth=False)`.
+  A Safari web login is not an app-API session.
 
-`fanops hashtags scrape-login` opens that profile, waits for a sessionid, and best-effort
-promotes the envelope. Never `login(relogin=True)`. Under instagrapi≥2.18.12, `login()`
-escalates `LoginRequired` into a password re-auth; the unattended tick doing that earned
-the 2026-07-29T22:01Z native Instagram checkpoint. A checkpoint still needs in-app
-verification — no code path can clear it.
+`fanops hashtags scrape-login` opens Safari to instagram.com, waits until that
+tab is logged in, and best-effort promotes the envelope. Never `login(relogin=True)`.
+Under instagrapi≥2.18.12, `login()` escalates `LoginRequired` into a password re-auth;
+the unattended tick doing that earned the 2026-07-29T22:01Z native Instagram
+checkpoint. A checkpoint still needs in-app verification — no code path can clear it.
 
 Per persona linked to an
 **active** account (`_posting_persona_ids`; dormant personas cannot steer discovery):

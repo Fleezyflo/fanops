@@ -1122,17 +1122,17 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
-    """`fanops hashtags scrape-login` — open the FanOps Chrome profile, promote the envelope.
+    """`fanops hashtags scrape-login` — open Safari on Instagram, promote the envelope.
 
     The operator escape hatch: it deliberately IGNORES an active cooldown (an explicit human act, run
     after clearing a challenge in the app — the freeze exists to stop the unattended pump, not the
     operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
     out the remaining 12h (MOL-699).
 
-    Sole `allow_reauth=True` call site. Opens `cfg.control/scrape_chrome/<user>/` (that
-    Instagram account only) on a FanOps-owned CDP port (never 9222/9223), waits for a
-    sessionid in THAT Chrome, then best-effort promotes the device envelope. Lock scrape
-    uses the live Chrome page, not the envelope. Never system Chrome, never password login.
+    Sole `allow_reauth=True` call site. Opens Safari to instagram.com (never Google Chrome —
+    a FanOps Chrome instance hijacks the Dock). Waits until Safari's Instagram tab is
+    logged in, then best-effort promotes the device envelope. Lock scrape fetch()es inside
+    that Safari tab. Never password login.
 
     Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, promote each envelope. Clears THAT
     user's freeze on success — peers keep their own cooldown."""
@@ -1151,7 +1151,7 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
         profile.mkdir(parents=True, exist_ok=True)
         if not ensure_scrape_chrome(cfg, user, restart=True):
             get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason="chrome-missing")
+                            user=user[:40], reason="safari-missing")
             continue
         if wait_for_scrape_profile_auth(cfg, user) is None:
             get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",

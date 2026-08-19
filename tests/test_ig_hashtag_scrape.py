@@ -497,23 +497,20 @@ def test_scrape_login_promote_writes_envelope_from_profile_sid(tmp_path, monkeyp
     assert '"promoted": true' in sess.read_text()
 
 
-def test_scrape_chrome_launch_argv_uses_fanops_profile_not_system_devtools(tmp_path, monkeypatch):
-    """Operator Chrome argv is that user's FanOps profile; FanOps port, never 9222/9223."""
+def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch):
+    """Scrape launch is Safari. Google Chrome must stay the operator's browser."""
     import fanops.ig_hashtag_scrape as igs
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(igs, "_chrome_executable", lambda: "/fake/chrome")
     argv = igs.scrape_chrome_launch_argv(cfg, "perca.late")
     assert argv is not None
     joined = " ".join(argv)
-    assert argv[0] == "/fake/chrome"
-    assert f"--user-data-dir={igs.scrape_chrome_profile_dir(cfg, 'perca.late')}" in argv
+    assert argv[0] == "open"
+    assert "Safari" in argv
+    assert "Google Chrome" not in joined
     assert "9222" not in joined and "9223" not in joined
-    assert "--remote-debugging-port=" in joined
-    assert "--remote-debugging-address=127.0.0.1" in joined
+    assert "remote-debugging" not in joined
     assert "Application Support/Google/Chrome" not in joined
-    port = igs.scrape_cdp_port("perca.late")
-    assert f"--remote-debugging-port={port}" in argv
     monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
     monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     from fanops.fanops_hashtags import cmd_hashtags_scrape_login
@@ -541,16 +538,17 @@ def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
 
 def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeypatch):
     import fanops.ig_hashtag_scrape as igs
+    import fanops.ig_web_scrape as web
     cfg = Config(root=tmp_path)
     hits = {"n": 0}
 
     def _auth(*_a, **_k):
         hits["n"] += 1
-        return ("sid", "1") if hits["n"] >= 2 else None
-    monkeypatch.setattr(igs, "_profile_auth_for", _auth)
+        return ("safari", "u") if hits["n"] >= 2 else None
+    monkeypatch.setattr(web, "safari_profile_auth", _auth)
     slept = []
     got = igs.wait_for_scrape_profile_auth(
         cfg, "u", timeout_s=5, sleep=lambda s: slept.append(s),
         clock=lambda: 0 if hits["n"] < 2 else 5)
-    assert got == ("sid", "1")
+    assert got == ("safari", "u")
     assert slept
