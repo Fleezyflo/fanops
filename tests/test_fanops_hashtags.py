@@ -2263,7 +2263,7 @@ def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, mo
 
 
 def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monkeypatch):
-    """Day budget still aborts remesure without an envelope; lock walk still opens."""
+    """Day budget aborts remesure and lock walk — one blob, one room."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
     import fanops.ig_web_scrape as iws
@@ -2295,8 +2295,55 @@ def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monk
         return SimpleNamespace(_fanops_scrape_user=user)
 
     opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener))
-    assert lock_seen == ["u"]
-    assert [getattr(c, "_fanops_scrape_user", None) for c in opened] == ["u"]
+    assert lock_seen == []
+    assert opened == []
+
+
+def test_lock_then_remesure_share_remaining_room(tmp_path, monkeypatch):
+    """Same tick: lock charges used; remesure only spends leftover room on the same blob."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    import fanops.ig_web_scrape as iws
+    from fanops.controlio import write_json_atomic
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due)
+    from fanops.hashtags import load_measurements
+    from fanops.ig_web_scrape import IgWebSession
+    from fanops.source_tags import ensure_source_lock, load_source_tag_locks
+    from hashtag_scrape_fakes import _Media
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = Config(root=tmp_path)
+    t0 = datetime.now(timezone.utc)
+    today = t0.date().isoformat()
+    start_used = _SCRAPE_DAY_BUDGET - 2
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {"u": {"day": today, "used": start_used}}})
+
+    class _LockCli:
+        _fanops_scrape_user = "u"
+
+        def search_hashtags(self, query):
+            return [SimpleNamespace(name="alpha", id="1", media_count=2)]
+
+        def hashtag_medias_top(self, name, amount=9):
+            return [_Media(1, "", play_count=8)]
+
+    ensure_source_lock(cfg, SimpleNamespace(id="src_1", title="t", language="en", transcript="x"),
+                       client=_LockCli(), research_fn=lambda *_a: ["alpha"],
+                       resolve_fn=lambda *_a: "gid-alpha", measure_fn=lambda *_a: (10.0, {}))
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"] and rec["lock"] == ["#alpha"]
+    used_after_lock = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
+    assert used_after_lock == start_used + 1
+    _boom_chrome_tick(monkeypatch)
+    monkeypatch.setattr(iws, "open_web_session",
+                        lambda _c, user=None, **_k: IgWebSession(user or "u",
+                                                                 fetch=_web_fetch_for("alpha")))
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
+    assert out["refreshed"] is True
+    used_end = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
+    assert used_end == used_after_lock + 1
+    assert used_end <= _SCRAPE_DAY_BUDGET
+    assert "#alpha" in load_measurements(cfg)
 
 
 def test_tick_remesure_source_has_no_dump_login_or_chrome():

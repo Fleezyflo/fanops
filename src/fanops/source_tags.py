@@ -1,11 +1,14 @@
 # src/fanops/source_tags.py
 """Source hashtag lock producer.
 
-Source-entry run: whisper, scrape, and Graph are required. LLM names THIS video
-(mild→provocative). Search verifies the exact name (no siblings on the pile).
-Every name is dual-measured; lock is the first 15 that clear both meters, LLM order.
-Caption / regen / recaption read the sidecar; they do not produce it.
-Sidecar is cfg.control / source_tag_locks.json — not a Config field, not hashtags.json.
+Safari scrape completes the per-source lock. Graph may cache/confirm/rank; Graph
+never vetoes membership or withholds researched_at after scrape finished. Empty
+lock = scrape finished with zero admits. Caption waits on researched_at.
+
+LLM names THIS video (mild→provocative). Search verifies the exact name (no
+siblings on the pile). Lock is scrape-admitted names, Graph-present first, LLM
+order within tier, cap 15. Sidecar is cfg.control / source_tag_locks.json —
+not a Config field, not hashtags.json.
 
 Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
 (graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
@@ -375,23 +378,14 @@ def _remember_dead_dump(cfg, client, exc) -> None:
 
 
 def _iter_lock_clients(cfg, *, client, open_client_fn):
-    """Yield clients to try for this lock, one unfrozen session at a time."""
+    """Yield clients to try for this lock. Empty picker → stop (no opener(cfg) fallthrough)."""
     if client is not None:
         yield client
         return
     opener = open_client_fn or open_web_session
     from fanops.ig_web_scrape import _lock_web_users
     now = datetime.now(timezone.utc)
-    peers = _lock_web_users(cfg, now)
-    if not peers:
-        try:
-            cli = _call_opener(opener, cfg)
-        except ScrapeUnavailable:
-            return
-        if cli is not None:
-            yield cli
-        return
-    for user in peers:
+    for user in _lock_web_users(cfg, now):
         try:
             cli = _call_opener(opener, cfg, user=user)
         except ScrapeUnavailable:
@@ -416,23 +410,46 @@ def _graph_message(exc) -> str:
     return str(exc)[:160]
 
 
-def _search_verify(cli, names: list[str]) -> tuple[list[str] | None, Exception | None]:
-    """Exact-name verify. Returns (verified, dead_exc). dead_exc set → rotate."""
-    verified: list[str] = []
-    seen: set[str] = set()
-    for q in names:
-        try:
-            hits = search_hashtags_scrape(cli, q)
-        except Exception as exc:
-            if scrape_session_dead(exc):
-                return None, exc
-            raise
-        want = _norm(q)
-        if any(_norm(hit.get("name") if isinstance(hit, dict) else "") == want for hit in hits):
-            if want and want not in seen:
-                seen.add(want)
-                verified.append(want)
-    return verified, None
+def _lock_identity(cli) -> str | None:
+    user = getattr(cli, "_fanops_scrape_user", None)
+    return user if isinstance(user, str) and user else None
+
+
+def _advance_lock_client(cfg, current, spare, already):
+    """Next client with remaining min(try_cap, day room), or None."""
+    from fanops.fanops_hashtags import _user_attempt_room
+    cand = current
+    while cand is not None:
+        user = _lock_identity(cand)
+        if _user_attempt_room(cfg, user, already=already.get(user or "", 0)) > 0:
+            return cand
+        cand = next(spare, None)
+    return None
+
+
+def _charge_lock_tag(cfg, cli, already) -> None:
+    from fanops.fanops_hashtags import _charge_scrape_user
+    user = _lock_identity(cli)
+    _charge_scrape_user(cfg, user, 1)
+    key = user or ""
+    already[key] = already.get(key, 0) + 1
+
+
+def _graph_confirmed_n(names, measurements) -> int:
+    recs = measurements if isinstance(measurements, dict) else {}
+    n = 0
+    for name in names:
+        rec = recs.get(name)
+        if _scrape_number(rec) is None:
+            continue
+        gm = _num(rec.get("graph_metric"))
+        if gm is not None and gm > 0:
+            n += 1
+    return n
+
+
+def _exact_hit(hits, want: str) -> bool:
+    return any(_norm(hit.get("name") if isinstance(hit, dict) else "") == want for hit in hits)
 
 
 def _apply_scrape_metrics(measurements: dict, tag: str, metrics) -> None:
@@ -459,16 +476,6 @@ def _apply_cached_graph(cfg, measurements: dict, tag: str) -> None:
         _set_graph_metric(measurements, tag, gm)
 
 
-def _persist_quota(cfg, log, table, sid, *, pile, verified, measurements, remaining, exc=None) -> None:
-    spent, limit, _ = graph_search_quota_status(cfg)
-    log("source_tags", sid, "quota_exhausted", level="error",
-        err=_graph_message(exc) if exc is not None else "ration",
-        spent=spent, limit=limit)
-    _mark_quota_exhausted(cfg)
-    _write_in_progress(cfg, table, sid, pile=pile, verified=verified,
-                       measurements=measurements, remaining=remaining, quota=True)
-
-
 def _measure_graph_tag(cfg, tag, hid, measurements, *, measure_fn) -> None:
     raw = measure_fn(cfg, hid) if measure_fn is not None else measure_and_harvest(cfg, hid)
     gmetric = raw[0] if isinstance(raw, tuple) and raw else raw
@@ -476,13 +483,21 @@ def _measure_graph_tag(cfg, tag, hid, measurements, *, measure_fn) -> None:
     _note_graph_metric(cfg, tag, gmetric)
 
 
+def _stamp_source(cfg, table, sid, pile, lock) -> None:
+    table[sid] = {
+        "pile": list(pile),
+        "lock": list(lock),
+        "researched_at": iso_z(datetime.now(timezone.utc)),
+    }
+    write_json_atomic(source_tag_locks_path(cfg), table)
+
+
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> None:
-    """Research → exact-name verify → dual scrape+Graph measure → lock. Abort source on tool death.
+    """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
 
-    Graph node ids + graph_metric are cached globally. Novel ig_hashtag_search is rationed to
-    30 unique / 7d. Quota death persists the pile without researched_at so LLM is not re-run.
-    Graph stops once 15 names dual-qualify.
+    Charge + rotate via `_day_room` / `_charge_scrape_user`. All peers at cap / dead /
+    missing → no researched_at. Empty finished scrape → lock [] + researched_at.
     """
     sid = str(getattr(source, "id", "") or "")
     if not sid:
@@ -496,9 +511,6 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     first = next(walk, None)
     if first is None:
         log("source_tags", sid, "no_scrape", level="error")
-        return
-    if not _graph_ready(cfg, resolve_fn):
-        log("source_tags", sid, "no_graph", level="error")
         return
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     if pile_prior:
@@ -516,42 +528,47 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if not llm_names:
         log("source_tags", sid, "research_fail", level="error", err="research_empty")
         return
-    verified: list[str] | None = None
-    cli = None
+    measurements = dict(load_measurements(cfg))
+    _restore_meters(measurements, prior.get("measurements"))
     verified_prior = prior.get("verified") if isinstance(prior.get("verified"), list) else None
     if verified_prior:
         verified = _dedupe_norm(verified_prior)
-        cli = first
+        pending = [t for t in verified if _scrape_number(measurements.get(t)) is None]
+        search_needed = False
     else:
-        def _clients():
-            yield first
-            yield from walk
-
-        for cand in _clients():
-            got, dead_exc = _search_verify(cand, llm_names)
-            if dead_exc is not None:
-                log("source_tags", sid, "rotate_dead", err=type(dead_exc).__name__,
-                    user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
-                _remember_dead_dump(cfg, cand, dead_exc)
-                continue
-            verified = got
-            cli = cand
-            break
-    if verified is None or cli is None:
-        log("source_tags", sid, "no_scrape", level="error", err="all_sessions_dead")
-        return
-    measurements = dict(load_measurements(cfg))
-    _restore_meters(measurements, prior.get("measurements"))
+        verified = []
+        pending = list(llm_names)
+        search_needed = True
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
-    remaining_scrape = list(verified)
+    already: dict[str, int] = {}
     spare = iter(walk)
-    current = cli
-    while remaining_scrape:
+    current = first
+    while pending:
         if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
             break
-        tag = remaining_scrape[0]
-        if _scrape_number(measurements.get(tag)) is None:
+        current = _advance_lock_client(cfg, current, spare, already)
+        if current is None:
+            break
+        raw = pending[0]
+        tag = _norm(raw) if isinstance(raw, str) else ""
+        _charge_lock_tag(cfg, current, already)
+        if search_needed and tag and tag not in verified:
+            try:
+                hits = search_hashtags_scrape(current, raw)
+            except Exception as exc:
+                if scrape_session_dead(exc):
+                    log("source_tags", sid, "rotate_dead", err=type(exc).__name__,
+                        user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
+                    _remember_dead_dump(cfg, current, exc)
+                    current = next(spare, None)
+                    continue
+                raise
+            if not _exact_hit(hits, tag):
+                pending.pop(0)
+                continue
+            verified.append(tag)
+        if tag and _scrape_number(measurements.get(tag)) is None:
             try:
                 metrics, _cotags = measure_and_harvest_scrape(current, tag)
             except Exception as exc:
@@ -559,73 +576,57 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     log("source_tags", sid, "rotate_dead", tag=tag, err=type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
-                    nxt = next(spare, None)
-                    if nxt is None:
-                        log("source_tags", sid, "no_scrape", level="error", err="measure_dead")
-                        return
-                    current = nxt
+                    current = next(spare, None)
                     continue
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
-                remaining_scrape.pop(0)
+                pending.pop(0)
                 continue
             _apply_scrape_metrics(measurements, tag, metrics)
         _apply_cached_graph(cfg, measurements, tag)
-        remaining_scrape.pop(0)
-    for idx, tag in enumerate(verified):
-        if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
-            break
-        cached = _cache_lookup(cfg, tag)
-        gm = _cached_metric(cached)
-        if gm is not None:
-            _set_graph_metric(measurements, tag, gm)
-            continue
-        if isinstance(cached, dict) and "id" in cached:
-            hid = cached.get("id")
-            if not (isinstance(hid, str) and hid):
+        pending.pop(0)
+    scrape_done = (not pending) or len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N
+    if not scrape_done:
+        log("source_tags", sid, "no_scrape", level="error", err="scrape_unfinished")
+        if verified:
+            _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
+                               measurements=measurements, remaining=pending)
+        return
+    if _graph_ready(cfg, resolve_fn):
+        for tag in verified:
+            if _graph_confirmed_n(verified, measurements) >= _LOCK_N:
+                break
+            if _scrape_number(measurements.get(tag)) is None:
+                continue
+            cached = _cache_lookup(cfg, tag)
+            gm = _cached_metric(cached)
+            if gm is not None:
+                _set_graph_metric(measurements, tag, gm)
                 continue
             try:
-                _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+                if isinstance(cached, dict) and "id" in cached:
+                    hid = cached.get("id")
+                    if not (isinstance(hid, str) and hid):
+                        continue
+                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+                    continue
+                if graph_search_quota_status(cfg)[2]:
+                    _mark_quota_exhausted(cfg)
+                    log("source_tags", sid, "quota_exhausted", level="error", err="ration",
+                        spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                    break
+                hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
+                _note_graph_id(cfg, tag, hid)
+                if hid:
+                    _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
             except GraphQuotaExhausted as exc:
-                _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
-                               measurements=measurements, remaining=verified[idx:], exc=exc)
-                return
-            except GraphThrottled as exc:
+                _mark_quota_exhausted(cfg)
+                log("source_tags", sid, "quota_exhausted", level="error", err=_graph_message(exc),
+                    spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                break
+            except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
-                _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
-                                   measurements=measurements, remaining=verified[idx:])
-                return
-            except (GraphRefused, GraphUnreachable) as exc:
-                log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
-                return
-            continue
-        if graph_search_quota_status(cfg)[2]:
-            _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
-                           measurements=measurements, remaining=verified[idx:])
-            return
-        try:
-            hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
-            _note_graph_id(cfg, tag, hid)
-            if hid:
-                _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
-        except GraphQuotaExhausted as exc:
-            _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
-                           measurements=measurements, remaining=verified[idx:], exc=exc)
-            return
-        except GraphThrottled as exc:
-            log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
-            _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
-                               measurements=measurements, remaining=verified[idx:])
-            return
-        except (GraphRefused, GraphUnreachable) as exc:
-            log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
-            return
-    lock = lock_from_pile(verified, measurements, _LOCK_N)
-    table[sid] = {
-        "pile": llm_names,
-        "lock": lock,
-        "researched_at": iso_z(datetime.now(timezone.utc)),
-    }
-    write_json_atomic(source_tag_locks_path(cfg), table)
+                break
+    _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N))
 
 
 def _state_value(source) -> str:

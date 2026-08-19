@@ -53,8 +53,14 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 - **Lock scrape** (`ig_web_scrape`) runs a same-origin XHR inside **that
   account's Safari profile window** (`Personal`=cisumwolfhom, `mark`=markmakmouly,
   `perca`=perca.late). Never Google Chrome. Never cookie export into Python.
-- **Layer A remesure** still uses instagrapi `open_client(allow_reauth=False)`.
-  A Safari web login is not an app-API session.
+  Safari scrape **completes** the per-source lock (`researched_at` + `lock`).
+  Graph may cache/confirm/rank; Graph never vetoes membership or withholds
+  `researched_at`. Empty `lock: []` means scrape finished with zero admits.
+- **Tick remesure** uses the same Safari `open_web_session` as lock. Lock and
+  remesure share one UTC-day budget (`accounts[user].used`), one
+  `FANOPS_HASHTAG_SCRAPE_DELAY` (live `IgWebSession._json` only), and one LRU
+  picker. Manual `fanops hashtags refresh` discovery stays on instagrapi
+  `open_client`.
 
 `fanops hashtags scrape-login` opens Safari to instagram.com, waits until that
 tab is logged in, and best-effort promotes the envelope. Never `login(relogin=True)`.
@@ -94,10 +100,11 @@ and then **skipped every tag it had logged**, capping each pass.
 What governs spend now (MOL-854):
 - **`_SCRAPE_TRY_CAP` (default 25, env `FANOPS_HASHTAG_SCRAPE_TRY_CAP`)** — hard ceiling on measure attempts
   in one pass. Hitting it ends the pass incomplete (no `last_complete_pass` advance).
-- **UTC day budget on `.hashtag_scrape_cooldown.json`** — additive `day` / `used` (and reserved `accounts{}`
-  for MOL-858). Cap is `_SCRAPE_DAY_BUDGET` (~40 request-units). When `used >=` cap for today's UTC date,
-  `refresh_store_if_due` skips with `reason=budget` until the next UTC day. Clean success clears streak
-  fields only — day budget keys are preserved.
+- **UTC day budget on `.hashtag_scrape_cooldown.json`** — additive `accounts[user].day` / `.used`
+  (MOL-858). Cap is `_SCRAPE_DAY_BUDGET` (~40 request-units). Lock producer and tick remesure share
+  this blob via `_day_room` / `_charge_scrape_user` (+1 per tag-attempt on the wire, not per XHR).
+  When `used >=` cap for today's UTC date, both skip that user; remesure aborts `reason=budget`
+  when every peer is out of room. Clean success clears streak fields only — day budget keys stay.
 - **`graph_id` cached** on every record — a known tag skips `hashtag_info` and still re-measures via
   `hashtag_medias_top`, so resolve funds novel discovery only.
 - **Platform stop** (any non-404 instagrapi exception) ⇒ ends the account's slice; evidence accrued so
@@ -188,7 +195,9 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 |---|---|
 | metric constant, cache reader, selection | `src/fanops/hashtags.py` |
 | Layer A scrape (resolve, measure+harvest, throttle) | `src/fanops/ig_hashtag_scrape.py` |
-| Graph hashtag helpers (deferred) | `src/fanops/meta_graph.py` |
+| Safari lock + remesure XHR | `src/fanops/ig_web_scrape.py` |
+| Per-source lock producer | `src/fanops/source_tags.py` |
+| Graph hashtag helpers (rank/cache; never lock veto) | `src/fanops/meta_graph.py` |
 | Layer A driver + CLI verbs | `src/fanops/fanops_hashtags.py` |
 | terms, alignment, Layer B derivation | `src/fanops/persona_research.py` |
 | corpus writer + deprecation cutover | `src/fanops/persona_store.py` |
@@ -206,6 +215,7 @@ hook/clip/account, not the hashtag. Pinned by `tests/test_hashtag_attribution_se
 
 `tests/test_hashtag_platform_truth.py` (the contract: verbatim field, no local cap, id cache, evidence-only
 corpus, deprecation cutover, cache-sourced selection, refusal handling), `test_hashtags.py` (selection),
-`test_fanops_hashtags.py` (Layer A), `test_meta_graph.py` (transport), `test_persona_corpus.py` (corpus →
-caption wiring), `test_hashtag_lifecycle_e2e.py` (end to end, `@pytest.mark.slow`),
-`test_hashtag_attribution_severance.py` (the severance invariant).
+`test_source_tag_lock.py` / `test_source_tags.py` (scrape-complete lock), `test_ig_web_scrape.py` (Safari
+XHR + delay), `test_fanops_hashtags.py` (Layer A + shared day budget), `test_meta_graph.py` (transport),
+`test_persona_corpus.py` (corpus → caption wiring), `test_hashtag_lifecycle_e2e.py` (end to end,
+`@pytest.mark.slow`), `test_hashtag_attribution_severance.py` (the severance invariant).
