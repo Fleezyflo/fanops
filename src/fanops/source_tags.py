@@ -377,14 +377,14 @@ def _remember_dead_dump(cfg, client, exc) -> None:
     _persist_cooldown(cfg, datetime.now(timezone.utc), reason=type(exc).__name__, user=user)
 
 
-def _iter_lock_clients(cfg, *, client, open_client_fn):
+def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     """Yield clients to try for this lock. Empty picker → stop (no opener(cfg) fallthrough)."""
     if client is not None:
         yield client
         return
     opener = open_client_fn or open_web_session
     from fanops.ig_web_scrape import _lock_web_users
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     for user in _lock_web_users(cfg, now):
         try:
             cli = _call_opener(opener, cfg, user=user)

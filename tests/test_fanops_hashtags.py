@@ -2294,7 +2294,7 @@ def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monk
         lock_seen.append(user)
         return SimpleNamespace(_fanops_scrape_user=user)
 
-    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener))
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener, now=t0))
     assert lock_seen == []
     assert opened == []
 
