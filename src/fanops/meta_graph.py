@@ -3,18 +3,19 @@
 instagrapi (`ig_hashtag_scrape`) — Graph hashtag helpers below are deferred. Never on the publish path.
 Design rules:
 
-  Hashtag LOOKUPS never swallow Meta's answer. A non-throttle error raises `GraphRefused` carrying
-  Meta's own code/subcode/type/message; a transport failure raises `GraphUnreachable`. `resolve_hashtag`
-  returns None ONLY when Meta answered HTTP 200 with an empty match list — that is the unambiguous
-  "no such hashtag". The token is sent as the Graph `access_token` param and is NEVER logged/echoed
-  (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors post/metrics.py).
+  Hashtag LOOKUPS never swallow Meta's answer. Throttle codes (4/17/32/613) raise `GraphThrottled`
+  after backoff. code 18 / subcode 2207034 raises `GraphQuotaExhausted` (Hashtag Search unique-ID
+  quota — durable, not a throttle, not retried). Any other Meta error object raises `GraphRefused`.
+  Transport failure raises `GraphUnreachable`. `resolve_hashtag` returns None ONLY when Meta answered
+  HTTP 200 with an empty match list — that is the unambiguous "no such hashtag". The token is sent as
+  the Graph `access_token` param and is NEVER logged/echoed (METRICS_CLIENT_AUTH_DISCIPLINE — mirrors
+  post/metrics.py).
 
-  META IS THE ONLY GOVERNOR of how much a hashtag pass gets through. There is no local budget /
-  allowance model (a previous hard-capped local meter was deleted for cause — it starved the store
-  while Meta was still serving searches). Throttle codes are absorbed with a jittered backoff and, if
-  they persist, end the pass with whatever evidence accrued; non-throttle Meta errors raise
-  `GraphRefused` so callers see Meta's own code/subcode/message. Nothing here predicts or meters an
-  allowance.
+  This module does not meter a local allowance (a previous hard-capped local meter was deleted for
+  cause — it starved the store while Meta was still serving searches). Callers cache node ids so
+  `ig_hashtag_search` funds novel names only; Meta's own 18/2207034 is classified here so they stop
+  instead of hammering. Throttle codes are absorbed with a jittered backoff and, if they persist, end
+  the pass with whatever evidence accrued.
 
   The hashtag REACH datum is Meta's own `like_count`, taken verbatim off one `top_media` item. Probed
   live 2026-07-26: the IG Hashtag node serves only `id` and `name` — `media_count` answers
@@ -205,13 +206,25 @@ def _graph_get(cfg: Config, path: str, params: dict, *, get=None, token: Optiona
 
 class GraphThrottled(Exception):
     """Meta answered with a THROTTLE code and kept answering with one after the backoff ladder. The
-    caller ends its pass and keeps the evidence it already accrued. This exception is the ONLY thing
-    that bounds a pass — there is no local allowance model to consult."""
+    caller ends its pass and keeps the evidence it already accrued. Distinct from quota exhaustion."""
+
+
+class GraphQuotaExhausted(Exception):
+    """Meta Hashtag Search unique-ID quota: code 18 / subcode 2207034. Durable — not a throttle.
+    Do not retry this tick; cache the IDs already spent and resume remaining names later."""
+    def __init__(self, path: str, *, code=None, subcode=None, type=None, message: str = ""):
+        self.path = path
+        self.code = code if isinstance(code, int) and not isinstance(code, bool) else None
+        self.subcode = subcode if isinstance(subcode, int) and not isinstance(subcode, bool) else None
+        self.type = type if isinstance(type, str) else None
+        self.message = (message or "")[:160]
+        super().__init__(f"Meta hashtag quota {path}: code={self.code} subcode={self.subcode} "
+                         f"type={self.type} msg={self.message}")
 
 
 class GraphRefused(Exception):
-    """Meta answered with a non-throttle error object. Carries Meta's own fields so a caller can tell
-    'refused' from 'no such hashtag' — never collapse either into a bare None."""
+    """Meta answered with a non-throttle, non-quota error object. Carries Meta's own fields so a
+    caller can tell 'refused' from 'no such hashtag' — never collapse either into a bare None."""
     def __init__(self, path: str, *, code=None, subcode=None, type=None, message: str = ""):
         self.path = path
         self.code = code if isinstance(code, int) and not isinstance(code, bool) else None
@@ -231,6 +244,8 @@ class GraphUnreachable(Exception):
 
 
 _THROTTLE_CODES = frozenset({4, 17, 32, 613})   # Meta's own rate-limit codes: app / user / page / custom
+_QUOTA_CODE = 18                                # Hashtag Search unique-ID quota (with _QUOTA_SUBCODE)
+_QUOTA_SUBCODE = 2207034
 _MAX_RL_RETRIES = 3                             # total attempts = retries + 1 (mirrors llm.py's ladder)
 _RL_BASE_DELAY = 2.0                            # seconds; doubled per attempt + jittered
 _sleep = time.sleep                             # indirection so tests can stub the backoff wait
@@ -245,6 +260,20 @@ def _error_code(body) -> Optional[int]:
     return code if isinstance(code, int) and not isinstance(code, bool) else None
 
 
+def _error_subcode(body) -> Optional[int]:
+    """Meta's numeric error_subcode from a response body, or None when absent."""
+    if not isinstance(body, dict):
+        return None
+    err = body.get("error")
+    sc = err.get("error_subcode") if isinstance(err, dict) else None
+    return sc if isinstance(sc, int) and not isinstance(sc, bool) else None
+
+
+def _is_hashtag_quota(body) -> bool:
+    """True iff Meta named the Hashtag Search unique-ID quota (code 18 / subcode 2207034)."""
+    return _error_code(body) == _QUOTA_CODE and _error_subcode(body) == _QUOTA_SUBCODE
+
+
 def _refused_from_body(path: str, body) -> GraphRefused:
     """Build GraphRefused from Meta's error object (or an empty shell when the body carried none)."""
     err = body.get("error") if isinstance(body, dict) else None
@@ -257,13 +286,26 @@ def _refused_from_body(path: str, body) -> GraphRefused:
                         message=msg if isinstance(msg, str) else "")
 
 
+def _quota_from_body(path: str, body) -> GraphQuotaExhausted:
+    """Build GraphQuotaExhausted from Meta's 18/2207034 error object."""
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        return GraphQuotaExhausted(path, code=_QUOTA_CODE, subcode=_QUOTA_SUBCODE)
+    msg = err.get("message")
+    typ = err.get("type")
+    return GraphQuotaExhausted(path, code=err.get("code"), subcode=err.get("error_subcode"),
+                               type=typ if isinstance(typ, str) else None,
+                               message=msg if isinstance(msg, str) else "")
+
+
 def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
     """One hashtag-endpoint GET, with Meta's own refusals as the only control loop.
 
     Returns the parsed body on HTTP 200. Raises GraphThrottled when a throttle code survives the
-    jittered-backoff ladder (end the pass). Raises GraphRefused for any other Meta error object — the
-    caller MUST see Meta's code/subcode/message. Raises GraphUnreachable on transport / non-JSON.
-    The token rides the `access_token` param and never enters a logged or exception string."""
+    jittered-backoff ladder (end the pass). Raises GraphQuotaExhausted for code 18 / subcode 2207034
+    (no retry). Raises GraphRefused for any other Meta error object — the caller MUST see Meta's
+    code/subcode/message. Raises GraphUnreachable on transport / non-JSON. The token rides the
+    `access_token` param and never enters a logged or exception string."""
     get = get or _default_get
     delay = _RL_BASE_DELAY
     for attempt in range(_MAX_RL_RETRIES + 1):
@@ -284,6 +326,8 @@ def _hashtag_get(cfg: Config, path: str, params: dict, *, get=None):
             body = resp.json()
         except (ValueError, AttributeError):
             body = None
+        if _is_hashtag_quota(body):
+            raise _quota_from_body(path, body)               # durable quota — never the retry ladder
         if _error_code(body) not in _THROTTLE_CODES:
             raise _refused_from_body(path, body)             # Meta's own words — never swallow to None
         if attempt < _MAX_RL_RETRIES:
@@ -296,8 +340,8 @@ def resolve_hashtag(cfg: Config, tag: str, *, get=None) -> Optional[str]:
     """Resolve '#tag' to its Graph hashtag-node id via ig_hashtag_search (`q` carries no leading '#').
 
     Returns None ONLY when Meta answered and there is no such hashtag (HTTP 200, empty `data`).
-    Raises GraphRefused / GraphUnreachable / GraphThrottled for every other failure — a bare None must
-    never mean "Meta errored" or "the socket dropped".
+    Raises GraphQuotaExhausted / GraphRefused / GraphUnreachable / GraphThrottled for every other
+    failure — a bare None must never mean "Meta errored" or "the socket dropped".
 
     Node ids are STABLE and global, which is why callers cache them: a tag we have already resolved never
     spends another search, so the search endpoint funds novel discovery only.
@@ -331,7 +375,7 @@ def measure_and_harvest(cfg: Config, hid: str, *, get=None) -> tuple[Optional[fl
               and it is also where versatility comes from: the posts winning in a niche right now carry
               both the niche tags and the broad ones.
 
-    Raises GraphThrottled / GraphRefused / GraphUnreachable. A 200 with empty `data` is unmeasured
+    Raises GraphThrottled / GraphQuotaExhausted / GraphRefused / GraphUnreachable. A 200 with empty `data` is unmeasured
     `(None, {})` — that is Meta answering, not Meta failing."""
     # Ask for both visibility fields; prefer play_count then like_count (same compass as scrape Layer A).
     body = _hashtag_get(cfg, f"{hid}/top_media",

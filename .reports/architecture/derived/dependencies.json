@@ -523,6 +523,7 @@
         "fanops.pipeline_status",
         "fanops.post.zernio",
         "fanops.settings",
+        "fanops.source_tags",
         "fanops.timeutil",
         "fanops.transcribe"
       ],
@@ -2648,6 +2649,14 @@
       "to_level": 1
     },
     {
+      "from": "fanops.doctor",
+      "from_level": 5,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 5
+    },
+    {
       "from": "fanops.fanops_hashtags",
       "from_level": 3,
       "jump": 0,
@@ -3867,10 +3876,10 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 381,
-    "lazy_edges_lateral": 45,
+    "lazy_edges": 382,
+    "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 79,
-    "lazy_edges_to_equal_or_higher_level": 124,
+    "lazy_edges_to_equal_or_higher_level": 125,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7

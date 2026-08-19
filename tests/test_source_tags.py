@@ -465,9 +465,13 @@ def test_lock_ready_sources_no_whisper_errors_no_stamp(tmp_path):
                           state=SourceState.catalogued))
     led.save()
     _write_whisper(cfg, "b")
-    lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]}),
+    lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]},
+                                                 media_by_tag={"#music": [_Media(1, "", play_count=8)]}),
                        research_fn=lambda *_a: ["music"], **_ok_graph())
-    assert not source_tag_locks_path(cfg).exists()
+    table = load_source_tag_locks(cfg)
+    assert "src_1" not in table
+    assert "src_2" in table
+    assert table["src_2"]["researched_at"]
     assert "no_transcript" in cfg.log_path.read_text()
 
 
@@ -531,3 +535,150 @@ def test_graph_refused_writes_nothing(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"],
                        resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
     assert not source_tag_locks_path(cfg).exists()
+
+
+def _count_graph():
+    resolves: list[str] = []
+    measures: list[str] = []
+
+    def resolve(_cfg, tag):
+        resolves.append(tag)
+        n = tag if str(tag).startswith("#") else f"#{tag}"
+        return f"gid-{n}"
+
+    def measure(_cfg, hid):
+        measures.append(hid)
+        return 10.0, {}
+
+    return resolves, measures, {"resolve_fn": resolve, "measure_fn": measure}
+
+
+def test_three_verified_names_six_graph_http(tmp_path):
+    cfg = _cfg(tmp_path)
+    names = ["a", "b", "c"]
+    client = _SearchClient({n: [_Hit(n)] for n in names},
+                           media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+    resolves, measures, graph = _count_graph()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
+    assert len(resolves) == 3 and len(measures) == 3
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["lock"] == ["#a", "#b", "#c"]
+    assert rec["researched_at"]
+
+
+def test_stop_graph_at_fifteen_dual_qualify(tmp_path):
+    cfg = _cfg(tmp_path)
+    names = [f"t{i}" for i in range(16)]
+    client = _SearchClient(
+        {n: [_Hit(n)] for n in names},
+        media_by_tag={f"#{n}": [_Media(1, "", play_count=i + 1)] for i, n in enumerate(names)},
+    )
+    resolves, measures, graph = _count_graph()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
+    assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(15)]
+    assert len(measures) == 15
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(15)]
+
+
+def _norm_tag(tag):
+    from fanops.hashtags import _norm
+    return _norm(tag)
+
+
+def test_second_source_overlapping_tags_zero_extra_search(tmp_path):
+    cfg = _cfg(tmp_path)
+    names = ["a", "b", "c"]
+    media = {f"#{n}": [_Media(1, "", play_count=8)] for n in names}
+    client = _SearchClient({n: [_Hit(n)] for n in names}, media_by_tag=media)
+    resolves, measures, graph = _count_graph()
+    ensure_source_lock(cfg, _src(sid="src_1"), client=client, research_fn=lambda *_a: names, **graph)
+    n_search, n_measure = len(resolves), len(measures)
+    assert n_search == 3
+    ensure_source_lock(cfg, _src(sid="src_2"), client=client, research_fn=lambda *_a: names, **graph)
+    assert len(resolves) == n_search
+    assert len(measures) == n_measure
+    rec = load_source_tag_locks(cfg)["src_2"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#a", "#b", "#c"]
+
+
+def test_code_18_mid_pile_keeps_in_progress_no_rellm(tmp_path):
+    from fanops.meta_graph import GraphQuotaExhausted
+    cfg = _cfg(tmp_path)
+    names = ["a", "b", "c"]
+    client = _SearchClient({n: [_Hit(n)] for n in names},
+                           media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+    calls = {"n": 0}
+    seen = []
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return names
+
+    def resolve(_c, tag):
+        seen.append(tag)
+        from fanops.hashtags import _norm
+        if _norm(tag) == "#c":
+            raise GraphQuotaExhausted("ig_hashtag_search", code=18, subcode=2207034,
+                                      message="resource limits")
+        return f"gid-{tag}"
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research,
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert not rec.get("researched_at")
+    assert rec["pile"] == ["#a", "#b", "#c"]
+    assert rec["measurements"]["#a"]["graph_metric"]
+    assert rec["measurements"]["#b"]["graph_metric"]
+    assert calls["n"] == 1
+    first_seen = list(seen)
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research,
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    assert calls["n"] == 1
+    assert seen == first_seen
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert not rec2.get("researched_at")
+
+
+def test_lock_ready_after_quota_on_a_tries_b(tmp_path):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.meta_graph import GraphQuotaExhausted
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    _write_whisper(cfg, "b")
+    names_a = ["a1", "a2", "a3"]
+    names_b = ["a1", "a2"]
+    client = _SearchClient({n: [_Hit(n)] for n in names_a},
+                           media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names_a})
+    attempted = []
+
+    def research(source, _e):
+        attempted.append(source.id)
+        return names_a if source.id == "src_a" else names_b
+
+    def resolve(_c, tag):
+        from fanops.hashtags import _norm
+        if _norm(tag) == "#a3":
+            raise GraphQuotaExhausted("ig_hashtag_search", code=18, subcode=2207034,
+                                      message="resource limits")
+        return f"gid-{tag}"
+
+    lock_ready_sources(cfg, client=client, research_fn=research, resolve_fn=resolve,
+                       measure_fn=lambda *_a: (10.0, {}))
+    assert attempted == ["src_a"]
+    rec_a = load_source_tag_locks(cfg)["src_a"]
+    assert not rec_a.get("researched_at")
+    lock_ready_sources(cfg, client=client, research_fn=research, resolve_fn=resolve,
+                       measure_fn=lambda *_a: (10.0, {}))
+    assert attempted == ["src_a", "src_b"]
+    table = load_source_tag_locks(cfg)
+    assert not table["src_a"].get("researched_at")
+    assert table["src_b"]["researched_at"]
+    assert table["src_b"]["lock"] == ["#a1", "#a2"]

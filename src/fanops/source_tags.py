@@ -6,26 +6,35 @@ Source-entry run: whisper, scrape, and Graph are required. LLM names THIS video
 Every name is dual-measured; lock is the first 15 that clear both meters, LLM order.
 Caption / regen / recaption read the sidecar; they do not produce it.
 Sidecar is cfg.control / source_tag_locks.json — not a Config field, not hashtags.json.
+
+Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
+(graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
 """
 from __future__ import annotations
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
-from fanops.hashtags import _dedupe_norm, _norm, _num, load_measurements, lock_from_pile
+from fanops.hashtags import (_dedupe_norm, _norm, _num, _scrape_number,
+                             load_measurements, lock_from_pile)
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.ig_web_scrape import open_web_session
 from fanops.log import get_logger
-from fanops.meta_graph import (GraphRefused, GraphThrottled, GraphUnreachable,
-                               measure_and_harvest, resolve_hashtag)
+from fanops.meta_graph import (GraphQuotaExhausted, GraphRefused, GraphThrottled,
+                               GraphUnreachable, measure_and_harvest, resolve_hashtag)
 from fanops.timeutil import iso_z
 
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
+GRAPH_TAG_CACHE_NAME = "graph_hashtag_cache.json"
 _LOCK_N = 15
 _RESEARCH_CAP = 20
+_SEARCH_QUOTA = 30
+_SEARCH_WINDOW_DAYS = 7
+_METER_KEYS = ("play_count", "like_count", "media_count",
+               "current_top_reel_play_max_7d", "top_reel_sample_n", "graph_metric")
 _RESEARCH_SCHEMA = {
     "type": "object",
     "properties": {"names": {"type": "array", "items": {"type": "string"}}},
@@ -36,6 +45,11 @@ _RESEARCH_SCHEMA = {
 def source_tag_locks_path(cfg):
     """Sidecar path. Not a Config field — callers must not add one."""
     return cfg.control / SOURCE_TAG_LOCKS_NAME
+
+
+def graph_tag_cache_path(cfg):
+    """Global Graph node-id + graph_metric cache. Not a Config field, not hashtags.json."""
+    return cfg.control / GRAPH_TAG_CACHE_NAME
 
 
 def load_source_tag_locks(cfg) -> dict:
@@ -50,6 +64,222 @@ def load_source_tag_locks(cfg) -> dict:
         raw = json.loads(p.read_text())
         table = raw if isinstance(raw, dict) else {}
     return table
+
+
+def load_graph_tag_cache(cfg) -> dict:
+    """Read the Graph tag cache. Missing / corrupt / unreadable → {}. Never raises."""
+    cache: dict = {}
+    with fail_open("source_tags.graph_cache"):
+        if cfg is None:
+            return {}
+        p = graph_tag_cache_path(cfg)
+        if not p.exists():
+            return {}
+        raw = json.loads(p.read_text())
+        cache = raw if isinstance(raw, dict) else {}
+    return cache
+
+
+def _parse_iso(raw) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
+def _cache_tags(cache: dict) -> dict:
+    tags = cache.get("tags") if isinstance(cache, dict) else None
+    return tags if isinstance(tags, dict) else {}
+
+
+def _unique_searches_in_window(cache: dict, now: datetime) -> int:
+    cutoff = now - timedelta(days=_SEARCH_WINDOW_DAYS)
+    seen: set[str] = set()
+    searches = cache.get("searches") if isinstance(cache, dict) else None
+    if isinstance(searches, list):
+        for row in searches:
+            if not isinstance(row, dict):
+                continue
+            raw = row.get("tag")
+            tag = _norm(raw) if isinstance(raw, str) else ""
+            ts = _parse_iso(row.get("at"))
+            if tag and ts is not None and ts >= cutoff:
+                seen.add(tag)
+    for name, rec in _cache_tags(cache).items():
+        if not isinstance(name, str) or not isinstance(rec, dict):
+            continue
+        tag = _norm(name)
+        ts = _parse_iso(rec.get("resolved_at"))
+        if tag and ts is not None and ts >= cutoff:
+            seen.add(tag)
+    return len(seen)
+
+
+def _quota_exhausted_unexpired(cache: dict, now: datetime) -> bool:
+    ts = _parse_iso(cache.get("quota_exhausted_at") if isinstance(cache, dict) else None)
+    if ts is None:
+        return False
+    return now - ts < timedelta(days=_SEARCH_WINDOW_DAYS)
+
+
+def graph_search_quota_status(cfg, *, now=None) -> tuple[int, int, bool]:
+    """(unique IDs spent in 7d, limit 30, exhausted). File read only — no Graph HTTP."""
+    now = now or datetime.now(timezone.utc)
+    cache = load_graph_tag_cache(cfg)
+    spent = _unique_searches_in_window(cache, now)
+    exhausted = spent >= _SEARCH_QUOTA or _quota_exhausted_unexpired(cache, now)
+    return spent, _SEARCH_QUOTA, exhausted
+
+
+def _write_graph_cache(cfg, cache: dict) -> None:
+    write_json_atomic(graph_tag_cache_path(cfg), cache)
+
+
+def _mark_quota_exhausted(cfg) -> None:
+    cache = load_graph_tag_cache(cfg)
+    cache["quota_exhausted_at"] = iso_z(datetime.now(timezone.utc))
+    _write_graph_cache(cfg, cache)
+
+
+def _cache_lookup(cfg, tag: str) -> dict | None:
+    rec = _cache_tags(load_graph_tag_cache(cfg)).get(_norm(tag))
+    return rec if isinstance(rec, dict) else None
+
+
+def _cached_metric(rec) -> float | None:
+    if not isinstance(rec, dict):
+        return None
+    v = _num(rec.get("graph_metric"))
+    return v if v is not None and v > 0 else None
+
+
+def _note_graph_id(cfg, tag: str, hid) -> None:
+    n = _norm(tag)
+    if not n:
+        return
+    now = datetime.now(timezone.utc)
+    cache = load_graph_tag_cache(cfg)
+    tags = dict(_cache_tags(cache))
+    prev = tags.get(n)
+    rec = dict(prev) if isinstance(prev, dict) else {}
+    rec["id"] = hid if isinstance(hid, str) and hid else None
+    rec["resolved_at"] = iso_z(now)
+    tags[n] = rec
+    cache["tags"] = tags
+    searches = cache.get("searches")
+    searches = list(searches) if isinstance(searches, list) else []
+    cutoff = now - timedelta(days=_SEARCH_WINDOW_DAYS)
+    already = False
+    for row in searches:
+        if not isinstance(row, dict):
+            continue
+        raw = row.get("tag")
+        if (_norm(raw) if isinstance(raw, str) else "") != n:
+            continue
+        ts = _parse_iso(row.get("at"))
+        if ts is not None and ts >= cutoff:
+            already = True
+            break
+    if not already:
+        searches.append({"tag": n, "at": iso_z(now)})
+    cache["searches"] = searches
+    _write_graph_cache(cfg, cache)
+
+
+def _note_graph_metric(cfg, tag: str, metric) -> None:
+    n = _norm(tag)
+    v = _num(metric)
+    if not n or v is None:
+        return
+    cache = load_graph_tag_cache(cfg)
+    tags = dict(_cache_tags(cache))
+    prev = tags.get(n)
+    rec = dict(prev) if isinstance(prev, dict) else {}
+    rec["graph_metric"] = v
+    rec["measured_at"] = iso_z(datetime.now(timezone.utc))
+    tags[n] = rec
+    cache["tags"] = tags
+    _write_graph_cache(cfg, cache)
+
+
+def _snapshot_meters(measurements: dict, names: list[str]) -> dict:
+    out: dict = {}
+    for name in names:
+        rec = measurements.get(name)
+        if not isinstance(rec, dict):
+            continue
+        snap = {}
+        for k in _METER_KEYS:
+            v = rec.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                snap[k] = v
+        if snap:
+            out[name] = snap
+    return out
+
+
+def _restore_meters(measurements: dict, snap) -> None:
+    if not isinstance(snap, dict):
+        return
+    for name, rec in snap.items():
+        n = _norm(name) if isinstance(name, str) else ""
+        if not n or not isinstance(rec, dict):
+            continue
+        prev = measurements.get(n)
+        merged = dict(prev) if isinstance(prev, dict) else {}
+        for k in _METER_KEYS:
+            v = rec.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                merged[k] = v
+        measurements[n] = merged
+
+
+def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining, quota=False) -> None:
+    rec = {
+        "pile": list(pile),
+        "verified": list(verified),
+        "measurements": _snapshot_meters(measurements, list(verified) or list(pile)),
+        "remaining": list(remaining),
+        "lock": [],
+    }
+    if quota:
+        rec["quota_exhausted_at"] = iso_z(datetime.now(timezone.utc))
+    table[sid] = rec
+    write_json_atomic(source_tag_locks_path(cfg), table)
+
+
+def _remaining_needs_novel(cfg, rec) -> bool:
+    names = rec.get("remaining") if isinstance(rec, dict) else None
+    if not isinstance(names, list) or not names:
+        names = []
+        if isinstance(rec, dict):
+            for key in ("verified", "pile"):
+                raw = rec.get(key)
+                if isinstance(raw, list) and raw:
+                    names = raw
+                    break
+    for raw in names:
+        n = _norm(raw) if isinstance(raw, str) else ""
+        if n and _cache_lookup(cfg, n) is None:
+            return True
+    return False
+
+
+def _source_quota_stuck(cfg, rec) -> bool:
+    """True when this source already hit quota and still needs a novel ig_hashtag_search."""
+    if not isinstance(rec, dict):
+        return False
+    qat = rec.get("quota_exhausted_at")
+    if not (isinstance(qat, str) and qat.strip()):
+        return False
+    if not graph_search_quota_status(cfg)[2]:
+        return False
+    return _remaining_needs_novel(cfg, rec)
 
 
 def _prose(source, excerpt=None) -> str:
@@ -179,7 +409,7 @@ def _graph_ready(cfg, resolve_fn) -> bool:
 
 
 def _graph_message(exc) -> str:
-    if isinstance(exc, GraphRefused):
+    if isinstance(exc, (GraphRefused, GraphQuotaExhausted)):
         return (exc.message or str(exc))[:160]
     if isinstance(exc, GraphUnreachable):
         return (exc.reason or str(exc))[:160]
@@ -223,9 +453,37 @@ def _set_graph_metric(measurements: dict, tag: str, metric) -> None:
     measurements[tag] = rec
 
 
+def _apply_cached_graph(cfg, measurements: dict, tag: str) -> None:
+    gm = _cached_metric(_cache_lookup(cfg, tag))
+    if gm is not None:
+        _set_graph_metric(measurements, tag, gm)
+
+
+def _persist_quota(cfg, log, table, sid, *, pile, verified, measurements, remaining, exc=None) -> None:
+    spent, limit, _ = graph_search_quota_status(cfg)
+    log("source_tags", sid, "quota_exhausted", level="error",
+        err=_graph_message(exc) if exc is not None else "ration",
+        spent=spent, limit=limit)
+    _mark_quota_exhausted(cfg)
+    _write_in_progress(cfg, table, sid, pile=pile, verified=verified,
+                       measurements=measurements, remaining=remaining, quota=True)
+
+
+def _measure_graph_tag(cfg, tag, hid, measurements, *, measure_fn) -> None:
+    raw = measure_fn(cfg, hid) if measure_fn is not None else measure_and_harvest(cfg, hid)
+    gmetric = raw[0] if isinstance(raw, tuple) and raw else raw
+    _set_graph_metric(measurements, tag, gmetric)
+    _note_graph_metric(cfg, tag, gmetric)
+
+
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> None:
-    """Research → exact-name verify → dual scrape+Graph measure → lock. Abort source on tool death."""
+    """Research → exact-name verify → dual scrape+Graph measure → lock. Abort source on tool death.
+
+    Graph node ids + graph_metric are cached globally. Novel ig_hashtag_search is rationed to
+    30 unique / 7d. Quota death persists the pile without researched_at so LLM is not re-run.
+    Graph stops once 15 names dual-qualify.
+    """
     sid = str(getattr(source, "id", "") or "")
     if not sid:
         return
@@ -233,6 +491,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if _researched(table, sid):
         return
     log = get_logger(cfg)
+    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
     if first is None:
@@ -241,71 +500,125 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if not _graph_ready(cfg, resolve_fn):
         log("source_tags", sid, "no_graph", level="error")
         return
-    try:
-        raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
-    except Exception as exc:
-        log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
-        return
-    llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+    pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
+    if pile_prior:
+        llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP]
+    else:
+        try:
+            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
+        except Exception as exc:
+            log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
+            return
+        llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+        if not llm_names:
+            log("source_tags", sid, "research_fail", level="error", err="research_empty")
+            return
     if not llm_names:
         log("source_tags", sid, "research_fail", level="error", err="research_empty")
         return
     verified: list[str] | None = None
     cli = None
+    verified_prior = prior.get("verified") if isinstance(prior.get("verified"), list) else None
+    if verified_prior:
+        verified = _dedupe_norm(verified_prior)
+        cli = first
+    else:
+        def _clients():
+            yield first
+            yield from walk
 
-    def _clients():
-        yield first
-        yield from walk
-
-    for cand in _clients():
-        got, dead_exc = _search_verify(cand, llm_names)
-        if dead_exc is not None:
-            log("source_tags", sid, "rotate_dead", err=type(dead_exc).__name__,
-                user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
-            _remember_dead_dump(cfg, cand, dead_exc)
-            continue
-        verified = got
-        cli = cand
-        break
+        for cand in _clients():
+            got, dead_exc = _search_verify(cand, llm_names)
+            if dead_exc is not None:
+                log("source_tags", sid, "rotate_dead", err=type(dead_exc).__name__,
+                    user=str(getattr(cand, "_fanops_scrape_user", "") or "")[:40])
+                _remember_dead_dump(cfg, cand, dead_exc)
+                continue
+            verified = got
+            cli = cand
+            break
     if verified is None or cli is None:
         log("source_tags", sid, "no_scrape", level="error", err="all_sessions_dead")
         return
     measurements = dict(load_measurements(cfg))
-    remaining = list(verified)
+    _restore_meters(measurements, prior.get("measurements"))
+    for tag in verified:
+        _apply_cached_graph(cfg, measurements, tag)
+    remaining_scrape = list(verified)
     spare = iter(walk)
     current = cli
-    while remaining:
-        tag = remaining[0]
-        try:
-            metrics, _cotags = measure_and_harvest_scrape(current, tag)
-        except Exception as exc:
-            if scrape_session_dead(exc):
-                log("source_tags", sid, "rotate_dead", tag=tag, err=type(exc).__name__,
-                    user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
-                _remember_dead_dump(cfg, current, exc)
-                nxt = next(spare, None)
-                if nxt is None:
-                    log("source_tags", sid, "no_scrape", level="error", err="measure_dead")
-                    return
-                current = nxt
+    while remaining_scrape:
+        if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+            break
+        tag = remaining_scrape[0]
+        if _scrape_number(measurements.get(tag)) is None:
+            try:
+                metrics, _cotags = measure_and_harvest_scrape(current, tag)
+            except Exception as exc:
+                if scrape_session_dead(exc):
+                    log("source_tags", sid, "rotate_dead", tag=tag, err=type(exc).__name__,
+                        user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
+                    _remember_dead_dump(cfg, current, exc)
+                    nxt = next(spare, None)
+                    if nxt is None:
+                        log("source_tags", sid, "no_scrape", level="error", err="measure_dead")
+                        return
+                    current = nxt
+                    continue
+                log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
+                remaining_scrape.pop(0)
                 continue
-            log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
-            remaining.pop(0)
+            _apply_scrape_metrics(measurements, tag, metrics)
+        _apply_cached_graph(cfg, measurements, tag)
+        remaining_scrape.pop(0)
+    for idx, tag in enumerate(verified):
+        if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+            break
+        cached = _cache_lookup(cfg, tag)
+        gm = _cached_metric(cached)
+        if gm is not None:
+            _set_graph_metric(measurements, tag, gm)
             continue
-        _apply_scrape_metrics(measurements, tag, metrics)
+        if isinstance(cached, dict) and "id" in cached:
+            hid = cached.get("id")
+            if not (isinstance(hid, str) and hid):
+                continue
+            try:
+                _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+            except GraphQuotaExhausted as exc:
+                _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
+                               measurements=measurements, remaining=verified[idx:], exc=exc)
+                return
+            except GraphThrottled as exc:
+                log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
+                _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
+                                   measurements=measurements, remaining=verified[idx:])
+                return
+            except (GraphRefused, GraphUnreachable) as exc:
+                log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
+                return
+            continue
+        if graph_search_quota_status(cfg)[2]:
+            _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
+                           measurements=measurements, remaining=verified[idx:])
+            return
         try:
             hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
+            _note_graph_id(cfg, tag, hid)
             if hid:
-                raw = measure_fn(cfg, hid) if measure_fn is not None else measure_and_harvest(cfg, hid)
-                gmetric = raw[0] if isinstance(raw, tuple) and raw else raw
-                _set_graph_metric(measurements, tag, gmetric)
+                _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
+        except GraphQuotaExhausted as exc:
+            _persist_quota(cfg, log, table, sid, pile=llm_names, verified=verified,
+                           measurements=measurements, remaining=verified[idx:], exc=exc)
+            return
         except GraphThrottled as exc:
             log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
+            _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
+                               measurements=measurements, remaining=verified[idx:])
             return
         except (GraphRefused, GraphUnreachable) as exc:
             log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
             return
-        remaining.pop(0)
     lock = lock_from_pile(verified, measurements, _LOCK_N)
     table[sid] = {
         "pile": llm_names,
@@ -322,7 +635,12 @@ def _state_value(source) -> str:
 
 def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=None,
                        resolve_fn=None, measure_fn=None) -> None:
-    """After produce, before reduce. One source per call. Lock-free. Never raises."""
+    """After produce, before reduce. One source per real lock attempt. Never raises.
+
+    Missing whisper JSON on a produce-eligible source logs no_transcript and continues
+    (must not starve a later ready source). After quota-block on A, skip A when it still
+    needs a novel search and try B whose remaining names are already cached.
+    """
     log = get_logger(cfg)
     try:
         from fanops.ledger import Ledger
@@ -340,7 +658,10 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 if _state_value(source) in ("pending", "discovered", "retired"):
                     continue
                 log("source_tags", sid, "no_transcript", level="error")
-                return
+                continue
+            rec = table.get(sid)
+            if _source_quota_stuck(cfg, rec):
+                continue
             excerpt = _transcript_file_prose(cfg, source) or _prose(source)
             try:
                 ensure_source_lock(cfg, source, excerpt=excerpt, client=client,

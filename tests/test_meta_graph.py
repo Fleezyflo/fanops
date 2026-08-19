@@ -1,9 +1,9 @@
 # tests/test_meta_graph.py
 # The read-only Meta Graph HASHTAG client. Pure-fixture (mocked `get`), no real network. Covers:
 # ig_hashtag_search -> node id, top_media -> (verbatim like_count, co-occurring tags), typed Meta
-# refusals (GraphRefused / GraphUnreachable — never a bare None for an error), throttle backoff ->
-# GraphThrottled (Meta's own refusal is the ONLY governor — the local 30/7-day budget fiction is
-# deleted), the token NEVER appearing in any logged / exception string (METRICS_CLIENT_AUTH_DISCIPLINE),
+# refusals (GraphQuotaExhausted / GraphRefused / GraphUnreachable — never a bare None for an error),
+# throttle backoff -> GraphThrottled. code 18 / 2207034 is quota (durable), not a throttle. The token
+# NEVER appearing in any logged / exception string (METRICS_CLIENT_AUTH_DISCIPLINE),
 # and the IPv4-only default transport.
 import pytest
 from fanops.config import Config
@@ -47,17 +47,19 @@ def test_resolve_hashtag_none_means_no_such_hashtag(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     assert meta_graph.resolve_hashtag(cfg, "#x", get=_router({"ig_hashtag_search": _Resp(200, {"data": []})})) is None
 
-def test_resolve_hashtag_raises_graph_refused_on_meta_error(tmp_path, monkeypatch):
+def test_resolve_hashtag_raises_graph_quota_exhausted_on_code_18(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     get = _router({"ig_hashtag_search": _Resp(400, {"error": {
         "message": "This API call could not be completed due to resource limits",
         "type": "OAuthException", "code": 18, "error_subcode": 2207034}})})
-    with pytest.raises(meta_graph.GraphRefused) as ei:
+    with pytest.raises(meta_graph.GraphQuotaExhausted) as ei:
         meta_graph.resolve_hashtag(cfg, "#a", get=get)
     exc = ei.value
     assert exc.code == 18 and exc.subcode == 2207034 and exc.type == "OAuthException"
     assert "resource limits" in exc.message
     assert _TOKEN not in str(exc)
+    assert not isinstance(exc, meta_graph.GraphThrottled)
+    assert not isinstance(exc, meta_graph.GraphRefused)
 
 def test_resolve_hashtag_no_creds_never_touches_the_network(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, token=None)
@@ -116,14 +118,14 @@ def test_throttle_code_backs_off_then_raises_graph_throttled(tmp_path, monkeypat
     assert len(slept) == meta_graph._MAX_RL_RETRIES                # backed off before giving up
     assert len(get.calls) == meta_graph._MAX_RL_RETRIES + 1
 
-def test_non_throttle_meta_error_is_graph_refused_not_none(tmp_path, monkeypatch):
-    # code 18 is Meta's own error object — raise it; never collapse to None (that invented "no such tag").
+def test_quota_code_18_is_graph_quota_exhausted_not_throttled(tmp_path, monkeypatch):
+    # code 18 / 2207034 is durable quota — not a throttle retry, never collapse to None.
     cfg = _cfg(tmp_path, monkeypatch)
     slept: list = []
     monkeypatch.setattr(meta_graph, "_sleep", lambda s: slept.append(s))
     get = _router({"ig_hashtag_search": _Resp(400, {"error": {"code": 18, "error_subcode": 2207034,
                                                                "message": "resource limits"}})})
-    with pytest.raises(meta_graph.GraphRefused) as ei:
+    with pytest.raises(meta_graph.GraphQuotaExhausted) as ei:
         meta_graph.resolve_hashtag(cfg, "#a", get=get)
     assert ei.value.code == 18 and ei.value.subcode == 2207034
     assert slept == [] and len(get.calls) == 1                     # no retry ladder, no wait
