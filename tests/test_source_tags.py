@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from fanops.caption import request_captions
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, search_hashtags_scrape
-from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, load_source_tag_locks,
-                                lock_ready_sources, source_tag_locks_path)
+from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, graph_tag_cache_path,
+                                load_source_tag_locks, lock_ready_sources, source_tag_locks_path)
 from fanops.studio.actions import regenerate_caption
 from hashtag_scrape_fakes import _FakeClient, _Media
 
@@ -720,6 +720,107 @@ def test_graph_quota_after_scrape_still_stamps(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#a", "#b"]
+
+
+def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None):
+    names = list(names)
+    measured = list(names) if measured is None else list(measured)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        sid: {
+            "pile": names,
+            "verified": names,
+            "measurements": {n: {"play_count": 10.0} for n in measured},
+            "remaining": names,
+            "lock": [],
+            "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+        }
+    }))
+    graph_tag_cache_path(cfg).write_text(json.dumps({
+        "quota_exhausted_at": "2026-08-19T14:33:28.816749Z",
+    }))
+
+
+def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _leftover_quota_sidecar(cfg)
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("finished scrape must not open Safari")
+
+    def resolve(_c, tag):
+        raise AssertionError("Graph must not gate leftover lock")
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: (_ for _ in ()).throw(
+        AssertionError("must not re-LLM a leftover pile")), open_client_fn=opener,
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#a", "#b"]
+    assert "quota_exhausted_at" not in rec
+    assert seen == []
+
+
+def test_leftover_incomplete_without_safari_does_not_stamp(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _leftover_quota_sidecar(cfg, names=("#a", "#b"), measured=("#a",))
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["a", "b"], open_client_fn=opener,
+                       **_ok_graph())
+    rec = load_source_tag_locks(cfg).get("src_1") or {}
+    assert not rec.get("researched_at")
+    assert rec.get("quota_exhausted_at")
+    assert seen == []
+
+
+def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    _write_whisper(cfg, "b")
+    _leftover_quota_sidecar(cfg, sid="src_a", names=("#a",))
+    attempted = []
+
+    def research(source, _e):
+        attempted.append(source.id)
+        return ["music"]
+
+    def resolve(_c, tag):
+        raise AssertionError("Graph must not skip leftover A")
+
+    lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]},
+                                                 media_by_tag={"#music": [_Media(1, "", play_count=8)]}),
+                       research_fn=research, resolve_fn=resolve,
+                       measure_fn=lambda *_a: (10.0, {}))
+    table = load_source_tag_locks(cfg)
+    assert table["src_a"]["researched_at"]
+    assert table["src_a"]["lock"] == ["#a"]
+    assert "src_b" not in table
+    assert attempted == []
 
 
 def test_empty_scrape_pass_stamps_empty_lock(tmp_path):

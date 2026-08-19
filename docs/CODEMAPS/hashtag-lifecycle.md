@@ -55,7 +55,9 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
   `perca`=perca.late). Never Google Chrome. Never cookie export into Python.
   Safari scrape **completes** the per-source lock (`researched_at` + `lock`).
   Graph may cache/confirm/rank; Graph never vetoes membership or withholds
-  `researched_at`. Empty `lock: []` means scrape finished with zero admits.
+  `researched_at`. A leftover `quota_exhausted_at` row whose scrape already
+  finished stamps without a Safari seat and without a novel Graph search.
+  Empty `lock: []` means scrape finished with zero admits.
 - **Tick remesure** uses the same Safari `open_web_session` as lock. Lock and
   remesure share one UTC-day budget (`accounts[user].used`), one
   `FANOPS_HASHTAG_SCRAPE_DELAY` (live `IgWebSession._json` only), and one LRU
