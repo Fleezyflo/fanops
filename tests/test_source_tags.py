@@ -484,6 +484,33 @@ def test_lock_ready_sources_no_whisper_errors_no_stamp(tmp_path):
     assert "no_transcript" in cfg.log_path.read_text()
 
 
+def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypatch):
+    """No Instagram seat: probe users once, log no_scrape once, do not walk every source.
+
+    Live 2026-08-19: lock_ready_sources logged no_scrape on ~30 unfinished sources in 37s.
+    Each source called open_web_session → #music XHR. That is what logged the Safari
+    sessions out. A missing seat is one tick fact, not N probes."""
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,wolf")
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    for i, stem in enumerate(("a", "b", "c"), start=1):
+        led.add_source(Source(id=f"src_{i}", source_path=str(tmp_path / f"{stem}.mp4"),
+                              state=SourceState.catalogued))
+        _write_whisper(cfg, stem)
+    led.save()
+    seen: list[str | None] = []
+
+    def opener(_cfg, user=None, **_k):
+        seen.append(user)
+        raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
+
+    lock_ready_sources(cfg, open_client_fn=opener,
+                       research_fn=lambda *_a: (_ for _ in ()).throw(AssertionError("no LLM without a seat")))
+    assert seen == ["mark", "wolf"]
+
+
 def test_lock_ready_sources_at_most_one(tmp_path):
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
