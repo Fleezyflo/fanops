@@ -57,7 +57,10 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
   Graph may cache/confirm/rank; Graph never vetoes membership or withholds
   `researched_at`. A leftover `quota_exhausted_at` row whose scrape already
   finished stamps without a Safari seat and without a novel Graph search.
-  Empty `lock: []` means scrape finished with zero admits.
+  Empty `lock: []` means scrape finished with zero admits. Tags this source
+  already used on its clips/posts that have scrape meters join the lock
+  (`hydrate_locks_from_known`) — not the persona store ∪ corpus. Exact-name
+  meters already on disk skip a Safari re-search.
 - **Tick remesure** uses the same Safari `open_web_session` as lock. Both pace
   with instagrapi `delay_range` on each XHR and +1 `used` per XHR. Unattended
   tick: one tag. LRU picker. Manual `fanops hashtags refresh` stays on instagrapi

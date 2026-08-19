@@ -6,9 +6,10 @@ never vetoes membership or withholds researched_at after scrape finished. Empty
 lock = scrape finished with zero admits. Caption waits on researched_at.
 
 LLM names THIS video (mild→provocative). Search verifies the exact name (no
-siblings on the pile). Lock is scrape-admitted names, Graph-present first, LLM
-order within tier, cap 15. Sidecar is cfg.control / source_tag_locks.json —
-not a Config field, not hashtags.json.
+siblings on the pile). Lock is (1) this source's already-used tags that have
+scrape meters — not the persona store ∪ corpus — then (2) scrape-admitted pile
+names, Graph-present first, LLM order within tier, cap 15. Sidecar is
+cfg.control / source_tag_locks.json — not a Config field, not hashtags.json.
 
 Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
 (graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
@@ -21,7 +22,7 @@ from pathlib import Path
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import (_dedupe_norm, _norm, _num, _scrape_number,
-                             load_measurements, lock_from_pile)
+                             load_measurements, lock_from_pile, play_rank_key)
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.ig_web_scrape import open_web_session
@@ -471,13 +472,114 @@ def _measure_graph_tag(cfg, tag, hid, measurements, *, measure_fn) -> None:
     _note_graph_metric(cfg, tag, gmetric)
 
 
-def _stamp_source(cfg, table, sid, pile, lock) -> None:
-    table[sid] = {
+def used_tags_for_source(led, sid: str) -> list[str]:
+    """Hashtags already on THIS source's clips/posts. Not the global store."""
+    counts: dict[str, int] = {}
+    if led is None or not sid:
+        return []
+    clip_ids: set[str] = set()
+    for clip in getattr(led, "clips", {}).values():
+        mom = getattr(led, "moments", {}).get(getattr(clip, "parent_id", None))
+        if mom is None or str(getattr(mom, "parent_id", "") or "") != sid:
+            continue
+        cid = str(getattr(clip, "id", "") or "")
+        if cid:
+            clip_ids.add(cid)
+        meta = getattr(clip, "meta_captions", None)
+        if not isinstance(meta, dict):
+            continue
+        for rec in meta.values():
+            if not isinstance(rec, dict):
+                continue
+            for raw in rec.get("hashtags") or []:
+                n = _norm(raw) if isinstance(raw, str) else ""
+                if n:
+                    counts[n] = counts.get(n, 0) + 1
+    for post in getattr(led, "posts", {}).values():
+        if str(getattr(post, "parent_id", "") or "") not in clip_ids:
+            continue
+        for raw in getattr(post, "hashtags", None) or []:
+            n = _norm(raw) if isinstance(raw, str) else ""
+            if n:
+                counts[n] = counts.get(n, 0) + 1
+    return sorted(counts, key=lambda t: (-counts[t], t))
+
+
+def _union_lock_meters(table: dict, measurements: dict) -> None:
+    for rec in table.values():
+        if isinstance(rec, dict):
+            _restore_meters(measurements, rec.get("measurements"))
+
+
+def known_lock(names, measurements, used, n=15, keep=None) -> list[str]:
+    """This-source used∩measured (play then 7d reel), then keep, then scrape-admitted pile."""
+    seen: set[str] = set()
+    out: list[str] = []
+    recs = measurements if isinstance(measurements, dict) else {}
+    used_n = [t for t in _dedupe_norm(used) if _scrape_number(recs.get(t)) is not None]
+    used_n.sort(key=lambda t: play_rank_key(t, recs.get(t)))
+    for t in used_n:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    for t in _dedupe_norm(keep):
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    for t in lock_from_pile(names, recs, n):
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
+    row = {
         "pile": list(pile),
         "lock": list(lock),
         "researched_at": iso_z(datetime.now(timezone.utc)),
     }
+    if isinstance(measurements, dict):
+        snap = _snapshot_meters(measurements, list(lock) or list(pile))
+        if snap:
+            row["measurements"] = snap
+    table[sid] = row
     write_json_atomic(source_tag_locks_path(cfg), table)
+
+
+def hydrate_locks_from_known(cfg, led) -> int:
+    """Stamp/merge locks from this-source used tags that already have scrape meters.
+
+    Zero network. Never the persona 80-pile. Does not recaption. Returns rows written.
+    """
+    if cfg is None or led is None:
+        return 0
+    table = load_source_tag_locks(cfg)
+    measurements = dict(load_measurements(cfg))
+    _union_lock_meters(table, measurements)
+    n = 0
+    for source in getattr(led, "sources", {}).values():
+        if getattr(source, "origin_kind", "native") == "third_party":
+            continue
+        sid = str(getattr(source, "id", "") or "")
+        if not sid:
+            continue
+        used = used_tags_for_source(led, sid)
+        if not used:
+            continue
+        prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+        pile = _dedupe_norm(prior.get("pile") if isinstance(prior.get("pile"), list) else [])
+        verified = prior.get("verified") if isinstance(prior.get("verified"), list) else None
+        names = _dedupe_norm(verified if verified else (prior.get("lock") or pile))
+        keep = prior.get("lock") if _researched(table, sid) else []
+        lock = known_lock(names, measurements, used, _LOCK_N, keep=keep)
+        if not lock:
+            continue
+        if _researched(table, sid) and list(prior.get("lock") or []) == lock:
+            continue
+        _stamp_source(cfg, table, sid, pile, lock, measurements)
+        n += 1
+    return n
 
 
 def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
@@ -518,7 +620,8 @@ def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
             except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
                 break
-    _stamp_source(cfg, table, sid, pile, lock_from_pile(verified, measurements, _LOCK_N))
+    _stamp_source(cfg, table, sid, pile, lock_from_pile(verified, measurements, _LOCK_N),
+                  measurements)
 
 
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
@@ -559,8 +662,24 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         search_needed = True
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
-    if llm_names and _scrape_already_done(search_needed, pending, verified, measurements):
-        _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N))
+    _union_lock_meters(table, measurements)
+    still: list[str] = []
+    for raw in pending:
+        tag = _norm(raw) if isinstance(raw, str) else ""
+        if tag and _scrape_number(measurements.get(tag)) is not None:
+            if tag not in verified:
+                verified.append(tag)
+            _apply_cached_graph(cfg, measurements, tag)
+        elif tag:
+            still.append(tag)
+    pending = still
+    if llm_names and (
+        (not pending)
+        or _scrape_already_done(False if not pending else search_needed, pending,
+                                verified, measurements)
+    ):
+        _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N),
+                      measurements)
         return False
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
@@ -587,13 +706,19 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     while pending:
         if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
             break
+        raw = pending[0]
+        tag = _norm(raw) if isinstance(raw, str) else ""
+        if tag and _scrape_number(measurements.get(tag)) is not None:
+            if tag not in verified:
+                verified.append(tag)
+            _apply_cached_graph(cfg, measurements, tag)
+            pending.pop(0)
+            continue
         if stagger and tags_this_walk >= 1:
             break
         current = _advance_lock_client(cfg, current, spare, already)
         if current is None:
             break
-        raw = pending[0]
-        tag = _norm(raw) if isinstance(raw, str) else ""
         _charge_lock_tag(cfg, current, already)
         if search_needed and tag and tag not in verified:
             try:
@@ -654,11 +779,13 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     (must not starve a later ready source). Graph quota does not skip a source —
     leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
     A source that cannot progress (no seat) does not consume the one-attempt slot.
+    Used∩measured hydrate is zero-network and may stamp many sources in one tick.
     """
     log = get_logger(cfg)
     try:
         from fanops.ledger import Ledger
         led = Ledger.load(cfg)
+        hydrate_locks_from_known(cfg, led)
         table = load_source_tag_locks(cfg)
         for source in led.sources.values():
             if getattr(source, "origin_kind", "native") == "third_party":
