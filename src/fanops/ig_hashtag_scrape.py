@@ -382,8 +382,12 @@ def safari_eval(expr: str, user: str | None = None) -> str:
     return _safari_osascript(script, expr, prefix)
 
 
-def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool = False) -> bool:
-    """THIS account's Safari Instagram tab. Kills leftover FanOps Chrome. Never Chrome."""
+def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool = False,
+                         navigate: bool = True) -> bool:
+    """THIS account's Safari Instagram tab. Kills leftover FanOps Chrome. Never Chrome.
+
+    Unattended tick passes navigate=False: never activate Safari, never reload
+    instagram.com (that is a session-kill). scrape-login keeps navigate=True."""
     import time
     _enable_safari_apple_events()
     for u in scrape_users(cfg) or ((user,) if user else ()):
@@ -396,6 +400,8 @@ def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool 
                 return True
         except RuntimeError:
             pass
+    if not navigate:
+        return False
     try:
         safari_open_instagram(user)
     except RuntimeError:

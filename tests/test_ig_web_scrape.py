@@ -58,6 +58,43 @@ def test_web_measure_reads_play_and_like():
     assert "#music" in cotags or "#live" in cotags
 
 
+def test_safari_logged_in_does_not_hit_tags_api(monkeypatch):
+    """Login check is the existing tab (login URL / login form). #music/info is a
+    private API call and was fired once per unfinished source — that logged
+    the accounts out. sessionid is HttpOnly so document.cookie is not a signal."""
+    import fanops.ig_hashtag_scrape as igs
+    import fanops.ig_web_scrape as iws
+    seen = []
+
+    def ev(expr, user=None):
+        seen.append(expr)
+        assert "/tags/" not in expr
+        assert "music" not in expr
+        assert "sessionid" not in expr
+        return "ok"
+
+    monkeypatch.setattr(igs, "safari_eval", ev)
+    assert iws.safari_logged_in("markmakmouly") is True
+    assert seen and all("/tags/" not in e for e in seen)
+    monkeypatch.setattr(igs, "safari_eval", lambda *_a, **_k: "login")
+    assert iws.safari_logged_in("markmakmouly") is False
+
+
+def test_ensure_scrape_safari_unattended_does_not_navigate(tmp_path, monkeypatch):
+    """Unattended tick must not activate Safari or reload instagram.com."""
+    import fanops.ig_hashtag_scrape as igs
+    opened = []
+    monkeypatch.setattr(igs, "_enable_safari_apple_events", lambda: None)
+    monkeypatch.setattr(igs, "stop_scrape_chrome", lambda *_a, **_k: None)
+    monkeypatch.setattr(igs, "scrape_users", lambda _cfg: ["u"])
+    monkeypatch.setattr(igs, "safari_eval",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("no instagram tab")))
+    monkeypatch.setattr(igs, "safari_open_instagram", lambda u: opened.append(u))
+    cfg = Config(root=tmp_path)
+    assert igs.ensure_scrape_safari(cfg, "u", navigate=False) is False
+    assert opened == []
+
+
 def test_open_web_session_refuses_without_safari(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     import fanops.ig_hashtag_scrape as igs

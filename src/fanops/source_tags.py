@@ -782,7 +782,9 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     Missing whisper JSON on a produce-eligible source logs no_transcript and continues
     (must not starve a later ready source). Graph quota does not skip a source —
     leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
-    A source that cannot progress (no seat) does not consume the one-attempt slot.
+    A source that cannot progress (no seat) does not consume the one-attempt slot —
+    but a missing seat is one tick fact: stop after the first no_scrape. Re-opening
+    Safari per unfinished source is what logged the accounts out.
     Used∩measured hydrate is zero-network and may stamp many sources in one tick.
     """
     log = get_logger(cfg)
@@ -817,6 +819,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
             table = load_source_tag_locks(cfg)
             if _researched(table, sid) or walked:
                 return
+            return   # no_scrape: do not reopen Safari for every unfinished source
     except Exception as exc:
         log("source_tags", "-", "error", level="error",
             err=f"{type(exc).__name__}: {exc}"[:160])

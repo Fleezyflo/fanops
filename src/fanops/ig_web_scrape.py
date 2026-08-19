@@ -157,7 +157,7 @@ def _looks_like_media(d: dict) -> bool:
 
 
 def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgWebSession:
-    """Open a web scrape session. Tick may open Safari. Never launches Chrome."""
+    """Open a web scrape session. Tick uses an existing Instagram tab. Never Chrome."""
     from fanops.ig_hashtag_scrape import ensure_scrape_safari, scrape_users
     users = scrape_users(cfg)
     if not users:
@@ -174,7 +174,7 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
         raise ScrapeUnavailable(f"scrape user {user!r} not in FANOPS_IG_SCRAPE_USER")
     if fetch is not None:
         return IgWebSession(user, fetch=fetch, cfg=cfg)
-    if not ensure_scrape_safari(cfg, user):
+    if not ensure_scrape_safari(cfg, user, navigate=False):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
     if not safari_logged_in(user):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
@@ -197,14 +197,27 @@ def _lock_web_users(cfg: Config, now) -> list[str]:
 
 
 def safari_logged_in(user: str) -> bool:
-    """True when THIS account's Safari Instagram tab can resolve a real tag."""
+    """True when THIS account's Safari Instagram tab is not a login wall.
+
+    sessionid is HttpOnly — document.cookie cannot see it. Do not call
+    /api/v1/tags/... here; that private-API probe ran once per unfinished
+    source and is what Instagram treated as a session kill. A dead session
+    still on instagram.com/ fails on the first real tag XHR."""
+    from fanops.ig_hashtag_scrape import safari_eval
     try:
-        data = _safari_fetch(
-            "GET", "https://www.instagram.com/api/v1/tags/music/info/", user=user,
+        raw = safari_eval(
+            "(function(){"
+            "var u=location.href||'';"
+            "if(u.indexOf('accounts/login')>=0)return 'login';"
+            "if(document.querySelector('input[name=\"username\"], input[name=\"password\"]'))"
+            "return 'login';"
+            "return 'ok';"
+            "})()",
+            user,
         )
-    except (LoginRequired, ScrapeUnavailable, RuntimeError, OSError, TimeoutError):
+    except (ScrapeUnavailable, RuntimeError, OSError, TimeoutError):
         return False
-    return isinstance(data, dict) and bool(data.get("id") or data.get("name"))
+    return (raw or "").strip() == "ok"
 
 
 def safari_profile_auth(cfg: Config, user: str) -> tuple[str, str] | None:
