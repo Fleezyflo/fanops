@@ -512,12 +512,16 @@ def _union_lock_meters(table: dict, measurements: dict) -> None:
 
 
 def known_lock(names, measurements, used, n=15, keep=None) -> list[str]:
-    """This-source used∩measured (play then 7d reel), then keep, then scrape-admitted pile."""
+    """This-source used tags (measured first, play then 7d reel), then keep, then scrape-admitted pile.
+
+    Unmeasured used tags still belong — they already shipped on this video. The global store does not.
+    """
     seen: set[str] = set()
     out: list[str] = []
     recs = measurements if isinstance(measurements, dict) else {}
-    used_n = [t for t in _dedupe_norm(used) if _scrape_number(recs.get(t)) is not None]
-    used_n.sort(key=lambda t: play_rank_key(t, recs.get(t)))
+    used_n = _dedupe_norm(used)
+    used_n.sort(key=lambda t: (0 if _scrape_number(recs.get(t)) is not None else 1,
+                               play_rank_key(t, recs.get(t))))
     for t in used_n:
         if t not in seen:
             seen.add(t)
@@ -548,7 +552,7 @@ def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
 
 
 def hydrate_locks_from_known(cfg, led) -> int:
-    """Stamp/merge locks from this-source used tags that already have scrape meters.
+    """Stamp/merge locks from tags this source already used.
 
     Zero network. Never the persona 80-pile. Does not recaption. Returns rows written.
     """

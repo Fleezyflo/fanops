@@ -1062,13 +1062,13 @@ def test_hydrate_used_measured_stamps_without_safari(tmp_path):
     assert rec["researched_at"]
     assert rec["lock"][0] == "#hiphop"
     assert "#lyrics" in rec["lock"]
+    assert "#storeonly" in rec["lock"]
     assert "#rap" not in rec["lock"]
-    assert "#storeonly" not in rec["lock"]
     lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
     assert seen == []
     post = Ledger.load(cfg).posts["post_src_1"]
     text = posted_text_for(cfg, Ledger.load(cfg), post)
-    assert "#hiphop" in text or "#lyrics" in text
+    assert "#hiphop" in text and "#lyrics" in text and "#storeonly" in text
 
 
 def test_hydrate_store_tag_not_on_source_stays_out(tmp_path):
