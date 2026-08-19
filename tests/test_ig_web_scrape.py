@@ -1,4 +1,5 @@
 """Lock scrape fetches inside Safari, never Google Chrome."""
+import json
 from types import SimpleNamespace
 
 from fanops.config import Config
@@ -165,14 +166,24 @@ def test_open_web_session_passes_user_keyword(tmp_path, monkeypatch):
     assert sess._fanops_scrape_user == "cisumwolfhom"
 
 
-def test_igweb_json_paces_safari_xhr(monkeypatch):
-    """Live Safari _json sleeps FANOPS_HASHTAG_SCRAPE_DELAY; injected _fetch does not."""
+def _ok_xhr(*_a, **_k):
+    return json.dumps({"status": 200, "url": "https://www.instagram.com/api/v1/tags/music/info/",
+                       "text": json.dumps({"ok": True})})
+
+
+def test_igweb_json_paces_safari_xhr(tmp_path, monkeypatch):
+    """instagrapi delay_range: first XHR has no wait; the next waits [lo,hi] since the last.
+    Injected _fetch does not sleep."""
     import fanops.ig_web_scrape as iws
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "2,2")
+    iws._LAST_REQUEST_MONO.clear()
     sleeps = []
     monkeypatch.setattr(iws.time, "sleep", lambda s: sleeps.append(s))
-    monkeypatch.setattr(iws, "_safari_fetch", lambda *_a, **_k: {"ok": True})
-    live = IgWebSession("u", safari=True)
+    monkeypatch.setattr(iws, "_safari_xhr", _ok_xhr)
+    cfg = Config(root=tmp_path)
+    live = IgWebSession("u", safari=True, cfg=cfg)
+    live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    assert sleeps == []
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     assert sleeps == [2.0]
     sleeps.clear()
@@ -180,6 +191,7 @@ def test_igweb_json_paces_safari_xhr(monkeypatch):
     injected._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     assert sleeps == []
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "0")
+    iws._LAST_REQUEST_MONO.clear()
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     assert sleeps == []
 
@@ -190,15 +202,59 @@ def test_igweb_json_charges_each_live_xhr(tmp_path, monkeypatch):
     import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import _cooldown_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    iws._LAST_REQUEST_MONO.clear()
     monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
-    monkeypatch.setattr(iws, "_safari_fetch", lambda *_a, **_k: {"ok": True})
+    monkeypatch.setattr(iws, "_safari_xhr", _ok_xhr)
     cfg = Config(root=tmp_path)
     live = IgWebSession("u", safari=True, cfg=cfg)
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     live._json("POST", "https://www.instagram.com/api/v1/tags/music/sections/", body="x")
-    used = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
-    assert used == 2
+    rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]
+    assert rec["used"] == 2
+    assert rec.get("last_request_at")
     injected = IgWebSession("u", fetch=lambda *_a, **_k: {"ok": True}, cfg=cfg)
     injected._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     used2 = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
     assert used2 == 2
+
+
+def test_safari_fetch_skips_network_when_frozen(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _persist_cooldown
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path)
+    _persist_cooldown(cfg, datetime(2026, 8, 19, tzinfo=timezone.utc),
+                      reason="operator_hold", delay_s=7 * 24 * 3600, user="u")
+    hit = []
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: hit.append(1) or _ok_xhr())
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable:
+        pass
+    assert hit == []
+
+
+def test_safari_fetch_429_freezes(tmp_path, monkeypatch):
+    import json
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: json.dumps({
+        "status": 429, "url": "https://www.instagram.com/api/v1/tags/music/info/", "text": "{}",
+    }))
+    cfg = Config(root=tmp_path)
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected WebThrottled")
+    except iws.WebThrottled:
+        pass
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("reason") == "WebThrottled"
+    assert rec.get("used") == 1

@@ -360,12 +360,17 @@ def _call_opener(opener, cfg, user=None):
 
 
 def _remember_dead_dump(cfg, client, exc) -> None:
-    """Freeze this identity so the next source does not re-hit a rejected dump."""
+    """Freeze this identity so the next source does not re-hit a rejected dump.
+
+    Skip when the Safari XHR gate already froze this user on this request."""
     user = getattr(client, "_fanops_scrape_user", None)
     if not isinstance(user, str) or not user:
         return
-    from fanops.fanops_hashtags import _persist_cooldown
-    _persist_cooldown(cfg, datetime.now(timezone.utc), reason=type(exc).__name__, user=user)
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob, _persist_cooldown
+    now = datetime.now(timezone.utc)
+    if _is_frozen(_account_rec(_load_cooldown_blob(cfg), user), now):
+        return
+    _persist_cooldown(cfg, now, reason=type(exc).__name__, user=user)
 
 
 def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
@@ -729,11 +734,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                 hits = search_hashtags_scrape(current, raw)
             except Exception as exc:
                 if scrape_session_dead(exc):
-                    log("source_tags", sid, "rotate_dead", err=type(exc).__name__,
+                    log("source_tags", sid, "stop_dead", err=type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
-                    current = next(spare, None)
-                    continue
+                    break
                 raise
             if not _exact_hit(hits, tag):
                 pending.pop(0)
@@ -745,11 +749,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                 metrics, _cotags = measure_and_harvest_scrape(current, tag)
             except Exception as exc:
                 if scrape_session_dead(exc):
-                    log("source_tags", sid, "rotate_dead", tag=tag, err=type(exc).__name__,
+                    log("source_tags", sid, "stop_dead", tag=tag, err=type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
-                    current = next(spare, None)
-                    continue
+                    break
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
                 pending.pop(0)
                 tags_this_walk += 1

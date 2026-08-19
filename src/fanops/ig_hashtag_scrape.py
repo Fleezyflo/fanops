@@ -83,6 +83,7 @@ def scrape_configured(cfg: Config) -> bool:
 _SESSION_DEAD_NAMES = frozenset({
     "LoginRequired", "ClientLoginRequired",
     "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
+    "WebThrottled", "ClientThrottledError", "PleaseWaitFewMinutes",
 })
 
 

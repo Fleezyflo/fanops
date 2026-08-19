@@ -326,14 +326,13 @@ def test_search_hashtags_scrape_reraises_challenge_subclass():
     assert False, "Challenge subclass must not fail-open to []"
 
 
-def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
-    """A LoginRequired dump must not persist an empty lock — try the next client."""
+def test_ensure_source_lock_login_required_stops_the_tick(tmp_path, monkeypatch):
+    """LoginRequired freezes that user and ends the walk. Same-tick rotate onto the
+    next account is the burst instagrapi says to stop."""
     from instagrapi.exceptions import LoginRequired
     from fanops.ig_hashtag_scrape import scrape_session_path
 
     cfg = _cfg(tmp_path)
-    live = _SearchClient({"music": [_Hit("music", id="1", media_count=2)]},
-                         media_by_tag={"#music": [_Media(1, "", play_count=8)]})
 
     class _Dead:
         def search_hashtags(self, query):
@@ -343,7 +342,7 @@ def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
 
     def opener(_cfg, user=None):
         seen.append(user)
-        return _Dead() if user == "a" else live
+        return _Dead()
 
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     for u in ("a", "b"):
@@ -352,10 +351,8 @@ def test_ensure_source_lock_rotates_off_dead_session(tmp_path, monkeypatch):
         p.write_text("{}")
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener,
                        **_ok_graph())
-    rec = load_source_tag_locks(cfg)["src_1"]
-    assert rec["pile"] == ["#music"]
-    assert rec["lock"] == ["#music"]
-    assert seen == ["a", "b"]
+    assert not source_tag_locks_path(cfg).exists()
+    assert seen == ["a"]
 
 
 def test_ensure_source_lock_all_dead_writes_nothing(tmp_path, monkeypatch):
