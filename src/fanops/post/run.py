@@ -543,9 +543,13 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         row = _non_active_row(accounts, p.account)
         if row is not None:
             parked_not_active[p.id] = (p, row)
-    for pid, (p, row) in parked_not_active.items():
-        get_logger(cfg)("publish", pid, "skip_account_not_active",
-                        account=p.account, platform=p.platform.value, status=row.status.value)
+    by_acct: dict[str, tuple[Account, int]] = {}
+    for _pid, (p, row) in parked_not_active.items():
+        prev = by_acct.get(p.account)
+        by_acct[p.account] = (row, (prev[1] if prev else 0) + 1)
+    for handle, (row, n) in by_acct.items():
+        get_logger(cfg)("publish", handle, "skip_account_not_active",
+                        account=handle, status=row.status.value, n=n)
     due = [p for p in due if p.id not in parked_not_active]
     if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
         from fanops.postiz_lifecycle import ensure_up

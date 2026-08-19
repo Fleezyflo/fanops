@@ -1,3 +1,4 @@
+import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, Moment, PostState, ClipState, MomentState, Platform
@@ -808,6 +809,23 @@ def test_publish_due_warming_and_retired_stay_queued(tmp_path, monkeypatch, mock
     assert summary["published"] == 0 and summary["skipped_not_active"] == 2
     led = Ledger.load(cfg)
     assert led.posts["p_warm"].state is PostState.queued and led.posts["p_gone"].state is PostState.queued
+    poster.assert_not_called()
+
+
+def test_publish_due_planned_logs_once_per_account(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "planned")])
+    _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="p2", cid="c2", when="2020-01-01T00:00:00Z")
+    _http_media(led, "p1", "p2")
+    poster = mocker.patch("fanops.post.run.get_poster")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    summary = publish_due(cfg, now=_quota_now())
+    assert summary["published"] == 0 and summary["skipped_not_active"] == 2
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()
+            and "skip_account_not_active" in line]
+    assert len(recs) == 1
+    assert recs[0]["account"] == "a" and recs[0]["n"] == "2"
     poster.assert_not_called()
 
 
