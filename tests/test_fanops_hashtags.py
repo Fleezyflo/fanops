@@ -406,6 +406,24 @@ def test_login_required_arms_the_laddered_cooldown(tmp_path, monkeypatch):
     assert not cfg.hashtags_path.exists()
 
 
+def test_expired_loginrequired_is_stripped_from_cooldown(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.controlio import write_json_atomic
+    from fanops.fanops_hashtags import _cooldown_path, _healthy_scrape_users
+
+    cfg = Config(root=tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
+    now = datetime(2026, 8, 19, 18, 0, tzinfo=timezone.utc)
+    write_json_atomic(_cooldown_path(cfg), {"accounts": {
+        "perca.late": {"until": "2026-08-18T22:45:10+00:00", "reason": "LoginRequired",
+                       "streak": 2, "day": "2026-08-18", "used": 0},
+    }})
+    peers = _healthy_scrape_users(cfg, now, require_budget_room=False, require_session=False)
+    assert peers == ["perca.late"]
+    rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["perca.late"]
+    assert "reason" not in rec and "until" not in rec and "streak" not in rec
+
+
 def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch):
     """MOL-727/MOL-910: dead session discovered at first hashtag_info (not open probe) still arms
     LoginRequired cooldown so due ticks do not re-hit a dead session forever."""

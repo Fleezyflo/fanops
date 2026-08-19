@@ -971,6 +971,11 @@ def test_unattended_lock_walks_one_tag(tmp_path, monkeypatch):
     rec2 = load_source_tag_locks(cfg)["src_1"]
     assert rec2.get("verified") == ["#t0", "#t1"]
     assert not rec2.get("researched_at")
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    unfinished = [r for r in recs if r.get("outcome") == "scrape_unfinished"]
+    assert unfinished
+    assert all(r.get("level") != "error" for r in unfinished)
+    assert not any(r.get("err") == "scrape_unfinished" for r in recs)
 
 
 def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):

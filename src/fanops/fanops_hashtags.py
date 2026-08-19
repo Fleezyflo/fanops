@@ -254,6 +254,24 @@ def _account_rec(blob: dict, user: str) -> dict:
     return {}
 
 
+def _scrub_expired_accounts(blob: dict, now: datetime) -> bool:
+    """Drop until/reason/streak once the clock has passed. Dead labels are a lie."""
+    accounts = blob.get("accounts") if isinstance(blob, dict) else None
+    if not isinstance(accounts, dict):
+        return False
+    changed = False
+    for rec in accounts.values():
+        if not isinstance(rec, dict) or rec.get("until") is None:
+            continue
+        if _is_frozen(rec, now):
+            continue
+        for k in ("until", "reason", "streak"):
+            if k in rec:
+                rec.pop(k, None)
+                changed = True
+    return changed
+
+
 def _is_frozen(rec: dict, now: datetime) -> bool:
     """True when accounts[user].until is in the future. Budget is not a freeze."""
     if not isinstance(rec, dict):
@@ -288,6 +306,12 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
     users = scrape_users(cfg)
     blob = _load_cooldown_blob(cfg)
+    if _scrub_expired_accounts(blob, now):
+        try:
+            cfg.control.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(_cooldown_path(cfg), blob)
+        except OSError:
+            pass
     eligible: list[str] = []
     for user in users:
         rec = _account_rec(blob, user)
