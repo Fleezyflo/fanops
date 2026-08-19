@@ -85,10 +85,14 @@ def test_lock_walk_uses_unfrozen_users(tmp_path, monkeypatch):
 
 
 def test_scrape_launch_never_names_google_chrome():
-    from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_chrome_launch_argv
     from pathlib import Path
+
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import scrape_chrome_launch_argv, safari_profile_name
     argv = scrape_chrome_launch_argv(Config(root=Path("/tmp")), "perca.late")
     joined = " ".join(argv or [])
     assert "Google Chrome" not in joined
     assert "Safari" in joined
+    assert safari_profile_name("cisumwolfhom") == "Personal"
+    assert safari_profile_name("markmakmouly") == "mark"
+    assert safari_profile_name("perca.late") == "perca"

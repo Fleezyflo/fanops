@@ -505,8 +505,8 @@ def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch)
     argv = igs.scrape_chrome_launch_argv(cfg, "perca.late")
     assert argv is not None
     joined = " ".join(argv)
-    assert argv[0] == "open"
     assert "Safari" in argv
+    assert argv[-1] == "perca"
     assert "Google Chrome" not in joined
     assert "9222" not in joined and "9223" not in joined
     assert "remote-debugging" not in joined
