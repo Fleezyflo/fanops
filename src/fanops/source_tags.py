@@ -684,7 +684,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
     if first is None:
-        log("source_tags", sid, "no_scrape", level="error")
+        log("source_tags", sid, "no_scrape")
         return False
     if not llm_names:
         try:
@@ -756,7 +756,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         tags_this_walk += 1
     scrape_done = (not pending) or len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
-        log("source_tags", sid, "no_scrape", level="error", err="scrape_unfinished")
+        log("source_tags", sid, "scrape_unfinished")
         if verified:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending)
