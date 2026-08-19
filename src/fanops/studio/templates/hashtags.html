@@ -1,15 +1,11 @@
-{# src/fanops/studio/templates/hashtags.html — U11 the Hashtags observatory: the reach store, the local
-   lookup meter (observational), cross-account rotation health, and the operator's global ban lane — the
-   system-wide hashtag state that S12 (automated corpora) + U9 (per-persona display) leave homeless.
-   Read-only EXCEPT the ban lane. Budget-inert (zero Graph calls on load). Per-persona corpus EDITING
-   lives on the Personas tab (this page links there). #}
+{# src/fanops/studio/templates/hashtags.html — U11: per-source locks (the ship menu), then Layer A/B
+   discovery (not posted tags), then rotation health. Read-only. Zero Graph on load. #}
 {% extends "base.html" %}
 {% block title %}Hashtags{% endblock %}
 {% block body %}
   <h2>Hashtags</h2>
-  <p class="muted">The system-wide hashtag picture: what the system currently believes is worth using (the reach
-    store), a local lookup meter (observational — does not block Meta), cross-account rotation health, and a
-    global ban lane. Loading this page makes <strong>no</strong> Graph calls. Per-persona corpora are edited on
-    <a href="{{ url_for('personas_view') }}">Personas</a>.</p>
+  <p class="muted">Posted tags come from each video's <strong>source lock</strong>. The measurement cache and
+    persona corpora below are discovery — they are not the caption menu. This page makes <strong>no</strong>
+    Graph calls.</p>
   {% include "_hashtags_panel.html" %}
 {% endblock %}

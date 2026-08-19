@@ -72,8 +72,8 @@ def test_page_get_is_network_inert(tmp_path, monkeypatch):
     r = _client(cfg).get("/hashtags")
     assert r.status_code == 200
     html = r.data.decode()
-    for needle in ("Corpora at a glance", "Measurement cache", "Rotation health"):
-        assert needle in html                            # all three sections present
+    for needle in ("Source locks", "Corpora at a glance", "Measurement cache", "Rotation health"):
+        assert needle in html
     assert "Ban lane" not in html
     assert "/hashtags/ban" not in html
 
@@ -178,6 +178,34 @@ def test_corpus_rows_read_only(tmp_path):
     assert "/personas/research" not in section1          # ...as is the research proposal lane
     assert "/hashtags/ban" not in html                   # ban forms gone from the whole page
     assert "edit →" in section1                          # but the read-only link to Personas is present
+
+
+def test_lock_rows_ready_missing_and_in_progress(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_ready", source_path=str(tmp_path / "a.mp4"), title="ready vid"))
+    led.add_source(Source(id="src_empty", source_path=str(tmp_path / "b.mp4"), title="empty vid"))
+    led.add_source(Source(id="src_wait", source_path=str(tmp_path / "c.mp4"), title="wait vid"))
+    led.add_source(Source(id="src_gone", source_path=str(tmp_path / "d.mp4"), title="gone vid"))
+    led.save()
+    from fanops.source_tags import source_tag_locks_path
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_ready": {"pile": ["#a"], "lock": ["#a"], "researched_at": "2026-08-19T00:00:00Z"},
+        "src_empty": {"pile": ["#z"], "lock": [], "researched_at": "2026-08-19T00:00:00Z"},
+        "src_wait": {"pile": ["#w"], "verified": ["#w"], "remaining": ["#w"], "lock": []},
+    }))
+    page = views_hashtags.hashtags_page(cfg, led=led)
+    by = {r.sid: r for r in page.locks}
+    assert page.lock_total == 4 and page.lock_ready == 2
+    assert by["src_ready"].state == "ready" and by["src_ready"].tags == ["#a"]
+    assert by["src_empty"].state == "empty" and by["src_empty"].n == 0
+    assert by["src_wait"].state == "in_progress"
+    assert by["src_gone"].state == "missing"
+    html = _client(cfg).get("/hashtags").data.decode()
+    assert "Source locks" in html and "2 of 4 sources" in html
+    assert "not the posted caption menu" in html or "not</strong> the posted caption menu" in html
 
 
 def test_corpus_row_size_is_byte_truth_from_personas_json(tmp_path):
