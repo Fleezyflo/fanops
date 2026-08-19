@@ -674,7 +674,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     consecutive tags up to `min(_scrape_try_cap(), day room)`, charge that user, then the next user
     continues the same queue cursor. Account platform stop (via `_freeze_for`) stops that user only —
     peers keep the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
-    (LRU head) remains for cooldown gates and `open_client(user=None)`.
+    (LRU head) remains for cooldown gates and harvest `open_client(user=None)`.
+
+    Tick remesure (`known_names` set) opens via `open_web_session(cfg, user=u)` — same Safari profile
+    map as lock (#1029). Envelope json / Chrome dumps are not required. Day budget still brakes
+    remesure; lock walk still ignores budget. Manual `refresh_store` discovery stays on `open_client`.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
     (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
@@ -890,16 +894,23 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
             _clear_cooldown(cfg, now=now, used_delta=user_tried, user=user)
         return None
 
+    def _open_pass_client(user=None):
+        """Harvest: instagrapi envelope. Tick remesure: Safari web session. Never Chrome."""
+        if harvest:
+            return open_client(cfg, now=now) if user is None else open_client(cfg, user=user, now=now)
+        from fanops.ig_web_scrape import open_web_session
+        return open_web_session(cfg) if user is None else open_web_session(cfg, user=user)
+
     def _open_single_fallback() -> tuple[str, str] | None:
         """Open one client when no session-ready walk list (inject-like / password-only classify)."""
         nonlocal client, scrape_user, cooldown
         scrape_user = None
         try:
-            client = open_client(cfg, now=now)
+            client = _open_pass_client()
             scrape_user = getattr(client, "_fanops_scrape_user", None)
         except ScrapeUnavailable as e:
             return ("no_scrape", str(e))
-        except Exception as e:                                  # noqa: BLE001 — platform errors from open_client
+        except Exception as e:                                  # noqa: BLE001 — platform errors from the opener
             reason, delay_s = _freeze_for(e)
             cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=scrape_user)
             cooldown = cd
@@ -921,7 +932,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         today = _utc_day(now)
         blob = _load_cooldown_blob(cfg)
         walk: list[tuple[str, int]] = []
-        for u in _healthy_scrape_users(cfg, now, allow_reauth=False):
+        # Harvest needs an envelope on disk. Tick remesure walks FANOPS_IG_SCRAPE_USER
+        # (Safari profile map, #1029) and does not require ig_scrape_session_*.json.
+        if harvest:
+            peers = _healthy_scrape_users(cfg, now, allow_reauth=False)
+        else:
+            peers = [u for u in listed if not _is_frozen(_account_rec(blob, u), now)]
+        for u in peers:
             rec = _account_rec(blob, u)
             used = int(rec["used"]) if rec.get("day") == today and isinstance(rec.get("used"), (int, float)) else 0
             room = _SCRAPE_DAY_BUDGET - max(used, 0)
@@ -931,11 +948,15 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         if not walk:
             from fanops.ig_hashtag_scrape import scrape_session_path, scrape_users as _scrape_users
             listed = _scrape_users(cfg)
-            unfrozen_sess = [u for u in listed
-                             if scrape_session_path(cfg, u).exists()
-                             and not _is_frozen(_account_rec(blob, u), now)]
-            if unfrozen_sess:
-                # Session answers; Layer A is out of day room. Do not open_client() —
+            if harvest:
+                unfrozen_ready = [u for u in listed
+                                  if scrape_session_path(cfg, u).exists()
+                                  and not _is_frozen(_account_rec(blob, u), now)]
+            else:
+                unfrozen_ready = [u for u in listed
+                                  if not _is_frozen(_account_rec(blob, u), now)]
+            if unfrozen_ready:
+                # Unfrozen identity exists; Layer A is out of day room. Do not open —
                 # the lock producer may ignore budget; remesure must not.
                 return {"written": False, "aborted": "budget", "reason": "budget",
                         "backend": "scrape"}
@@ -961,11 +982,11 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
                 if i >= len(queue):
                     break
                 try:
-                    client = open_client(cfg, user=u, now=now)
+                    client = _open_pass_client(u)
                 except ScrapeUnavailable as e:
                     last_open_abort = ("no_scrape", str(e))
                     continue
-                except Exception as e:                          # noqa: BLE001 — platform errors from open_client
+                except Exception as e:                          # noqa: BLE001 — platform errors from the opener
                     reason, delay_s = _freeze_for(e)
                     cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=u)
                     cooldown = cd
@@ -1053,14 +1074,17 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     NOT file mtime. Queue is NEVER `persona_terms` (HV1-PR4). Empty sidecar is a clean no-op
     (`refreshed: False`), not `discovery_skip_no_niche`. Exact-name quota ≤30 unique / 7 days.
 
-    Needs a scrape session (else a clean no-op). FAIL-OPEN: any error -> a reason, NEVER raises.
-    Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
+    Configured = FANOPS_IG_SCRAPE_USER listed. Password / Chrome dumps / envelope json do not
+    count. Safari authority is the opener (`open_web_session`), not this gate — probing Safari
+    on every tick would hit Instagram when the cache is still fresh. FAIL-OPEN: any error -> a
+    reason, NEVER raises. Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening
+    scrape — never sleeps.
     MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted.
     A skip under a freeze that has outlived the cadence also emits `scrape_outage` at
     `_outage_level` (MOL-794). Manual `fanops hashtags refresh` still runs Layer A via
     `refresh_store` — this tick does not call that path."""
-    from fanops.ig_hashtag_scrape import scrape_configured
-    if not scrape_configured(cfg) and scrape_client is None:
+    from fanops.ig_hashtag_scrape import scrape_users
+    if scrape_client is None and not scrape_users(cfg):
         return {"refreshed": False, "reason": "no scrape session"}
     try:
         now_dt = now or datetime.now(timezone.utc)

@@ -567,6 +567,7 @@
         "fanops.accounts",
         "fanops.errors",
         "fanops.ig_hashtag_scrape",
+        "fanops.ig_web_scrape",
         "fanops.persona_research",
         "fanops.personas",
         "fanops.source_tags"
@@ -3265,6 +3266,14 @@
       "from_level": 3,
       "jump": 1,
       "same_scc": false,
+      "to": "fanops.ig_web_scrape",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
       "to": "fanops.personas",
       "to_level": 4
     },
@@ -3830,10 +3839,10 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 377,
+    "lazy_edges": 378,
     "lazy_edges_lateral": 44,
-    "lazy_edges_strictly_upward": 76,
-    "lazy_edges_to_equal_or_higher_level": 120,
+    "lazy_edges_strictly_upward": 77,
+    "lazy_edges_to_equal_or_higher_level": 121,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7

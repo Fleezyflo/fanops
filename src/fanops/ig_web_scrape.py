@@ -29,7 +29,7 @@ class LoginRequired(Exception):
 
 
 class IgWebSession:
-    """Duck-types the two instagrapi calls the lock path uses."""
+    """Duck-types instagrapi search_hashtags / hashtag_info / hashtag_medias_top."""
 
     def __init__(self, user: str, *, fetch=None, safari: bool = False):
         if not user or (fetch is None and not safari):
@@ -38,12 +38,16 @@ class IgWebSession:
         self._fetch = fetch
         self._safari = safari
 
+    def _tag_info(self, q: str) -> dict:
+        """GET /api/v1/tags/{q}/info/ — lock search and remesure hashtag_info share this."""
+        return self._json("GET", f"https://www.instagram.com/api/v1/tags/{quote(q)}/info/")
+
     def search_hashtags(self, query: str):
         """Exact-name resolve. Typeahead is siblings — lock verify must not accept those."""
         q = (query or "").strip().lstrip("#")
         if not q:
             return []
-        data = self._json("GET", f"https://www.instagram.com/api/v1/tags/{quote(q)}/info/")
+        data = self._tag_info(q)
         name = data.get("name")
         if not isinstance(name, str) or not name.strip():
             return []
@@ -52,6 +56,16 @@ class IgWebSession:
         if hid in (None, "") and not (isinstance(media_count, (int, float)) and media_count > 0):
             return []
         return [_Hit(name=name, hid=hid, media_count=media_count)]
+
+    def hashtag_info(self, name: str):
+        """Duck-type instagrapi hashtag_info so resolve_hashtag_scrape runs on Safari."""
+        q = (name or "").strip().lstrip("#")
+        if not q:
+            return _Hit(name="", hid=None, media_count=None)
+        data = self._tag_info(q)
+        raw = data.get("name")
+        nm = raw.strip() if isinstance(raw, str) and raw.strip() else q
+        return _Hit(name=nm, hid=data.get("id"), media_count=data.get("media_count"))
 
     def hashtag_medias_top(self, name: str, amount: int = 9):
         tag = _norm(name).lstrip("#")
