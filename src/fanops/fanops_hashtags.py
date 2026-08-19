@@ -265,7 +265,7 @@ def _scrub_expired_accounts(blob: dict, now: datetime) -> bool:
             continue
         if _is_frozen(rec, now):
             continue
-        for k in ("until", "reason", "streak"):
+        for k in ("until", "reason"):
             if k in rec:
                 rec.pop(k, None)
                 changed = True

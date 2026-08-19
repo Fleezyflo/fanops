@@ -421,7 +421,8 @@ def test_expired_loginrequired_is_stripped_from_cooldown(tmp_path, monkeypatch):
     peers = _healthy_scrape_users(cfg, now, require_budget_room=False, require_session=False)
     assert peers == ["perca.late"]
     rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["perca.late"]
-    assert "reason" not in rec and "until" not in rec and "streak" not in rec
+    assert "reason" not in rec and "until" not in rec
+    assert rec.get("streak") == 2
 
 
 def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch):
