@@ -921,7 +921,10 @@ def test_request_captions_noops_without_researched_at(tmp_path):
 
 def _cooldown_used(cfg, user):
     from fanops.fanops_hashtags import _cooldown_path
-    raw = json.loads(_cooldown_path(cfg).read_text())
+    p = _cooldown_path(cfg)
+    if not p.exists():
+        return 0
+    raw = json.loads(p.read_text())
     rec = (raw.get("accounts") or {}).get(user) or {}
     return int(rec.get("used") or 0)
 

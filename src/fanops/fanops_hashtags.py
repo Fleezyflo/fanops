@@ -964,7 +964,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
             peers = [u for u in listed if not _is_frozen(_account_rec(blob, u), now)]
         for u in peers:
             cap = _user_attempt_room(cfg, u, now=now)
-            cap = min(cap, 1)
+            if not harvest:
+                cap = min(cap, 1)
             if cap <= 0:
                 continue
             walk.append((u, cap))

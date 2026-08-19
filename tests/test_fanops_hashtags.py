@@ -1798,7 +1798,7 @@ def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
     """MOL-858: skip with cooldown only when every scrape peer is frozen/budgeted."""
     from datetime import datetime, timezone, timedelta
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _SCRAPE_DAY_BUDGET)
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path)
     from fanops.controlio import write_json_atomic
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1814,7 +1814,8 @@ def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
         "accounts": {
             "a": {"until": (t0 + timedelta(hours=1)).isoformat(), "streak": 1,
                   "reason": "throttle", "day": "2026-07-01", "used": 1},
-            "b": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET},
+            "b": {"until": (t0 + timedelta(hours=1)).isoformat(), "streak": 1,
+                  "reason": "LoginRequired", "day": "2026-07-01", "used": 0},
         }})
     nxt = _FakeClient({"#hiphop": 50})
     skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
