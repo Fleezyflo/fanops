@@ -126,3 +126,22 @@ def test_open_web_session_passes_user_keyword(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     sess = open_web_session(cfg, user="cisumwolfhom", fetch=lambda *_a, **_k: {})
     assert sess._fanops_scrape_user == "cisumwolfhom"
+
+
+def test_igweb_json_paces_safari_xhr(monkeypatch):
+    """Live Safari _json sleeps FANOPS_HASHTAG_SCRAPE_DELAY; injected _fetch does not."""
+    import fanops.ig_web_scrape as iws
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "2,2")
+    sleeps = []
+    monkeypatch.setattr(iws.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(iws, "_safari_fetch", lambda *_a, **_k: {"ok": True})
+    live = IgWebSession("u", safari=True)
+    live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    assert sleeps == [2.0]
+    sleeps.clear()
+    injected = IgWebSession("u", fetch=lambda *_a, **_k: {"ok": True})
+    injected._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    assert sleeps == []
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "0")
+    live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    assert sleeps == []

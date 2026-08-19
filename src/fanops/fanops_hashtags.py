@@ -289,12 +289,13 @@ def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> 
 
 
 def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = False,
-                          require_budget_room: bool = True) -> list[str]:
+                          require_budget_room: bool = True,
+                          require_session: bool = True) -> list[str]:
     """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak.
 
-    `require_budget_room=False` (lock producer / open_client with no user): skip only a live
-    freeze. Day budget stays the Layer A remesure brake (`room` in `_refresh_pass`), not
-    "this session does not exist."
+    Lock picker: `require_budget_room=True, require_session=False` (Safari; no envelope json).
+    Harvest remesure keeps `require_session=True`. `require_budget_room=False` skips only a live
+    freeze — not the lock producer's default.
     """
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
     users = scrape_users(cfg)
@@ -306,10 +307,13 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
             continue
         if require_budget_room and scrape_user_blocked(cfg, user, now):
             continue
-        if allow_reauth:
-            if scrape_user_usable(cfg, user):
+        if require_session:
+            if allow_reauth:
+                if scrape_user_usable(cfg, user):
+                    eligible.append(user)
+            elif scrape_session_path(cfg, user).exists():
                 eligible.append(user)
-        elif scrape_session_path(cfg, user).exists():
+        else:
             eligible.append(user)
 
     def _lru_key(user: str) -> tuple[str, int]:
@@ -321,11 +325,49 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
 
 
 def _pick_healthy_scrape_user(cfg: Config, now: datetime, *, allow_reauth: bool = False,
-                              require_budget_room: bool = True) -> str | None:
+                              require_budget_room: bool = True,
+                              require_session: bool = True) -> str | None:
     """LRU-oldest healthy scrape peer, or None."""
     peers = _healthy_scrape_users(cfg, now, allow_reauth=allow_reauth,
-                                  require_budget_room=require_budget_room)
+                                  require_budget_room=require_budget_room,
+                                  require_session=require_session)
     return peers[0] if peers else None
+
+
+def _day_room(cfg: Config, user: str | None = None, now: datetime | None = None) -> int:
+    """Remaining UTC-day request-units for this scrape identity. Lock and remesure share this."""
+    now = now or datetime.now(timezone.utc)
+    blob = _load_cooldown_blob(cfg)
+    if user:
+        rec = _account_rec(blob, user)
+    elif isinstance(blob.get("accounts"), dict) and blob["accounts"]:
+        rec = {}
+    else:
+        rec = {k: blob[k] for k in ("day", "used") if k in blob}
+    today = _utc_day(now)
+    used = int(rec["used"]) if rec.get("day") == today and isinstance(rec.get("used"), (int, float)) else 0
+    return max(0, _SCRAPE_DAY_BUDGET - max(used, 0))
+
+
+def _user_attempt_room(cfg: Config, user: str | None, *, already: int = 0,
+                       now: datetime | None = None) -> int:
+    """min(try_cap - already, day room). Shared per-user ceiling for lock and remesure."""
+    now = now or datetime.now(timezone.utc)
+    return max(0, min(_scrape_try_cap() - max(int(already), 0), _day_room(cfg, user, now)))
+
+
+def _charge_scrape_user(cfg: Config, user: str | None, n: int, *, now=None,
+                        stop_exc: BaseException | None = None) -> dict | None:
+    """Charge +n tag-attempts onto accounts[user].used (legacy blob when user is None)."""
+    now = now or datetime.now(timezone.utc)
+    n = max(int(n), 0)
+    if stop_exc is not None:
+        reason, delay_s = _freeze_for(stop_exc)
+        return _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s,
+                                 used_delta=n, user=user)
+    if n > 0:
+        _clear_cooldown(cfg, now=now, used_delta=n, user=user)
+    return None
 
 
 def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
@@ -677,8 +719,9 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     (LRU head) remains for cooldown gates and harvest `open_client(user=None)`.
 
     Tick remesure (`known_names` set) opens via `open_web_session(cfg, user=u)` — same Safari profile
-    map as lock (#1029). Envelope json / Chrome dumps are not required. Day budget still brakes
-    remesure; lock walk still ignores budget. Manual `refresh_store` discovery stays on `open_client`.
+    map as lock (#1029). Envelope json / Chrome dumps are not required. Lock and remesure share the
+    UTC-day budget (`_day_room` / `_charge_scrape_user`). Manual `refresh_store` discovery stays
+    on `open_client`.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
     (MOL-694). A mid-pass flush is measurement durability alone — deriving on each one recomputed every
@@ -879,20 +922,16 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
 
     def _charge_user(user: str | None, user_tried: int, stop_exc: BaseException | None) -> dict | None:
         nonlocal platform_stop, stop_reason_word
+        cd = _charge_scrape_user(cfg, user, user_tried, now=now, stop_exc=stop_exc)
         if stop_exc is not None:
             platform_stop = True
-            reason, delay_s = _freeze_for(stop_exc)
+            reason, _delay_s = _freeze_for(stop_exc)
             stop_reason_word = reason
-            cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s,
-                                   used_delta=user_tried, user=user)
             log("hashtags", "-", "scrape_cooldown",
-                level=_outage_level(cd.get("streak"), _age_s(prev_complete, now)),
-                reason=reason, streak=cd.get("streak"), until=cd.get("until"),
+                level=_outage_level((cd or {}).get("streak"), _age_s(prev_complete, now)),
+                reason=reason, streak=(cd or {}).get("streak"), until=(cd or {}).get("until"),
                 user=(user or "")[:40])
-            return cd
-        if user_tried > 0:
-            _clear_cooldown(cfg, now=now, used_delta=user_tried, user=user)
-        return None
+        return cd
 
     def _open_pass_client(user=None):
         """Harvest: instagrapi envelope. Tick remesure: Safari web session. Never Chrome."""
@@ -929,7 +968,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
             throttled = True
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i, cap=try_cap)
     else:
-        today = _utc_day(now)
         blob = _load_cooldown_blob(cfg)
         walk: list[tuple[str, int]] = []
         # Harvest needs an envelope on disk. Tick remesure walks FANOPS_IG_SCRAPE_USER
@@ -939,12 +977,10 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         else:
             peers = [u for u in listed if not _is_frozen(_account_rec(blob, u), now)]
         for u in peers:
-            rec = _account_rec(blob, u)
-            used = int(rec["used"]) if rec.get("day") == today and isinstance(rec.get("used"), (int, float)) else 0
-            room = _SCRAPE_DAY_BUDGET - max(used, 0)
-            if room <= 0:
+            cap = _user_attempt_room(cfg, u, now=now)
+            if cap <= 0:
                 continue
-            walk.append((u, min(try_cap, room)))
+            walk.append((u, cap))
         if not walk:
             from fanops.ig_hashtag_scrape import scrape_session_path, scrape_users as _scrape_users
             listed = _scrape_users(cfg)
@@ -957,7 +993,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
                                   if not _is_frozen(_account_rec(blob, u), now)]
             if unfrozen_ready:
                 # Unfrozen identity exists; Layer A is out of day room. Do not open —
-                # the lock producer may ignore budget; remesure must not.
+                # lock and remesure share remaining room.
                 return {"written": False, "aborted": "budget", "reason": "budget",
                         "backend": "scrape"}
             err = _open_single_fallback()

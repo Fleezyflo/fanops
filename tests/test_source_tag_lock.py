@@ -1,5 +1,5 @@
 # tests/test_source_tag_lock.py
-"""lock_from_pile is dual scrape+Graph, LLM order. ship_from_lock is picks ∩ lock. play_rank_key stays."""
+"""lock_from_pile is scrape-admit; Graph ranks first among admits. ship_from_lock is picks ∩ lock."""
 from fanops.hashtags import lock_from_pile, play_rank_key, ship_from_lock, size_rank_key, _ARABIC
 
 # Same mid band (10k–2M) so size_rank_key is media_count DESC, not a band flip.
@@ -26,6 +26,7 @@ def test_unmeasured_names_excluded():
 
 
 def test_scrape_only_and_graph_only_are_excluded():
+    # scrape-only IN; graph-only OUT; unmeasured OUT. Graph-present ranks first (LLM order in-tier).
     names = ["#likes", "#plays", "#graphonly", "#both"]
     measurements = {
         "#likes": {"like_count": 99_000, "media_count": 1_000_000},
@@ -33,7 +34,18 @@ def test_scrape_only_and_graph_only_are_excluded():
         "#graphonly": {"graph_metric": 80},
         "#both": {"like_count": 10, "graph_metric": 3},
     }
-    assert lock_from_pile(names, measurements) == ["#both"]
+    assert lock_from_pile(names, measurements) == ["#both", "#likes", "#plays"]
+
+
+def test_graph_present_ranks_first_among_scrape_admitted():
+    names = ["#scrape_a", "#both", "#scrape_b", "#graphonly"]
+    measurements = {
+        "#scrape_a": {"play_count": 99},
+        "#both": {"like_count": 10, "graph_metric": 80},
+        "#scrape_b": {"like_count": 5},
+        "#graphonly": {"graph_metric": 999},
+    }
+    assert lock_from_pile(names, measurements) == ["#both", "#scrape_a", "#scrape_b"]
 
 
 def test_like_count_plus_graph_qualifies():

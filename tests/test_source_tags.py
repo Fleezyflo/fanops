@@ -1,5 +1,5 @@
 # tests/test_source_tags.py
-"""HV1-INGEST producer: research → exact-name pile → dual scrape+Graph lock. Fake client, no network."""
+"""HV1-SCRAPE-COMPLETE: Safari scrape completes the lock; Graph ranks, never vetoes."""
 from __future__ import annotations
 import inspect
 import json
@@ -171,6 +171,7 @@ def test_scrape_unavailable_leaves_sidecar_absent(tmp_path):
 
 
 def test_no_graph_leaves_sidecar_absent(tmp_path):
+    """Graph absence must not withhold researched_at after scrape finishes."""
     cfg = _cfg(tmp_path)
     seen = {"research": 0}
 
@@ -178,11 +179,14 @@ def test_no_graph_leaves_sidecar_absent(tmp_path):
         seen["research"] += 1
         return ["music"]
 
-    client = _SearchClient({"music": [_Hit("music")]})
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
     ensure_source_lock(cfg, _src(), client=client, research_fn=research)
-    assert seen["research"] == 0
-    assert not source_tag_locks_path(cfg).exists()
-    assert client.search_calls == []
+    assert seen["research"] == 1
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#music"]
+    assert rec["pile"] == ["#music"]
 
 
 def test_injected_no_client_leaves_sidecar_absent(tmp_path):
@@ -256,8 +260,11 @@ def test_caption_menu_is_not_80_pile():
     assert "vet_hashtags_traced" not in inspect.getsource(ingest_captions)
     assert "vet_hashtags_traced" not in regen
     import fanops.source_tags as st
-    assert "content_tag_candidates" not in inspect.getsource(st)
-    assert "fail_open(\"source_tags.ensure\")" not in inspect.getsource(st)
+    st_src = inspect.getsource(st)
+    assert "content_tag_candidates" not in st_src
+    assert "fail_open(\"source_tags.ensure\")" not in st_src
+    assert "sleep" not in st_src
+    assert "_SCRAPE_DAY_BUDGET" not in st_src
 
 
 def test_search_hashtags_scrape_maps_incomplete_hits():
@@ -411,7 +418,7 @@ def test_lock_walk_skips_loginrequired_freeze(tmp_path, monkeypatch):
     opened = [getattr(c, "_fanops_scrape_user", None)
               for c in _iter_lock_clients(cfg, client=None, open_client_fn=opener)]
     assert opened == []
-    assert seen == [None]  # empty healthy set falls through to opener(cfg); no frozen user passed
+    assert seen == []  # empty blocked list does not fall through to opener(cfg)
 
 
 def test_lock_walk_unfrozen_peer_not_loginrequired_freeze(tmp_path, monkeypatch):
@@ -534,7 +541,9 @@ def test_graph_refused_writes_nothing(tmp_path):
 
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"],
                        resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
-    assert not source_tag_locks_path(cfg).exists()
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#music"]
 
 
 def _count_graph():
@@ -626,10 +635,9 @@ def test_code_18_mid_pile_keeps_in_progress_no_rellm(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=research,
                        resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
     rec = load_source_tag_locks(cfg)["src_1"]
-    assert not rec.get("researched_at")
+    assert rec["researched_at"]
     assert rec["pile"] == ["#a", "#b", "#c"]
-    assert rec["measurements"]["#a"]["graph_metric"]
-    assert rec["measurements"]["#b"]["graph_metric"]
+    assert rec["lock"] == ["#a", "#b", "#c"]
     assert calls["n"] == 1
     first_seen = list(seen)
     ensure_source_lock(cfg, _src(), client=client, research_fn=research,
@@ -637,7 +645,7 @@ def test_code_18_mid_pile_keeps_in_progress_no_rellm(tmp_path):
     assert calls["n"] == 1
     assert seen == first_seen
     rec2 = load_source_tag_locks(cfg)["src_1"]
-    assert not rec2.get("researched_at")
+    assert rec2["researched_at"] == rec["researched_at"]
 
 
 def test_lock_ready_after_quota_on_a_tries_b(tmp_path):
@@ -674,11 +682,190 @@ def test_lock_ready_after_quota_on_a_tries_b(tmp_path):
                        measure_fn=lambda *_a: (10.0, {}))
     assert attempted == ["src_a"]
     rec_a = load_source_tag_locks(cfg)["src_a"]
-    assert not rec_a.get("researched_at")
+    assert rec_a["researched_at"]
+    assert rec_a["lock"] == ["#a1", "#a2", "#a3"]
     lock_ready_sources(cfg, client=client, research_fn=research, resolve_fn=resolve,
                        measure_fn=lambda *_a: (10.0, {}))
     assert attempted == ["src_a", "src_b"]
     table = load_source_tag_locks(cfg)
-    assert not table["src_a"].get("researched_at")
+    assert table["src_a"]["researched_at"]
     assert table["src_b"]["researched_at"]
     assert table["src_b"]["lock"] == ["#a1", "#a2"]
+
+
+def test_scrape_only_writes_researched_at_and_lock(tmp_path):
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"])
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#music"]
+    assert rec["pile"] == ["#music"]
+
+
+def test_graph_quota_after_scrape_still_stamps(tmp_path):
+    from fanops.meta_graph import GraphQuotaExhausted
+    cfg = _cfg(tmp_path)
+    names = ["a", "b"]
+    client = _SearchClient({n: [_Hit(n)] for n in names},
+                           media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+
+    def resolve(_c, tag):
+        raise GraphQuotaExhausted("ig_hashtag_search", code=18, subcode=2207034,
+                                  message="resource limits")
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names,
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#a", "#b"]
+
+
+def test_empty_scrape_pass_stamps_empty_lock(tmp_path):
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"music": [_Hit("incomplete"), _Hit("full")]})
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"])
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == []
+    assert rec["pile"] == ["#music"]
+
+
+def test_graph_refused_does_not_wipe_scrape_admits(tmp_path):
+    from fanops.meta_graph import GraphRefused
+    cfg = _cfg(tmp_path)
+    client = _SearchClient(
+        {"plays": [_Hit("plays")], "likes": [_Hit("likes")]},
+        media_by_tag={
+            "#plays": [_Media(1, "", play_count=9)],
+            "#likes": [_Media(40, "")],
+        },
+    )
+
+    def resolve(_cfg, tag):
+        raise GraphRefused("ig_hashtag_search", message="app not approved")
+
+    ensure_source_lock(cfg, _src(), client=client,
+                       research_fn=lambda *_a: ["plays", "likes"],
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#plays", "#likes"]
+
+
+def test_request_captions_noops_without_researched_at(tmp_path):
+    from fanops.agentstep import request_path
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    assert not request_path(cfg, "captions", "clip_1").exists()
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#x"], "lock": [], "researched_at": "2026-08-18T00:00:00Z"},
+    }))
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    assert request_path(cfg, "captions", "clip_1").exists()
+
+
+def _cooldown_used(cfg, user):
+    from fanops.fanops_hashtags import _cooldown_path
+    raw = json.loads(_cooldown_path(cfg).read_text())
+    rec = (raw.get("accounts") or {}).get(user) or {}
+    return int(rec.get("used") or 0)
+
+
+def test_lock_charges_day_budget_used(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    client._fanops_scrape_user = "u"
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"],
+                       **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#music"]
+    assert _cooldown_used(cfg, "u") == 1
+
+
+def test_lock_walk_skips_day_budget_exhausted(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _healthy_scrape_users
+    from fanops.source_tags import _iter_lock_clients
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    now = datetime.now(timezone.utc)
+    assert _healthy_scrape_users(cfg, now, require_budget_room=True, require_session=False) == []
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=opener))
+    assert opened == []
+    assert seen == []
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener,
+                       **_ok_graph())
+    assert not source_tag_locks_path(cfg).exists()
+
+
+def test_lock_rotates_when_user_room_hits_zero(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {
+        "a": {"day": today, "used": _SCRAPE_DAY_BUDGET - 1},
+        "b": {"day": today, "used": 0},
+    })
+    names = ["t0", "t1", "t2"]
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        cli = _SearchClient({n: [_Hit(n)] for n in names},
+                            media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+        cli._fanops_scrape_user = user
+        return cli
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
+                       **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    assert rec["lock"] == ["#t0", "#t1", "#t2"]
+    assert seen == ["a", "b"]
+    assert _cooldown_used(cfg, "a") == _SCRAPE_DAY_BUDGET
+    assert _cooldown_used(cfg, "b") == 2
+
+
+def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "1")
+    names = ["t0", "t1", "t2"]
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        cli = _SearchClient({n: [_Hit(n)] for n in names},
+                            media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+        cli._fanops_scrape_user = user
+        return cli
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
+                       **_ok_graph())
+    rec = load_source_tag_locks(cfg).get("src_1") or {}
+    assert not rec.get("researched_at")
+    assert seen == ["u"]

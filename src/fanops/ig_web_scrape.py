@@ -13,6 +13,8 @@ Never dump_settings. Never 9222/9223. Never system Chrome.
 from __future__ import annotations
 
 import json
+import random
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -83,6 +85,7 @@ class IgWebSession:
         if self._fetch is not None:
             payload = self._fetch(method, url, body)
         else:
+            _pace_live_safari()
             payload = _safari_fetch(method, url, body, user=self._fanops_scrape_user)
         if not isinstance(payload, dict):
             raise RuntimeError("instagram web bad payload")
@@ -174,12 +177,19 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
     return IgWebSession(user, safari=True)
 
 
+def _pace_live_safari() -> None:
+    """Sleep FANOPS_HASHTAG_SCRAPE_DELAY between live Safari XHRs. Injected _fetch does not call this."""
+    delay = Config().hashtag_scrape_delay
+    if not delay:
+        return
+    lo, hi = float(delay[0]), float(delay[-1])
+    time.sleep(lo if hi <= lo else random.uniform(lo, hi))
+
+
 def _lock_web_users(cfg: Config, now) -> list[str]:
-    """Unfrozen scrape users. Each has its own Safari profile window."""
-    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
-    from fanops.ig_hashtag_scrape import scrape_users
-    blob = _load_cooldown_blob(cfg)
-    return [user for user in scrape_users(cfg) if not _is_frozen(_account_rec(blob, user), now)]
+    """LRU scrape users with day-budget room. Safari lock: no envelope json required."""
+    from fanops.fanops_hashtags import _healthy_scrape_users
+    return _healthy_scrape_users(cfg, now, require_budget_room=True, require_session=False)
 
 
 def safari_logged_in(user: str) -> bool:
