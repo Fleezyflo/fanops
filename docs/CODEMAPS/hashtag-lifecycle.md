@@ -50,10 +50,9 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
 
 **Password re-authentication is operator-only.** Two consumers:
 
-- **Lock scrape** (`ig_web_scrape`) runs a same-origin XHR inside **Safari's**
-  Instagram tab. Never Google Chrome (a FanOps `--user-data-dir` instance hijacks
-  the Dock / daily Chrome). Never cookie export into Python — Instagram rejects
-  the exported web sessionid (login redirect).
+- **Lock scrape** (`ig_web_scrape`) runs a same-origin XHR inside **that
+  account's Safari profile window** (`Personal`=cisumwolfhom, `mark`=markmakmouly,
+  `perca`=perca.late). Never Google Chrome. Never cookie export into Python.
 - **Layer A remesure** still uses instagrapi `open_client(allow_reauth=False)`.
   A Safari web login is not an app-API session.
 

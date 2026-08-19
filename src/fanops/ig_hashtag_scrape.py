@@ -226,20 +226,35 @@ def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
         inject()
 
 
+# Safari window title is "{profile} — …". Personal is cisum's daily profile.
+_SAFARI_PROFILES = {
+    "cisumwolfhom": "Personal",
+    "markmakmouly": "mark",
+    "perca.late": "perca",
+}
+
+
+def safari_profile_name(user: str) -> str:
+    """Safari profile title for this scrape account. Never Chrome."""
+    return _SAFARI_PROFILES.get(user or "", user or "")
+
+
 def scrape_chrome_launch_argv(cfg: Config, user: str) -> list[str] | None:
-    """Open Safari on Instagram. Never Google Chrome — that hijacks the Dock."""
-    del cfg, user
-    return ["open", "-a", "Safari", "https://www.instagram.com/"]
+    """Does not launch a browser. Kept so callers/tests can see Safari, not Chrome."""
+    del cfg
+    name = safari_profile_name(user)
+    if not name:
+        return None
+    return ["Safari", name]
 
 
 def launch_scrape_chrome(cfg: Config, user: str) -> bool:
-    """Open Safari to Instagram. Never launches Google Chrome."""
-    import subprocess
-    argv = scrape_chrome_launch_argv(cfg, user)
-    if not argv:
+    """Open Instagram in THIS account's Safari profile window. Never Chrome."""
+    del cfg
+    try:
+        safari_open_instagram(user)
+    except RuntimeError:
         return False
-    subprocess.Popen(argv, start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
 
 
@@ -290,27 +305,11 @@ def _enable_safari_apple_events() -> None:
     prefs.write_bytes(plistlib.dumps(data))
 
 
-def safari_eval(expr: str) -> str:
-    """Run JS in Safari's Instagram tab. Raises RuntimeError if no tab / JS blocked."""
+def _safari_osascript(script: str, *args: str) -> str:
     import subprocess
-    script = (
-        "on run argv\n"
-        "  set expr to item 1 of argv\n"
-        "  tell application \"Safari\"\n"
-        "    repeat with w in windows\n"
-        "      repeat with t in tabs of w\n"
-        "        if (URL of t as string) contains \"instagram.com\" then\n"
-        "          return do JavaScript expr in t\n"
-        "        end if\n"
-        "      end repeat\n"
-        "    end repeat\n"
-        "  end tell\n"
-        "  error \"no instagram tab\"\n"
-        "end run\n"
-    )
     try:
         out = subprocess.check_output(
-            ["osascript", "-", expr], input=script, text=True, timeout=45,
+            ["osascript", "-", *args], input=script, text=True, timeout=45,
         )
     except subprocess.CalledProcessError as exc:
         err = (exc.stderr or str(exc))[:160]
@@ -318,30 +317,99 @@ def safari_eval(expr: str) -> str:
     return (out or "").strip()
 
 
+def safari_open_instagram(user: str) -> None:
+    """Focus THIS account's Safari profile window on instagram.com."""
+    prefix = safari_profile_name(user)
+    if not prefix:
+        raise RuntimeError("no safari profile")
+    script = (
+        "on run argv\n"
+        "  set prefix to item 1 of argv\n"
+        "  tell application \"Safari\"\n"
+        "    activate\n"
+        "    repeat with w in windows\n"
+        "      set wn to name of w as string\n"
+        "      if wn starts with (prefix & \" —\") or wn starts with (prefix & \" -\") "
+        "or wn is prefix then\n"
+        "        set URL of current tab of w to \"https://www.instagram.com/\"\n"
+        "        return \"ok\"\n"
+        "      end if\n"
+        "    end repeat\n"
+        "  end tell\n"
+        "  tell application \"System Events\"\n"
+        "    tell process \"Safari\"\n"
+        "      click menu item (\"New \" & prefix & \" Window\") of menu 1 of "
+        "menu item \"New Window\" of menu 1 of menu bar item \"File\" of menu bar 1\n"
+        "    end tell\n"
+        "  end tell\n"
+        "  delay 0.8\n"
+        "  tell application \"Safari\"\n"
+        "    set URL of current tab of front window to \"https://www.instagram.com/\"\n"
+        "  end tell\n"
+        "  return \"opened\"\n"
+        "end run\n"
+    )
+    _safari_osascript(script, prefix)
+
+
+def safari_eval(expr: str, user: str | None = None) -> str:
+    """Run JS in THIS account's Safari Instagram tab. Never another profile's tab."""
+    prefix = safari_profile_name(user) if user else ""
+    script = (
+        "on run argv\n"
+        "  set expr to item 1 of argv\n"
+        "  set prefix to item 2 of argv\n"
+        "  tell application \"Safari\"\n"
+        "    repeat with w in windows\n"
+        "      set wn to name of w as string\n"
+        "      set ok to true\n"
+        "      if prefix is not \"\" then\n"
+        "        set ok to (wn starts with (prefix & \" —\") or "
+        "wn starts with (prefix & \" -\") or wn is prefix)\n"
+        "      end if\n"
+        "      if ok then\n"
+        "        repeat with t in tabs of w\n"
+        "          if (URL of t as string) contains \"instagram.com\" then\n"
+        "            return do JavaScript expr in t\n"
+        "          end if\n"
+        "        end repeat\n"
+        "      end if\n"
+        "    end repeat\n"
+        "  end tell\n"
+        "  error \"no instagram tab\"\n"
+        "end run\n"
+    )
+    return _safari_osascript(script, expr, prefix)
+
+
 def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool = False) -> bool:
-    """Safari Instagram tab ready. Kills leftover FanOps Chrome. Never launches Chrome."""
+    """THIS account's Safari Instagram tab. Kills leftover FanOps Chrome. Never Chrome."""
     import time
     _enable_safari_apple_events()
     for u in scrape_users(cfg) or ((user,) if user else ()):
         stop_scrape_chrome(cfg, u)
+    if not user:
+        return False
     if not restart:
         try:
-            if safari_eval("1+1") in {"2", "2.0"}:
+            if safari_eval("1+1", user) in {"2", "2.0"}:
                 return True
         except RuntimeError:
             pass
-    if not launch_scrape_chrome(cfg, user or ""):
+    try:
+        safari_open_instagram(user)
+    except RuntimeError:
         return False
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         try:
-            if safari_eval("1+1") in {"2", "2.0"}:
+            if safari_eval("1+1", user) in {"2", "2.0"}:
                 return True
         except RuntimeError:
             pass
         time.sleep(0.25)
     try:
-        return safari_eval("1+1") in {"2", "2.0"}
+        return safari_eval("1+1", user) in {"2", "2.0"}
     except RuntimeError:
         return False
 

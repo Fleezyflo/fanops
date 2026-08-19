@@ -69,7 +69,7 @@ class IgWebSession:
         if self._fetch is not None:
             payload = self._fetch(method, url, body)
         else:
-            payload = _safari_fetch(method, url, body)
+            payload = _safari_fetch(method, url, body, user=self._fanops_scrape_user)
         if not isinstance(payload, dict):
             raise RuntimeError("instagram web bad payload")
         return payload
@@ -153,25 +153,27 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
         raise ScrapeUnavailable(f"scrape user {user!r} not in FANOPS_IG_SCRAPE_USER")
     if fetch is not None:
         return IgWebSession(user, fetch=fetch)
-    if not ensure_scrape_safari(cfg):
+    if not ensure_scrape_safari(cfg, user):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
-    if not safari_logged_in():
+    if not safari_logged_in(user):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
     return IgWebSession(user, safari=True)
 
 
 def _lock_web_users(cfg: Config, now) -> list[str]:
-    """Unfrozen scrape users. One Safari session serves whoever is logged in there."""
+    """Unfrozen scrape users. Each has its own Safari profile window."""
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from fanops.ig_hashtag_scrape import scrape_users
     blob = _load_cooldown_blob(cfg)
     return [user for user in scrape_users(cfg) if not _is_frozen(_account_rec(blob, user), now)]
 
 
-def safari_logged_in() -> bool:
-    """True when Safari's Instagram tab can resolve a real tag (not the login page)."""
+def safari_logged_in(user: str) -> bool:
+    """True when THIS account's Safari Instagram tab can resolve a real tag."""
     try:
-        data = _safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+        data = _safari_fetch(
+            "GET", "https://www.instagram.com/api/v1/tags/music/info/", user=user,
+        )
     except (LoginRequired, ScrapeUnavailable, RuntimeError, OSError, TimeoutError):
         return False
     return isinstance(data, dict) and bool(data.get("id") or data.get("name"))
@@ -179,12 +181,13 @@ def safari_logged_in() -> bool:
 
 def safari_profile_auth(cfg: Config, user: str) -> tuple[str, str] | None:
     """Auth tuple for wait_for_scrape_profile_auth. Values are not cookies."""
-    if not safari_logged_in():
+    del cfg
+    if not safari_logged_in(user):
         return None
     return ("safari", user or "")
 
 
-def _safari_fetch(method: str, url: str, body: str | None = None) -> dict:
+def _safari_fetch(method: str, url: str, body: str | None = None, user: str | None = None) -> dict:
     from fanops.ig_hashtag_scrape import safari_eval
     headers = [
         f"xhr.setRequestHeader('X-IG-App-ID', {_WEB_APP_ID!r});",
@@ -205,7 +208,7 @@ def _safari_fetch(method: str, url: str, body: str | None = None) -> dict:
         "})()"
     )
     try:
-        raw = safari_eval(expr)
+        raw = safari_eval(expr, user)
     except (OSError, TimeoutError, RuntimeError) as exc:
         raise ScrapeUnavailable("safari scrape not ready — run fanops hashtags scrape-login") from exc
     try:
