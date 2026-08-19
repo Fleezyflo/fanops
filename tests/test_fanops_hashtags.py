@@ -1064,6 +1064,17 @@ def test_open_client_callers_keep_reauth_default(tmp_path):
     assert "allow_reauth=True" in src_login
 
 
+def test_layer_a_fetch_does_not_call_graph_hashtag_apis():
+    """Layer A `_fetch` stays on instagrapi scrape — never ig_hashtag_search / Graph top_media."""
+    import inspect
+    import fanops.fanops_hashtags as fh
+    src = inspect.getsource(fh._refresh_pass)
+    assert "ig_hashtag_search" not in src
+    assert "meta_graph" not in src
+    assert "resolve_hashtag_scrape" in src
+    assert "measure_and_harvest_scrape" in src
+
+
 def test_clear_cooldown_keeps_per_account_updated_at(tmp_path):
     """Per-user clear must not wipe accounts[user].updated_at that _persist_cooldown wrote."""
     from datetime import datetime, timezone, timedelta

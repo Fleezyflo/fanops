@@ -191,6 +191,23 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
     return _check(lbl, True, "")
 
 
+def _graph_hashtag_quota_check(cfg: Config) -> dict | None:
+    """Surface Hashtag Search unique-ID spend (30 / 7d). File read — token expiry is blind to this."""
+    from fanops.source_tags import graph_search_quota_status, graph_tag_cache_path
+    has_creds = bool(getattr(cfg, "meta_graph_token", None) and getattr(cfg, "meta_ig_user_id", None))
+    p = graph_tag_cache_path(cfg)
+    if not has_creds and not p.exists():
+        return None
+    spent, limit, exhausted = graph_search_quota_status(cfg)
+    lbl = "Meta Hashtag Search quota (unique IDs / 7d)"
+    if exhausted:
+        return _check(
+            lbl, severity="warn",
+            hint=f"{spent}/{limit} unique ig_hashtag_search IDs in 7d — quota exhausted "
+                 f"(code 18/2207034); resume locks from the Graph cache, do not mint new IDs")
+    return _check(lbl, True, "")
+
+
 def _postiz_reach_check(cfg: Config, *, probe=None):
     """Deprecated internal — use health_model.postiz_doctor_check (ONE probe). Kept as thin alias for tests."""
     from fanops.health_model import postiz_doctor_check
@@ -609,6 +626,15 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         tcheck = _meta_token_expiry_check(cfg, get=get)
         if tcheck is not None:
             checks.append(tcheck)
+
+    # Hashtag Search unique-ID quota — file read of the Graph tag cache. Token expiry alone is blind.
+    try:
+        qcheck = _graph_hashtag_quota_check(cfg)
+        if qcheck is not None:
+            checks.append(qcheck)
+    except Exception:
+        with fail_open("doctor.graph-quota sensor degrade:", log=logging.getLogger("fanops.doctor").debug):
+            raise
 
     # T10: REAL backend reachability on the publish path (the operator-confirms-health step, as code). Postiz's
     # docker health-check is nginx-only and LIES while the Node backend crash-loops (mastra_ai_spans) — the real

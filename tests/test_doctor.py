@@ -812,3 +812,26 @@ def test_postiz_ondemand_missing_script_is_an_info_note(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(tmp_path / "nope" / "postiz-ondemand.sh"))
     notes = doctor._doctor_notes(Config(root=tmp_path))
     assert any("FANOPS_POSTIZ_ONDEMAND" in n and "does not exist" in n for n in notes)
+
+
+def test_doctor_quota_check_omitted_without_graph(tmp_path):
+    cfg = Config(root=tmp_path)
+    assert doctor._graph_hashtag_quota_check(cfg) is None
+
+
+def test_doctor_surfaces_hashtag_search_quota(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("META_GRAPH_TOKEN", "t")
+    monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops.source_tags import GRAPH_TAG_CACHE_NAME
+    p = cfg.control / GRAPH_TAG_CACHE_NAME
+    p.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    searches = [{"tag": f"#t{i}", "at": now} for i in range(30)]
+    p.write_text(json.dumps({"tags": {}, "searches": searches, "quota_exhausted_at": now}))
+    row = doctor._graph_hashtag_quota_check(cfg)
+    assert row is not None
+    assert row["severity"] == "warn"
+    assert "30/30" in row["hint"]
+    assert "2207034" in row["hint"]
