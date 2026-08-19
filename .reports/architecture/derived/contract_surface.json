@@ -230,7 +230,7 @@
         "swallow": "*** NOT IN BASELINE -> 0 allowed. ***"
       },
       "exists": true,
-      "function_count": 28,
+      "function_count": 30,
       "is_partitioned": false,
       "missing": false,
       "owners": [

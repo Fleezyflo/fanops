@@ -22,6 +22,54 @@ def _safe(cfg, text, limit: int = 200) -> str:
         return (text or "")[:limit]
     return redact(text, cfg.postiz_api_key, cfg.zernio_api_key, limit=limit)
 
+def poster_fail_reason(*sources) -> str | None:
+    """Short human reason from a Postiz/Zernio row. Never a stack dump. Never a secret."""
+    import json as _json
+    def coerce(v):
+        if v is None or isinstance(v, bool) or isinstance(v, (int, float)):
+            return None
+        if isinstance(v, str):
+            t = v.strip()
+            if not t:
+                return None
+            if t[:1] in "{[":
+                try:
+                    return coerce(_json.loads(t))
+                except ValueError:
+                    pass
+            if "    at " in t and len(t) > 200:
+                t = t.split("\n", 1)[0].strip() or t
+            return t[:200]
+        if isinstance(v, dict):
+            for k in ("message", "errorMessage", "error", "reason", "type"):
+                if k in v:
+                    s = coerce(v[k])
+                    if s:
+                        return s
+            cause = v.get("cause")
+            if isinstance(cause, dict):
+                s = coerce(cause.get("failure") or cause)
+                if s:
+                    return s
+            info = v.get("applicationFailureInfo")
+            if isinstance(info, dict):
+                s = coerce(info.get("type"))
+                if s:
+                    return s
+            return None
+        if isinstance(v, list):
+            for item in v:
+                s = coerce(item)
+                if s:
+                    return s
+        return None
+    for src in sources:
+        s = coerce(src)
+        if s:
+            return s
+    return None
+
+
 def _json_or_raise(resp, label: str, cfg=None):
     # ECC fix #4: a 200 with a non-JSON body (HTML error page from a misconfigured proxy) made
     # resp.json() raise a raw JSONDecodeError that propagated out of pull_metrics and aborted the
@@ -170,8 +218,13 @@ class PostizStatusClient:
         for r in rows:
             if not isinstance(r, dict) or not isinstance(r.get("id"), str): continue
             state = str(r.get("state", ""))
-            out.setdefault(r["id"], {"state": state, "status": _POSTIZ_STATE_MAP.get(state.upper(), "scheduled"),
-                                     "releaseURL": r.get("releaseURL"), "releaseId": r.get("releaseId"), "raw": r})
+            rec = {"state": state, "status": _POSTIZ_STATE_MAP.get(state.upper(), "scheduled"),
+                   "releaseURL": r.get("releaseURL"), "releaseId": r.get("releaseId"), "raw": r}
+            if r.get("error") is not None:
+                rec["error"] = r.get("error")
+            if r.get("errorMessage") is not None:
+                rec["errorMessage"] = r.get("errorMessage")
+            out.setdefault(r["id"], rec)
         return out
 
     def list_all(self) -> dict[str, dict]:
@@ -525,6 +578,11 @@ class ZernioStatusClient:
         body = _json_or_raise(resp, "zernio status", self.cfg)
         status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "scheduled")
         out = {"status": status}
+        if status == "failed":
+            msg = poster_fail_reason(body.get("errorMessage"), body.get("error"),
+                                     body.get("message"))
+            if msg:
+                out["errorMessage"] = msg
         if status == "published":
             out["publicUrl"] = _extract_zernio_permalink(body) or None
             # T-VERIFY: carry the Zernio-REPORTED TikTok username out of the SAME body (no second fetch) so
