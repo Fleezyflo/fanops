@@ -253,6 +253,19 @@ def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaini
     write_json_atomic(source_tag_locks_path(cfg), table)
 
 
+def _unsearched_remaining(verified, remaining) -> list[str]:
+    """Pile names not yet verified. leftover remaining==verified is not unfinished."""
+    vset = set(verified)
+    out: list[str] = []
+    if not isinstance(remaining, list):
+        return out
+    for raw in remaining:
+        n = _norm(raw) if isinstance(raw, str) else ""
+        if n and n not in vset and n not in out:
+            out.append(n)
+    return out
+
+
 def _scrape_already_done(search_needed, pending, verified, measurements) -> bool:
     """True when a prior Safari walk already finished. Graph quota is not membership."""
     if search_needed:
@@ -511,19 +524,20 @@ def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
 
 
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
-                       open_client_fn=None, resolve_fn=None, measure_fn=None) -> None:
+                       open_client_fn=None, resolve_fn=None, measure_fn=None) -> bool:
     """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
 
     Charge + rotate via `_day_room` / `_charge_scrape_user`. All peers at cap / dead /
     missing → no researched_at unless a prior walk already finished. Empty finished
     scrape → lock [] + researched_at. Graph quota never withholds a finished scrape.
+    Returns True when this call used a scrape client (one live attempt).
     """
     sid = str(getattr(source, "id", "") or "")
     if not sid:
-        return
+        return False
     table = load_source_tag_locks(cfg)
     if _researched(table, sid):
-        return
+        return False
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
@@ -534,7 +548,12 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if verified_prior:
         verified = _dedupe_norm(verified_prior)
         pending = [t for t in verified if _scrape_number(measurements.get(t)) is None]
-        search_needed = False
+        extra = _unsearched_remaining(verified, prior.get("remaining"))
+        if extra:
+            pending.extend(extra)
+            search_needed = True
+        else:
+            search_needed = False
     else:
         verified = []
         pending = list(llm_names)
@@ -542,24 +561,23 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
     if llm_names and _scrape_already_done(search_needed, pending, verified, measurements):
-        _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
-                         resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
-        return
+        _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N))
+        return False
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
     if first is None:
         log("source_tags", sid, "no_scrape", level="error")
-        return
+        return False
     if not llm_names:
         try:
             raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
         except Exception as exc:
             log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
-            return
+            return True
         llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
         if not llm_names:
             log("source_tags", sid, "research_fail", level="error", err="research_empty")
-            return
+            return True
         pending = list(llm_names)
         search_needed = True
     already: dict[str, int] = {}
@@ -611,9 +629,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         if verified:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending)
-        return
+        return True
     _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
                      resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
+    return True
 
 
 def _state_value(source) -> str:
@@ -628,6 +647,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     Missing whisper JSON on a produce-eligible source logs no_transcript and continues
     (must not starve a later ready source). Graph quota does not skip a source —
     leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
+    A source that cannot progress (no seat) does not consume the one-attempt slot.
     """
     log = get_logger(cfg)
     try:
@@ -648,14 +668,18 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 log("source_tags", sid, "no_transcript", level="error")
                 continue
             excerpt = _transcript_file_prose(cfg, source) or _prose(source)
+            walked = False
             try:
-                ensure_source_lock(cfg, source, excerpt=excerpt, client=client,
-                                   research_fn=research_fn, open_client_fn=open_client_fn,
-                                   resolve_fn=resolve_fn, measure_fn=measure_fn)
+                walked = bool(ensure_source_lock(cfg, source, excerpt=excerpt, client=client,
+                                                 research_fn=research_fn, open_client_fn=open_client_fn,
+                                                 resolve_fn=resolve_fn, measure_fn=measure_fn))
             except Exception as exc:
                 log("source_tags", sid, "error", level="error",
                     err=f"{type(exc).__name__}: {exc}"[:160])
-            return
+                return
+            table = load_source_tag_locks(cfg)
+            if _researched(table, sid) or walked:
+                return
     except Exception as exc:
         log("source_tags", "-", "error", level="error",
             err=f"{type(exc).__name__}: {exc}"[:160])

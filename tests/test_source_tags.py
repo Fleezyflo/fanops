@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from fanops.caption import request_captions
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, search_hashtags_scrape
-from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, graph_tag_cache_path,
-                                load_source_tag_locks, lock_ready_sources, source_tag_locks_path)
+from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, load_source_tag_locks,
+                                lock_ready_sources, source_tag_locks_path)
 from fanops.studio.actions import regenerate_caption
 from hashtag_scrape_fakes import _FakeClient, _Media
 
@@ -736,9 +736,6 @@ def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None)
             "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
         }
     }))
-    graph_tag_cache_path(cfg).write_text(json.dumps({
-        "quota_exhausted_at": "2026-08-19T14:33:28.816749Z",
-    }))
 
 
 def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch):
@@ -821,6 +818,58 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
     assert table["src_a"]["lock"] == ["#a"]
     assert "src_b" not in table
     assert attempted == []
+
+
+def test_lock_ready_skips_unfinished_leftover_to_stamp_complete(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    _write_whisper(cfg, "b")
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_a": {
+            "pile": ["#t0", "#t1", "#t2"],
+            "verified": ["#t0"],
+            "measurements": {"#t0": {"play_count": 8.0}},
+            "remaining": ["#t1", "#t2"],
+            "lock": [],
+        },
+        "src_b": {
+            "pile": ["#b"],
+            "verified": ["#b"],
+            "measurements": {"#b": {"play_count": 10.0}},
+            "remaining": ["#b"],
+            "lock": [],
+            "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+        },
+    }))
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("no safari")
+
+    lock_ready_sources(cfg, research_fn=lambda *_a: (_ for _ in ()).throw(AssertionError("llm")),
+                       open_client_fn=opener,
+                       resolve_fn=lambda *_a: (_ for _ in ()).throw(AssertionError("graph")),
+                       measure_fn=lambda *_a: (10.0, {}))
+    table = load_source_tag_locks(cfg)
+    assert not table["src_a"].get("researched_at")
+    assert table["src_b"]["researched_at"]
+    assert table["src_b"]["lock"] == ["#b"]
+    assert seen == []
 
 
 def test_empty_scrape_pass_stamps_empty_lock(tmp_path):
@@ -969,4 +1018,22 @@ def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
                        **_ok_graph())
     rec = load_source_tag_locks(cfg).get("src_1") or {}
     assert not rec.get("researched_at")
+    assert rec.get("verified") == ["#t0"]
+    assert rec.get("remaining") == ["#t1", "#t2"]
     assert seen == ["u"]
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
+    today = datetime.now(timezone.utc).date().isoformat()
+    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    seen.clear()
+
+    def dead(_cfg, user=None):
+        seen.append(user)
+        raise AssertionError("unfinished scrape must not stamp without a seat")
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=dead,
+                       **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert not rec2.get("researched_at")
+    assert rec2.get("remaining") == ["#t1", "#t2"]
+    assert seen == []
