@@ -1,27 +1,59 @@
-# MOL-688: Review caption-vs-corpus freshness signal — badge only when caption predates corpus derive.
+# Review off-lock badge — True only when a completed source lock exists and the post carries a tag not on it.
+import json
+
 from fanops.config import Config
-from fanops.models import Post, Platform, PostState
+from fanops.ledger import Ledger
+from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Post, PostState, Source
+from fanops.source_tags import source_tag_locks_path
 from fanops.studio.views_review import _caption_corpus_stale
 
 
+def _led(cfg):
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    led.save()
+    return led
+
+
 def _post(**kw):
-    base = dict(id="p1", parent_id="c1", account="a", account_id="a", platform=Platform.instagram,
-                caption="x", state=PostState.awaiting_approval)
+    base = dict(id="p1", parent_id="clip_1", account="a", account_id="a", platform=Platform.instagram,
+                caption="x", state=PostState.awaiting_approval, hashtags=["#lock"])
     base.update(kw)
     return Post(**base)
 
 
-def test_caption_before_corpus_derive_is_stale(tmp_path):
+def _lock(cfg, lock, *, researched=True):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"pile": list(lock), "lock": list(lock)}
+    if researched:
+        rec["researched_at"] = "2026-08-19T00:00:00Z"
+    p.write_text(json.dumps({"src_1": rec}))
+
+
+def test_off_lock_tag_is_stale(tmp_path):
     cfg = Config(root=tmp_path)
-    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.personas_path.write_text('{"personas":[{"id":"craft","name":"C","voice":"x","niche":["hiphop"],'
-                                '"hashtag_corpus":["#bars"],'
-                                '"hashtag_corpus_meta":{"#bars":{"measured_at":"2026-07-29T12:00:00Z","from":"#hiphop"}}}]}')
-    stale = _post(created_at="2026-07-28T12:00:00Z")
-    fresh = _post(created_at="2026-07-29T13:00:00Z")
-    edited = _post(created_at="2026-07-28T12:00:00Z", edited_at="2026-07-29T13:00:00Z")
-    assert _caption_corpus_stale(cfg, stale, "craft") is True
-    assert _caption_corpus_stale(cfg, fresh, "craft") is False
-    assert _caption_corpus_stale(cfg, edited, "craft") is False   # recaption/edit clears the signal
-    assert _caption_corpus_stale(cfg, stale, None) is False
-    assert _caption_corpus_stale(cfg, stale, "missing") is False
+    led = _led(cfg)
+    _lock(cfg, ["#lock"])
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is True
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#lock"])) is False
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=[])) is False
+
+
+def test_no_completed_lock_is_not_stale(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg)
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is False
+    _lock(cfg, ["#lock"], researched=False)
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is False
+
+
+def test_empty_completed_lock_flags_any_tag(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = _led(cfg)
+    _lock(cfg, [])
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#x"])) is True
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=[])) is False

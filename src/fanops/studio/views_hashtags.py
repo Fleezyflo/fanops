@@ -1,8 +1,6 @@
-"""U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Surfaces the platform
-measurement cache, the derived per-persona corpora, and cross-account rotation health. Every projection
-here is a LOCAL file + ledger read: `_store_status` reads the cache file, `_corpora_rows` reads
-personas.json, `rotation_health` scans the ledger. The page spends no Graph call by construction.
-Read-only: the cache is a measurement record; the operator's lever is the persona's declared niche.
+"""U11 — the Hashtags observatory read-model (pure; ZERO network on any call). Posted tags are the
+per-source lock. Layer A measurement cache and Layer B corpora are discovery, not the ship menu.
+Every projection is a LOCAL file + ledger read. The page spends no Graph call by construction.
 
 The old "budget meter" section is gone with the fiction it displayed — there is no local allowance to
 report. What the operator needs instead is COVERAGE: how much of the cache is measured and how fresh it
@@ -27,6 +25,17 @@ from fanops.studio.views_results import _EXPOSURE_STATES
 # The old single METRIC_LABEL is gone — it quoted a Top-post median as if it measured the tag.
 SIZE_LABEL = f"size ({SIZE_FIELD} — posts carrying the tag)"
 TREND_LABEL = f"7d Reels max ({TREND_FIELD})"
+
+
+@dataclass
+class LockRow:
+    """One native source's lock. `state` is ready | empty | in_progress | missing."""
+    sid: str
+    title: str
+    n: int
+    researched_at: Optional[str]
+    tags: list = field(default_factory=list)
+    state: str = "missing"
 
 
 @dataclass
@@ -63,6 +72,9 @@ class RotationAccount:
 @dataclass
 class HashtagsPage:
     """The whole /hashtags read-model. Pure; assembled with zero network."""
+    locks: list = field(default_factory=list)
+    lock_ready: int = 0
+    lock_total: int = 0
     corpora: list = field(default_factory=list)
     store: Optional[StoreStatus] = None
     rotation: list = field(default_factory=list)
@@ -114,6 +126,33 @@ def rotation_health(led: Ledger, *, n: int = 5) -> list:
     return out
 
 
+def _lock_rows(cfg: Config, led: Ledger) -> list:
+    """Per native source: lock membership. Missing sidecar / no researched_at is not a completed empty lock."""
+    from fanops.source_tags import load_source_tag_locks
+    table = load_source_tag_locks(cfg)
+    rows: list[LockRow] = []
+    for src in led.sources.values():
+        if getattr(src, "origin_kind", "native") == "third_party":
+            continue
+        sid = str(getattr(src, "id", "") or "")
+        if not sid:
+            continue
+        rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
+        at = rec.get("researched_at") if rec else None
+        lock = [t for t in (rec.get("lock") or []) if isinstance(t, str)] if rec else []
+        if isinstance(at, str) and at.strip():
+            state = "empty" if not lock else "ready"
+        elif rec:
+            state = "in_progress"
+        else:
+            state = "missing"
+        title = getattr(src, "title", None)
+        title = title.strip() if isinstance(title, str) and title.strip() else sid
+        rows.append(LockRow(sid=sid, title=title, n=len(lock), researched_at=at if isinstance(at, str) else None,
+                            tags=lock[:8], state=state))
+    return rows
+
+
 def _corpora_rows(cfg: Config, *, edit_href: str = "") -> list:
     """Section 1 read: one row per persona — corpus size, last Layer A complete pass, the 3 BIGGEST tags
     (`size_rank_key`). Byte-truth: personas.json + hashtags.json `last_complete_pass`."""
@@ -137,7 +176,10 @@ def hashtags_page(cfg: Config, *, led: Optional[Ledger] = None, edit_href: str =
     so the page never 500s. `now` is accepted for call-compat; nothing here is time-dependent."""
     if led is None:
         led = Ledger.load(cfg)
+    locks = _lock_rows(cfg, led)
+    ready = sum(1 for r in locks if r.state in ("ready", "empty"))
     return HashtagsPage(
+        locks=locks, lock_ready=ready, lock_total=len(locks),
         corpora=_corpora_rows(cfg, edit_href=edit_href),
         store=_store_status(cfg),
         rotation=rotation_health(led),

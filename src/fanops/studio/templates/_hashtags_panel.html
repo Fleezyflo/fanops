@@ -1,8 +1,5 @@
-{# src/fanops/studio/templates/_hashtags_panel.html — U11 the Hashtags observatory body.
-   THREE sections: (1) corpora at a glance (read-only — corpora are derived), (2) the platform
-   measurement cache (ranked chips, VIEW-ONLY), (3) rotation health (consecutive-duplicate warn).
-   Read-only: the cache is a measurement record; the operator's lever is the persona's declared niche.
-   Autoescape stays on (no |safe). #}
+{# src/fanops/studio/templates/_hashtags_panel.html — locks first (ship menu), then Layer B corpora
+   (discovery only), Layer A cache (discovery only), rotation health. Autoescape on. #}
 <div id="hashtags-panel" aria-live="polite">
   {% if result %}
     <div class="result {{ 'ok' if result.ok else 'err' }}">
@@ -11,13 +8,34 @@
     </div>
   {% endif %}
 
-  {# ── 1 · Corpora at a glance ─────────────────────────────────────────────────────────────────────
-     One compact row per persona. Read-only everywhere: a corpus is DERIVED from the cache below, so the
-     lever is the persona's description (the "edit →" link). Byte-truth counts from personas.json. #}
+  <section class="hashtag-section locks-section">
+    <h3>Source locks</h3>
+    <p class="muted">{{ page.lock_ready }} of {{ page.lock_total }} sources have a completed lock.
+      Caption and send pick only from that list (cap 4). Empty completed lock → no tags.</p>
+    {% if page.locks %}
+      <table class="corpora-grid">
+        <thead><tr><th>Source</th><th>Lock</th><th>State</th><th>Tags</th></tr></thead>
+        <tbody>
+          {% for r in page.locks %}
+            <tr>
+              <td>{{ r.title }}</td>
+              <td>{{ r.n }}</td>
+              <td>{{ r.state }}{% if r.researched_at %} · {{ r.researched_at | localdt }}{% endif %}</td>
+              <td>{% for t in r.tags %}<span class="chip tag ro">{{ t }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No native sources yet.</p>
+    {% endif %}
+  </section>
+
+  {# Layer B — discovery only, not the posted caption menu. #}
   <section class="hashtag-section corpora-section">
     <h3>Corpora at a glance</h3>
-    <p class="muted">Each persona's corpus is <strong>derived</strong> from live platform measurements —
-      nothing here is hand-picked. To change what a persona reaches for, edit its description on Personas.</p>
+    <p class="muted">Persona corpora are Layer B discovery — <strong>not</strong> the posted caption menu.
+      To change search roots, edit the persona niche on Personas.</p>
     {% if page.corpora %}
       <table class="corpora-grid">
         <thead><tr><th>Persona</th><th>Corpus</th><th>Last check</th><th>Biggest tags</th><th></th></tr></thead>
@@ -44,8 +62,8 @@
   <section class="hashtag-section store-section">
     <h3>Measurement cache</h3>
     {% if page.store.state == 'empty' %}
-      <p class="muted">Nothing measured yet. Until the first pass lands, posts ship an empty hashtag line —
-        short and honest rather than padded with guesses.</p>
+      <p class="muted">Nothing remesured yet. This cache is Layer A discovery — posted tags still come from
+        each source lock.</p>
     {% elif page.store.state == 'unreadable' %}
       <p class="result err">✗ cache unreadable — the file could not be parsed. Selection ships short until it
         is rewritten; a breadcrumb was logged.</p>

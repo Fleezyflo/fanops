@@ -93,7 +93,7 @@ class SurfacePost:
     batch_id: Optional[str] = None
     batch_created: Optional[str] = None
     clip_id: Optional[str] = None
-    corpus_stale: bool = False             # MOL-688: caption predates last corpus derive for this persona
+    corpus_stale: bool = False             # off-lock tags vs the source lock (ship drops them)
 
 
 @dataclass
@@ -219,34 +219,32 @@ def _cast_cause(led: Ledger, post, affinities) -> Optional[str]:
     return None
 
 
-def _caption_corpus_stale(cfg: Config, post, persona_id: Optional[str]) -> bool:
-    """True when this post's caption age predates the persona's last corpus derive (MOL-688).
-    Fail-open: missing persona / stamps / unparseable times -> False (no badge, never a guess)."""
-    if not persona_id:
-        return False
-    cap_raw = getattr(post, "edited_at", None) or getattr(post, "created_at", None)
-    if not isinstance(cap_raw, str) or not cap_raw:
-        return False
-    try:
-        import json
-        from datetime import timezone
-        raw = json.loads(cfg.personas_path.read_text())
-        row = next((d for d in (raw.get("personas") or [])
-                    if isinstance(d, dict) and d.get("id") == persona_id), None) or {}
-        meta = row.get("hashtag_corpus_meta") if isinstance(row.get("hashtag_corpus_meta"), dict) else {}
-        stamps = [v.get("measured_at") for v in meta.values()
-                  if isinstance(v, dict) and isinstance(v.get("measured_at"), str)]
-        if not stamps:
-            return False
-        def _ts(s: str):
-            t = datetime.fromisoformat(s.replace("Z", "+00:00"))
-            return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
-        return _ts(cap_raw) < max(_ts(s) for s in stamps)
-    except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError):
-        return False
+def _post_source_id(led: Ledger, post) -> str:
+    clip = led.clips.get(getattr(post, "parent_id", None))
+    mom = led.moments.get(getattr(clip, "parent_id", None)) if clip is not None else None
+    return str(getattr(mom, "parent_id", "") or "") if mom is not None else ""
 
 
-def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=()) -> SurfacePost:
+def _caption_corpus_stale(cfg: Config, led: Ledger, post, locks=None) -> bool:
+    """True when a completed source lock exists and this post carries a tag not on it. No lock → False."""
+    from fanops.hashtags import _dedupe_norm
+    from fanops.source_tags import load_source_tag_locks
+    sid = _post_source_id(led, post)
+    if not sid:
+        return False
+    table = locks if isinstance(locks, dict) else load_source_tag_locks(cfg)
+    rec = table.get(sid)
+    if not isinstance(rec, dict):
+        return False
+    at = rec.get("researched_at")
+    if not (isinstance(at, str) and at.strip()):
+        return False
+    allowed = set(_dedupe_norm(rec.get("lock") or []))
+    return any(t not in allowed for t in _dedupe_norm(getattr(post, "hashtags", None) or []))
+
+
+def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=(),
+             locks=None) -> SurfacePost:
     state = post.state.value
     # an awaiting_approval post is GATED — it cannot ship until approved, so it is never "imminent"
     # (no false "shipping now" badge) and is always editable (edit/regenerate/reschedule before approving).
@@ -302,7 +300,7 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
         tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}",
         ready=ready, ready_reason=ready_reason,
-        corpus_stale=_caption_corpus_stale(cfg, post, getattr(acct, "persona_id", None)) if editable else False)
+        corpus_stale=_caption_corpus_stale(cfg, led, post, locks) if editable else False)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
@@ -311,7 +309,9 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     mom = led.moments.get(clip.parent_id)                 # the moment carries hook_removed (clip -> moment)
     _by_norm = _handle_display_map(accts)
     _affs = _display_handles(sorted(set(mom.affinities or [])), _by_norm) if mom is not None else []   # P13: Moment.affinities (the gate input)
-    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs)
+    from fanops.source_tags import load_source_tag_locks
+    locks = load_source_tag_locks(cfg)
+    surfaces = [_surface(p, persona=personas.get(p.account), now=now, cfg=cfg, led=led, acct=accts.get(p.account), affinities=_affs, locks=locks)
                 for p in sorted(posts, key=lambda p: (p.account, p.platform.value))]
     src_key = mom.parent_id if mom is not None else None   # Phase 4: stable source id (clip -> moment.parent_id); the ?source= key
     # Face 4: the REAL Batch this card belongs to — Post.batch_id (all posts on one clip share the lineage,
