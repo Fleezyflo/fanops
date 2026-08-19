@@ -444,6 +444,7 @@ def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
         delay = _cooldown_delay_s(streak) if delay_s is None else int(delay_s)
         until = (now + timedelta(seconds=delay)).isoformat()
         accounts[user] = {"streak": streak, "until": until, "updated_at": now.isoformat(),
+                          "last_request_at": now.isoformat(),
                           "reason": reason, "day": today, "used": used}
         # Per-account write: strip legacy top-level freeze so one dead user cannot global-block.
         blob = {"accounts": accounts, "updated_at": now.isoformat()}
@@ -489,8 +490,11 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
         # Keep/bump per-account updated_at — do not wipe what _persist_cooldown wrote.
         if now is not None:
             kept_rec["updated_at"] = now.isoformat()
+            kept_rec["last_request_at"] = now.isoformat()
         elif isinstance(rec.get("updated_at"), str) and rec["updated_at"]:
             kept_rec["updated_at"] = rec["updated_at"]
+            if isinstance(rec.get("last_request_at"), str) and rec["last_request_at"]:
+                kept_rec["last_request_at"] = rec["last_request_at"]
         accounts[user] = kept_rec
         # Drop legacy top-level freeze keys; keep peer accounts.
         blob: dict = {"accounts": accounts}

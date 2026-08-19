@@ -30,6 +30,13 @@ class LoginRequired(Exception):
     """Named so scrape_session_dead matches the MRO. Page fetch hit login/401/403."""
 
 
+class WebThrottled(Exception):
+    """HTTP 429. instagrapi: stop the burst, freeze, do not retry in a tight loop."""
+
+
+_LAST_REQUEST_MONO: dict[str, float] = {}
+
+
 class IgWebSession:
     """Duck-types instagrapi search_hashtags / hashtag_info / hashtag_medias_top."""
 
@@ -86,11 +93,9 @@ class IgWebSession:
         if self._fetch is not None:
             payload = self._fetch(method, url, body)
         else:
-            _pace_live_safari()
-            if self._cfg is not None:
-                from fanops.fanops_hashtags import _charge_scrape_user
-                _charge_scrape_user(self._cfg, self._fanops_scrape_user, 1)
-            payload = _safari_fetch(method, url, body, user=self._fanops_scrape_user)
+            payload = _safari_fetch(
+                method, url, body, user=self._fanops_scrape_user, cfg=self._cfg,
+            )
         if not isinstance(payload, dict):
             raise RuntimeError("instagram web bad payload")
         return payload
@@ -181,13 +186,45 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
     return IgWebSession(user, safari=True, cfg=cfg)
 
 
-def _pace_live_safari() -> None:
-    """instagrapi delay_range: random 1–3s after each request. Injected _fetch does not sleep."""
-    delay = Config().hashtag_scrape_delay
+def _pace_since_last(cfg: Config | None, user: str | None) -> None:
+    """instagrapi delay_range: wait until [lo,hi] seconds have passed since THIS user's last XHR.
+
+    First request has no wait. Shared clock (cooldown last_request_at + process monotonic)
+    so opening a new IgWebSession cannot start a burst."""
+    src = cfg if cfg is not None else Config()
+    delay = src.hashtag_scrape_delay
     if not delay:
         return
+    key = user or ""
+    elapsed = None
+    last_m = _LAST_REQUEST_MONO.get(key)
+    if last_m is not None:
+        elapsed = time.monotonic() - last_m
+    elif cfg is not None and user:
+        from fanops.fanops_hashtags import _account_rec, _load_cooldown_blob
+        from fanops.timeutil import parse_iso
+        raw = _account_rec(_load_cooldown_blob(cfg), user).get("last_request_at")
+        if isinstance(raw, str) and raw:
+            try:
+                last = parse_iso(raw)
+            except (ValueError, TypeError):
+                last = None
+            if last is not None:
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+    if elapsed is None:
+        return
     lo, hi = float(delay[0]), float(delay[-1])
-    time.sleep(lo if hi <= lo else random.uniform(lo, hi))
+    need = lo if hi <= lo else random.uniform(lo, hi)
+    wait = need - elapsed
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _pace_live_safari() -> None:
+    """Back-compat name. Unattended live XHRs use _pace_since_last per user."""
+    _pace_since_last(None, "")
 
 
 def _lock_web_users(cfg: Config, now) -> list[str]:
@@ -228,7 +265,8 @@ def safari_profile_auth(cfg: Config, user: str) -> tuple[str, str] | None:
     return ("safari", user or "")
 
 
-def _safari_fetch(method: str, url: str, body: str | None = None, user: str | None = None) -> dict:
+def _safari_xhr(method: str, url: str, body: str | None = None, user: str | None = None) -> str:
+    """AppleScript XHR only. No delay, no charge. Callers go through _safari_fetch."""
     from fanops.ig_hashtag_scrape import safari_eval
     headers = [
         f"xhr.setRequestHeader('X-IG-App-ID', {_WEB_APP_ID!r});",
@@ -249,21 +287,52 @@ def _safari_fetch(method: str, url: str, body: str | None = None, user: str | No
         "})()"
     )
     try:
-        raw = safari_eval(expr, user)
+        return safari_eval(expr, user)
     except (OSError, TimeoutError, RuntimeError) as exc:
         raise ScrapeUnavailable("safari scrape not ready — run fanops hashtags scrape-login") from exc
+
+
+def _safari_fetch(method: str, url: str, body: str | None = None, user: str | None = None,
+                  cfg: Config | None = None) -> dict:
+    """THE Instagram web request. Delay, count, freeze, then XHR. No bypass."""
+    from fanops.fanops_hashtags import (
+        _charge_scrape_user, _day_room, scrape_user_blocked,
+    )
+    now = datetime.now(timezone.utc)
+    if cfg is not None and user:
+        if scrape_user_blocked(cfg, user, now):
+            raise ScrapeUnavailable("scrape account frozen or day budget exhausted")
+        if _day_room(cfg, user, now) <= 0:
+            raise ScrapeUnavailable("scrape day budget exhausted")
+    _pace_since_last(cfg, user)
+    raw = _safari_xhr(method, url, body, user=user)
+    _LAST_REQUEST_MONO[user or ""] = time.monotonic()
+    stop_exc: BaseException | None = None
+    status = None
+    loc = ""
     try:
         wrapped = json.loads(raw)
     except json.JSONDecodeError as exc:
+        if cfg is not None and user:
+            _charge_scrape_user(cfg, user, 1, now=now)
         raise RuntimeError("instagram safari non-json wrapper") from exc
     if not isinstance(wrapped, dict):
+        if cfg is not None and user:
+            _charge_scrape_user(cfg, user, 1, now=now)
         raise RuntimeError("instagram safari bad wrapper")
     status = wrapped.get("status")
     loc = str(wrapped.get("url") or "")
     if "accounts/login" in loc or status in (401, 403):
-        raise LoginRequired(f"web {status or 'login'}")
-    if status is not None and int(status) >= 400:
-        raise RuntimeError(f"instagram web {status}")
+        stop_exc = LoginRequired(f"web {status or 'login'}")
+    elif status == 429:
+        stop_exc = WebThrottled("web 429")
+    elif status is not None and int(status) >= 400:
+        stop_exc = RuntimeError(f"instagram web {status}")
+    if cfg is not None and user:
+        freeze = stop_exc if isinstance(stop_exc, (LoginRequired, WebThrottled)) else None
+        _charge_scrape_user(cfg, user, 1, now=now, stop_exc=freeze)
+    if stop_exc is not None:
+        raise stop_exc
     try:
         payload = json.loads(wrapped.get("text") or "")
     except json.JSONDecodeError as exc:
