@@ -739,12 +739,10 @@ def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None)
 
 
 def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _freeze_accounts(cfg, {"u": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                                 "reason": "LoginRequired"}})
     _leftover_quota_sidecar(cfg)
     seen = []
 
@@ -766,12 +764,10 @@ def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch
 
 
 def test_leftover_incomplete_without_safari_does_not_stamp(tmp_path, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _freeze_accounts(cfg, {"u": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                                 "reason": "LoginRequired"}})
     _leftover_quota_sidecar(cfg, names=("#a", "#b"), measured=("#a",))
     seen = []
 
@@ -821,14 +817,12 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
 
 
 def test_lock_ready_skips_unfinished_leftover_to_stamp_complete(tmp_path, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _freeze_accounts(cfg, {"u": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                                 "reason": "LoginRequired"}})
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
                           state=SourceState.catalogued))
@@ -932,7 +926,8 @@ def _cooldown_used(cfg, user):
     return int(rec.get("used") or 0)
 
 
-def test_lock_charges_day_budget_used(tmp_path, monkeypatch):
+def test_injected_client_still_finishes_the_pile(tmp_path, monkeypatch):
+    """Tests/manual inject a client — finish the pile. Tick (client is None) is one tag."""
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     client = _SearchClient({"music": [_Hit("music")]},
@@ -943,43 +938,12 @@ def test_lock_charges_day_budget_used(tmp_path, monkeypatch):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#music"]
-    assert _cooldown_used(cfg, "u") == 1
+    assert _cooldown_used(cfg, "u") == 0
 
 
-def test_lock_walk_skips_day_budget_exhausted(tmp_path, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _healthy_scrape_users
-    from fanops.source_tags import _iter_lock_clients
+def test_unattended_lock_walks_one_tag(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
-    now = datetime.now(timezone.utc)
-    assert _healthy_scrape_users(cfg, now, require_budget_room=True, require_session=False) == []
-    seen = []
-
-    def opener(_cfg, user=None):
-        seen.append(user)
-        return SimpleNamespace(_fanops_scrape_user=user)
-
-    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=opener))
-    assert opened == []
-    assert seen == []
-    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener,
-                       **_ok_graph())
-    assert not source_tag_locks_path(cfg).exists()
-
-
-def test_lock_rotates_when_user_room_hits_zero(tmp_path, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
-    cfg = _cfg(tmp_path)
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {
-        "a": {"day": today, "used": _SCRAPE_DAY_BUDGET - 1},
-        "b": {"day": today, "used": 0},
-    })
     names = ["t0", "t1", "t2"]
     seen = []
 
@@ -993,11 +957,15 @@ def test_lock_rotates_when_user_room_hits_zero(tmp_path, monkeypatch):
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
-    assert rec["researched_at"]
-    assert rec["lock"] == ["#t0", "#t1", "#t2"]
-    assert seen == ["a", "b"]
-    assert _cooldown_used(cfg, "a") == _SCRAPE_DAY_BUDGET
-    assert _cooldown_used(cfg, "b") == 2
+    assert not rec.get("researched_at")
+    assert rec.get("verified") == ["#t0"]
+    assert rec.get("remaining") == ["#t1", "#t2"]
+    assert seen == ["u"]
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
+                       **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert rec2.get("verified") == ["#t0", "#t1"]
+    assert not rec2.get("researched_at")
 
 
 def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
@@ -1021,10 +989,8 @@ def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
     assert rec.get("verified") == ["#t0"]
     assert rec.get("remaining") == ["#t1", "#t2"]
     assert seen == ["u"]
-    from datetime import datetime, timezone
-    from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET
-    today = datetime.now(timezone.utc).date().isoformat()
-    _freeze_accounts(cfg, {"u": {"day": today, "used": _SCRAPE_DAY_BUDGET}})
+    _freeze_accounts(cfg, {"u": {"until": "2099-01-01T00:00:00+00:00", "streak": 1,
+                                 "reason": "LoginRequired"}})
     seen.clear()
 
     def dead(_cfg, user=None):

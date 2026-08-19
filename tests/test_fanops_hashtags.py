@@ -1477,9 +1477,8 @@ def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
 
 
 
-def test_day_budget_exhaustion_skips_refresh(tmp_path, monkeypatch):
-    """MOL-854: when cooldown blob day/used hits `_SCRAPE_DAY_BUDGET`, refresh_store_if_due skips
-    with reason=budget and opens no scrape — even with no ladder `until` armed."""
+def test_used_counter_does_not_skip_refresh(tmp_path, monkeypatch):
+    """used is an XHR counter. instagrapi has no daily quota — do not skip on used."""
     from datetime import datetime, timezone, timedelta
     import fanops.fanops_hashtags as fh
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
@@ -1496,10 +1495,9 @@ def test_day_budget_exhaustion_skips_refresh(tmp_path, monkeypatch):
     write_json_atomic(_cooldown_path(cfg),
                       {"day": "2026-07-01", "used": fh._SCRAPE_DAY_BUDGET, "accounts": {}})
     nxt = _FakeClient({"#hiphop": 50})
-    skip = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
-    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
-    assert skip.get("cooldown_reason") == "budget"
-    assert nxt.info_calls == [] and nxt.media_calls == []
+    out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
+    assert out.get("reason") != "cooldown"
+    assert out.get("cooldown_reason") != "budget"
 
 
 
@@ -1748,12 +1746,11 @@ def test_open_client_uses_budget_exhausted_unfrozen_session(tmp_path, monkeypatc
     assert str(scrape_session_path(cfg, "spent")) in seen[0]
 
 
-def test_read_active_cooldown_budget_not_frozen_peer_login_required(tmp_path, monkeypatch):
-    """Frozen LoginRequired + unfrozen day-cap peer → gate is budget, not LoginRequired."""
+def test_read_active_cooldown_used_peer_is_healthy(tmp_path, monkeypatch):
+    """Frozen LoginRequired + unfrozen peer with a high used counter → tick stays open."""
     from datetime import datetime, timezone
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _read_active_cooldown,
-                                        refresh_store_if_due)
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _read_active_cooldown)
     from fanops.controlio import write_json_atomic
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,spent")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1769,16 +1766,11 @@ def test_read_active_cooldown_budget_not_frozen_peer_login_required(tmp_path, mo
             "spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET,
                       "updated_at": "2026-07-01T03:49:33+00:00"},
         }})
-    cool = _read_active_cooldown(cfg, t0)
-    assert cool is not None
-    assert cool.get("reason") == "budget"
-    skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
-    assert skip.get("cooldown_reason") == "budget"
+    assert _read_active_cooldown(cfg, t0) is None
 
 
-def test_refresh_store_does_not_spend_budget_exhausted_session(tmp_path, monkeypatch):
-    """Layer A remesure still stops at the day cap. open_client ignoring budget must not leak here."""
+def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
+    """used is not a skip. Harvest still opens instagrapi."""
     from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
@@ -1792,15 +1784,14 @@ def test_refresh_store_does_not_spend_budget_exhausted_session(tmp_path, monkeyp
     sess.write_text("{}")
     write_json_atomic(_cooldown_path(cfg), {
         "accounts": {"spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
-    def boom(*_a, **_k):
-        raise AssertionError("remesure must not open a budget-exhausted session")
-    monkeypatch.setattr(igs, "open_client", boom)
+    seen = []
+    def fake(*_a, **_k):
+        seen.append(1)
+        raise igs.ScrapeUnavailable("no scrape session")
+    monkeypatch.setattr(igs, "open_client", fake)
     out = refresh_store(cfg, now=t0)
-    assert out.get("written") is False
-    # Layer A short-circuits before open (`aborted=cooldown`, reason=budget) or
-    # the walk-empty path (`aborted=budget`). Either way: no client.
-    assert out.get("aborted") in ("budget", "cooldown")
-    assert out.get("reason") in ("budget", "cooldown")
+    assert seen == [1]
+    assert out.get("aborted") == "no_scrape"
 
 
 def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
@@ -2262,8 +2253,8 @@ def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, mo
     assert out.get("aborted") != "no_scrape"
 
 
-def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monkeypatch):
-    """Day budget aborts remesure and lock walk — one blob, one room."""
+def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
+    """used is telemetry. A high counter does not skip remesure or the lock picker."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
     import fanops.ig_web_scrape as iws
@@ -2280,14 +2271,13 @@ def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monk
 
     def fake_open(_cfg, user=None, **_k):
         opens.append(("web", user))
-        raise AssertionError("remesure must not open when day budget is exhausted")
+        raise iws.ScrapeUnavailable("no scrape profile session")
 
     monkeypatch.setattr(iws, "open_web_session", fake_open)
     _boom_chrome_tick(monkeypatch)
     skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert skip["refreshed"] is False
-    assert skip.get("aborted") == "budget" or skip.get("reason") == "budget"
-    assert opens == []
+    assert skip.get("reason") != "budget"
+    assert skip.get("aborted") != "budget"
     lock_seen = []
 
     def lock_opener(_cfg, user=None, **_k):
@@ -2295,17 +2285,16 @@ def test_tick_remesure_day_budget_aborts_lock_walk_ignores_budget(tmp_path, monk
         return SimpleNamespace(_fanops_scrape_user=user)
 
     opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener, now=t0))
-    assert lock_seen == []
-    assert opened == []
+    assert lock_seen == ["u"]
+    assert len(opened) == 1
 
 
-def test_lock_then_remesure_share_remaining_room(tmp_path, monkeypatch):
-    """Same tick: lock charges used; remesure only spends leftover room on the same blob."""
+def test_lock_then_remesure_still_runs(tmp_path, monkeypatch):
+    """Injected lock does not spend used; remesure via fetch still remesures."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
     import fanops.ig_web_scrape as iws
-    from fanops.controlio import write_json_atomic
-    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due)
+    from fanops.fanops_hashtags import refresh_store_if_due
     from fanops.hashtags import load_measurements
     from fanops.ig_web_scrape import IgWebSession
     from fanops.source_tags import ensure_source_lock, load_source_tag_locks
@@ -2313,10 +2302,6 @@ def test_lock_then_remesure_share_remaining_room(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     t0 = datetime.now(timezone.utc)
-    today = t0.date().isoformat()
-    start_used = _SCRAPE_DAY_BUDGET - 2
-    write_json_atomic(_cooldown_path(cfg), {
-        "accounts": {"u": {"day": today, "used": start_used}}})
 
     class _LockCli:
         _fanops_scrape_user = "u"
@@ -2332,17 +2317,12 @@ def test_lock_then_remesure_share_remaining_room(tmp_path, monkeypatch):
                        resolve_fn=lambda *_a: "gid-alpha", measure_fn=lambda *_a: (10.0, {}))
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"] and rec["lock"] == ["#alpha"]
-    used_after_lock = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
-    assert used_after_lock == start_used + 1
     _boom_chrome_tick(monkeypatch)
     monkeypatch.setattr(iws, "open_web_session",
                         lambda _c, user=None, **_k: IgWebSession(user or "u",
                                                                  fetch=_web_fetch_for("alpha")))
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is True
-    used_end = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
-    assert used_end == used_after_lock + 1
-    assert used_end <= _SCRAPE_DAY_BUDGET
     assert "#alpha" in load_measurements(cfg)
 
 

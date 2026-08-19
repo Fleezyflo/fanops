@@ -406,7 +406,7 @@ def _lock_identity(cli) -> str | None:
 
 
 def _advance_lock_client(cfg, current, spare, already):
-    """Next client with remaining min(try_cap, day room), or None."""
+    """Next client with remaining try_cap room, or None."""
     from fanops.fanops_hashtags import _user_attempt_room
     cand = current
     while cand is not None:
@@ -418,10 +418,8 @@ def _advance_lock_client(cfg, current, spare, already):
 
 
 def _charge_lock_tag(cfg, cli, already) -> None:
-    from fanops.fanops_hashtags import _charge_scrape_user
-    user = _lock_identity(cli)
-    _charge_scrape_user(cfg, user, 1)
-    key = user or ""
+    """Count this tag against try_cap. Wire spend is charged per live XHR in IgWebSession._json."""
+    key = _lock_identity(cli) or ""
     already[key] = already.get(key, 0) + 1
 
 
@@ -527,7 +525,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> bool:
     """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
 
-    Charge + rotate via `_day_room` / `_charge_scrape_user`. All peers at cap / dead /
+    Charge + rotate via try_cap. A tick with no injected client does one tag
+    (instagrapi: delay_range on each XHR, spread work). All peers at cap / dead /
     missing → no researched_at unless a prior walk already finished. Empty finished
     scrape → lock [] + researched_at. Graph quota never withholds a finished scrape.
     Returns True when this call used a scrape client (one live attempt).
@@ -583,8 +582,12 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     already: dict[str, int] = {}
     spare = iter(walk)
     current = first
+    stagger = client is None
+    tags_this_walk = 0
     while pending:
         if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+            break
+        if stagger and tags_this_walk >= 1:
             break
         current = _advance_lock_client(cfg, current, spare, already)
         if current is None:
@@ -605,6 +608,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                 raise
             if not _exact_hit(hits, tag):
                 pending.pop(0)
+                tags_this_walk += 1
                 continue
             verified.append(tag)
         if tag and _scrape_number(measurements.get(tag)) is None:
@@ -619,10 +623,12 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     continue
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
                 pending.pop(0)
+                tags_this_walk += 1
                 continue
             _apply_scrape_metrics(measurements, tag, metrics)
         _apply_cached_graph(cfg, measurements, tag)
         pending.pop(0)
+        tags_this_walk += 1
     scrape_done = (not pending) or len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "no_scrape", level="error", err="scrape_unfinished")
