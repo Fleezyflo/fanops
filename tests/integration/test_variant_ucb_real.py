@@ -32,6 +32,12 @@ def _seed_on_disk_ledger(cfg: Config) -> None:
         _add_analyzed(led, f"L{i}", "LEAD", 60.0)
     _add_analyzed(led, "N1", "NEW", 59.0)
     led.save()
+    from fanops.source_tags import source_tag_locks_path
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
 
 
 def test_ucb_real_request_carries_bandit_pick_and_is_deterministic(tmp_path, monkeypatch):

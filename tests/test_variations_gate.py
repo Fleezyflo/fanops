@@ -10,10 +10,17 @@ from fanops.prompts import caption_prompt
 
 
 def _clip(led, cfg):
+    import json
+    from fanops.source_tags import source_tag_locks_path
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me"))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
 
 
 def test_caption_item_schema_drops_dead_hook_axis_rationale():

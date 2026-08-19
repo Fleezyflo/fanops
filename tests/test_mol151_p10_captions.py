@@ -37,6 +37,12 @@ def test_captions_scoped_to_owner_platforms(tmp_path, monkeypatch, mocker):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, duration=20.0, language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="1-5", start=1.0, end=5.0, reason="r",
                           transcript_excerpt="they slept on me", state=MomentState.decided, affinities=["a"]))
+    from fanops.source_tags import source_tag_locks_path
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     accts = Accounts.load(cfg)
     _fake_ffmpeg(mocker)
     led = _stage_render_and_caption(led, cfg, accts, _aspects_for(accts), get_logger(cfg))

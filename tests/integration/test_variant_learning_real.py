@@ -45,6 +45,12 @@ def _seed_on_disk_ledger(cfg: Config) -> None:
         _add_analyzed(led, f"a{i}", "a", "1", hook, lift)
     _add_analyzed(led, "b0", "b", "2", "LOSE", 10.0)
     led.save()
+    from fanops.source_tags import source_tag_locks_path
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
 
 
 def test_learned_hook_reaches_caption_request_on_disk(tmp_path, monkeypatch):

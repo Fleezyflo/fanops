@@ -469,7 +469,7 @@ class ZernioPoster:
         self.headers = {"Authorization": f"Bearer {_key(cfg)}", "Content-Type": "application/json"}
         self._create_2xx_body = None
 
-    def _create(self, post) -> ZernioCreateResult:
+    def _create(self, post, led: Ledger) -> ZernioCreateResult:
         """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
         never leaves this class. Raises ONLY ZernioAuthError, which must halt the whole run rather than burn
         one post (a bad key fails every post).
@@ -482,9 +482,10 @@ class ZernioPoster:
         if bad is not None:
             return bad                                   # ZERO network calls (I-10) — never fabricate an id
         rid = _request_id(post)
+        from fanops.caption import posted_text_for
         payload = build_zernio_payload(account_id=post.account_id, platform=post.platform.value,
-                                       content=post.caption, media_urls=post.media_urls,
-                                       scheduled_time=post.scheduled_time)
+                                       content=posted_text_for(self.cfg, led, post),
+                                       media_urls=post.media_urls, scheduled_time=post.scheduled_time)
         headers = dict(self.headers); headers["x-request-id"] = rid
         started = time.monotonic()
         delay, sent_any = 1.0, False
@@ -571,7 +572,7 @@ class ZernioPoster:
         site mapping a Zernio create result onto the ledger, so each rule ("a 409 is never failed", "a
         candidate is never a submission_id") has exactly one owner to review."""
         post = led.posts[post_id]
-        result = self._create(post)                      # ZernioAuthError propagates: halts the run (run.py H8)
+        result = self._create(post, led)                 # ZernioAuthError propagates: halts the run (run.py H8)
         if isinstance(result, (Created, IdempotentReplay)):
             # Both are the SAME logical submission, so both take the SAME ledger state: `submitted` + a real
             # id. Zernio usually returns no permalink at create; when the 2xx body carries one, persist it.
