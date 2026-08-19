@@ -509,8 +509,6 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
     lock_ready_sources(cfg, open_client_fn=opener,
                        research_fn=lambda *_a: (_ for _ in ()).throw(AssertionError("no LLM without a seat")))
     assert seen == ["mark", "wolf"]
-    lines = [ln for ln in cfg.log_path.read_text().splitlines() if '"no_scrape"' in ln]
-    assert len(lines) == 1
 
 
 def test_lock_ready_sources_at_most_one(tmp_path):

@@ -782,9 +782,10 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     Missing whisper JSON on a produce-eligible source logs no_transcript and continues
     (must not starve a later ready source). Graph quota does not skip a source —
     leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
-    A source that cannot progress (no seat) does not consume the one-attempt slot —
-    but a missing seat is one tick fact: stop after the first no_scrape. Re-opening
-    Safari per unfinished source is what logged the accounts out.
+    A source that cannot progress (no seat) does not consume the one-attempt slot.
+    After the first no_scrape, later sources get a closed opener (no Safari) so
+    leftover-complete rows can still cache-stamp. Re-opening Safari per unfinished
+    source is what logged the accounts out.
     Used∩measured hydrate is zero-network and may stamp many sources in one tick.
     """
     log = get_logger(cfg)
@@ -793,6 +794,11 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
         led = Ledger.load(cfg)
         hydrate_locks_from_known(cfg, led)
         table = load_source_tag_locks(cfg)
+        opener = open_client_fn
+
+        def _closed(_cfg, user=None, **_k):
+            raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
+
         for source in led.sources.values():
             if getattr(source, "origin_kind", "native") == "third_party":
                 continue
@@ -810,7 +816,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
             walked = False
             try:
                 walked = bool(ensure_source_lock(cfg, source, excerpt=excerpt, client=client,
-                                                 research_fn=research_fn, open_client_fn=open_client_fn,
+                                                 research_fn=research_fn, open_client_fn=opener,
                                                  resolve_fn=resolve_fn, measure_fn=measure_fn))
             except Exception as exc:
                 log("source_tags", sid, "error", level="error",
@@ -819,7 +825,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
             table = load_source_tag_locks(cfg)
             if _researched(table, sid) or walked:
                 return
-            return   # no_scrape: do not reopen Safari for every unfinished source
+            opener = _closed
     except Exception as exc:
         log("source_tags", "-", "error", level="error",
             err=f"{type(exc).__name__}: {exc}"[:160])
