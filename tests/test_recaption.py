@@ -21,6 +21,16 @@ _OLD_ENTRY = {"caption": "#old", "hashtags": ["#old"], "hashtags_raw": [], "hook
               "axis": None, "rationale": None, "tag_sources": {}}
 
 
+def _completed_lock(cfg, sid="src_1", lock=()):
+    p = source_tag_locks_path(cfg)
+    if p.exists():
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        sid: {"pile": list(lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+
+
 def _seed(cfg, *, clip_state=ClipState.queued, post_state=PostState.awaiting_approval,
           lang="en", sched=FUTURE):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,6 +47,7 @@ def _seed(cfg, *, clip_state=ClipState.queued, post_state=PostState.awaiting_app
                       platform=Platform.instagram, caption="#old", hashtags=["#old"],
                       state=post_state, scheduled_time=sched, created_at="2026-07-01T12:00:00+00:00"))
     led.save()
+    _completed_lock(cfg)
     return led
 
 
@@ -181,6 +192,7 @@ def test_limit_caps_seed_clips_at_20(tmp_path):
     for i in range(25):
         _add_clip_post(led, i=i)
     led.save()
+    _completed_lock(cfg)
     dry = run_recaption(cfg, apply=False, now=NOW, limit=20)
     assert dry["clips"] == 20 and not request_path(cfg, "captions", "clip_0").exists()
     fake = _FakeResponder()
@@ -207,6 +219,7 @@ def test_account_filter_does_not_walk_other_handles(tmp_path):
     _add_clip_post(led, i=0, account="a")
     _add_clip_post(led, i=1, account="b")
     led.save()
+    _completed_lock(cfg)
     miss = run_recaption(cfg, apply=False, now=NOW, account="missing")
     assert miss["clips"] == 0 and miss["posts"] == 0                # unknown handle: list 0, do not crash
     fake = _FakeResponder()

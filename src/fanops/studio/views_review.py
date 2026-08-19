@@ -282,9 +282,10 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     _mom_hook = None
     if _mom is not None:
         _mom_hook = (_mom.hook or "").strip() or None
+    from fanops.caption import posted_text_for
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
-        caption=post.caption, hashtags=list(post.hashtags or []),
+        caption=posted_text_for(cfg, led, post), hashtags=list(post.hashtags or []),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
         suggested_time=suggest_time(cfg, post, now=now) if editable else None,

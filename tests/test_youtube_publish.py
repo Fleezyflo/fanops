@@ -132,3 +132,25 @@ def test_publish_instagram_still_stub(tmp_path, monkeypatch, mocker):
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p2")
     assert cap["json"]["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}
+
+
+def test_youtube_still_uses_settings_tags_not_ig_compose(tmp_path, monkeypatch, mocker):
+    import json
+    from fanops.source_tags import source_tag_locks_path
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _yt_lineage(led, hook="they slept on me")
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#wave", "#alt"], "lock": ["#wave", "#alt"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    led.add_post(_yt_post(hashtags=["#wave", "#alt"]))
+    cap = _mock_post_ok(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    body = cap["json"]["posts"][0]
+    assert body["value"][0]["content"] == "full description here"   # sentence, not IG compose
+    assert "\n#wave" not in body["value"][0]["content"]
+    assert body["settings"]["tags"] == [{"value": "wave", "label": "wave"}, {"value": "alt", "label": "alt"}]
+    assert led.posts["p1"].caption == "full description here"
