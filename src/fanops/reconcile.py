@@ -427,6 +427,13 @@ def _mirror_info(row: Optional[dict]) -> dict:
         rid = row["releaseId"]
         if isinstance(rid, str) and rid.strip():
             out["releaseId"] = rid.strip()                 # IG Graph media id -> persisted on Post.media_id
+    elif row["status"] == "failed":
+        from fanops.post.metrics import poster_fail_reason
+        raw_row = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+        msg = poster_fail_reason(row.get("errorMessage"), row.get("error"),
+                                 raw_row.get("errorMessage"), raw_row.get("error"))
+        if msg:
+            out["errorMessage"] = msg
     return out
 
 

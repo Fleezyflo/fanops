@@ -234,3 +234,18 @@ def test_postiz_fetch_posts_skips_non_dict_and_idless_rows(tmp_path, monkeypatch
     body = {"posts": ["junk", None, {"state": "PUBLISHED"}, {"id": 7, "state": "PUBLISHED"}, {"id": "p1", "state": "PUBLISHED"}]}
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
     assert set(PostizStatusClient(cfg).list_all()) == {"p1"}
+
+def test_poster_fail_reason_prefers_human_text_over_stack():
+    from fanops.post.metrics import poster_fail_reason
+    assert poster_fail_reason("API access blocked.") == "API access blocked."
+    blob = {"cause": {"failure": {"message": "bad_body", "stackTrace": "ApplicationFailure:\n    at x"}}}
+    assert poster_fail_reason(blob) == "bad_body"
+    assert poster_fail_reason(None, "", {"error": "platform rejected"}) == "platform rejected"
+
+def test_postiz_error_row_keeps_error_field(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [
+        {"id": "p1", "state": "ERROR", "error": "API access blocked."}]}))
+    row = PostizStatusClient(cfg).list_all()["p1"]
+    assert row["status"] == "failed" and row["error"] == "API access blocked."

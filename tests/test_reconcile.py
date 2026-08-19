@@ -795,11 +795,14 @@ def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monke
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
-    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None,
+                            "error": "API access blocked."}])
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
     assert p.postiz_state == "ERROR"
+    assert "API access blocked." in (p.error_reason or "")
+    assert "no detail" not in (p.error_reason or "")
 
 
 def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
