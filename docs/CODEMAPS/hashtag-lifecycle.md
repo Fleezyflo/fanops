@@ -58,11 +58,10 @@ loop. Network source is **instagrapi** (`ig_hashtag_scrape`). Missing scrape ses
   `researched_at`. A leftover `quota_exhausted_at` row whose scrape already
   finished stamps without a Safari seat and without a novel Graph search.
   Empty `lock: []` means scrape finished with zero admits.
-- **Tick remesure** uses the same Safari `open_web_session` as lock. Lock and
-  remesure share one UTC-day budget (`accounts[user].used`), one
-  `FANOPS_HASHTAG_SCRAPE_DELAY` (live `IgWebSession._json` only), and one LRU
-  picker. Manual `fanops hashtags refresh` discovery stays on instagrapi
-  `open_client`.
+- **Tick remesure** uses the same Safari `open_web_session` as lock. Both pace
+  with instagrapi `delay_range` on each XHR and +1 `used` per XHR. Unattended
+  tick: one tag. LRU picker. Manual `fanops hashtags refresh` stays on instagrapi
+  `open_client` (client `delay_range`).
 
 `fanops hashtags scrape-login` opens Safari to instagram.com, waits until that
 tab is logged in, and best-effort promotes the envelope. Never `login(relogin=True)`.
@@ -100,13 +99,14 @@ Deleted 2026-07-26: the old local search meter (`_BUDGET_LIMIT` / `_BUDGET_WINDO
 and then **skipped every tag it had logged**, capping each pass.
 
 What governs spend now (MOL-854):
-- **`_SCRAPE_TRY_CAP` (default 25, env `FANOPS_HASHTAG_SCRAPE_TRY_CAP`)** — hard ceiling on measure attempts
-  in one pass. Hitting it ends the pass incomplete (no `last_complete_pass` advance).
-- **UTC day budget on `.hashtag_scrape_cooldown.json`** — additive `accounts[user].day` / `.used`
-  (MOL-858). Cap is `_SCRAPE_DAY_BUDGET` (~40 request-units). Lock producer and tick remesure share
-  this blob via `_day_room` / `_charge_scrape_user` (+1 per tag-attempt on the wire, not per XHR).
-  When `used >=` cap for today's UTC date, both skip that user; remesure aborts `reason=budget`
-  when every peer is out of room. Clean success clears streak fields only — day budget keys stay.
+- **instagrapi `delay_range = [1, 3]`** — random delay after **each** request
+  (`FANOPS_HASHTAG_SCRAPE_DELAY`). Live Safari `_json` uses the same pair and +1
+  `accounts[user].used` per XHR. There is no invented daily Instagram quota.
+- **Unattended tick — one tag.** Lock walk with no injected client, and tick remesure,
+  process one tag then yield (daemon interval is the stagger). Manual `refresh_store`
+  still uses `FANOPS_HASHTAG_SCRAPE_TRY_CAP` (25).
+- **`PleaseWaitFewMinutes` / 429 / checkpoint** — freeze that identity (`until`), do not
+  retry it, LRU to a healthy peer. instagrapi: stop the burst, back off, do not spam.
 - **`graph_id` cached** on every record — a known tag skips `hashtag_info` and still re-measures via
   `hashtag_medias_top`, so resolve funds novel discovery only.
 - **Platform stop** (any non-404 instagrapi exception) ⇒ ends the account's slice; evidence accrued so

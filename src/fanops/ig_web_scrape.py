@@ -33,12 +33,13 @@ class LoginRequired(Exception):
 class IgWebSession:
     """Duck-types instagrapi search_hashtags / hashtag_info / hashtag_medias_top."""
 
-    def __init__(self, user: str, *, fetch=None, safari: bool = False):
+    def __init__(self, user: str, *, fetch=None, safari: bool = False, cfg=None):
         if not user or (fetch is None and not safari):
             raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
         self._fanops_scrape_user = user
         self._fetch = fetch
         self._safari = safari
+        self._cfg = cfg
 
     def _tag_info(self, q: str) -> dict:
         """GET /api/v1/tags/{q}/info/ — lock search and remesure hashtag_info share this."""
@@ -86,6 +87,9 @@ class IgWebSession:
             payload = self._fetch(method, url, body)
         else:
             _pace_live_safari()
+            if self._cfg is not None:
+                from fanops.fanops_hashtags import _charge_scrape_user
+                _charge_scrape_user(self._cfg, self._fanops_scrape_user, 1)
             payload = _safari_fetch(method, url, body, user=self._fanops_scrape_user)
         if not isinstance(payload, dict):
             raise RuntimeError("instagram web bad payload")
@@ -169,16 +173,16 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
     if user not in users:
         raise ScrapeUnavailable(f"scrape user {user!r} not in FANOPS_IG_SCRAPE_USER")
     if fetch is not None:
-        return IgWebSession(user, fetch=fetch)
+        return IgWebSession(user, fetch=fetch, cfg=cfg)
     if not ensure_scrape_safari(cfg, user):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
     if not safari_logged_in(user):
         raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
-    return IgWebSession(user, safari=True)
+    return IgWebSession(user, safari=True, cfg=cfg)
 
 
 def _pace_live_safari() -> None:
-    """Sleep FANOPS_HASHTAG_SCRAPE_DELAY between live Safari XHRs. Injected _fetch does not call this."""
+    """instagrapi delay_range: random 1–3s after each request. Injected _fetch does not sleep."""
     delay = Config().hashtag_scrape_delay
     if not delay:
         return

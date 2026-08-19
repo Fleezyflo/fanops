@@ -145,3 +145,23 @@ def test_igweb_json_paces_safari_xhr(monkeypatch):
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "0")
     live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
     assert sleeps == []
+
+
+def test_igweb_json_charges_each_live_xhr(tmp_path, monkeypatch):
+    """instagrapi counts every request. Live _json +1 used; injected _fetch does not."""
+    import json
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _cooldown_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_fetch", lambda *_a, **_k: {"ok": True})
+    cfg = Config(root=tmp_path)
+    live = IgWebSession("u", safari=True, cfg=cfg)
+    live._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    live._json("POST", "https://www.instagram.com/api/v1/tags/music/sections/", body="x")
+    used = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
+    assert used == 2
+    injected = IgWebSession("u", fetch=lambda *_a, **_k: {"ok": True}, cfg=cfg)
+    injected._json("GET", "https://www.instagram.com/api/v1/tags/music/info/")
+    used2 = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u"]["used"]
+    assert used2 == 2
