@@ -1,4 +1,4 @@
-"""Lock scrape fetches inside FanOps Chrome, not instagrapi / exported cookies."""
+"""Lock scrape fetches inside Safari, never Google Chrome."""
 from types import SimpleNamespace
 
 from fanops.config import Config
@@ -58,10 +58,10 @@ def test_web_measure_reads_play_and_like():
     assert "#music" in cotags or "#live" in cotags
 
 
-def test_open_web_session_refuses_without_live_chrome(tmp_path, monkeypatch):
+def test_open_web_session_refuses_without_safari(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     import fanops.ig_hashtag_scrape as igs
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: False)
+    monkeypatch.setattr(igs, "ensure_scrape_safari", lambda *_a, **_k: False)
     cfg = Config(root=tmp_path)
     try:
         open_web_session(cfg, "u")
@@ -84,16 +84,11 @@ def test_lock_walk_uses_unfrozen_users(tmp_path, monkeypatch):
     assert [c._fanops_scrape_user for c in clients] == ["mark", "wolf"]
 
 
-def test_cdp_port_is_fanops_owned_not_system_devtools():
-    from fanops.ig_hashtag_scrape import scrape_cdp_port
-    from fanops.ig_web_scrape import _Ws
-    for user in ("markmakmouly", "perca.late", "cisumwolfhom"):
-        port = scrape_cdp_port(user)
-        assert 9331 <= port <= 9399
-        assert port not in (9222, 9223)
-    for url in ("ws://127.0.0.1:9222/devtools/page/x", "ws://10.0.0.1:9331/devtools/page/x"):
-        try:
-            _Ws.connect(url)
-            raise AssertionError(url)
-        except RuntimeError:
-            pass
+def test_scrape_launch_never_names_google_chrome():
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import scrape_chrome_launch_argv
+    from pathlib import Path
+    argv = scrape_chrome_launch_argv(Config(root=Path("/tmp")), "perca.late")
+    joined = " ".join(argv or [])
+    assert "Google Chrome" not in joined
+    assert "Safari" in joined

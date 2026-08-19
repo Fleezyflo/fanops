@@ -226,100 +226,25 @@ def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
         inject()
 
 
-def _chrome_executable() -> str | None:
-    from shutil import which
-    for name in (
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "google-chrome",
-        "chromium",
-        "chromium-browser",
-    ):
-        if name.startswith("/") and Path(name).is_file():
-            return name
-        found = which(name)
-        if found:
-            return found
-    return None
-
-
-def scrape_cdp_port(user: str) -> int:
-    """FanOps-owned localhost port for THIS scrape profile. Never 9222/9223."""
-    return 9331 + (sum((user or "").encode()) % 16)
-
-
-def scrape_cdp_endpoint(cfg: Config, user: str) -> str | None:
-    """http://127.0.0.1:<fanops-port> for THIS profile. None if the port is not ours."""
-    profile = scrape_chrome_profile_dir(cfg, user)
-    port = scrape_cdp_port(user)
-    stored = profile / "cdp.port"
-    if stored.is_file():
-        try:
-            port = int(stored.read_text().strip())
-        except ValueError:
-            return None
-    if port in (9222, 9223) or not (9331 <= port <= 9399):
-        return None
-    return f"http://127.0.0.1:{port}"
-
-
-def cdp_alive(cfg: Config, user: str) -> bool:
-    """True when THIS profile's FanOps debug port answers /json/version."""
-    from urllib.request import urlopen
-    endpoint = scrape_cdp_endpoint(cfg, user)
-    if not endpoint:
-        return False
-    try:
-        with urlopen(f"{endpoint}/json/version", timeout=1) as resp:
-            return 200 <= int(resp.status) < 300
-    except (OSError, TimeoutError, ValueError):
-        return False
-
-
 def scrape_chrome_launch_argv(cfg: Config, user: str) -> list[str] | None:
-    """Argv that opens THIS user's FanOps Chrome profile.
-
-    FanOps-owned debug port (9331–9399) so lock scrape can fetch() inside
-    the logged-in page. Never 9222/9223. Never system Chrome.
-    """
-    chrome = _chrome_executable()
-    if not chrome:
-        return None
-    profile = scrape_chrome_profile_dir(cfg, user)
-    port = scrape_cdp_port(user)
-    stored = profile / "cdp.port"
-    if stored.is_file():
-        try:
-            n = int(stored.read_text().strip())
-        except ValueError:
-            n = port
-        else:
-            if 9331 <= n <= 9399 and n not in (9222, 9223):
-                port = n
-    return [chrome, f"--user-data-dir={profile}", f"--remote-debugging-port={port}",
-            "--remote-debugging-address=127.0.0.1", "--remote-allow-origins=*",
-            "--no-first-run", "--no-default-browser-check", "https://www.instagram.com/"]
+    """Open Safari on Instagram. Never Google Chrome — that hijacks the Dock."""
+    del cfg, user
+    return ["open", "-a", "Safari", "https://www.instagram.com/"]
 
 
 def launch_scrape_chrome(cfg: Config, user: str) -> bool:
-    """Start Chrome on the FanOps profile with that profile's FanOps CDP port."""
+    """Open Safari to Instagram. Never launches Google Chrome."""
     import subprocess
     argv = scrape_chrome_launch_argv(cfg, user)
     if not argv:
         return False
-    profile = scrape_chrome_profile_dir(cfg, user)
-    profile.mkdir(parents=True, exist_ok=True)
-    for arg in argv:
-        if arg.startswith("--remote-debugging-port="):
-            (profile / "cdp.port").write_text(arg.split("=", 1)[1] + "\n")
-            break
     subprocess.Popen(argv, start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True
 
 
 def stop_scrape_chrome(cfg: Config, user: str) -> None:
-    """SIGTERM only Google Chrome processes on THIS FanOps profile. Never system Chrome."""
+    """Kill leftover FanOps Google Chrome on THIS profile. Never the operator's Chrome."""
     import signal
     import subprocess
     import time
@@ -345,25 +270,90 @@ def stop_scrape_chrome(cfg: Config, user: str) -> None:
         time.sleep(0.2)
 
 
-def ensure_scrape_chrome(cfg: Config, user: str, *, restart: bool = False) -> bool:
-    """Make THIS profile's FanOps Chrome answer on its CDP port. Tick may relaunch."""
+def _enable_safari_apple_events() -> None:
+    """Safari refuses do JavaScript until this pref is on. Plist write — no Chrome."""
+    import plistlib
+    prefs = Path.home() / "Library/Preferences/com.apple.Safari.plist"
+    data: dict = {}
+    if prefs.is_file():
+        try:
+            data = plistlib.loads(prefs.read_bytes())
+        except (OSError, plistlib.InvalidFileException, ValueError):
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if data.get("AllowJavaScriptFromAppleEvents") is True:
+        return
+    data["AllowJavaScriptFromAppleEvents"] = True
+    data["IncludeDevelopMenu"] = True
+    prefs.parent.mkdir(parents=True, exist_ok=True)
+    prefs.write_bytes(plistlib.dumps(data))
+
+
+def safari_eval(expr: str) -> str:
+    """Run JS in Safari's Instagram tab. Raises RuntimeError if no tab / JS blocked."""
+    import subprocess
+    script = (
+        "on run argv\n"
+        "  set expr to item 1 of argv\n"
+        "  tell application \"Safari\"\n"
+        "    repeat with w in windows\n"
+        "      repeat with t in tabs of w\n"
+        "        if (URL of t as string) contains \"instagram.com\" then\n"
+        "          return do JavaScript expr in t\n"
+        "        end if\n"
+        "      end repeat\n"
+        "    end repeat\n"
+        "  end tell\n"
+        "  error \"no instagram tab\"\n"
+        "end run\n"
+    )
+    try:
+        out = subprocess.check_output(
+            ["osascript", "-", expr], input=script, text=True, timeout=45,
+        )
+    except subprocess.CalledProcessError as exc:
+        err = (exc.stderr or str(exc))[:160]
+        raise RuntimeError(err) from exc
+    return (out or "").strip()
+
+
+def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool = False) -> bool:
+    """Safari Instagram tab ready. Kills leftover FanOps Chrome. Never launches Chrome."""
     import time
-    if not restart and cdp_alive(cfg, user):
-        return True
-    stop_scrape_chrome(cfg, user)
-    if not launch_scrape_chrome(cfg, user):
+    _enable_safari_apple_events()
+    for u in scrape_users(cfg) or ((user,) if user else ()):
+        stop_scrape_chrome(cfg, u)
+    if not restart:
+        try:
+            if safari_eval("1+1") in {"2", "2.0"}:
+                return True
+        except RuntimeError:
+            pass
+    if not launch_scrape_chrome(cfg, user or ""):
         return False
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if cdp_alive(cfg, user):
-            return True
+        try:
+            if safari_eval("1+1") in {"2", "2.0"}:
+                return True
+        except RuntimeError:
+            pass
         time.sleep(0.25)
-    return cdp_alive(cfg, user)
+    try:
+        return safari_eval("1+1") in {"2", "2.0"}
+    except RuntimeError:
+        return False
+
+
+def ensure_scrape_chrome(cfg: Config, user: str | None = None, *, restart: bool = False) -> bool:
+    """Back-compat name. Opens Safari. Does not launch Chrome."""
+    return ensure_scrape_safari(cfg, user, restart=restart)
 
 
 def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 300,
                                  sleep=None, clock=None) -> tuple[str, str] | None:
-    """Poll THIS user's FanOps Chrome (CDP, then cookie file) until a sessionid appears."""
+    """Poll Safari's Instagram tab until a logged-in probe succeeds."""
     import time
     from fanops.errors import fail_open
     sleep = time.sleep if sleep is None else sleep
@@ -371,11 +361,9 @@ def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 3
     deadline = clock() + max(float(timeout_s), 0)
     while True:
         got = None
-        with fail_open("ig_hashtag_scrape.cdp_auth"):
-            from fanops.ig_web_scrape import cdp_profile_auth
-            got = cdp_profile_auth(cfg, user)
-        if not (got and got[0]):
-            got = _profile_auth_for(cfg, user)
+        with fail_open("ig_hashtag_scrape.safari_auth"):
+            from fanops.ig_web_scrape import safari_profile_auth
+            got = safari_profile_auth(cfg, user)
         if got and got[0]:
             return got
         if clock() >= deadline:

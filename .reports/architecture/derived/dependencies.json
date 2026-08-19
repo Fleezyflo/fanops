@@ -2198,7 +2198,6 @@
       "werkzeug"
     ],
     "lazy": [
-      "base64",
       "browser_cookie3",
       "certifi",
       "collections",
