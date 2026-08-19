@@ -1193,7 +1193,9 @@
         "fanops.ledger",
         "fanops.log"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.caption"
+      ],
       "optional": [],
       "typing": []
     },
@@ -1234,6 +1236,7 @@
         "fanops.text"
       ],
       "lazy": [
+        "fanops.caption",
         "fanops.timeutil"
       ],
       "optional": [],
@@ -1288,6 +1291,7 @@
         "fanops.text"
       ],
       "lazy": [
+        "fanops.caption",
         "fanops.post.metrics"
       ],
       "optional": [],
@@ -2006,6 +2010,7 @@
         "fanops.timeutil"
       ],
       "lazy": [
+        "fanops.caption",
         "fanops.studio.views_results"
       ],
       "optional": [],
@@ -2884,6 +2889,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.studio.views_review",
+      "from_level": 5,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 5
+    },
+    {
       "from": "fanops.track",
       "from_level": 3,
       "jump": 0,
@@ -3142,6 +3155,22 @@
       "to_level": 3
     },
     {
+      "from": "fanops.post.dryrun",
+      "from_level": 3,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.post.postiz",
+      "from_level": 3,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 5
+    },
+    {
       "from": "fanops.post.providers",
       "from_level": 1,
       "jump": 2,
@@ -3172,6 +3201,14 @@
       "same_scc": false,
       "to": "fanops.post.zernio",
       "to_level": 3
+    },
+    {
+      "from": "fanops.post.zernio",
+      "from_level": 3,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 5
     },
     {
       "from": "fanops.postiz_lifecycle",
@@ -3839,10 +3876,10 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 378,
-    "lazy_edges_lateral": 45,
-    "lazy_edges_strictly_upward": 76,
-    "lazy_edges_to_equal_or_higher_level": 121,
+    "lazy_edges": 382,
+    "lazy_edges_lateral": 46,
+    "lazy_edges_strictly_upward": 79,
+    "lazy_edges_to_equal_or_higher_level": 125,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7
