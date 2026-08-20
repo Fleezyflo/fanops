@@ -354,3 +354,74 @@ def test_safari_fetch_200_missing_tag_does_not_freeze(tmp_path, monkeypatch):
     rec = _account_rec(_load_cooldown_blob(cfg), "u")
     assert not _is_frozen(rec, datetime.now(timezone.utc))
     assert rec.get("used") == 1
+
+
+def _assert_fetch_freezes(tmp_path, monkeypatch, xhr_raw, exc_cls, reason):
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: xhr_raw)
+    cfg = Config(root=tmp_path)
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError(f"expected {exc_cls.__name__}")
+    except exc_cls:
+        pass
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("reason") == reason
+
+
+def test_safari_fetch_200_rate_limit_error_freezes(tmp_path, monkeypatch):
+    """instagrapi RateLimitError is error_type on HTTP 200. Text-only please-wait missed it."""
+    import fanops.ig_web_scrape as iws
+    _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(200, {
+        "status": "fail", "error_type": "rate_limit_error",
+    }), iws.RateLimitError, "RateLimitError")
+
+
+def test_safari_fetch_200_sentry_block_freezes(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(200, {
+        "status": "fail", "error_type": "sentry_block",
+    }), iws.SentryBlock, "SentryBlock")
+
+
+def test_safari_fetch_200_logged_out_title_freezes(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(200, {
+        "status": "fail", "error_title": "You've Been Logged Out", "logout_reason": 8,
+    }), iws.LoginRequired, "LoginRequired")
+
+
+def test_safari_fetch_200_html_login_freezes(tmp_path, monkeypatch):
+    """Session death as HTML, not JSON — RuntimeError used to fail-open the lock walk."""
+    import json
+    import fanops.ig_web_scrape as iws
+    html = "<!DOCTYPE html><html><form><input name=\"username\"></form></html>"
+    _assert_fetch_freezes(tmp_path, monkeypatch, json.dumps({
+        "status": 200,
+        "url": "https://www.instagram.com/api/v1/tags/music/info/",
+        "text": html,
+    }), iws.LoginRequired, "LoginRequired")
+
+
+def test_safari_fetch_200_non_json_freezes(tmp_path, monkeypatch):
+    import json
+    import fanops.ig_web_scrape as iws
+    _assert_fetch_freezes(tmp_path, monkeypatch, json.dumps({
+        "status": 200,
+        "url": "https://www.instagram.com/api/v1/tags/music/info/",
+        "text": "not-json",
+    }), iws.WebThrottled, "WebThrottled")
+
+
+def test_safari_fetch_400_unclassified_freezes(tmp_path, monkeypatch):
+    """Unclassified 4xx was RuntimeError — lock search fail-opened and kept walking."""
+    import fanops.ig_web_scrape as iws
+    _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(400, {
+        "status": "fail", "message": "counter get error",
+    }), iws.WebThrottled, "WebThrottled")

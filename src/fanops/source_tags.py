@@ -733,7 +733,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             try:
                 hits = search_hashtags_scrape(current, raw)
             except Exception as exc:
-                if scrape_session_dead(exc):
+                if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
                     log("source_tags", sid, "stop_dead", err=type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
@@ -748,7 +748,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             try:
                 metrics, _cotags = measure_and_harvest_scrape(current, tag)
             except Exception as exc:
-                if scrape_session_dead(exc):
+                if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
                     log("source_tags", sid, "stop_dead", tag=tag, err=type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)

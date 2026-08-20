@@ -42,6 +42,14 @@ class FeedbackRequired(WebThrottled):
     """Named for scrape_session_dead. Instagram 200-body action block."""
 
 
+class RateLimitError(WebThrottled):
+    """Named for scrape_session_dead. Instagram error_type rate_limit_error on HTTP 200."""
+
+
+class SentryBlock(WebThrottled):
+    """Named for scrape_session_dead. Instagram sentry_block — IP/session rejected."""
+
+
 class ChallengeRequired(Exception):
     """Named for scrape_session_dead. Checkpoint in JSON. Not LoginRequired — no password restore."""
 
@@ -286,20 +294,45 @@ def _body_stop(payload: dict) -> BaseException | None:
         return None
     msg = str(payload.get("message") or "")
     err = str(payload.get("error_type") or payload.get("error_title") or "")
+    challenge = payload.get("challenge") if isinstance(payload.get("challenge"), dict) else {}
     blob = " ".join((
         msg, err,
         str(payload.get("feedback_message") or ""),
         str(payload.get("feedback_title") or ""),
+        str(payload.get("checkpoint_url") or ""),
+        str(challenge.get("url") or ""),
     )).lower()
-    if payload.get("require_login") is True or "login_required" in blob:
+    if (payload.get("require_login") is True or payload.get("logout_reason") is not None
+            or "login_required" in blob or "logged out" in blob):
         return LoginRequired("web login_required")
-    if "checkpoint" in blob or "challenge_required" in blob or payload.get("checkpoint_url"):
+    if (payload.get("two_factor_info") or "checkpoint" in blob or "challenge_required" in blob
+            or payload.get("checkpoint_url") or challenge.get("url")):
         return ChallengeRequired("web checkpoint")
     if payload.get("feedback_required") or payload.get("spam") is True or "feedback_required" in blob:
         return FeedbackRequired("web feedback_required")
     if "please wait" in blob or "few minutes" in blob or "please_wait" in blob:
         return PleaseWaitFewMinutes("web please_wait")
+    if err.lower() == "rate_limit_error" or "rate_limit" in blob:
+        return RateLimitError("web rate_limit")
+    if err.lower() == "sentry_block" or "sentry_block" in blob:
+        return SentryBlock("web sentry_block")
     return None
+
+
+def _text_stop(text: str) -> BaseException:
+    """Tag XHR that is not JSON is a wall (login HTML / empty / garbage), not a missing tag."""
+    blob = (text or "").lower()
+    if ("accounts/login" in blob or "login_required" in blob or "logged out" in blob
+            or 'name="username"' in blob or 'name="password"' in blob
+            or "<html" in blob or "<!doctype" in blob):
+        return LoginRequired("web html login")
+    if "checkpoint" in blob or "challenge_required" in blob:
+        return ChallengeRequired("web html checkpoint")
+    if "feedback_required" in blob:
+        return FeedbackRequired("web html feedback")
+    if "please wait" in blob or "few minutes" in blob or "rate_limit" in blob:
+        return PleaseWaitFewMinutes("web text wait")
+    return WebThrottled("web non-json")
 
 
 def _safari_xhr(method: str, url: str, body: str | None = None, user: str | None = None) -> str:
@@ -350,18 +383,21 @@ def _safari_fetch(method: str, url: str, body: str | None = None, user: str | No
     try:
         wrapped = json.loads(raw)
     except json.JSONDecodeError as exc:
+        stop_exc = WebThrottled("web wrapper")
         if cfg is not None and user:
-            _charge_scrape_user(cfg, user, 1, now=now)
-        raise RuntimeError("instagram safari non-json wrapper") from exc
+            _charge_scrape_user(cfg, user, 1, now=now, stop_exc=stop_exc)
+        raise stop_exc from exc
     if not isinstance(wrapped, dict):
+        stop_exc = WebThrottled("web wrapper")
         if cfg is not None and user:
-            _charge_scrape_user(cfg, user, 1, now=now)
-        raise RuntimeError("instagram safari bad wrapper")
+            _charge_scrape_user(cfg, user, 1, now=now, stop_exc=stop_exc)
+        raise stop_exc
     status = wrapped.get("status")
     loc = str(wrapped.get("url") or "")
+    text = str(wrapped.get("text") or "")
     payload: dict | None = None
     try:
-        parsed = json.loads(wrapped.get("text") or "")
+        parsed = json.loads(text)
         if isinstance(parsed, dict):
             payload = parsed
     except json.JSONDecodeError:
@@ -372,15 +408,19 @@ def _safari_fetch(method: str, url: str, body: str | None = None, user: str | No
         stop_exc = WebThrottled("web 429")
     elif payload is not None:
         stop_exc = _body_stop(payload)
-        if stop_exc is None and status is not None and int(status) >= 400:
-            stop_exc = RuntimeError(f"instagram web {status}")
-    elif status is not None and int(status) >= 400:
-        stop_exc = RuntimeError(f"instagram web {status}")
+        if stop_exc is None and status is not None:
+            try:
+                if int(status) >= 400:
+                    stop_exc = WebThrottled(f"web {status}")
+            except (TypeError, ValueError):
+                pass
+    else:
+        stop_exc = _text_stop(text)
     if cfg is not None and user:
         freeze = stop_exc if stop_exc is not None and scrape_session_dead(stop_exc) else None
         _charge_scrape_user(cfg, user, 1, now=now, stop_exc=freeze)
     if stop_exc is not None:
         raise stop_exc
     if payload is None:
-        raise RuntimeError("instagram web non-json")
+        raise WebThrottled("web non-json")
     return payload
