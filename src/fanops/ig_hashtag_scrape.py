@@ -81,10 +81,10 @@ def scrape_configured(cfg: Config) -> bool:
 
 
 _SESSION_DEAD_NAMES = frozenset({
-    "LoginRequired", "ClientLoginRequired",
+    "LoginRequired", "ClientLoginRequired", "ClientUnauthorizedError",
     "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
     "WebThrottled", "ClientThrottledError", "PleaseWaitFewMinutes",
-    "FeedbackRequired",
+    "FeedbackRequired", "RateLimitError", "SentryBlock",
 })
 
 
@@ -637,7 +637,8 @@ def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[
 def search_hashtags_scrape(client, name) -> list[dict]:
     """One instagrapi search_hashtags page. Incomplete hits stay; never invent play_count.
 
-    Fail-open: client error → []. Nameless hits are skipped. Cap is the search page.
+    Fail-open: generic client error → []. Session-dead and ScrapeUnavailable raise so the
+    lock walk stops. Nameless hits are skipped. Cap is the search page.
     """
     query = _norm(name).lstrip("#") if isinstance(name, str) else ""
     if not query:
@@ -645,7 +646,7 @@ def search_hashtags_scrape(client, name) -> list[dict]:
     try:
         hits = client.search_hashtags(query)
     except Exception as exc:
-        if scrape_session_dead(exc):
+        if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
             raise
         _log.warning("search_hashtags_scrape fail-open: %s: %s", type(exc).__name__, str(exc)[:200])
         return []

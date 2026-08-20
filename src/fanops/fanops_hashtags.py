@@ -542,6 +542,7 @@ _OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy
     "PleaseWaitFewMinutes": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "FeedbackRequired": "Instagram blocked the action; the ladder clears it, no operator action does",
     "WebThrottled": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+    "SentryBlock": "Instagram blocked this IP/session; the ladder clears it, inspect in the app",
     "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
 

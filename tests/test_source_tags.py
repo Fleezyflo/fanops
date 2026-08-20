@@ -355,6 +355,33 @@ def test_ensure_source_lock_login_required_stops_the_tick(tmp_path, monkeypatch)
     assert seen == ["a"]
 
 
+def test_ensure_source_lock_scrape_unavailable_stops_the_tick(tmp_path, monkeypatch):
+    """Safari dying mid-walk used to fail-open search to [] and keep XHRing."""
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, scrape_session_path
+
+    cfg = _cfg(tmp_path)
+
+    class _Dead:
+        def search_hashtags(self, query):
+            raise ScrapeUnavailable("safari scrape not ready")
+
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        return _Dead()
+
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    for u in ("a", "b"):
+        p = scrape_session_path(cfg, u)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}")
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"], open_client_fn=opener,
+                       **_ok_graph())
+    assert not source_tag_locks_path(cfg).exists()
+    assert seen == ["a"]
+
+
 def test_ensure_source_lock_all_dead_writes_nothing(tmp_path, monkeypatch):
     from instagrapi.exceptions import LoginRequired
     from fanops.ig_hashtag_scrape import scrape_session_path

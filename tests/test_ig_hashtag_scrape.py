@@ -126,6 +126,38 @@ def test_search_hashtags_feedback_required_does_not_fail_open():
         pass
 
 
+def test_search_hashtags_rate_limit_does_not_fail_open():
+    from fanops.ig_hashtag_scrape import scrape_session_dead
+
+    class RateLimitError(Exception):
+        pass
+
+    class _C:
+        def search_hashtags(self, query):
+            raise RateLimitError("rate_limit_error")
+
+    assert scrape_session_dead(RateLimitError("x")) is True
+    try:
+        search_hashtags_scrape(_C(), "#x")
+        raise AssertionError("must not fail-open to []")
+    except RateLimitError:
+        pass
+
+
+def test_search_hashtags_scrape_unavailable_does_not_fail_open():
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable
+
+    class _C:
+        def search_hashtags(self, query):
+            raise ScrapeUnavailable("safari scrape not ready")
+
+    try:
+        search_hashtags_scrape(_C(), "#x")
+        raise AssertionError("must not fail-open to []")
+    except ScrapeUnavailable:
+        pass
+
+
 def test_resolve_passes_platform_throttle_through(tmp_path):
     """Bare hashtag_info — platform exception is the caller exception (identity)."""
     class PleaseWaitFewMinutes(Exception): pass
