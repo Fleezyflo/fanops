@@ -540,20 +540,25 @@ _OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy
     "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
     "RateLimitError": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "PleaseWaitFewMinutes": "Instagram is rate-limiting; the ladder clears it, no operator action does",
+    "FeedbackRequired": "Instagram blocked the action; the ladder clears it, no operator action does",
+    "WebThrottled": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "throttle": "Instagram is rate-limiting; the ladder clears it, no operator action does",
     "budget": "local UTC day scrape budget exhausted; waits for next UTC day"}
 
 
 def _freeze_for(exc: BaseException) -> tuple[str, int | None]:
-    """Map a platform stop onto (cooldown reason, optional flat delay_s). ChallengeError → checkpoint + 12h;
+    """Map a platform stop onto (cooldown reason, optional flat delay_s). Challenge* → checkpoint + 12h;
     everything else labels with its class name and rides the ladder (`delay_s=None`)."""
+    name = type(exc).__name__
+    if "Challenge" in name:
+        return ("checkpoint", _CHECKPOINT_DELAY_S)
     try:
         from instagrapi.exceptions import ChallengeError
     except ImportError:
         ChallengeError = ()  # fail closed: never checkpoint-classify without the lib
-    if isinstance(exc, ChallengeError):
+    if ChallengeError and isinstance(exc, ChallengeError):
         return ("checkpoint", _CHECKPOINT_DELAY_S)
-    return (type(exc).__name__, None)
+    return (name, None)
 
 
 def _outage_level(streak, stalled_s: float | None, cadence_s: float = _REFRESH_CADENCE_S) -> str:

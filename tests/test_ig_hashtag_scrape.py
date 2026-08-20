@@ -106,6 +106,26 @@ def test_resolve_hashtag_scrape_returns_id(tmp_path):
     assert "hiphop" in c.info_calls
 
 
+def test_search_hashtags_feedback_required_does_not_fail_open():
+    """FeedbackRequired was named in docs/cooldown copy but not _SESSION_DEAD_NAMES — search
+    swallowed it to [] and the pass kept walking."""
+    from fanops.ig_hashtag_scrape import scrape_session_dead
+
+    class FeedbackRequired(Exception):
+        pass
+
+    class _C:
+        def search_hashtags(self, query):
+            raise FeedbackRequired("feedback_required")
+
+    assert scrape_session_dead(FeedbackRequired("x")) is True
+    try:
+        search_hashtags_scrape(_C(), "#x")
+        raise AssertionError("must not fail-open to []")
+    except FeedbackRequired:
+        pass
+
+
 def test_resolve_passes_platform_throttle_through(tmp_path):
     """Bare hashtag_info — platform exception is the caller exception (identity)."""
     class PleaseWaitFewMinutes(Exception): pass
