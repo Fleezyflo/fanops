@@ -258,3 +258,99 @@ def test_safari_fetch_429_freezes(tmp_path, monkeypatch):
     assert _is_frozen(rec, datetime.now(timezone.utc))
     assert rec.get("reason") == "WebThrottled"
     assert rec.get("used") == 1
+
+
+def _xhr_json(http, payload):
+    return json.dumps({
+        "status": http,
+        "url": "https://www.instagram.com/api/v1/tags/music/info/",
+        "text": json.dumps(payload),
+    })
+
+
+def test_safari_fetch_200_please_wait_freezes(tmp_path, monkeypatch):
+    """instagrapi PleaseWaitFewMinutes is a 200 body. HTTP-status-only freeze never fired."""
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
+        "status": "fail",
+        "message": "Please wait a few minutes before you try again.",
+    }))
+    cfg = Config(root=tmp_path)
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected PleaseWaitFewMinutes")
+    except iws.PleaseWaitFewMinutes:
+        pass
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("reason") == "PleaseWaitFewMinutes"
+
+
+def test_safari_fetch_200_feedback_required_freezes(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
+        "status": "fail",
+        "message": "feedback_required",
+        "spam": True,
+        "feedback_title": "We restrict certain activity",
+        "feedback_message": "This action was blocked.",
+    }))
+    cfg = Config(root=tmp_path)
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected FeedbackRequired")
+    except iws.FeedbackRequired:
+        pass
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("reason") == "FeedbackRequired"
+
+
+def test_safari_fetch_200_login_required_body_freezes(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
+        "status": "fail", "message": "login_required", "require_login": True,
+    }))
+    cfg = Config(root=tmp_path)
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected LoginRequired")
+    except iws.LoginRequired:
+        pass
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("reason") == "LoginRequired"
+
+
+def test_safari_fetch_200_missing_tag_does_not_freeze(tmp_path, monkeypatch):
+    """status=fail for a missing hashtag is not an account freeze."""
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
+    from datetime import datetime, timezone
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
+        "status": "fail", "message": "Invalid hashtag",
+    }))
+    cfg = Config(root=tmp_path)
+    out = iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/nope/info/",
+                            user="u", cfg=cfg)
+    assert out.get("message") == "Invalid hashtag"
+    rec = _account_rec(_load_cooldown_blob(cfg), "u")
+    assert not _is_frozen(rec, datetime.now(timezone.utc))
+    assert rec.get("used") == 1

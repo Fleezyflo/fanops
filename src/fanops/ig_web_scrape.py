@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 from fanops.config import Config
 from fanops.hashtags import _norm
-from fanops.ig_hashtag_scrape import ScrapeUnavailable
+from fanops.ig_hashtag_scrape import ScrapeUnavailable, scrape_session_dead
 
 _WEB_APP_ID = "936619743392459"
 
@@ -32,6 +32,18 @@ class LoginRequired(Exception):
 
 class WebThrottled(Exception):
     """HTTP 429. instagrapi: stop the burst, freeze, do not retry in a tight loop."""
+
+
+class PleaseWaitFewMinutes(WebThrottled):
+    """Named for scrape_session_dead. Instagram 200-body wait — same freeze as 429."""
+
+
+class FeedbackRequired(WebThrottled):
+    """Named for scrape_session_dead. Instagram 200-body action block."""
+
+
+class ChallengeRequired(Exception):
+    """Named for scrape_session_dead. Checkpoint in JSON. Not LoginRequired — no password restore."""
 
 
 _LAST_REQUEST_MONO: dict[str, float] = {}
@@ -265,6 +277,31 @@ def safari_profile_auth(cfg: Config, user: str) -> tuple[str, str] | None:
     return ("safari", user or "")
 
 
+def _body_stop(payload: dict) -> BaseException | None:
+    """instagrapi stop classes from Instagram JSON. HTTP 200 still carries these.
+
+    Generic `status: fail` (missing tag) is not a freeze — only named anti-abuse signals.
+    """
+    if not isinstance(payload, dict):
+        return None
+    msg = str(payload.get("message") or "")
+    err = str(payload.get("error_type") or payload.get("error_title") or "")
+    blob = " ".join((
+        msg, err,
+        str(payload.get("feedback_message") or ""),
+        str(payload.get("feedback_title") or ""),
+    )).lower()
+    if payload.get("require_login") is True or "login_required" in blob:
+        return LoginRequired("web login_required")
+    if "checkpoint" in blob or "challenge_required" in blob or payload.get("checkpoint_url"):
+        return ChallengeRequired("web checkpoint")
+    if payload.get("feedback_required") or payload.get("spam") is True or "feedback_required" in blob:
+        return FeedbackRequired("web feedback_required")
+    if "please wait" in blob or "few minutes" in blob or "please_wait" in blob:
+        return PleaseWaitFewMinutes("web please_wait")
+    return None
+
+
 def _safari_xhr(method: str, url: str, body: str | None = None, user: str | None = None) -> str:
     """AppleScript XHR only. No delay, no charge. Callers go through _safari_fetch."""
     from fanops.ig_hashtag_scrape import safari_eval
@@ -322,21 +359,28 @@ def _safari_fetch(method: str, url: str, body: str | None = None, user: str | No
         raise RuntimeError("instagram safari bad wrapper")
     status = wrapped.get("status")
     loc = str(wrapped.get("url") or "")
+    payload: dict | None = None
+    try:
+        parsed = json.loads(wrapped.get("text") or "")
+        if isinstance(parsed, dict):
+            payload = parsed
+    except json.JSONDecodeError:
+        payload = None
     if "accounts/login" in loc or status in (401, 403):
         stop_exc = LoginRequired(f"web {status or 'login'}")
     elif status == 429:
         stop_exc = WebThrottled("web 429")
+    elif payload is not None:
+        stop_exc = _body_stop(payload)
+        if stop_exc is None and status is not None and int(status) >= 400:
+            stop_exc = RuntimeError(f"instagram web {status}")
     elif status is not None and int(status) >= 400:
         stop_exc = RuntimeError(f"instagram web {status}")
     if cfg is not None and user:
-        freeze = stop_exc if isinstance(stop_exc, (LoginRequired, WebThrottled)) else None
+        freeze = stop_exc if stop_exc is not None and scrape_session_dead(stop_exc) else None
         _charge_scrape_user(cfg, user, 1, now=now, stop_exc=freeze)
     if stop_exc is not None:
         raise stop_exc
-    try:
-        payload = json.loads(wrapped.get("text") or "")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("instagram web non-json") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("instagram web bad payload")
+    if payload is None:
+        raise RuntimeError("instagram web non-json")
     return payload

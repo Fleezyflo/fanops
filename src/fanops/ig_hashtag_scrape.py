@@ -84,6 +84,7 @@ _SESSION_DEAD_NAMES = frozenset({
     "LoginRequired", "ClientLoginRequired",
     "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
     "WebThrottled", "ClientThrottledError", "PleaseWaitFewMinutes",
+    "FeedbackRequired",
 })
 
 
