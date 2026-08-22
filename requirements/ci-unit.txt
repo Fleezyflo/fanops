@@ -234,9 +234,9 @@ iniconfig==2.3.0 \
     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
     # via pytest
-instagrapi==2.18.12 \
-    --hash=sha256:2f4c7de15c4ad3c33c4629b16b3631c8dfbf809d863d79788c9408e93f9bdf8a \
-    --hash=sha256:4e299d1b0e497edc71df4b711c542b645c6715932a3fc830b2a836f5062939ce
+instagrapi==2.18.16 \
+    --hash=sha256:8ce34b8c5809d1f4c7efe8523b6ae88473fd36bb4687daf03b1b338e16766758 \
+    --hash=sha256:df8416d11a5aba7db716dbe7b7675f38d727c574b6348feea40b11729d60143e
     # via fanops (pyproject.toml)
 itsdangerous==2.2.0 \
     --hash=sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef \
