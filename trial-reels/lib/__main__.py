@@ -1,4 +1,4 @@
-from lib.cover_qa import main
+from lib.runner import main as run_main
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_main())

@@ -157,7 +157,7 @@ def _fake_out_graph(duration_s: float, width: int, height: int, *, has_audio: bo
     if has_audio:
         parts.extend([
             _audio_trim_chain("0:a", 0.0, pre_end, "apre"),
-            f"anullsrc=r=48000:cl=stereo,duration={FAKE_OUT_FLASH_S:.3f}[aflash]",
+            f"anullsrc=r=48000:cl=stereo:d={FAKE_OUT_FLASH_S:.3f}[aflash]",
             _audio_trim_chain("0:a", post_start, post_end, "apost"),
             "[apre][aflash][apost]concat=n=3:v=0:a=1[acat]",
             _loudnorm_chain("acat"),

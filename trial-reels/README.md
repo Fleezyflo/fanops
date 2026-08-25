@@ -1,6 +1,23 @@
-# Trial Reels — RTL captions + cover OCR QA
+# Trial Reels — RTL captions + cover OCR QA + runner
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
+
+## Runner
+
+One clip in, **15–20 vertical cuts** out (5 hook policies × 4 edit stacks). On-screen text is **contiguous attested transcript** only — desk blocks permutations, whisper slices, and credit-only lines.
+
+```bash
+# From repo root
+PYTHONPATH=trial-reels python trial-reels run \
+  --file /path/to/clip.mp4 \
+  --transcript /path/to/transcript.json \
+  --out out/
+
+# Plan without rendering
+PYTHONPATH=trial-reels python trial-reels run --file clip.mp4 --transcript tx.json --dry-run
+```
+
+Transcript JSON accepts `lines`, merged `segments`, or dual-ear `{primary, secondary}` fixtures. Whisper is **not** invoked by the runner (no model downloads).
 
 ## Why this exists
 
@@ -13,6 +30,7 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
+| `lib/runner.py` | `run` CLI — ingest, desk, hook×stack ffmpeg render |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |
 | `tests/` | Hermetic unit tests + ffmpeg/tesseract integration on a generated purple fixture |
