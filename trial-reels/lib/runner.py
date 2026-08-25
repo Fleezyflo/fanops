@@ -28,11 +28,14 @@ from lib.media import MediaInfo, probe_media, vertical_filter_chain
 from lib.cover_qa import cover_extract_s_for_hook, qa_cover
 from lib.pipeline import PipelineScore, score_run, write_score_report
 from lib.stacks import (
+    STACK_NAMES,
     ffmpeg_cmd,
     rehooks_for_stack,
     resolve_ffmpeg_bin,
     stack_gate_passes,
 )
+
+RECIPES_PATH = Path(__file__).resolve().parents[1] / "recipes.json"
 
 REHOOK_DURATION_S = 1.8
 DEFAULT_OUT_WIDTH = 1080
@@ -57,22 +60,84 @@ class VariantResult:
 
 
 @dataclass
+class VariantPlan:
+    hook: str
+    stack: str
+    card: dict[str, Any]
+    cite_start_s: float
+    cut_length_s: float
+    output_name: str
+
+
+@dataclass
 class ClipRunResult:
     clip_id: str
     source_path: Path
     desk: dict[str, Any]
     validation: dict[str, Any]
     variants: list[VariantResult] = field(default_factory=list)
+    clip_payloads: list[dict[str, Any]] = field(default_factory=list)
     score: PipelineScore | None = None
     blocked: bool = False
+    success: bool = False
     message: str = ""
+
+    @property
+    def variants_planned(self) -> int:
+        return len(self.variants)
+
+    @property
+    def variants_rendered(self) -> int:
+        return sum(1 for variant in self.variants if variant.ok)
+
+    @property
+    def outputs(self) -> list[Path]:
+        return [variant.output_path for variant in self.variants if variant.ok]
+
+
+def load_recipes(path: Path | None = None) -> dict[str, Any]:
+    p = path or RECIPES_PATH
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def plan_variants(
+    desk: dict[str, Any],
+    *,
+    clip_id: str,
+    recipes: dict[str, Any] | None = None,
+    source_duration_s: float,
+) -> list[VariantPlan]:
+    """Enumerate hook×stack variants that pass desk + stack gates."""
+    if desk.get("mode") != "write":
+        return []
+
+    recipes = recipes or load_recipes()
+    slots = expand_variant_slots(list(desk.get("cards") or []))
+    plans: list[VariantPlan] = []
+    for slot in slots:
+        hook = str(slot["hook"])
+        stack = str(slot["stack"])
+        card = {"hook": hook, "text": slot["text"], "cite": slot["cite"]}
+        cite = card.get("cite") or {}
+        cite_start = float(cite.get("start") or 0.0)
+        _, cut_length = cut_spec(cite_start, source_duration_s)
+        if not stack_gate_passes(stack, cut_length):
+            continue
+        plans.append(
+            VariantPlan(
+                hook=hook,
+                stack=stack,
+                card=card,
+                cite_start_s=cite_start,
+                cut_length_s=cut_length,
+                output_name=f"{clip_id}_{hook}_{stack}.mp4",
+            )
+        )
+    return plans
 
 
 def _clip_id(path: Path) -> str:
-    stem = path.stem
-    if stem.startswith("clip_"):
-        return stem
-    return f"clip_{stem}"
+    return path.stem
 
 
 def _transcript_candidates(source: Path, work_dir: Path) -> list[Path]:
@@ -245,10 +310,12 @@ def run_clip(
     *,
     out_dir: Path,
     work_dir: Path,
-    recipes: dict[str, Any],
+    recipes: dict[str, Any] | None = None,
+    transcript: dict[str, Any] | None = None,
     transcript_path: Path | None = None,
     allow_asr: bool = False,
     run_cover_qa: bool = True,
+    dry_run: bool = False,
 ) -> ClipRunResult:
     """Run the full trial-reels pipeline for one source clip."""
     source = source.resolve()
@@ -256,13 +323,15 @@ def run_clip(
     out_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    recipes = recipes or load_recipes()
     media = probe_media(source)
-    transcript = load_or_transcribe(
-        source,
-        work_dir,
-        transcript_path=transcript_path,
-        allow_asr=allow_asr,
-    )
+    if transcript is None:
+        transcript = load_or_transcribe(
+            source,
+            work_dir,
+            transcript_path=transcript_path,
+            allow_asr=allow_asr,
+        )
     desk_result = write(transcript)
     validation = validate_desk_result(desk_result)
 
@@ -346,15 +415,6 @@ def run_clip(
 
         out_path = out_dir / f"{clip_id}_{variant_tag}_{stack}.mp4"
         try:
-            render_variant(
-                source=source,
-                output=out_path,
-                cite_start_s=cut_start,
-                cut_length_s=cut_length,
-                stack=stack,
-                ass_path=ass_path,
-                media=media,
-            )
             cover_ok: bool | None = None
             cover_message = ""
             cover_extract_s = cover_extract_s_for_hook(
@@ -363,19 +423,31 @@ def run_clip(
                 total_duration_s=media.duration_s,
             )
             variant_ok = True
-            if run_cover_qa and hook_text.strip():
-                cover = qa_cover(
-                    out_path,
-                    attested_words=(hook_text,),
-                    extract_s=cover_extract_s,
-                    workdir=work_dir / "cover_qa" / f"{clip_id}_{variant_tag}_{stack}",
-                    keep_artifacts=True,
-                    language=clip_language,
+            if dry_run:
+                variant_ok = True
+            else:
+                render_variant(
+                    source=source,
+                    output=out_path,
+                    cite_start_s=cut_start,
+                    cut_length_s=cut_length,
+                    stack=stack,
+                    ass_path=ass_path,
+                    media=media,
                 )
-                cover_ok = cover.ok
-                cover_message = cover.message
-                if not cover.ok:
-                    variant_ok = False
+                if run_cover_qa and hook_text.strip():
+                    cover = qa_cover(
+                        out_path,
+                        attested_words=(hook_text,),
+                        extract_s=cover_extract_s,
+                        workdir=work_dir / "cover_qa" / f"{clip_id}_{variant_tag}_{stack}",
+                        keep_artifacts=True,
+                        language=clip_language,
+                    )
+                    cover_ok = cover.ok
+                    cover_message = cover.message
+                    if not cover.ok:
+                        variant_ok = False
             result.variants.append(
                 VariantResult(
                     hook=hook,
@@ -406,60 +478,73 @@ def run_clip(
 
     checked_variants = [v for v in result.variants if v.cover_ok is not None]
     ok_variants = [v for v in result.variants if v.ok]
-    clip_payloads = [
+    payload_variants = checked_variants if checked_variants else ok_variants
+    result.clip_payloads = [
         {
-            "clip_id": clip_id,
+            "clip_id": f"{clip_id}_{v.hook}_{v.stack}",
             "desk": desk_result,
-            "output_path": str(v.output_path),
+            "output_path": str(v.output_path) if not dry_run else "",
             "attested_words": (v.hook_text,),
             "cover_ok": v.cover_ok,
             "cover_message": v.cover_message,
         }
-        for v in checked_variants
+        for v in payload_variants
     ]
     result.score = score_run(
-        clip_payloads=clip_payloads,
+        clip_payloads=result.clip_payloads,
         stacks_landed=len(ok_variants),
         file_count=len(ok_variants),
         require_cover=run_cover_qa and bool(checked_variants),
         cover_checked=len(checked_variants),
         cover_pass=sum(1 for v in checked_variants if v.cover_ok),
     )
+    result.success = bool(ok_variants) and validation["ok"]
+    if not result.message:
+        result.message = result.score.message if result.score else ""
     return result
 
 
 def run_batch(
     sources: list[Path],
     *,
-    out_dir: Path,
-    work_root: Path,
-    recipes: dict[str, Any],
+    out_root: Path | None = None,
+    out_dir: Path | None = None,
+    work_root: Path | None = None,
+    recipes: dict[str, Any] | None = None,
+    transcript_map: dict[str, dict[str, Any]] | None = None,
     transcript_paths: dict[Path, Path] | None = None,
+    dry_run: bool = False,
+    require_cover: bool = False,
     allow_asr: bool = False,
-    run_cover_qa: bool = True,
+    run_cover_qa: bool | None = None,
 ) -> list[ClipRunResult]:
+    """Run clips; supports both pipeline door (out_root/transcript_map) and runner CLI."""
+    resolved_out = out_dir or (out_root / "cuts" if out_root else Path("out"))
+    resolved_work = work_root or out_root or Path("work")
+    resolved_recipes = recipes or load_recipes()
+    cover_qa = run_cover_qa if run_cover_qa is not None else require_cover
+
     results: list[ClipRunResult] = []
     transcript_paths = transcript_paths or {}
+    transcript_map = transcript_map or {}
     for source in sources:
-        work_dir = work_root / _clip_id(source)
+        work_dir = resolved_work / _clip_id(source)
+        transcript = transcript_map.get(str(source.resolve()))
+        transcript_path = transcript_paths.get(source.resolve())
         results.append(
             run_clip(
                 source,
-                out_dir=out_dir,
+                out_dir=resolved_out,
                 work_dir=work_dir,
-                recipes=recipes,
-                transcript_path=transcript_paths.get(source.resolve()),
+                recipes=resolved_recipes,
+                transcript=transcript,
+                transcript_path=transcript_path,
                 allow_asr=allow_asr,
-                run_cover_qa=run_cover_qa,
+                run_cover_qa=cover_qa,
+                dry_run=dry_run,
             )
         )
     return results
-
-
-def _load_recipes(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        path = Path(__file__).resolve().parents[1] / "recipes.json"
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -483,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("no media sources found")
 
     allow_asr = bool(os.environ.get("TRIAL_REELS_ALLOW_ASR", "").strip())
-    recipes = _load_recipes(Path(args.recipes) if args.recipes else None)
+    recipes = load_recipes(Path(args.recipes) if args.recipes else None)
     out_dir = Path(args.out_dir)
     work_root = Path(args.work_dir)
 
