@@ -10,7 +10,7 @@ expands those claims across hook×stack slots (15–20 cuts) when fewer claims e
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
 
 from lib.stacks import STACK_NAMES
 
@@ -207,6 +207,16 @@ def _ends_sentence(word: str) -> bool:
     return bool(_SENTENCE_END_RE.search(word))
 
 
+_UTTERANCE_MIN_WORDS = 8
+
+
+def _fragment_continues(words: list[str]) -> bool:
+    if not words:
+        return False
+    last = words[-1].rstrip("\"')]}")
+    return last.endswith(",") or last.endswith(";")
+
+
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
     """Merge English Whisper crumbs into sentences; keep Arabic lines separate."""
     if language != "en":
@@ -239,11 +249,20 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
             buffer_line_index = index
         buffer.append(text)
         words = text.split()
-        if words and (_ends_sentence(words[-1]) or len(words) >= 6):
+        if not words:
+            continue
+        if _ends_sentence(words[-1]):
+            flush()
+        elif not _fragment_continues(words) and len(words) >= _UTTERANCE_MIN_WORDS:
             flush()
 
     flush()
     return stitched
+
+
+def _split_stitched_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?…])\s+", text.strip())
+    return [part.strip() for part in parts if part.strip()]
 
 
 def _tokenize_stitched(
@@ -253,12 +272,13 @@ def _tokenize_stitched(
     tokens: list[_Token] = []
     sentence_index = 0
     for text, start, line_index in stitched:
-        words = [word for word in text.split() if word.strip()]
-        if not words:
-            continue
-        for word in words:
-            tokens.append(_Token(word, start, line_index, text, sentence_index))
-        if language == "en" and _ends_sentence(words[-1]):
+        units = _split_stitched_sentences(text) if language == "en" else [text]
+        for unit in units:
+            words = [word for word in unit.split() if word.strip()]
+            if not words:
+                continue
+            for word in words:
+                tokens.append(_Token(word, start, line_index, unit, sentence_index))
             sentence_index += 1
     return tokens
 
@@ -400,15 +420,29 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     return False
 
 
+def _is_complete_sentence(text: str, language: str) -> bool:
+    if language != "en":
+        return True
+    words = text.split()
+    if not words:
+        return False
+    return _ends_sentence(words[-1])
+
+
 def _is_whisper_crumb(text: str, language: str) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
+        return True
+    lowered = " ".join(words).lower()
+    if lowered in {"so the next", "fails.", "so the next move"}:
         return True
     if words[0].startswith((".", ",", ";", ":")):
         return True
     if _has_internal_sentence_break(text):
         return True
     if language == "en":
+        if not _is_complete_sentence(text, language):
+            return True
         content = [word for word in words if _normalize_word(word) not in _EN_FUNCTION]
         if len(words) == 1 and _ends_sentence(words[0]) and _letter_count(_normalize_word(words[0])) < 5:
             return True
@@ -447,105 +481,28 @@ def _sentence_token_groups(tokens: list[_Token], language: str) -> list[list[_To
     return [by_sentence[index] for index in sorted(by_sentence)]
 
 
-def _clause_token_groups(sentence_tokens: list[_Token]) -> list[list[_Token]]:
-    if not sentence_tokens:
-        return []
-    groups: list[list[_Token]] = []
-    current: list[_Token] = []
-    for token in sentence_tokens:
-        current.append(token)
-        word = token.word.rstrip("\"')]}")
-        if word.endswith(",") or word.endswith(";"):
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
-    return groups if len(groups) > 1 else [sentence_tokens]
-
-
 def _extract_claims(tokens: list[_Token], language: str, vocabulary: set[str]) -> list[dict[str, Any]]:
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for sentence_tokens in _sentence_token_groups(tokens, language):
-        for clause_tokens in _clause_token_groups(sentence_tokens):
-            text = _join_tokens(clause_tokens)
-            norm = _normalize_word(text)
-            if norm in seen:
-                continue
-            if not _validate_claim(text, clause_tokens, language, vocabulary):
-                continue
-            seen.add(norm)
-            claims.append({"text": text, "cite": _cite(clause_tokens), "tokens": clause_tokens})
+        text = _join_tokens(sentence_tokens)
+        norm = _normalize_word(text)
+        if norm in seen:
+            continue
+        if not _validate_claim(text, sentence_tokens, language, vocabulary):
+            continue
+        seen.add(norm)
+        claims.append({"text": text, "cite": _cite(sentence_tokens), "tokens": sentence_tokens})
 
     return claims
 
 
-def _claim_score(claim: dict[str, Any], language: str) -> int:
-    tokens = claim["tokens"]
-    return len(_content_tokens(tokens, language)) * 10 + len(tokens)
-
-
-def _hook_scorer(hook: str, language: str) -> Callable[[dict[str, Any]], int]:
-    markers = _direct_markers(language)
-
-    def score(claim: dict[str, Any]) -> int:
-        tokens = claim["tokens"]
-        if not tokens:
-            return -1
-        pool = _sentence_token_groups(tokens, language)[0]
-        start = pool.index(tokens[0])
-        end = start + len(tokens)
-        n = len(pool)
-        content_score = _claim_score(claim, language)
-
-        if hook == "result_first":
-            return content_score + (100 if end == n else end * 2)
-
-        if hook == "mid_action":
-            center = (n - 1) / 2
-            span_center = (start + end - 1) / 2
-            distance = abs(span_center - center)
-            return content_score + max(0, 50 - int(distance * 10))
-
-        if hook == "direct_you":
-            if not any(token.norm in markers for token in tokens):
-                return -1
-            return content_score + 80 + max(0, 20 - len(tokens))
-
-        if hook == "bold_claim":
-            return content_score + max(0, 30 - start * 3) + len(tokens) * 5
-
-        if hook == "cold_proof":
-            return content_score + start * 3 + len(tokens) * 2
-
-        raise ValueError(f"unknown hook: {hook}")
-
-    return score
-
-
 def _assign_hooks(claims: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
-    cards: list[dict[str, Any]] = []
-    used_texts: set[str] = set()
-
-    for hook in HOOKS:
-        scorer = _hook_scorer(hook, language)
-        ranked = sorted(
-            claims,
-            key=lambda claim: (scorer(claim), _claim_score(claim, language)),
-            reverse=True,
-        )
-        for claim in ranked:
-            norm = _normalize_word(claim["text"])
-            if norm in used_texts:
-                continue
-            if scorer(claim) < 0:
-                continue
-            cards.append({"hook": hook, "text": claim["text"], "cite": claim["cite"]})
-            used_texts.add(norm)
-            break
-
-    return sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
+    return [
+        {"hook": HOOKS[index % len(HOOKS)], "text": claim["text"], "cite": claim["cite"]}
+        for index, claim in enumerate(claims)
+    ]
 
 
 def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:

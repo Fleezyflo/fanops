@@ -4,12 +4,11 @@ Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. 
 
 ## Hook factory contract
 
-One source clip → **15–20 vertical cuts**, each with a **distinct attested on-screen hook** when the transcript supports it.
+One source clip → **up to 20 vertical cuts** built from **attested sentence/clause claims**.
 
-- `lib/desk.py` inventories contiguous attested transcript spans (no permutation, no invented words).
-- Nested sub-spans of a single sung line do **not** count as separate hooks — single-line clips fail closed.
-- `lib/runner.py` ships one output per hook card; stacks cycle as edit style only (stack × hook is not hook diversity).
-- `lib/desk_swarm.py` rejects anagram permuters and duplicate hook texts before scoring.
+- `lib/desk.py` extracts contiguous attested **sentences and real clauses** only — no n-gram windows, no cross-sentence joins, no permutations.
+- When a clip has fewer claims than slots (e.g. one Arabic sung line), the runner **reuses the claim** across hook×stack slots; stacks and rehooks provide edit diversity.
+- Fail closed only on **empty**, **credit-only**, or **no valid claims** — never slice sentences to hit a quota.
 
 ```bash
 PYTHONPATH=trial-reels python -m lib.runner --file clip.mp4 --transcript clip.transcript.json --out-dir out
@@ -26,8 +25,8 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
-| `lib/desk.py` | Contiguous attested hook inventory (15–20 distinct spans or fail closed) |
-| `lib/runner.py` | One clip → vertical hook cuts via ASS + ffmpeg stacks |
+| `lib/desk.py` | Sentence/clause claim extraction; `expand_variant_slots()` maps claims → hook×stack |
+| `lib/runner.py` | One clip → 20 vertical cuts (claims × hook policies × stacks) |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |
 | `tests/` | Hermetic unit tests + ffmpeg/tesseract integration on a generated purple fixture |
