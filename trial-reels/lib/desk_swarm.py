@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
+from lib.desk import TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
