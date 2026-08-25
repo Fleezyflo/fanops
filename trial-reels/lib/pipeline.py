@@ -106,7 +106,11 @@ def score_clip(
 
     words = attested_words
     if words is None and desk_result.get("mode") == "write":
-        words = tuple(card["text"] for card in desk_result.get("cards") or [])
+        treatments = desk_result.get("treatments") or []
+        if treatments:
+            words = tuple(item["text"] for item in treatments)
+        else:
+            words = tuple(card["text"] for card in desk_result.get("cards") or [])
 
     cover = qa_cover(path, words, tess_langs=tess_langs)
     score.cover_ok = cover.ok

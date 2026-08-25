@@ -159,36 +159,51 @@ def plan_variants(
     recipes: dict[str, Any] | None = None,
     source_duration_s: float,
 ) -> list[VariantPlan]:
-    """Enumerate hook×stack variants that pass desk + stack gates."""
+    """Enumerate hook×stack variants — one treatment text per slot when ceiling allows."""
     if desk.get("mode") != "write":
         return []
 
     recipes = recipes or load_recipes()
     hooks = list(recipes.get("hooks") or HOOK_POLICIES)
     stacks = list(recipes.get("stacks") or STACK_NAMES)
-    cards_by_hook = {card["hook"]: card for card in desk.get("cards") or []}
+    cards = list(desk.get("cards") or [])
+    if not cards:
+        treatments = list(desk.get("treatments") or [])
+        cards = [
+            {
+                "hook": hook,
+                "stack": stack,
+                "text": treatments[i % len(treatments)]["text"],
+                "cite": treatments[i % len(treatments)]["cite"],
+                "kind": treatments[i % len(treatments)].get("kind"),
+            }
+            for i, (hook, stack) in enumerate(
+                (h, s) for h in hooks for s in stacks
+            )
+            if treatments
+        ]
 
     plans: list[VariantPlan] = []
-    for hook in hooks:
-        card = cards_by_hook.get(hook)
-        if not card:
+    for card in cards:
+        hook = card.get("hook") or ""
+        stack = card.get("stack") or ""
+        if hook not in hooks or stack not in stacks:
             continue
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
-        for stack in stacks:
-            if not stack_gate_passes(stack, cut_length):
-                continue
-            plans.append(
-                VariantPlan(
-                    hook=hook,
-                    stack=stack,
-                    card=card,
-                    cite_start_s=cite_start,
-                    cut_length_s=cut_length,
-                    output_name=f"{clip_id}_{hook}_{stack}.mp4",
-                )
+        if not stack_gate_passes(stack, cut_length):
+            continue
+        plans.append(
+            VariantPlan(
+                hook=hook,
+                stack=stack,
+                card=card,
+                cite_start_s=cite_start,
+                cut_length_s=cut_length,
+                output_name=f"{clip_id}_{hook}_{stack}.mp4",
             )
+        )
     return plans
 
 

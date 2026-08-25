@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk must return `mode=write` with five hook-policy cards (full attested sentences or lines). On-screen text may repeat when the transcript cannot honestly support five distinct claims — stacks multiply to ~20 output cuts. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). Rich clips ship as many distinct on-screen texts as the transcript honestly supports (up to 20); thin clips ship the honest ceiling (e.g. two Arabic lines → two texts) and stacks multiply cuts. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 
@@ -30,6 +30,8 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
+| `lib/treatments.py` | Attested hook treatment enumeration (clause spans, honest ceiling) |
+| `lib/desk.py` | Maps treatments onto hook×stack render cards |
 | `lib/runner.py` | End-to-end pipeline: ingest → desk → ASS → ffmpeg stacks → score |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |

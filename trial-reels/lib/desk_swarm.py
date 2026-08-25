@@ -1,14 +1,11 @@
-"""Desk swarm — run the constrained hook writer across clips and validate output.
-
-Ship when hooks are attested sentences/lines. Stacks multiply outputs; text may
-repeat when the transcript cannot honestly support five distinct claims.
-"""
+"""Desk swarm — validate attested hook treatments across clips."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, is_contiguous_attested_span, write
+from lib.desk import TARGET_VARIANTS, _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, is_contiguous_attested_span, write
+from lib.treatments import MAX_TREATMENTS, TREATMENT_KINDS
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -20,22 +17,21 @@ def _card_is_contiguous(card: dict[str, Any]) -> bool:
     return is_contiguous_attested_span(text, line)
 
 
-def _is_permutation_fake(cards: list[dict[str, Any]]) -> bool:
-    """True when all cards share the same word-bag (anagram permuter)."""
-    if len(cards) < 2:
+def _is_permutation_fake(items: list[dict[str, Any]]) -> bool:
+    if len(items) < 2:
         return False
-    bags = [frozenset((card.get("text") or "").split()) for card in cards]
+    bags = [frozenset((item.get("text") or "").split()) for item in items]
     if len(set(bags)) > 1:
         return False
-    texts = [(card.get("text") or "") for card in cards]
+    texts = [(item.get("text") or "") for item in items]
     return len(set(texts)) > 1
 
 
-def _hook_ranges_on_line(cards: list[dict[str, Any]], line: str) -> list[tuple[int, int]]:
+def _hook_ranges_on_line(items: list[dict[str, Any]], line: str) -> list[tuple[int, int]]:
     words = line.split()
     ranges: list[tuple[int, int]] = []
-    for card in cards:
-        text = (card.get("text") or "").strip()
+    for item in items:
+        text = (item.get("text") or "").strip()
         hook_words = text.split()
         for start in range(len(words) - len(hook_words) + 1):
             if words[start : start + len(hook_words)] == hook_words:
@@ -44,22 +40,21 @@ def _hook_ranges_on_line(cards: list[dict[str, Any]], line: str) -> list[tuple[i
     return ranges
 
 
-def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
-    """True when multiple different hook texts are nested windows on one sung line."""
-    if len(cards) < 2:
+def _is_nested_window_farm(items: list[dict[str, Any]]) -> bool:
+    if len(items) < 2:
         return False
-    texts = {(card.get("text") or "").strip() for card in cards}
+    texts = {(item.get("text") or "").strip() for item in items}
     texts.discard("")
     if len(texts) < 2:
         return False
 
-    lines = {(card.get("cite") or {}).get("line") or "" for card in cards}
+    lines = {(item.get("cite") or {}).get("line") or "" for item in items}
     lines.discard("")
     if len(lines) != 1:
         return False
 
     line = next(iter(lines))
-    ranges = _hook_ranges_on_line(cards, line)
+    ranges = _hook_ranges_on_line(items, line)
     if len(ranges) < 2:
         return False
 
@@ -74,12 +69,12 @@ def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
     return False
 
 
-def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
+def _is_forbidden_english_crumb(item: dict[str, Any], language: str) -> bool:
     if language != "en":
         return False
-    from lib.desk import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, _normalize_phrase
+    from lib.treatments import _normalize_phrase  # noqa: PLC0415
 
-    text = (card.get("text") or "").strip()
+    text = (item.get("text") or "").strip()
     norm = _normalize_phrase(text)
     if norm in _EN_FORBIDDEN_SLICES:
         return True
@@ -87,8 +82,13 @@ def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
     return len(words) < _MIN_HOOK_WORDS_EN
 
 
+def _treatment_items(result: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(result.get("treatments") or [])
+
+
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     """Validate a desk write payload; return structured pass/fail with reasons."""
+    treatments = _treatment_items(result)
     cards = list(result.get("cards") or [])
     language = result.get("language") or "en"
     issues: list[str] = []
@@ -96,47 +96,58 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if len(cards) != len(HOOKS):
-        issues.append(f"expected {len(HOOKS)} hook cards, got {len(cards)}")
+    if not treatments:
+        issues.append("no hook treatments")
 
-    hooks_seen = [card.get("hook") for card in cards]
-    if hooks_seen != HOOKS[: len(cards)]:
-        issues.append(f"hook order mismatch: {hooks_seen}")
+    if len(treatments) > MAX_TREATMENTS:
+        issues.append(f"expected at most {MAX_TREATMENTS} treatments, got {len(treatments)}")
 
-    for card in cards:
-        if not _card_is_contiguous(card):
-            issues.append(f"{card.get('hook')}: not a contiguous attested span")
+    for item in treatments:
+        kind = item.get("kind")
+        if kind not in TREATMENT_KINDS:
+            issues.append(f"unknown treatment kind: {kind!r}")
 
-    if _is_permutation_fake(cards):
-        issues.append("cards are anagram permutations of the same word-bag")
+    for item in treatments:
+        if not _card_is_contiguous(item):
+            issues.append(f"{item.get('kind')}: not a contiguous attested span")
 
-    if _is_nested_window_farm(cards):
-        issues.append("cards are nested windows on one sung line")
+    if _is_permutation_fake(treatments):
+        issues.append("treatments are anagram permutations of the same word-bag")
 
-    for card in cards:
-        if _is_forbidden_english_crumb(card, language):
-            issues.append(f"{card.get('hook')}: leftover whisper slice or crumb hook")
+    if _is_nested_window_farm(treatments):
+        issues.append("treatments are nested windows on one sung line")
+
+    for item in treatments:
+        if _is_forbidden_english_crumb(item, language):
+            issues.append(f"{item.get('kind')}: leftover whisper slice or crumb hook")
+
+    if len(cards) != TARGET_VARIANTS:
+        issues.append(f"expected {TARGET_VARIANTS} variant cards, got {len(cards)}")
+
+    unique_treatments = len({(item.get("text") or "").strip() for item in treatments})
+    unique_cards = len({(card.get("text") or "").strip() for card in cards})
 
     ok = not issues
     return {
         "ok": ok,
         "language": language,
         "mode": result.get("mode"),
+        "treatment_count": len(treatments),
         "card_count": len(cards),
-        "unique_texts": len({(card.get("text") or "").strip() for card in cards}),
+        "unique_treatments": unique_treatments,
+        "unique_texts": unique_cards,
+        "ceiling": result.get("ceiling", unique_treatments),
         "issues": issues,
     }
 
 
 def write_and_validate(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write hooks then validate; returns both payloads."""
     result = write(transcript)
     validation = validate_desk_result(result)
     return {"desk": result, "validation": validation}
 
 
 def swarm_write(transcripts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run desk across multiple transcripts; aggregate validation stats."""
     results: list[dict[str, Any]] = []
     passed = 0
     for transcript in transcripts:
