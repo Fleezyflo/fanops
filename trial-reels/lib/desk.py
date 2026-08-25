@@ -1,13 +1,13 @@
 """Constrained hook writer for trial reels.
 
-Builds on-screen hooks by dropping and reordering attested transcript words only.
-Never adds words, never invents facts, and rejects weak phrase-slicer spans.
+Every on-screen hook is a contiguous, source-order span of the attested transcript.
+No reordering, no permutations, no invented words.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable
 
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
 
@@ -17,6 +17,7 @@ _CREDIT_RE = re.compile(
 )
 _TASHKEEL_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _PUNCT_RE = re.compile(r"[^\w\s\u0600-\u06FF]", re.UNICODE)
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"')\]]*$")
 
 _EN_FUNCTION = frozenset(
     {
@@ -115,6 +116,8 @@ _EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
 
+_MAX_HOOK_WORDS = 7
+
 
 def _strip_tashkeel(text: str) -> str:
     return _TASHKEEL_RE.sub("", text)
@@ -148,14 +151,22 @@ def _direct_markers(language: str) -> frozenset[str]:
 
 
 class _Token:
-    __slots__ = ("word", "norm", "start", "line_index", "line_text")
+    __slots__ = ("word", "norm", "start", "line_index", "line_text", "sentence_index")
 
-    def __init__(self, word: str, start: float, line_index: int, line_text: str) -> None:
+    def __init__(
+        self,
+        word: str,
+        start: float,
+        line_index: int,
+        line_text: str,
+        sentence_index: int,
+    ) -> None:
         self.word = word
         self.norm = _normalize_word(word)
         self.start = start
         self.line_index = line_index
         self.line_text = line_text
+        self.sentence_index = sentence_index
 
 
 def _parse_lines(transcript: dict[str, Any]) -> list[dict[str, Any]]:
@@ -182,27 +193,74 @@ def _line_start(raw: dict[str, Any]) -> float:
     return 0.0
 
 
-def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
-    tokens: list[_Token] = []
-    language = transcript.get("language")
-    source_parts: list[str] = []
+def _ends_sentence(word: str) -> bool:
+    return bool(_SENTENCE_END_RE.search(word))
 
-    for index, raw in enumerate(_parse_lines(transcript)):
+
+def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
+    """Merge Whisper fragments into sentence-sized chunks in source order."""
+    stitched: list[tuple[str, float, int]] = []
+    buffer: list[str] = []
+    buffer_start = 0.0
+    buffer_line_index = 0
+
+    def flush() -> None:
+        nonlocal buffer, buffer_start, buffer_line_index
+        if not buffer:
+            return
+        stitched.append((" ".join(buffer), buffer_start, buffer_line_index))
+        buffer = []
+
+    for index, raw in enumerate(lines):
         text = _line_text(raw)
         if not text:
             continue
-        source_parts.append(text)
-        if language is None:
-            language = _detect_language(text)
         start = _line_start(raw)
-        for word in text.split():
-            if word.strip():
-                tokens.append(_Token(word, start, index, text))
+        if not buffer:
+            buffer_start = start
+            buffer_line_index = index
+        buffer.append(text)
+        if language == "en" and _ends_sentence(text.split()[-1] if text.split() else text):
+            flush()
 
+    flush()
+    return stitched
+
+
+def _tokenize_stitched(
+    stitched: list[tuple[str, float, int]],
+    language: str,
+) -> list[_Token]:
+    tokens: list[_Token] = []
+    sentence_index = 0
+    for text, start, line_index in stitched:
+        words = [word for word in text.split() if word.strip()]
+        if not words:
+            continue
+        for word in words:
+            tokens.append(_Token(word, start, line_index, text, sentence_index))
+        if language == "en" and _ends_sentence(words[-1]):
+            sentence_index += 1
+    return tokens
+
+
+def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
+    raw_lines = _parse_lines(transcript)
+    language = transcript.get("language")
+    if language is None:
+        for raw in raw_lines:
+            text = _line_text(raw)
+            if text:
+                language = _detect_language(text)
+                break
     resolved_language = language or "en"
-    return tokens, resolved_language if resolved_language in {"ar", "en"} else _detect_language(
-        " ".join(source_parts) or ""
-    )
+    if resolved_language not in {"ar", "en"}:
+        joined = " ".join(_line_text(raw) for raw in raw_lines if _line_text(raw))
+        resolved_language = _detect_language(joined)
+
+    stitched = _stitch_line_texts(raw_lines, resolved_language)
+    tokens = _tokenize_stitched(stitched, resolved_language)
+    return tokens, resolved_language
 
 
 def _attested_vocabulary(tokens: list[_Token]) -> set[str]:
@@ -240,8 +298,13 @@ def _is_credit_only(transcript: dict[str, Any], tokens: list[_Token]) -> bool:
     for token in tokens:
         by_line.setdefault(token.line_index, []).append(token)
 
-    return not any(_line_has_hookable_content(line_tokens, _detect_language(" ".join(t.word for t in line_tokens))) for line_tokens in by_line.values())
-
+    return not any(
+        _line_has_hookable_content(
+            line_tokens,
+            _detect_language(" ".join(t.word for t in line_tokens)),
+        )
+        for line_tokens in by_line.values()
+    )
 
 
 def _cite(tokens: list[_Token]) -> dict[str, Any]:
@@ -257,9 +320,6 @@ def _cite(tokens: list[_Token]) -> dict[str, Any]:
 def _join_tokens(tokens: list[_Token]) -> str:
     if not tokens:
         return ""
-    language = _detect_language(tokens[0].word)
-    if language == "ar":
-        return " ".join(token.word for token in tokens)
     return " ".join(token.word for token in tokens)
 
 
@@ -299,6 +359,79 @@ def _words_attested(text: str, vocabulary: set[str]) -> bool:
     return True
 
 
+def _is_source_order_contiguous(span: list[_Token], pool: list[_Token]) -> bool:
+    if not span:
+        return False
+    start = pool.index(span[0])
+    end = start + len(span)
+    return pool[start:end] == span
+
+
+def _has_internal_sentence_break(text: str) -> bool:
+    trimmed = text.rstrip("\"')]}")
+    while trimmed and trimmed[-1] in ".!?…":
+        trimmed = trimmed[:-1].rstrip()
+    return bool(re.search(r"[.!?…]", trimmed))
+
+
+def _is_leftover_slice(span: list[_Token], language: str) -> bool:
+    """Reject Whisper crumbs and cross-sentence leftovers."""
+    if not span:
+        return True
+    text = _join_tokens(span)
+    if language == "en":
+        if _has_internal_sentence_break(text):
+            return True
+        if span[0].word.startswith((".", ",", ";", ":")):
+            return True
+    return False
+
+
+def _contiguous_spans(pool: list[_Token], language: str) -> list[list[_Token]]:
+    spans: list[list[_Token]] = []
+    n = len(pool)
+    for start in range(n):
+        for size in range(1, min(_MAX_HOOK_WORDS, n - start) + 1):
+            span = pool[start : start + size]
+            if language == "en":
+                sentence_ids = {token.sentence_index for token in span}
+                if len(sentence_ids) > 1:
+                    continue
+            spans.append(span)
+    return spans
+
+
+def _span_content_score(span: list[_Token], language: str) -> int:
+    content = _content_tokens(span, language)
+    return len(content) * 10 + sum(_letter_count(token.norm) for token in content)
+
+
+def _validate_span(
+    span: list[_Token],
+    pool: list[_Token],
+    language: str,
+    vocabulary: set[str],
+) -> bool:
+    if not _is_source_order_contiguous(span, pool):
+        return False
+    text = _join_tokens(span)
+    if not _validate_card(text, language, vocabulary):
+        return False
+    if _is_leftover_slice(span, language):
+        return False
+    return True
+
+
+def _validate_card(text: str, language: str, vocabulary: set[str]) -> bool:
+    if _contains_forbidden_rewrite(text):
+        return False
+    if _is_weak_card(text, language):
+        return False
+    if not _words_attested(text, vocabulary):
+        return False
+    return True
+
+
 def _pick_best_line(tokens: list[_Token], language: str) -> list[_Token]:
     by_line: dict[int, list[_Token]] = {}
     for token in tokens:
@@ -315,130 +448,98 @@ def _pick_best_line(tokens: list[_Token], language: str) -> list[_Token]:
     return best
 
 
-def _reorder(tokens: list[_Token], order: list[int]) -> list[_Token]:
-    picked: list[_Token] = []
-    seen: set[int] = set()
-    for idx in order:
-        if 0 <= idx < len(tokens) and idx not in seen:
-            picked.append(tokens[idx])
-            seen.add(idx)
-    return picked
+def _hook_scorer(hook: str, language: str) -> Callable[[list[_Token], list[_Token]], int]:
+    markers = _direct_markers(language)
+
+    def score(span: list[_Token], pool: list[_Token]) -> int:
+        if not span:
+            return -1
+        n = len(pool)
+        start = pool.index(span[0])
+        end = start + len(span)
+        content_score = _span_content_score(span, language)
+
+        if hook == "result_first":
+            tail_bonus = end == n
+            return content_score + (100 if tail_bonus else end * 2)
+
+        if hook == "mid_action":
+            center = (n - 1) / 2
+            span_center = (start + end - 1) / 2
+            distance = abs(span_center - center)
+            return content_score + max(0, 50 - int(distance * 10))
+
+        if hook == "direct_you":
+            if not any(token.norm in markers for token in span):
+                return -1
+            marker_bonus = 80
+            compact = max(0, 20 - len(span))
+            return content_score + marker_bonus + compact
+
+        if hook == "bold_claim":
+            # Longest contiguous claim — never shortest-letter leftover permutations.
+            head_bonus = max(0, 30 - start * 3)
+            return content_score + head_bonus + len(span) * 5
+
+        if hook == "cold_proof":
+            latter_bonus = start * 3
+            return content_score + latter_bonus + len(span) * 2
+
+        raise ValueError(f"unknown hook: {hook}")
+
+    return score
 
 
-def _window(content: list[_Token], start: int, size: int) -> list[_Token]:
-    if not content:
-        return []
-    if len(content) <= size:
-        return list(content)
-    start = max(0, min(start, len(content) - size))
-    return content[start : start + size]
+def _assign_hooks(
+    pool: list[_Token],
+    language: str,
+    vocabulary: set[str],
+) -> list[dict[str, Any]]:
+    candidates = [
+        span
+        for span in _contiguous_spans(pool, language)
+        if _validate_span(span, pool, language, vocabulary)
+    ]
+    cards: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
+    used_spans: set[tuple[int, int]] = set()
 
-
-def _prepare_pool(tokens: list[_Token], language: str) -> list[_Token]:
-    content = _content_tokens(tokens, language)
-    if len(content) >= 3:
-        return content
-    return list(tokens)
-
-
-def _subset_for_hook(hook: str, pool: list[_Token], language: str) -> list[_Token] | None:
-    size = min(7, len(pool))
-    if size == 0:
-        return None
-
-    if hook == "result_first":
-        chunk = _window(pool, max(0, len(pool) - size), size)
-        if len(chunk) <= 1:
-            return chunk
-        return _reorder(chunk, [len(chunk) - 1, *range(len(chunk) - 1)])
-
-    if hook == "mid_action":
-        chunk = _window(pool, max(0, (len(pool) - size) // 2), size)
-        if len(chunk) <= 2:
-            return list(reversed(chunk))
-        mid = len(chunk) // 2
-        order = [mid]
-        for offset in range(1, len(chunk)):
-            left = mid - offset
-            right = mid + offset
-            if left >= 0:
-                order.append(left)
-            if right < len(chunk):
-                order.append(right)
-        return _reorder(chunk, order)
-
-    if hook == "direct_you":
-        markers = _direct_markers(language)
-        hits = [idx for idx, token in enumerate(pool) if token.norm in markers]
-        if not hits:
-            return None
-        anchor = hits[0]
-        chunk = _window(pool, max(0, anchor - 1), size)
-        anchor_idx = next((idx for idx, token in enumerate(chunk) if token.norm in markers), 0)
-        rest = [idx for idx in range(len(chunk)) if idx != anchor_idx]
-        return _reorder(chunk, [anchor_idx, *rest])
-
-    if hook == "bold_claim":
-        chunk = _window(pool, 0, size)
+    for hook in HOOKS:
+        scorer = _hook_scorer(hook, language)
         ranked = sorted(
-            range(len(chunk)),
-            key=lambda idx: (-_letter_count(chunk[idx].norm), idx),
+            candidates,
+            key=lambda span: (
+                scorer(span, pool),
+                _span_content_score(span, language),
+                -pool.index(span[0]),
+            ),
+            reverse=True,
         )
-        return _reorder(chunk, ranked)
+        for span in ranked:
+            start = pool.index(span[0])
+            key = (start, len(span))
+            text = _join_tokens(span)
+            norm_text = _normalize_word(text)
+            if key in used_spans or norm_text in seen_texts:
+                continue
+            if scorer(span, pool) < 0:
+                continue
+            cards.append(
+                {
+                    "hook": hook,
+                    "text": text,
+                    "cite": _cite(span),
+                }
+            )
+            seen_texts.add(norm_text)
+            used_spans.add(key)
+            break
 
-    if hook == "cold_proof":
-        chunk = _window(pool, 0, size)
-        return list(reversed(chunk))
-
-    raise ValueError(f"unknown hook: {hook}")
-
-
-def _compose(hook: str, tokens: list[_Token], language: str) -> list[_Token] | None:
-    pool = _prepare_pool(tokens, language)
-    return _subset_for_hook(hook, pool, language)
-
-
-def _validate_card(text: str, language: str, vocabulary: set[str]) -> bool:
-    if _contains_forbidden_rewrite(text):
-        return False
-    if _is_weak_card(text, language):
-        return False
-    if not _words_attested(text, vocabulary):
-        return False
-    return True
-
-
-def _build_card(hook: str, picked: list[_Token], language: str, vocabulary: set[str]) -> dict[str, Any] | None:
-    text = _join_tokens(picked)
-    if not _validate_card(text, language, vocabulary):
-        return None
-    return {
-        "hook": hook,
-        "text": text,
-        "cite": _cite(picked),
-    }
-
-
-def _fallback_variants(tokens: list[_Token], language: str) -> list[list[_Token]]:
-    pool = _prepare_pool(tokens, language)
-    variants: list[list[_Token]] = []
-    n = len(pool)
-    if n == 0:
-        return variants
-    variants.append(list(pool))
-    variants.append(list(reversed(pool)))
-    if n >= 3:
-        variants.append(_reorder(pool, [n - 1, 0, *range(1, n - 1)]))
-        variants.append(_reorder(pool, [1, 2, 0, *range(3, n)]))
-        variants.append(_reorder(pool, [n - 2, n - 1, *range(n - 2)]))
-        if n >= 4:
-            variants.append(pool[1:] + pool[:1])
-            variants.append(pool[2:] + pool[:2])
-    return variants
+    return sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write five constrained hooks from an attested transcript payload."""
+    """Write attested contiguous hooks from a transcript payload."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
@@ -466,60 +567,27 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         }
 
     line_tokens = _pick_best_line(tokens, language)
-    cards: list[dict[str, Any]] = []
-    seen_texts: set[str] = set()
-
-    for hook in HOOKS:
-        picked = _compose(hook, line_tokens, language)
-        if picked is None:
-            continue
-        card = _build_card(hook, picked, language, vocabulary)
-        if card is None:
-            continue
-        norm_text = _normalize_word(card["text"])
-        if norm_text in seen_texts:
-            continue
-        seen_texts.add(norm_text)
-        cards.append(card)
-
-    if len(cards) < len(HOOKS):
-        for variant in _fallback_variants(line_tokens, language):
-            if len(cards) >= len(HOOKS):
-                break
-            for hook in HOOKS:
-                if any(card["hook"] == hook for card in cards):
-                    continue
-                card = _build_card(hook, variant, language, vocabulary)
-                if card is None:
-                    continue
-                norm_text = _normalize_word(card["text"])
-                if norm_text in seen_texts:
-                    continue
-                seen_texts.add(norm_text)
-                cards.append(card)
-                break
-
-    cards = sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
-
+    cards = _assign_hooks(line_tokens, language, vocabulary)
     cites = [card["cite"] for card in cards]
     ear = cards[0]["text"] if cards else ""
 
-    if len(cards) < len(HOOKS):
+    if not cards:
         return {
             "mode": "blocked",
             "language": language,
             "source_line": source_line,
-            "reason": "unable to produce five distinct attested hooks",
-            "cites": cites,
-            "cards": cards,
-            "ear": ear,
+            "reason": "no valid contiguous attested hooks",
+            "cites": [],
+            "cards": [],
+            "ear": "",
         }
 
+    count = len(cards)
     return {
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": "five attested reorder hooks",
+        "reason": f"{count} contiguous attested hook{'s' if count != 1 else ''}",
         "cites": cites,
         "cards": cards,
         "ear": ear,
