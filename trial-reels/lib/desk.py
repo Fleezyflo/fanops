@@ -208,7 +208,11 @@ def _ends_sentence(word: str) -> bool:
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
-    """Merge English Whisper crumbs into one flow; keep Arabic lines separate."""
+    """Merge English Whisper crumbs into sentence chunks with cite timestamps.
+
+    Arabic keeps each Whisper line separate so span enumeration cannot collapse a
+    verse into one mega-line of nested windows.
+    """
     if language != "en":
         stitched: list[tuple[str, float, int]] = []
         for index, raw in enumerate(lines):
@@ -217,22 +221,47 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
                 stitched.append((text, _line_start(raw), index))
         return stitched
 
-    parts: list[str] = []
-    start = 0.0
-    line_index = 0
+    stitched: list[tuple[str, float, int]] = []
+    buffer: list[str] = []
+    buffer_start = 0.0
+    buffer_line_index = 0
+
+    def flush() -> None:
+        nonlocal buffer
+        if not buffer:
+            return
+        merged = " ".join(buffer)
+        if not _is_whisper_crumb(merged, "en"):
+            stitched.append((merged, buffer_start, buffer_line_index))
+        buffer = []
+
     for index, raw in enumerate(lines):
         text = _line_text(raw)
         if not text:
             continue
-        if not parts:
-            start = _line_start(raw)
-            line_index = index
-        parts.append(text)
+        start = _line_start(raw)
+        parts = _split_stitched_sentences(text)
+        if len(parts) > 1:
+            for part in parts:
+                if _is_complete_sentence(part, "en") and not _is_whisper_crumb(part, "en"):
+                    stitched.append((part, start, index))
+            continue
+        if not buffer:
+            buffer_start = start
+            buffer_line_index = index
+        buffer.append(text)
+        last_word = text.split()[-1] if text.split() else text
+        if _ends_sentence(last_word):
+            flush()
 
-    if not parts:
-        return []
+    if buffer:
+        merged = " ".join(buffer)
+        for part in _split_stitched_sentences(merged):
+            if _is_complete_sentence(part, "en") and not _is_whisper_crumb(part, "en"):
+                stitched.append((part, buffer_start, buffer_line_index))
+        buffer = []
 
-    return [(" ".join(parts), start, line_index)]
+    return stitched
 
 
 def _split_stitched_sentences(text: str) -> list[str]:
@@ -248,6 +277,8 @@ def _tokenize_stitched(
     sentence_index = 0
     for text, start, line_index in stitched:
         units = _split_stitched_sentences(text) if language == "en" else [text]
+        if not units:
+            units = [text]
         for unit in units:
             words = [word for word in unit.split() if word.strip()]
             if not words:
@@ -454,6 +485,14 @@ def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
     return [by_index[idx] for idx in sorted(by_index)]
 
 
+def contract_met(desk: dict[str, Any]) -> bool:
+    """True when desk attests TARGET_VARIANTS distinct on-screen hook texts."""
+    if desk.get("mode") != "write":
+        return False
+    unique = int(desk.get("unique_texts") or 0)
+    return unique >= TARGET_VARIANTS
+
+
 def _sentence_token_groups(tokens: list[_Token], language: str) -> list[list[_Token]]:
     if language == "ar":
         by_line: dict[int, list[_Token]] = {}
@@ -572,4 +611,5 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "ear": ear,
         "unique_texts": unique_texts,
         "target_variants": TARGET_VARIANTS,
+        "contract_met": unique_texts >= TARGET_VARIANTS,
     }

@@ -82,6 +82,13 @@ def test_arabic_whisper_lines_stay_separate() -> None:
     assert len(lines) == len(fixture["lines"])
 
 
+def test_english_cite_timestamps_follow_whisper_lines() -> None:
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    starts = sorted({card["cite"]["start"] for card in result["cards"]})
+    assert starts == [0.0, 7.2, 12.6, 18.4]
+    assert not result["contract_met"]
+
+
 def test_english_whisper_slices_do_not_ship() -> None:
     transcript = {
         "language": "en",

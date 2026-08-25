@@ -194,7 +194,7 @@ def score_run(
     )
 
     if clip_scores:
-        success = shippable > 0
+        success = shippable > 0 and distinct_verified >= TARGET_VARIANTS
         if require_cover and cover_checked_count:
             success = success and cover_pass_count == cover_checked_count
     else:

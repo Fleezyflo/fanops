@@ -121,6 +121,6 @@ def test_pipeline_counts_distinct_attested_without_cover() -> None:
         for index, text in enumerate(texts)
     ]
     score = score_run(clip_payloads=payloads, stacks_landed=len(payloads), require_cover=False)
-    assert score.success
+    assert not score.success
     assert score.distinct_verified_texts == 2
-    assert "2 distinct attested hook texts" in score.message
+    assert score.shippable == 2

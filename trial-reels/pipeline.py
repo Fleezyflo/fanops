@@ -1,9 +1,9 @@
 """Trial-reels inbox pipeline — live door.
 
 Drain ``in/``, write ``desk.json`` per clip, render hook×stack variants, score cover OCR.
-Ships every honest attested claim; never aborts because unique hook count is below five.
-Pass bar: up to TARGET_VARIANTS distinct on-screen texts verified on covers when the
-transcript can support them; otherwise ship the verified subset without inventing text.
+Ships every honest attested claim across hook×stack slots (15–20 cuts).
+Success requires ``desk.json`` + cover JPGs to prove TARGET_VARIANTS distinct attested texts.
+Sparse transcripts still render; they do not pass the success gate.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from lib.desk import TARGET_VARIANTS
+from lib.desk import TARGET_VARIANTS, contract_met
 from lib.desk_swarm import validate_desk_result
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
@@ -66,15 +66,14 @@ def run_inbox(
 
     unique_hooks = len(set(all_hook_texts))
     shipped = sum(r.variants_rendered for r in results)
-    # Legacy Mac gate removed: do not return 4 when unique < 5.
-    honest_ship = any(r.desk.get("mode") == "write" and r.variants_rendered > 0 for r in results)
+    desk_valid = all(validate_desk_result(r.desk)["ok"] for r in results if r.desk.get("mode") == "write")
 
     return {
         "clips": len(results),
         "shipped": shipped,
         "unique_hook_texts": unique_hooks,
         "target_variants": TARGET_VARIANTS,
-        "honest_ship": honest_ship,
+        "desk_valid": desk_valid,
         "results": results,
     }
 
@@ -125,13 +124,15 @@ def main(argv: list[str] | None = None) -> int:
         "unique_hook_texts": summary["unique_hook_texts"],
         "distinct_verified_texts": score.distinct_verified_texts,
         "target_variants": TARGET_VARIANTS,
-        "success": score.success or summary["honest_ship"],
+        "success": score.success and summary["desk_valid"],
         "message": score.message,
         "results": [
             {
                 "clip_id": r.clip_id,
                 "desk_mode": r.desk.get("mode"),
                 "unique_texts": r.desk.get("unique_texts"),
+                "verified_distinct_texts": r.desk.get("verified_distinct_texts"),
+                "contract_met": r.desk.get("contract_met"),
                 "variants_rendered": r.variants_rendered,
                 "success": r.success,
                 "message": r.message,
@@ -155,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(payload["message"])
 
-    if summary["honest_ship"] or score.success:
+    if score.success and summary["desk_valid"]:
         return EXIT_OK
     return EXIT_BLOCKED
 

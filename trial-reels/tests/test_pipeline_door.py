@@ -30,15 +30,13 @@ def test_english_four_claims_expand_to_twenty_without_fifth_duplicate() -> None:
     assert len(expand_variant_slots(desk["cards"])) == TARGET_VARIANTS
 
 
-def test_arabic_two_claims_do_not_abort_low_unique_count() -> None:
+def test_arabic_two_claims_render_but_do_not_pass_contract() -> None:
     desk = write(_load_fixture("clip_5a92132dc6de.json"))
     filled = _desk_hook_texts(desk)
 
     assert len(filled) == 2
     assert len(set(filled)) == 2
-    # Legacy Mac gate: if len(filled) < 5 or len(set(filled)) < 5: return 4
-    assert len(filled) < 5
-    assert len(set(filled)) < 5
+    assert not desk.get("contract_met")
     assert EXIT_OK == 0
 
 
@@ -91,11 +89,11 @@ def test_run_inbox_ships_sparse_arabic_without_five_unique_gate(
     assert summary["clips"] == 1
     assert summary["shipped"] == TARGET_VARIANTS
     assert summary["unique_hook_texts"] == 2
-    assert summary["honest_ship"]
+    assert summary["desk_valid"]
     assert (out_root / "clip" / "desk.json").exists()
 
 
-def test_pipeline_main_exits_ok_for_sparse_arabic(
+def test_pipeline_main_blocks_sparse_arabic_contract(
     tmp_path: Path,
     minimal_clip_mp4: Path,
 ) -> None:
@@ -118,7 +116,7 @@ def test_pipeline_main_exits_ok_for_sparse_arabic(
         ]
     )
 
-    assert code == EXIT_OK
+    assert code == EXIT_BLOCKED
 
 
 def test_pipeline_main_blocks_credit_only(tmp_path: Path, minimal_clip_mp4: Path) -> None:
