@@ -1,14 +1,14 @@
 """Desk swarm — run the constrained hook writer across clips and validate output.
 
-Rejects permutation fakes: every card must be a contiguous attested span, and five
-distinct hooks are required before a clip is marked shippable.
+Rejects permutation fakes and nested-window farms. Twenty distinct on-screen
+hooks (five policies × four stacks) are required before a clip is shippable.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, is_contiguous_attested_span, write
+from lib.desk import HOOKS, TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -32,6 +32,37 @@ def _is_permutation_fake(cards: list[dict[str, Any]]) -> bool:
     return len(set(texts)) > 1
 
 
+def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
+    """True when every card text is a nested window on the same source line."""
+    if len(cards) < 2:
+        return False
+    lines = {(card.get("cite") or {}).get("line") or "" for card in cards}
+    lines.discard("")
+    if len(lines) != 1:
+        return False
+    line = next(iter(lines))
+    words = line.split()
+    ranges: list[tuple[int, int]] = []
+    for card in cards:
+        text = (card.get("text") or "").strip()
+        hook_words = text.split()
+        found = False
+        for start in range(len(words) - len(hook_words) + 1):
+            if words[start : start + len(hook_words)] == hook_words:
+                ranges.append((start, start + len(hook_words)))
+                found = True
+                break
+        if not found:
+            return False
+    for i, r1 in enumerate(ranges):
+        for r2 in ranges[i + 1 :]:
+            s1, e1 = r1
+            s2, e2 = r2
+            if (s1 <= s2 and e2 <= e1) or (s2 <= s1 and e1 <= e2):
+                return True
+    return False
+
+
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     """Validate a desk write payload; return structured pass/fail with reasons."""
     cards = list(result.get("cards") or [])
@@ -41,12 +72,12 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if len(cards) != len(HOOKS):
-        issues.append(f"expected {len(HOOKS)} cards, got {len(cards)}")
+    if len(cards) != TARGET_VARIANTS:
+        issues.append(f"expected {TARGET_VARIANTS} cards, got {len(cards)}")
 
-    hooks_seen = [card.get("hook") for card in cards]
-    if hooks_seen != HOOKS[: len(cards)]:
-        issues.append(f"hook order mismatch: {hooks_seen}")
+    expected_slots = [(card.get("hook"), card.get("stack")) for card in cards]
+    if expected_slots != VARIANT_SLOTS[: len(cards)]:
+        issues.append(f"variant slot mismatch: {expected_slots}")
 
     texts = [(card.get("text") or "").strip() for card in cards]
     if len(set(texts)) != len(texts):
@@ -54,10 +85,13 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
 
     for card in cards:
         if not _card_is_contiguous(card):
-            issues.append(f"{card.get('hook')}: not a contiguous attested span")
+            issues.append(f"{card.get('hook')}/{card.get('stack')}: not a contiguous attested span")
 
     if _is_permutation_fake(cards):
         issues.append("cards are anagram permutations of the same word-bag")
+
+    if _is_nested_window_farm(cards):
+        issues.append("cards are nested windows on one sung line")
 
     for card in cards:
         text = (card.get("text") or "").lower()

@@ -19,16 +19,67 @@ def test_validate_rejects_permutation_anagrams() -> None:
         "mode": "write",
         "language": "ar",
         "cards": [
-            {"hook": "result_first", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "mid_action", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "bold_claim", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "cold_proof", "text": "كفاية عزبتني لك", "cite": {"line": "لك كفاية عزبتني"}},
+            {
+                "hook": "result_first",
+                "stack": "punch_cuts",
+                "text": "عزبتني لك كفاية",
+                "cite": {"line": "لك كفاية عزبتني"},
+            },
+            {
+                "hook": "result_first",
+                "stack": "open_loop",
+                "text": "كفاية لك عزبتني",
+                "cite": {"line": "لك كفاية عزبتني"},
+            },
+            {
+                "hook": "result_first",
+                "stack": "fake_out",
+                "text": "لك كفاية عزبتني",
+                "cite": {"line": "لك كفاية عزبتني"},
+            },
+            {
+                "hook": "result_first",
+                "stack": "end_loop",
+                "text": "عزبتني كفاية لك",
+                "cite": {"line": "لك كفاية عزبتني"},
+            },
+            {
+                "hook": "mid_action",
+                "stack": "punch_cuts",
+                "text": "كفاية عزبتني لك",
+                "cite": {"line": "لك كفاية عزبتني"},
+            },
         ],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
     assert any("anagram" in issue for issue in validation["issues"])
+
+
+def test_validate_rejects_nested_window_farm() -> None:
+    cards = []
+    nested_texts = [
+        "لك كفاية عزبتني عزبتني",
+        "كفاية عزبتني عزبتني",
+        "لك كفاية عزبتني",
+        "كفاية عزبتني",
+        "عزبتني عزبتني",
+    ]
+    from lib.desk import VARIANT_SLOTS
+
+    for (hook, stack), text in zip(VARIANT_SLOTS, nested_texts * 4):
+        cards.append(
+            {
+                "hook": hook,
+                "stack": stack,
+                "text": text,
+                "cite": {"line": "لك كفاية عزبتني عزبتني"},
+            }
+        )
+    fake = {"mode": "write", "language": "ar", "cards": cards[:20]}
+    validation = validate_desk_result(fake)
+    assert not validation["ok"]
+    assert any("nested" in issue for issue in validation["issues"])
 
 
 def test_validate_rejects_non_contiguous_span() -> None:
@@ -38,6 +89,7 @@ def test_validate_rejects_non_contiguous_span() -> None:
         "cards": [
             {
                 "hook": "bold_claim",
+                "stack": "punch_cuts",
                 "text": "fails. So the next",
                 "cite": {"line": "genuine street ties actually accept."},
             },

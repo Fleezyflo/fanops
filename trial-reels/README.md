@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk must return `mode=write` with five distinct contiguous attested hooks before any files ship. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk must return `mode=write` with **twenty distinct on-screen hooks** (five policies × four stacks, each with its own attested span) before any files ship. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 

@@ -9,7 +9,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from lib.stacks import STACK_NAMES
+
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
+TARGET_VARIANTS = len(HOOKS) * len(STACK_NAMES)
+VARIANT_SLOTS: list[tuple[str, str]] = [
+    (hook, stack) for hook in HOOKS for stack in STACK_NAMES
+]
 
 _CREDIT_RE = re.compile(
     r"(ترجمة|translation|subtitle|subtitles|credits?\b|translated by)",
@@ -216,7 +222,20 @@ def _ends_sentence(word: str) -> bool:
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
-    """Merge Whisper fragments into sentence-sized chunks in source order."""
+    """Merge Whisper fragments into sentence-sized chunks in source order.
+
+    English fragments stitch until a sentence boundary. Other languages keep each
+    Whisper line separate so span enumeration cannot collapse a verse into one
+    mega-line of nested windows.
+    """
+    if language != "en":
+        stitched: list[tuple[str, float, int]] = []
+        for index, raw in enumerate(lines):
+            text = _line_text(raw)
+            if text:
+                stitched.append((text, _line_start(raw), index))
+        return stitched
+
     stitched: list[tuple[str, float, int]] = []
     buffer: list[str] = []
     buffer_start = 0.0
@@ -238,7 +257,7 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
             buffer_start = start
             buffer_line_index = index
         buffer.append(text)
-        if language == "en" and _ends_sentence(text.split()[-1] if text.split() else text):
+        if _ends_sentence(text.split()[-1] if text.split() else text):
             flush()
 
     flush()
@@ -425,8 +444,81 @@ def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
 
 
 def _substantive_lines(tokens: list[_Token], language: str) -> list[list[_Token]]:
-  lines = _tokens_by_line(tokens)
-  return [line for line in lines if _line_has_hookable_content(line, language)]
+    lines = _tokens_by_line(tokens)
+    return [line for line in lines if _line_has_hookable_content(line, language)]
+
+
+def _span_range_in_line(span: _Span, line_tokens: list[_Token]) -> tuple[int, int]:
+    start = line_tokens.index(span.tokens[0])
+    end = line_tokens.index(span.tokens[-1]) + 1
+    return start, end
+
+
+def _ranges_nested(r1: tuple[int, int], r2: tuple[int, int]) -> bool:
+    if r1 == r2:
+        return False
+    s1, e1 = r1
+    s2, e2 = r2
+    return (s1 <= s2 and e2 <= e1) or (s2 <= s1 and e1 <= e2)
+
+
+def _content_word_count(span: _Span, language: str) -> int:
+    function_words = _function_words(language)
+    return sum(1 for token in span.tokens if token.norm not in function_words)
+
+
+def _select_variant_spans(
+    spans: list[_Span],
+    tokens: list[_Token],
+    language: str,
+    *,
+    count: int = TARGET_VARIANTS,
+) -> list[_Span]:
+    """Pick *count* spans with unique text and no same-line nested windows."""
+    by_line = {line[0].line_index: line for line in _tokens_by_line(tokens) if line}
+    buckets: dict[int, list[_Span]] = {}
+    for span in spans:
+        buckets.setdefault(span.tokens[0].line_index, []).append(span)
+    for line_index, line_spans in buckets.items():
+        line_spans.sort(
+            key=lambda span: (
+                len(span.tokens),
+                -_content_word_count(span, language),
+                span.text,
+            )
+        )
+
+    selected: list[_Span] = []
+    ranges_by_line: dict[int, list[tuple[int, int]]] = {}
+    seen_texts: set[str] = set()
+    line_indices = sorted(buckets)
+
+    while len(selected) < count:
+        added = False
+        for line_index in line_indices:
+            line_tokens = by_line.get(line_index)
+            if line_tokens is None:
+                continue
+            for span in buckets[line_index]:
+                text = span.text
+                if text in seen_texts:
+                    continue
+                token_range = _span_range_in_line(span, line_tokens)
+                if any(
+                    _ranges_nested(token_range, existing)
+                    for existing in ranges_by_line.get(line_index, [])
+                ):
+                    continue
+                selected.append(span)
+                seen_texts.add(text)
+                ranges_by_line.setdefault(line_index, []).append(token_range)
+                added = True
+                break
+            if len(selected) >= count:
+                break
+        if not added:
+            break
+    return selected
 
 
 def _contiguous_spans(line_tokens: list[_Token], language: str, vocabulary: set[str]) -> list[_Span]:
@@ -552,16 +644,17 @@ def _pick_span_for_hook(
     raise ValueError(f"unknown hook: {hook}")
 
 
-def _build_card(hook: str, span: _Span) -> dict[str, Any]:
+def _build_card(hook: str, stack: str, span: _Span) -> dict[str, Any]:
     return {
         "hook": hook,
+        "stack": stack,
         "text": span.text,
         "cite": span.cite(),
     }
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write five constrained hooks from an attested transcript payload."""
+    """Write twenty constrained hooks (five policies × four stacks) from attested transcript."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
@@ -588,32 +681,25 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "ear": "",
         }
 
-    substantive = _substantive_lines(tokens, language)
+    all_spans = _all_spans(tokens, language, vocabulary)
+    selected = _select_variant_spans(all_spans, tokens, language, count=TARGET_VARIANTS)
     cards: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-
-    for hook in HOOKS:
-        span = _pick_span_for_hook(hook, substantive, language, vocabulary)
-        if span is None:
-            continue
-        key = _span_key(span)
-        if key in seen_keys:
-            continue
+    for (hook, stack), span in zip(VARIANT_SLOTS, selected):
         if not is_contiguous_attested_span(span.text, span.tokens[0].line_text):
             continue
-        seen_keys.add(key)
-        cards.append(_build_card(hook, span))
+        cards.append(_build_card(hook, stack, span))
 
-    cards = sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
     cites = [card["cite"] for card in cards]
     ear = cards[0]["text"] if cards else ""
 
-    if len(cards) < len(HOOKS):
+    if len(cards) < TARGET_VARIANTS:
         return {
             "mode": "blocked",
             "language": language,
             "source_line": source_line,
-            "reason": "unable to produce five distinct contiguous attested hooks",
+            "reason": (
+                f"unable to produce {TARGET_VARIANTS} distinct contiguous attested hooks"
+            ),
             "cites": cites,
             "cards": cards,
             "ear": ear,
@@ -623,7 +709,7 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": "five contiguous attested spans",
+        "reason": f"{TARGET_VARIANTS} distinct contiguous attested spans",
         "cites": cites,
         "cards": cards,
         "ear": ear,

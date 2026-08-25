@@ -9,23 +9,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from lib.desk import write  # noqa: E402
+from lib.desk import TARGET_VARIANTS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result  # noqa: E402
 from lib.runner import (  # noqa: E402
     build_ass_events,
     plan_variants,
     transcript_from_segments,
 )
+from tests.test_desk import AR_MULTILINE  # noqa: E402
 
-
-AR_MULTILINE = {
-    "language": "ar",
-    "lines": [
-        {"start": 1.0, "text": "لك كفاية عزبتني يا حبيبي الغالي"},
-        {"start": 5.0, "text": "قلبي مشتاق وحنيني كبير في الليل"},
-        {"start": 10.0, "text": "يا حبيبي رجعت لك من جديد"},
-    ],
-}
 
 EN_NOTEBOOK = {
     "language": "en",
@@ -38,11 +30,13 @@ EN_NOTEBOOK = {
 }
 
 
-def test_plan_variants_yields_twenty_for_multiline_arabic() -> None:
+def test_plan_variants_yields_twenty_distinct_hook_texts() -> None:
     desk = write(AR_MULTILINE)
     assert desk["mode"] == "write"
     plans = plan_variants(desk, clip_id="ar_demo", source_duration_s=30.0)
-    assert len(plans) == 20
+    assert len(plans) == TARGET_VARIANTS
+    hook_texts = [p.card["text"] for p in plans]
+    assert len(set(hook_texts)) == TARGET_VARIANTS
     hooks = {p.hook for p in plans}
     stacks = {p.stack for p in plans}
     assert len(hooks) == 5
