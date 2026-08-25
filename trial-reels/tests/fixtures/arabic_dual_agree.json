@@ -1,0 +1,43 @@
+{
+  "primary": {
+    "language": "ar",
+    "ear": "large-v3",
+    "segments": [
+      {
+        "start": 1.0,
+        "end": 2.5,
+        "text": "عزبتني",
+        "avg_logprob": -0.22,
+        "no_speech_prob": 0.03
+      }
+    ]
+  },
+  "secondary": {
+    "language": "ar",
+    "ear": "large-v3-turbo",
+    "segments": [
+      {
+        "start": 1.0,
+        "end": 2.5,
+        "text": "عزبتني",
+        "avg_logprob": -0.25,
+        "no_speech_prob": 0.02
+      }
+    ]
+  },
+  "wrong_primary": {
+    "language": "ar",
+    "ear": "large-v3",
+    "segments": [
+      {
+        "start": 1.0,
+        "end": 2.5,
+        "text": "عذبتيني",
+        "avg_logprob": -0.19,
+        "no_speech_prob": 0.02
+      }
+    ]
+  },
+  "expected_text": "عزبتني",
+  "forbidden": "عذبتيني"
+}
