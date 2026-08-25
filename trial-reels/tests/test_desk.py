@@ -33,6 +33,42 @@ EN_LIVE_SENTENCES = frozenset(
     }
 )
 
+DIRECTOR_BRIEF_EN_PROSE = (
+    "inside a padded recording booth creates a powerful illusion, one that completely "
+    "evaporates the second real-world leverage is required. Which brings us to the missing "
+    "reality layer, behind-the-scenes power. Ross defines a true boss by the rare ability "
+    "to execute moves the real streets actually accept. It's a test of genuine respect "
+    "that the modern corporate industry completely fails. So the next"
+)
+
+
+def test_director_brief_english_prose_writes_four_sentences() -> None:
+    """Factory pass: four attested sentences; incomplete tail rejected; stacks → 20 plans."""
+    result = write({"language": "en", "lines": [{"start": 0.0, "text": DIRECTOR_BRIEF_EN_PROSE}]})
+
+    assert result["mode"] == "write"
+    assert result["unique_texts"] == 4
+    assert len(result["cards"]) == len(HOOKS)
+    assert set(_card_texts(result)) == EN_LIVE_SENTENCES
+    assert "So the next" not in _card_texts(result)
+
+    validation = validate_desk_result(result)
+    assert validation["ok"], validation["issues"]
+    assert validation["unique_texts"] == 4
+
+    plans = plan_variants(result, clip_id="director_brief", source_duration_s=60.0)
+    assert len(plans) == TARGET_VARIANTS
+
+
+def test_validation_allows_repeated_on_screen_text_across_policies() -> None:
+    """Stacks multiply outputs; five policies do not require five unique strings."""
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    validation = validate_desk_result(result)
+
+    assert validation["ok"]
+    assert result["unique_texts"] == 4
+    assert len(result["cards"]) == len(HOOKS)
+
 
 def test_live_arabic_clip_ships_two_attested_lines() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
