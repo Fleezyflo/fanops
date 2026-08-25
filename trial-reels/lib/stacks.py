@@ -96,17 +96,38 @@ def _subtitles_chain(label_in: str, sub_path: str, label_out: str = "vout") -> s
     return f"[{label_in}]subtitles='{escaped}'[{label_out}]"
 
 
-def _punch_cuts_graph(duration_s: float, *, has_audio: bool, sub_path: str | None) -> str:
+def _split_video_chain(video_in: str, count: int) -> tuple[list[str], list[str]]:
+    """Return per-branch input labels and optional split filter fragments.
+
+    Intermediate labels (e.g. ``vprep``) may only be consumed once; multi-trim stacks
+    need an explicit ``split`` when *count* > 1.
+    """
+    if count <= 1:
+        return [video_in], []
+    labels = [f"vsplit{i}" for i in range(count)]
+    split_in = "".join(f"[{lbl}]" for lbl in labels)
+    return labels, [f"[{video_in}]split={count}{split_in}"]
+
+
+def _punch_cuts_graph(
+    duration_s: float,
+    *,
+    has_audio: bool,
+    sub_path: str | None,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
+) -> str:
     segs = _punch_segments(duration_s)
-    parts: list[str] = []
+    v_inputs, split_parts = _split_video_chain(video_in, len(segs))
+    parts: list[str] = list(split_parts)
     v_labels: list[str] = []
     a_labels: list[str] = []
     for i, (s, e) in enumerate(segs):
         vl, al = f"pv{i}", f"pa{i}"
-        parts.append(_video_trim_chain("0:v", s, e, vl))
+        parts.append(_video_trim_chain(v_inputs[i], s, e, vl))
         v_labels.append(vl)
         if has_audio:
-            parts.append(_audio_trim_chain("0:a", s, e, al))
+            parts.append(_audio_trim_chain(audio_in, s, e, al))
             a_labels.append(al)
     v_in = "".join(f"[{lbl}]" for lbl in v_labels)
     parts.append(f"{v_in}concat=n=3:v=1:a=0[vcat]")
@@ -123,14 +144,21 @@ def _punch_cuts_graph(duration_s: float, *, has_audio: bool, sub_path: str | Non
     return ";".join(parts)
 
 
-def _open_loop_graph(duration_s: float, *, has_audio: bool, sub_path: str | None) -> str:
+def _open_loop_graph(
+    duration_s: float,
+    *,
+    has_audio: bool,
+    sub_path: str | None,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
+) -> str:
     """Shorter unresolved cut — trim before the tail so the last lyric never resolves."""
     end = max(0.5, duration_s - OPEN_LOOP_TRIM_END_S)
     parts = [
-        _video_trim_chain("0:v", 0.0, end, "vtrim"),
+        _video_trim_chain(video_in, 0.0, end, "vtrim"),
     ]
     if has_audio:
-        parts.append(_audio_trim_chain("0:a", 0.0, end, "atrim"))
+        parts.append(_audio_trim_chain(audio_in, 0.0, end, "atrim"))
         parts.append(_loudnorm_chain("atrim"))
     if sub_path:
         parts.append(_subtitles_chain("vtrim", sub_path))
@@ -139,26 +167,37 @@ def _open_loop_graph(duration_s: float, *, has_audio: bool, sub_path: str | None
     return ";".join(parts)
 
 
-def _fake_out_graph(duration_s: float, width: int, height: int, *, has_audio: bool, sub_path: str | None) -> str:
+def _fake_out_graph(
+    duration_s: float,
+    width: int,
+    height: int,
+    *,
+    has_audio: bool,
+    sub_path: str | None,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
+) -> str:
     """Insert a 0.15 s black flash via ``color=`` (never ``geq``)."""
     flash_at = max(0.1, duration_s * 0.55)
     pre_end = flash_at
     post_start = flash_at
     post_end = duration_s
-    parts = [
-        _video_trim_chain("0:v", 0.0, pre_end, "vpre"),
+    v_inputs, split_parts = _split_video_chain(video_in, 2)
+    parts: list[str] = list(split_parts)
+    parts.extend([
+        _video_trim_chain(v_inputs[0], 0.0, pre_end, "vpre"),
         (
             f"color=c=black:s={width}x{height}:d={FAKE_OUT_FLASH_S:.3f},"
             f"fps=30,{_FMT}[vflash]"
         ),
-        _video_trim_chain("0:v", post_start, post_end, "vpost"),
+        _video_trim_chain(v_inputs[1], post_start, post_end, "vpost"),
         "[vpre][vflash][vpost]concat=n=3:v=1:a=0[vcat]",
-    ]
+    ])
     if has_audio:
         parts.extend([
-            _audio_trim_chain("0:a", 0.0, pre_end, "apre"),
-            f"anullsrc=r=48000:cl=stereo,duration={FAKE_OUT_FLASH_S:.3f}[aflash]",
-            _audio_trim_chain("0:a", post_start, post_end, "apost"),
+            _audio_trim_chain(audio_in, 0.0, pre_end, "apre"),
+            f"anullsrc=r=48000:cl=stereo:d={FAKE_OUT_FLASH_S:.3f}[aflash]",
+            _audio_trim_chain(audio_in, post_start, post_end, "apost"),
             "[apre][aflash][apost]concat=n=3:v=0:a=1[acat]",
             _loudnorm_chain("acat"),
         ])
@@ -170,18 +209,27 @@ def _fake_out_graph(duration_s: float, width: int, height: int, *, has_audio: bo
     return ";".join(parts)
 
 
-def _end_loop_graph(duration_s: float, *, has_audio: bool, sub_path: str | None) -> str:
+def _end_loop_graph(
+    duration_s: float,
+    *,
+    has_audio: bool,
+    sub_path: str | None,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
+) -> str:
     """Repeat the last 1 s after the main body."""
     loop_start = max(0.0, duration_s - END_LOOP_REPEAT_S)
-    parts = [
-        _video_trim_chain("0:v", 0.0, duration_s, "vbody"),
-        _video_trim_chain("0:v", loop_start, duration_s, "vloop"),
+    v_inputs, split_parts = _split_video_chain(video_in, 2)
+    parts: list[str] = list(split_parts)
+    parts.extend([
+        _video_trim_chain(v_inputs[0], 0.0, duration_s, "vbody"),
+        _video_trim_chain(v_inputs[1], loop_start, duration_s, "vloop"),
         "[vbody][vloop]concat=n=2:v=1:a=0[vcat]",
-    ]
+    ])
     if has_audio:
         parts.extend([
-            _audio_trim_chain("0:a", 0.0, duration_s, "abody"),
-            _audio_trim_chain("0:a", loop_start, duration_s, "aloop"),
+            _audio_trim_chain(audio_in, 0.0, duration_s, "abody"),
+            _audio_trim_chain(audio_in, loop_start, duration_s, "aloop"),
             "[abody][aloop]concat=n=2:v=0:a=1[acat]",
             _loudnorm_chain("acat"),
         ])
@@ -201,6 +249,8 @@ def build_stack_graph(
     height: int = 1920,
     has_audio: bool = True,
     sub_path: str | None = None,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
 ) -> StackGraph:
     """Build the ``filter_complex`` string and output maps for *stack*."""
     if stack not in STACK_NAMES:
@@ -215,13 +265,26 @@ def build_stack_graph(
             has_audio_chain=False,
         )
 
+    v_in, a_in = video_in, audio_in
     builders = {
-        "punch_cuts": lambda: _punch_cuts_graph(duration_s, has_audio=has_audio, sub_path=sub_path),
-        "open_loop": lambda: _open_loop_graph(duration_s, has_audio=has_audio, sub_path=sub_path),
-        "fake_out": lambda: _fake_out_graph(
-            duration_s, width, height, has_audio=has_audio, sub_path=sub_path
+        "punch_cuts": lambda: _punch_cuts_graph(
+            duration_s, has_audio=has_audio, sub_path=sub_path, video_in=v_in, audio_in=a_in
         ),
-        "end_loop": lambda: _end_loop_graph(duration_s, has_audio=has_audio, sub_path=sub_path),
+        "open_loop": lambda: _open_loop_graph(
+            duration_s, has_audio=has_audio, sub_path=sub_path, video_in=v_in, audio_in=a_in
+        ),
+        "fake_out": lambda: _fake_out_graph(
+            duration_s,
+            width,
+            height,
+            has_audio=has_audio,
+            sub_path=sub_path,
+            video_in=v_in,
+            audio_in=a_in,
+        ),
+        "end_loop": lambda: _end_loop_graph(
+            duration_s, has_audio=has_audio, sub_path=sub_path, video_in=v_in, audio_in=a_in
+        ),
     }
     fc = builders[stack]()
     maps: list[str] = ["[vout]"]
@@ -246,6 +309,10 @@ def ffmpeg_cmd(
     height: int = 1920,
     has_audio: bool = True,
     sub_path: str | None = None,
+    cite_start_s: float = 0.0,
+    video_in: str = "0:v",
+    audio_in: str = "0:a",
+    vertical_prep: str | None = None,
 ) -> list[str]:
     """Assemble a full ffmpeg argv list for *stack* (no ``-af`` when graph carries audio)."""
     graph = build_stack_graph(
@@ -255,12 +322,21 @@ def ffmpeg_cmd(
         height=height,
         has_audio=has_audio,
         sub_path=sub_path,
+        video_in=video_in,
+        audio_in=audio_in,
     )
     if not graph.gate_passes:
         raise ValueError(f"stack {stack!r} gated off for duration {duration_s:.3f}s")
 
     bin_path = resolve_ffmpeg_bin()
-    cmd = [bin_path, "-y", "-i", input_path, "-filter_complex", graph.filter_complex]
+    cmd = [bin_path, "-y"]
+    if cite_start_s > 0.0:
+        cmd.extend(["-ss", f"{cite_start_s:.6f}"])
+    cmd.extend(["-t", f"{duration_s:.6f}", "-i", input_path])
+    fc = graph.filter_complex
+    if vertical_prep:
+        fc = f"{vertical_prep};{fc}"
+    cmd.extend(["-filter_complex", fc])
     for m in graph.maps:
         cmd.extend(["-map", m])
     cmd.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
