@@ -12,7 +12,7 @@ from lib.cover_qa import ocr_langs_for_language  # noqa: E402
 from lib.desk import HOOKS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
-from tests.test_desk import AR_CLIP_5A92132DC6DE, EN_CLIP_004AE6D9098A  # noqa: E402
+from tests.test_desk import EN_LIVE_SENTENCES, _load_fixture  # noqa: E402
 
 
 def test_validate_rejects_permutation_anagrams() -> None:
@@ -66,18 +66,18 @@ def test_validate_rejects_non_contiguous_span() -> None:
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_live_arabic_clip_ships() -> None:
-    payload = write_and_validate(AR_CLIP_5A92132DC6DE)
+def test_live_arabic_fixture_ships() -> None:
+    payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
     assert payload["desk"]["mode"] == "write"
+    assert payload["desk"]["unique_texts"] == 2
     assert payload["validation"]["ok"], payload["validation"]["issues"]
 
 
-def test_live_english_clip_ships_sentence_hooks() -> None:
-    payload = write_and_validate(EN_CLIP_004AE6D9098A)
+def test_live_english_fixture_ships_four_sentences() -> None:
+    payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
     assert payload["desk"]["mode"] == "write"
+    assert set(card["text"] for card in payload["desk"]["cards"]) == EN_LIVE_SENTENCES
     assert payload["validation"]["ok"], payload["validation"]["issues"]
-    for card in payload["desk"]["cards"]:
-        assert len(card["text"].split()) >= 4
 
 
 def test_ocr_langs_routes_english_to_eng() -> None:
@@ -101,7 +101,7 @@ def test_pipeline_does_not_count_files_as_success() -> None:
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
-    desk = write(EN_CLIP_004AE6D9098A)
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
     score = score_run(
         clip_payloads=[{"clip_id": "en_v01", "desk": desk}],
         require_cover=False,

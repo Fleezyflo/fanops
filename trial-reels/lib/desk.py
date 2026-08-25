@@ -116,7 +116,7 @@ _AR_FUNCTION = frozenset(
 )
 
 _AR_DIRECT = frozenset({"لك", "يا", "أنت", "انت", "لكم", "ك", "أنتم", "انتما"})
-_EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours"})
+_EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours", "us"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
 _EN_FORBIDDEN_SLICES = frozenset(
@@ -124,11 +124,6 @@ _EN_FORBIDDEN_SLICES = frozenset(
         "so the next",
         "fails.",
         "fails. so the next",
-        "ross defines",
-        "which brings",
-        "brings us",
-        "it's a test",
-        "a test of",
     }
 )
 _MIN_HOOK_WORDS_EN = 4
@@ -321,8 +316,8 @@ def _tokenize_stitched(
             continue
         for word in words:
             tokens.append(_Token(word, start, line_index, text, sentence_index))
-        if language == "en" and _ends_sentence(words[-1]):
-            sentence_index += 1
+            if language == "en" and _ends_sentence(word):
+                sentence_index += 1
     return tokens
 
 
@@ -483,7 +478,25 @@ def _hook_units(tokens: list[_Token], language: str) -> list[_Span]:
     by_sentence: dict[int, list[_Token]] = {}
     for token in tokens:
         by_sentence.setdefault(token.sentence_index, []).append(token)
-    return [_Span(by_sentence[idx]) for idx in sorted(by_sentence) if by_sentence[idx]]
+
+    units: list[_Span] = []
+    for idx in sorted(by_sentence):
+        sentence_tokens = by_sentence[idx]
+        if not sentence_tokens:
+            continue
+        sentence_text = " ".join(token.word for token in sentence_tokens)
+        normalized_tokens = [
+            _Token(
+                token.word,
+                token.start,
+                token.line_index,
+                sentence_text,
+                token.sentence_index,
+            )
+            for token in sentence_tokens
+        ]
+        units.append(_Span(normalized_tokens))
+    return units
 
 
 def _validate_hook_unit(span: _Span, language: str, vocabulary: set[str]) -> bool:

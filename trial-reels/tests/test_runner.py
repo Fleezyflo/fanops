@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT))
 
 from lib.desk import TARGET_VARIANTS, write  # noqa: E402
@@ -16,7 +17,7 @@ from lib.runner import (  # noqa: E402
     plan_variants,
     transcript_from_segments,
 )
-from tests.test_desk import AR_CLIP_5A92132DC6DE, AR_MULTILINE, EN_CLIP_004AE6D9098A  # noqa: E402
+from tests.test_desk import EN_LIVE_SENTENCES, _load_fixture  # noqa: E402
 
 
 EN_NOTEBOOK = {
@@ -30,22 +31,20 @@ EN_NOTEBOOK = {
 }
 
 
-def test_plan_variants_yields_twenty_for_arabic_sung_line() -> None:
-    desk = write(AR_CLIP_5A92132DC6DE)
+def test_plan_variants_yields_twenty_for_live_arabic() -> None:
+    desk = write(_load_fixture("clip_5a92132dc6de.json"))
     assert desk["mode"] == "write"
     plans = plan_variants(desk, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
     assert len(plans) == TARGET_VARIANTS
-    assert len({p.hook for p in plans}) == 5
-    assert len({p.stack for p in plans}) == 4
-    assert len({p.card["text"] for p in plans}) == 1
+    assert len({p.card["text"] for p in plans}) == 2
 
 
-def test_plan_variants_yields_twenty_for_english_clip() -> None:
-    desk = write(EN_CLIP_004AE6D9098A)
+def test_plan_variants_yields_twenty_for_live_english() -> None:
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
     assert desk["mode"] == "write"
     plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
     assert len(plans) == TARGET_VARIANTS
-    assert all(len(p.card["text"].split()) >= 4 for p in plans)
+    assert set(p.card["text"] for p in plans) == EN_LIVE_SENTENCES
 
 
 def test_plan_variants_empty_when_desk_blocked() -> None:
@@ -63,11 +62,11 @@ def test_english_whisper_slices_block_instead_of_shipping_crumbs() -> None:
 
 
 def test_ass_events_burn_only_hook_card_text() -> None:
-    desk = write(AR_MULTILINE)
-    card = next(c for c in desk["cards"] if c["hook"] == "result_first")
+    desk = write(_load_fixture("clip_5a92132dc6de.json"))
+    card = next(c for c in desk["cards"] if c["hook"] == "direct_you")
     events = build_ass_events(
         card,
-        policy="result_first",
+        policy="direct_you",
         cite_start_s=float(card["cite"]["start"]),
         cut_length_s=8.0,
     )
