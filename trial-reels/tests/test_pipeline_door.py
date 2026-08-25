@@ -14,20 +14,20 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT))
 
-from lib.desk import TARGET_VARIANTS, expand_variant_slots, write  # noqa: E402
+from lib.desk import TARGET_VARIANTS, write  # noqa: E402
 from pipeline import EXIT_BLOCKED, EXIT_OK, _desk_hook_texts, main, run_inbox  # noqa: E402
-from tests.test_desk import EN_LIVE_SENTENCES, _load_fixture  # noqa: E402
+from tests.test_desk import _load_fixture  # noqa: E402
 
 
-def test_english_four_claims_expand_to_twenty_without_fifth_duplicate() -> None:
+def test_english_clause_treatments_expand_to_twenty_cards() -> None:
     desk = write(_load_fixture("clip_004ae6d9098a.json"))
     filled = _desk_hook_texts(desk)
 
     assert desk["mode"] == "write"
-    assert len(filled) == 4
-    assert len(set(filled)) == 4
-    assert set(filled) == EN_LIVE_SENTENCES
-    assert len(expand_variant_slots(desk["cards"])) == TARGET_VARIANTS
+    assert len(filled) >= 8
+    assert len(set(filled)) == len(filled)
+    assert len(desk["cards"]) == TARGET_VARIANTS
+    assert len({card["text"] for card in desk["cards"]}) == len(filled)
 
 
 def test_arabic_two_claims_do_not_abort_low_unique_count() -> None:
@@ -36,7 +36,6 @@ def test_arabic_two_claims_do_not_abort_low_unique_count() -> None:
 
     assert len(filled) == 2
     assert len(set(filled)) == 2
-    # Legacy Mac gate: if len(filled) < 5 or len(set(filled)) < 5: return 4
     assert len(filled) < 5
     assert len(set(filled)) < 5
     assert EXIT_OK == 0

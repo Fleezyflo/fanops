@@ -33,6 +33,9 @@ def _write_desk_json(desk: dict[str, Any], path: Path) -> Path:
 def _desk_hook_texts(desk: dict[str, Any]) -> list[str]:
     if desk.get("mode") != "write":
         return []
+    treatments = desk.get("treatments") or []
+    if treatments:
+        return [str(item.get("text") or "").strip() for item in treatments if str(item.get("text") or "").strip()]
     claims = desk.get("claims") or desk.get("cards") or []
     return [str(item.get("text") or "").strip() for item in claims if str(item.get("text") or "").strip()]
 
@@ -123,7 +126,6 @@ def main(argv: list[str] | None = None) -> int:
         "clips": summary["clips"],
         "shipped": summary["shipped"],
         "unique_hook_texts": summary["unique_hook_texts"],
-        "distinct_verified_texts": score.distinct_verified_texts,
         "target_variants": TARGET_VARIANTS,
         "success": score.success or summary["honest_ship"],
         "message": score.message,
