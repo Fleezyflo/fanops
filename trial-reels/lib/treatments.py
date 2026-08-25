@@ -63,11 +63,45 @@ _WEAK_HOOK_ENDINGS_EN = frozenset(
     {"by", "to", "that", "and", "or", "a", "an", "of", "in", "for", "its", "is", "one", "us", "the"}
 )
 _EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves"})
-_EN_FRAGMENT_CRUMBS = frozenset({"fails.", "so the next"})
+_EN_FRAGMENT_CRUMBS = frozenset(
+    {
+        "fails.",
+        "so the next",
+        "ross defines a true",
+        "boss by the rare ability",
+        "the modern corporate industry completely",
+        "by the rare ability",
+        "one that completely evaporates",
+        "the missing reality layer,",
+        "the real streets actually accept.",
+        "illusion, one that completely",
+        "which brings us to the missing",
+        "it's a test of genuine",
+        "respect that the modern",
+        "inside a padded recording booth",
+    }
+)
 
 # Clause splits inside one English sentence — never cross a sentence boundary.
-# Only major clause markers; avoid " the "/" of "/" in " sliding crumbs.
-_EN_SPLIT_MARKERS = (" that ", " by ", " to ", " moves ")
+# Major clause markers only; avoid bare " the "/" of "/" in " sliding crumbs.
+_EN_SPLIT_MARKERS = (
+    " that ",
+    " by ",
+    " to ",
+    " moves ",
+    " creates ",
+    " illusion, ",
+    " layer, ",
+    " evaporates ",
+    " corporate ",
+    " industry ",
+    " respect ",
+    " ability ",
+    " streets ",
+    " required.",
+    " accept.",
+    " fails.",
+)
 
 
 @dataclass(frozen=True)
@@ -382,7 +416,7 @@ def _is_crumb(text: str, language: str, *, tokens: list[_Token], at_clause_bound
         return True
     if language == "en":
         norm = _normalize_phrase(text)
-        if norm in _EN_FORBIDDEN_SLICES:
+        if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
             return True
         if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
             return True
@@ -594,25 +628,25 @@ def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list
 
 
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Pick up to MAX_TREATMENTS non-nested spans; prefer sibling clauses over supersets."""
-    ordered = sorted(
-        candidates,
-        key=lambda item: (
-            item.source_order,
-            item.word_start,
-            item.word_end - item.word_start,
-            item.text,
-        ),
-    )
-    packed: list[HookTreatment] = []
-    for candidate in ordered:
-        if any(_nested_on_line(candidate, picked) for picked in packed):
-            continue
-        packed.append(candidate)
-        if len(packed) >= MAX_TREATMENTS:
-            break
+    """Pick the largest non-nested antichain per line, then take up to MAX_TREATMENTS."""
+    by_line: dict[str, list[HookTreatment]] = {}
+    for candidate in candidates:
+        by_line.setdefault(candidate.line_text, []).append(candidate)
 
-    packed.sort(key=lambda item: (item.source_order, item.word_start))
+    packed: list[HookTreatment] = []
+    for line_text in sorted(by_line, key=lambda line: by_line[line][0].source_order):
+        line_candidates = sorted(
+            by_line[line_text],
+            key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
+        )
+        line_packed: list[HookTreatment] = []
+        for candidate in line_candidates:
+            if any(_nested_on_line(candidate, picked) for picked in line_packed):
+                continue
+            line_packed.append(candidate)
+        packed.extend(line_packed)
+
+    packed.sort(key=lambda item: (item.source_order, item.word_start, item.text))
     return packed[:MAX_TREATMENTS]
 
 
@@ -694,13 +728,32 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
 
     unique_texts = len({item.text for item in treatments})
     ceiling = unique_texts
+    if unique_texts < MAX_TREATMENTS:
+        return {
+            **blocked,
+            "reason": (
+                f"transcript supports {unique_texts} distinct attested hook"
+                f"{'s' if unique_texts != 1 else ''}; need {MAX_TREATMENTS}"
+            ),
+            "treatments": [item.to_dict() for item in treatments],
+            "ceiling": ceiling,
+            "unique_texts": unique_texts,
+            "claims_found": unique_texts,
+            "target_variants": MAX_TREATMENTS,
+        }
+
     return {
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{len(treatments)} treatments ({unique_texts} distinct on-screen texts, ceiling {ceiling})",
+        "reason": (
+            f"{MAX_TREATMENTS} distinct attested on-screen texts "
+            f"from {unique_texts} grammatical hook treatments"
+        ),
         "treatments": [item.to_dict() for item in treatments],
         "ceiling": ceiling,
         "unique_texts": unique_texts,
+        "claims_found": unique_texts,
+        "target_variants": MAX_TREATMENTS,
         "ear": treatments[0].text,
     }

@@ -1,9 +1,8 @@
 """Trial-reels inbox pipeline — live door.
 
 Drain ``in/``, write ``desk.json`` per clip, render hook×stack variants, score cover OCR.
-Ships every honest attested claim; never aborts because unique hook count is below five.
-Pass bar: up to TARGET_VARIANTS distinct on-screen texts verified on covers when the
-transcript can support them; otherwise ship the verified subset without inventing text.
+Desk must ship exactly TARGET_VARIANTS distinct attested on-screen texts or fail closed.
+File count and stack cycling are not success.
 """
 
 from __future__ import annotations
@@ -32,7 +31,12 @@ def _write_desk_json(desk: dict[str, Any], path: Path) -> Path:
 
 def _desk_hook_texts(desk: dict[str, Any]) -> list[str]:
     if desk.get("mode") != "write":
-        return []
+        treatments = desk.get("treatments") or []
+        return [
+            str(item.get("text") or "").strip()
+            for item in treatments
+            if str(item.get("text") or "").strip()
+        ]
     treatments = desk.get("treatments") or []
     if treatments:
         return [str(item.get("text") or "").strip() for item in treatments if str(item.get("text") or "").strip()]
@@ -48,7 +52,7 @@ def run_inbox(
     dry_run: bool = False,
     require_cover: bool = False,
 ) -> dict[str, Any]:
-    """Process every clip in *in_dir*; never abort on low unique-hook count."""
+    """Process every clip in *in_dir*; fail closed when desk cannot ship 20 hooks."""
     sources = collect_sources(argparse.Namespace(in_dir=str(in_dir)))
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -69,15 +73,14 @@ def run_inbox(
 
     unique_hooks = len(set(all_hook_texts))
     shipped = sum(r.variants_rendered for r in results)
-    # Legacy Mac gate removed: do not return 4 when unique < 5.
-    honest_ship = any(r.desk.get("mode") == "write" and r.variants_rendered > 0 for r in results)
+    desk_ok = all(r.desk.get("mode") == "write" and r.validation.get("ok") for r in results)
 
     return {
         "clips": len(results),
         "shipped": shipped,
         "unique_hook_texts": unique_hooks,
         "target_variants": TARGET_VARIANTS,
-        "honest_ship": honest_ship,
+        "desk_ok": desk_ok,
         "results": results,
     }
 
@@ -126,8 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         "clips": summary["clips"],
         "shipped": summary["shipped"],
         "unique_hook_texts": summary["unique_hook_texts"],
+        "distinct_verified_texts": score.distinct_verified_texts,
         "target_variants": TARGET_VARIANTS,
-        "success": score.success or summary["honest_ship"],
+        "success": score.success and summary["desk_ok"],
         "message": score.message,
         "results": [
             {
@@ -157,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(payload["message"])
 
-    if summary["honest_ship"] or score.success:
+    if summary["desk_ok"] and score.success:
         return EXIT_OK
     return EXIT_BLOCKED
 

@@ -22,50 +22,71 @@ def _load_fixture(name: str) -> dict:
 
 
 def _treatment_texts(result: dict) -> list[str]:
-    return [item["text"] for item in result["treatments"]]
+    return [item["text"] for item in result.get("treatments", [])]
 
 
 def _card_texts(result: dict) -> list[str]:
-    return [card["text"] for card in result["cards"]]
+    return [card["text"] for card in result.get("cards", [])]
 
 
-def test_live_arabic_clip_honest_ceiling_is_two() -> None:
+def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
+    result = write(_load_fixture("clip_twenty_hooks.json"))
+
+    assert result["mode"] == "write"
+    assert result["unique_texts"] == TARGET_VARIANTS
+    assert len(result["treatments"]) == TARGET_VARIANTS
+    assert len(result["cards"]) == TARGET_VARIANTS
+    assert len(set(_card_texts(result))) == TARGET_VARIANTS
+    validation = validate_desk_result(result)
+    assert validation["ok"], validation["issues"]
+    plans = plan_variants(result, clip_id="clip_twenty_hooks", source_duration_s=120.0)
+    assert len(plans) == TARGET_VARIANTS
+    assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
+
+
+def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
-    assert result["mode"] == "write"
-    assert result["ceiling"] == 2
-    assert len(result["treatments"]) == 2
-    assert set(_treatment_texts(result)) == {"لك كفاية عزبتني", "عزبتني"}
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 2
+    assert result["target_variants"] == TARGET_VARIANTS
+    assert "need 20" in result["reason"]
+    assert result["cards"] == []
     validation = validate_desk_result(result)
-    assert validation["ok"], validation["issues"]
+    assert not validation["ok"]
     plans = plan_variants(result, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
-    assert len(plans) == TARGET_VARIANTS
-    assert len({p.card["text"] for p in plans}) == 2
+    assert plans == []
 
 
-def test_live_english_clip_ships_many_clause_treatments_not_four_sentences() -> None:
+def test_arabic_merged_line_does_not_ship_nested_windows() -> None:
+    result = write(
+        {
+            "language": "ar",
+            "lines": [{"start": 12.4, "text": "لك كفاية عزبتني عزبتني"}],
+        }
+    )
+
+    assert result["mode"] == "blocked"
+    treatments = _treatment_texts(result)
+    assert treatments == ["لك كفاية عزبتني عزبتني"]
+    assert "عذبتيني" not in " ".join(treatments)
+
+
+def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
-    assert result["mode"] == "write"
-    treatments = _treatment_texts(result)
-    assert len(treatments) >= 8
-    assert len(treatments) <= MAX_TREATMENTS
-    assert len(set(treatments)) == len(treatments)
-    assert len(set(treatments)) > 4
-    assert "So the next" not in treatments
-    assert all("framework for sustainable leadership" not in t for t in treatments)
-    for item in result["treatments"]:
-        assert item["kind"] in TREATMENT_KINDS
-        assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] >= 8
+    assert result["claims_found"] < TARGET_VARIANTS
+    assert result["cards"] == []
+    assert "So the next" not in _treatment_texts(result)
     validation = validate_desk_result(result)
-    assert validation["ok"], validation["issues"]
+    assert not validation["ok"]
     plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
-    assert len(plans) == TARGET_VARIANTS
-    assert len({p.card["text"] for p in plans}) == len(treatments)
+    assert plans == []
 
 
 def test_english_rejects_pr1073_mid_sentence_crumbs() -> None:
-    """PR 1073 sliding-window crumbs must not ship."""
     result = write(_load_fixture("clip_004ae6d9098a.json"))
     treatments = _treatment_texts(result)
     forbidden = {
@@ -85,17 +106,20 @@ def test_english_one_line_blob_still_yields_clause_treatments() -> None:
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
-    assert result["mode"] == "write"
-    assert len(result["treatments"]) >= 7
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] >= 8
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:
     from lib.desk import _collect_tokens, _tokens_by_line
+    from lib.treatments import enumerate_treatments
 
     fixture = _load_fixture("clip_5a92132dc6de.json")
     tokens, _ = _collect_tokens(fixture)
     lines = _tokens_by_line(tokens)
     assert len(lines) == len(fixture["lines"])
+    units = enumerate_treatments(fixture)["treatments"]
+    assert {item["text"] for item in units} == {"لك كفاية عزبتني", "عزبتني"}
 
 
 def test_english_whisper_slices_do_not_ship() -> None:
@@ -133,5 +157,11 @@ def test_credit_only_arabic_transcript_blocks() -> None:
 
 def test_variant_slots_cover_hook_stack_grid() -> None:
     assert TARGET_VARIANTS == len(HOOKS) * len(STACK_NAMES)
-    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    result = write(_load_fixture("clip_twenty_hooks.json"))
     assert len(result["cards"]) == TARGET_VARIANTS
+
+
+def test_is_contiguous_attested_span_matches_subsequence() -> None:
+    line = "Ross defines a true boss by the rare ability."
+    assert is_contiguous_attested_span("true boss by", line)
+    assert not is_contiguous_attested_span("boss Ross", line)

@@ -1,9 +1,7 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
 Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
-words). Rich clips ship as many distinct on-screen texts as the transcript
-honestly supports (up to 20); thin clips ship the honest ceiling and stacks
-multiply cuts.
+words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
 """
 
 from __future__ import annotations
@@ -45,12 +43,11 @@ def _collect_tokens(transcript: dict[str, Any]):
 
 
 def _build_variant_cards(treatments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Assign treatments to hook×stack slots — cycle when ceiling < TARGET_VARIANTS."""
-    if not treatments:
+    """Assign the first TARGET_VARIANTS treatments 1:1 onto hook×stack slots."""
+    if len(treatments) < TARGET_VARIANTS:
         return []
     cards: list[dict[str, Any]] = []
-    for index, (hook, stack) in enumerate(VARIANT_SLOTS):
-        treatment = treatments[index % len(treatments)]
+    for index, ((hook, stack), treatment) in enumerate(zip(VARIANT_SLOTS, treatments, strict=True)):
         cards.append(
             {
                 "hook": hook,
@@ -58,7 +55,7 @@ def _build_variant_cards(treatments: list[dict[str, Any]]) -> list[dict[str, Any
                 "kind": treatment["kind"],
                 "text": treatment["text"],
                 "cite": treatment["cite"],
-                "treatment_index": index % len(treatments),
+                "treatment_index": index,
             }
         )
     return cards
@@ -80,7 +77,7 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "max_treatments": MAX_TREATMENTS,
     }
     if payload.get("mode") == "write" and treatments:
-        unique = len({item["text"] for item in treatments})
+        unique = len({item["text"] for item in treatments[:TARGET_VARIANTS]})
         result["unique_texts"] = unique
         result["ceiling"] = unique
     return result

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import TARGET_VARIANTS, _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, is_contiguous_attested_span, write
+from lib.desk import TARGET_VARIANTS, VARIANT_SLOTS, _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, is_contiguous_attested_span, write
 from lib.treatments import MAX_TREATMENTS, TREATMENT_KINDS
 
 
@@ -100,11 +100,17 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if not treatments:
-        issues.append("no hook treatments")
+    if len(treatments) < TARGET_VARIANTS:
+        issues.append(f"expected at least {TARGET_VARIANTS} treatments, got {len(treatments)}")
 
     if len(treatments) > MAX_TREATMENTS:
         issues.append(f"expected at most {MAX_TREATMENTS} treatments, got {len(treatments)}")
+
+    unique_treatments = len({(item.get("text") or "").strip() for item in treatments})
+    if unique_treatments != TARGET_VARIANTS:
+        issues.append(
+            f"expected {TARGET_VARIANTS} distinct on-screen texts, got {unique_treatments}"
+        )
 
     for item in treatments:
         kind = item.get("kind")
@@ -128,8 +134,25 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if len(cards) != TARGET_VARIANTS:
         issues.append(f"expected {TARGET_VARIANTS} variant cards, got {len(cards)}")
 
-    unique_treatments = len({(item.get("text") or "").strip() for item in treatments})
-    unique_cards = len({(card.get("text") or "").strip() for card in cards})
+    card_texts = [(card.get("text") or "").strip() for card in cards]
+    unique_cards = len({text for text in card_texts if text})
+    if unique_cards != TARGET_VARIANTS:
+        issues.append(
+            f"expected {TARGET_VARIANTS} distinct card texts, got {unique_cards}"
+        )
+
+    if len(set(card_texts)) != len(card_texts):
+        issues.append("duplicate card texts")
+
+    expected_hooks = [hook for hook, _stack in VARIANT_SLOTS]
+    hooks_seen = [card.get("hook") for card in cards]
+    if hooks_seen != expected_hooks:
+        issues.append(f"hook order mismatch: {hooks_seen}")
+
+    expected_stacks = [stack for _hook, stack in VARIANT_SLOTS]
+    stacks_seen = [card.get("stack") for card in cards]
+    if stacks_seen != expected_stacks:
+        issues.append(f"stack order mismatch: {stacks_seen}")
 
     ok = not issues
     return {

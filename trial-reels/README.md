@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). Rich clips ship as many distinct on-screen texts as the transcript honestly supports (up to 20); thin clips ship the honest ceiling (e.g. two Arabic lines → two texts) and stacks multiply cuts. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
 
 ## Why this exists
 

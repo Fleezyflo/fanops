@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.cover_qa import ocr_langs_for_language  # noqa: E402
-from lib.desk import write  # noqa: E402
+from lib.desk import TARGET_VARIANTS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
 from tests.test_desk import _load_fixture  # noqa: E402
@@ -77,17 +77,24 @@ def test_validate_rejects_non_contiguous_span() -> None:
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_live_arabic_fixture_ships() -> None:
+def test_live_arabic_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
-    assert payload["desk"]["mode"] == "write"
-    assert payload["desk"]["ceiling"] == 2
-    assert payload["validation"]["ok"], payload["validation"]["issues"]
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] == 2
+    assert not payload["validation"]["ok"]
 
 
-def test_live_english_fixture_ships_many_treatments() -> None:
+def test_live_english_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] >= 8
+    assert not payload["validation"]["ok"]
+
+
+def test_twenty_hook_fixture_passes_validation() -> None:
+    payload = write_and_validate(_load_fixture("clip_twenty_hooks.json"))
     assert payload["desk"]["mode"] == "write"
-    assert payload["desk"]["unique_texts"] > 4
+    assert payload["desk"]["unique_texts"] == TARGET_VARIANTS
     assert payload["validation"]["ok"], payload["validation"]["issues"]
 
 
@@ -112,7 +119,7 @@ def test_pipeline_does_not_count_files_as_success() -> None:
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     score = score_run(
         clip_payloads=[{"clip_id": "en_v01", "desk": desk}],
         require_cover=False,
