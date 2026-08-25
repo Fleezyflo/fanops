@@ -54,7 +54,7 @@ def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 2
+    assert result["claims_found"] == 1
     assert result["target_variants"] == TARGET_VARIANTS
     assert "need 20 distinct on-screen texts" in result["reason"]
     assert result["cards"] == []
@@ -96,6 +96,52 @@ def test_arabic_whisper_lines_stay_separate() -> None:
     units = _hook_units(tokens, language)
     assert len(lines) == len(fixture["lines"])
     assert {unit.text for unit in units} == {"لك كفاية عزبتني", "عزبتني"}
+
+
+def test_arabic_nested_whisper_farm_counts_one_distinct_hook() -> None:
+    transcript = {
+        "language": "ar",
+        "lines": [
+            {"start": 12.0, "text": "لك كفاية"},
+            {"start": 13.0, "text": "كفاية عزبتني"},
+            {"start": 14.0, "text": "لك كفاية عزبتني"},
+            {"start": 15.0, "text": "عزبتني عزبتني"},
+            {"start": 16.0, "text": "لك كفاية عزبتني عزبتني"},
+        ],
+    }
+
+    result = write(transcript)
+
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 1
+    assert "need 20 distinct on-screen texts" in result["reason"]
+
+
+def test_validate_rejects_nested_substring_hooks() -> None:
+    fake = {
+        "mode": "write",
+        "language": "ar",
+        "cards": [
+            {
+                "hook": HOOKS[i % len(HOOKS)],
+                "stack": STACK_NAMES[i % len(STACK_NAMES)],
+                "text": text,
+                "cite": {"line": "لك كفاية عزبتني عزبتني"},
+            }
+            for i, text in enumerate(
+                [
+                    "لك كفاية عزبتني عزبتني",
+                    "كفاية عزبتني عزبتني",
+                    "لك كفاية عزبتني",
+                    "كفاية عزبتني",
+                    "عزبتني عزبتني",
+                ]
+            )
+        ],
+    }
+    validation = validate_desk_result(fake)
+    assert not validation["ok"]
+    assert any("nested substring" in issue for issue in validation["issues"])
 
 
 def test_english_whisper_slices_do_not_ship() -> None:

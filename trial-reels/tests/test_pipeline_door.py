@@ -37,5 +37,5 @@ def test_arabic_live_fixture_blocks_below_twenty() -> None:
 
     assert desk["mode"] == "blocked"
     assert filled == []
-    assert desk["claims_found"] == 2
+    assert desk["claims_found"] == 1
     assert EXIT_BLOCKED == 1

@@ -341,7 +341,8 @@ def run_clip(
     skipped: list[str] = []
     clip_payloads: list[dict[str, Any]] = []
 
-    if desk.get("mode") != "write":
+    if desk.get("mode") != "write" or not validation.get("ok"):
+        reason = desk.get("reason") or "; ".join(validation.get("issues") or [])
         return RunResult(
             clip_id=clip_id,
             desk=desk,
@@ -349,9 +350,9 @@ def run_clip(
             variants_planned=len(plans),
             variants_rendered=0,
             outputs=[],
-            skipped=[f"desk blocked: {desk.get('reason')}"],
+            skipped=[f"desk blocked: {reason}"],
             success=False,
-            message=f"desk blocked: {desk.get('reason')}",
+            message=f"desk blocked: {reason}",
         )
 
     for plan in plans:

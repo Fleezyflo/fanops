@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
+from lib.desk import (
+    HOOKS,
+    TARGET_VARIANTS,
+    VARIANT_SLOTS,
+    is_contiguous_attested_span,
+    is_nested_hook_text,
+    write,
+)
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -42,6 +49,17 @@ def _hook_ranges_on_line(cards: list[dict[str, Any]], line: str) -> list[tuple[i
                 ranges.append((start, start + len(hook_words)))
                 break
     return ranges
+
+
+def _has_nested_substring_hooks(cards: list[dict[str, Any]]) -> bool:
+    """True when any card text is a strict contiguous sub-span of another card."""
+    texts = [(card.get("text") or "").strip() for card in cards]
+    texts = [text for text in texts if text]
+    for index, shorter in enumerate(texts):
+        for other_index, longer in enumerate(texts):
+            if index != other_index and is_nested_hook_text(shorter, longer):
+                return True
+    return False
 
 
 def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
@@ -128,6 +146,9 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
 
     if _is_nested_window_farm(cards):
         issues.append("cards are nested windows on one sung line")
+
+    if _has_nested_substring_hooks(cards):
+        issues.append("cards include nested substring hooks")
 
     for card in cards:
         if _is_forbidden_english_crumb(card, language):
