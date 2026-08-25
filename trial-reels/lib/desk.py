@@ -207,18 +207,8 @@ def _ends_sentence(word: str) -> bool:
     return bool(_SENTENCE_END_RE.search(word))
 
 
-_UTTERANCE_MIN_WORDS = 8
-
-
-def _fragment_continues(words: list[str]) -> bool:
-    if not words:
-        return False
-    last = words[-1].rstrip("\"')]}")
-    return last.endswith(",") or last.endswith(";")
-
-
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
-    """Merge English Whisper crumbs into sentences; keep Arabic lines separate."""
+    """Merge English Whisper crumbs into one flow; keep Arabic lines separate."""
     if language != "en":
         stitched: list[tuple[str, float, int]] = []
         for index, raw in enumerate(lines):
@@ -227,37 +217,22 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
                 stitched.append((text, _line_start(raw), index))
         return stitched
 
-    stitched: list[tuple[str, float, int]] = []
-    buffer: list[str] = []
-    buffer_start = 0.0
-    buffer_line_index = 0
-
-    def flush() -> None:
-        nonlocal buffer
-        if not buffer:
-            return
-        stitched.append((" ".join(buffer), buffer_start, buffer_line_index))
-        buffer = []
-
+    parts: list[str] = []
+    start = 0.0
+    line_index = 0
     for index, raw in enumerate(lines):
         text = _line_text(raw)
         if not text:
             continue
-        start = _line_start(raw)
-        if not buffer:
-            buffer_start = start
-            buffer_line_index = index
-        buffer.append(text)
-        words = text.split()
-        if not words:
-            continue
-        if _ends_sentence(words[-1]):
-            flush()
-        elif not _fragment_continues(words) and len(words) >= _UTTERANCE_MIN_WORDS:
-            flush()
+        if not parts:
+            start = _line_start(raw)
+            line_index = index
+        parts.append(text)
 
-    flush()
-    return stitched
+    if not parts:
+        return []
+
+    return [(" ".join(parts), start, line_index)]
 
 
 def _split_stitched_sentences(text: str) -> list[str]:
