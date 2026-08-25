@@ -1,8 +1,9 @@
 """Constrained hook writer for trial reels.
 
 Extracts distinct attested sentences (English) or full Whisper lines (Arabic).
-No nested windows, no permutations, no padding to five hooks. The runner expands
-honest claims across hook×stack slots (up to TARGET_VARIANTS cuts).
+No nested windows, no permutations, no stack cycling. Ships exactly
+TARGET_VARIANTS unique on-screen texts or fails closed when the transcript
+cannot honestly support that many grammatical attested hooks.
 """
 
 from __future__ import annotations
@@ -432,7 +433,8 @@ def _is_crumb_hook(span: _Span, language: str) -> bool:
     first = _normalize_word(words[0])
     lower = text.lower()
     if first in _WEAK_HOOK_STARTERS_EN and not lower.startswith("so the next chapter"):
-        return True
+        if len(words) < _MIN_HOOK_WORDS_EN or not _ends_sentence(words[-1]):
+            return True
     if len(words) < _MIN_HOOK_WORDS_EN:
         if len(words) >= 3 and _ends_sentence(words[-1]):
             return False
@@ -539,90 +541,115 @@ def _extract_claims(
     return claims
 
 
-def _assign_hooks(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _assign_variant_cards(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map the first TARGET_VARIANTS claims 1:1 onto hook×stack render slots."""
     return [
-        {"hook": HOOKS[index % len(HOOKS)], "text": claim["text"], "cite": claim["cite"]}
-        for index, claim in enumerate(claims)
+        {
+            "hook": hook,
+            "stack": stack,
+            "text": claim["text"],
+            "cite": claim["cite"],
+            "claim_index": index,
+        }
+        for index, ((hook, stack), claim) in enumerate(zip(VARIANT_SLOTS, claims, strict=True))
     ]
 
 
 def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Map attested claim cards onto hook×stack render slots (up to TARGET_VARIANTS)."""
+    """Return hook×stack cards when desk shipped TARGET_VARIANTS unique texts."""
     if not cards:
         return []
-    expanded: list[dict[str, Any]] = []
-    for index, (hook, stack) in enumerate(VARIANT_SLOTS):
-        claim = cards[index % len(cards)]
-        expanded.append(
-            {
-                "hook": hook,
-                "stack": stack,
-                "text": claim["text"],
-                "cite": claim["cite"],
-                "claim_index": index % len(cards),
-            }
-        )
-    return expanded
+    if len(cards) != TARGET_VARIANTS:
+        return []
+    if len({(card.get("text") or "").strip() for card in cards}) != TARGET_VARIANTS:
+        return []
+    return list(cards)
+
+
+def _blocked_payload(
+    *,
+    language: str,
+    source_line: str,
+    reason: str,
+    claims_found: int = 0,
+) -> dict[str, Any]:
+    return {
+        "mode": "blocked",
+        "language": language,
+        "source_line": source_line,
+        "reason": reason,
+        "claims_found": claims_found,
+        "target_variants": TARGET_VARIANTS,
+        "cites": [],
+        "cards": [],
+        "claims": [],
+        "ear": "",
+        "unique_texts": 0,
+    }
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Return distinct attested claims; fail only on empty or credit-only input."""
+    """Return TARGET_VARIANTS distinct attested hooks or fail closed."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
 
     if _is_credit_only(transcript, tokens):
-        return {
-            "mode": "blocked",
-            "language": language,
-            "source_line": source_line,
-            "reason": "credit-only transcript",
-            "cites": [],
-            "cards": [],
-            "claims": [],
-            "ear": "",
-        }
+        return _blocked_payload(
+            language=language,
+            source_line=source_line,
+            reason="credit-only transcript",
+        )
 
     if not tokens:
-        return {
-            "mode": "blocked",
-            "language": language,
-            "source_line": source_line,
-            "reason": "empty transcript",
-            "cites": [],
-            "cards": [],
-            "claims": [],
-            "ear": "",
-        }
+        return _blocked_payload(
+            language=language,
+            source_line=source_line,
+            reason="empty transcript",
+        )
 
     units = _hook_units(tokens, language)
     claims = _extract_claims(units, language, vocabulary)
-    cards = _assign_hooks(claims)
-    cites = [card["cite"] for card in cards]
-    ear = cards[0]["text"] if cards else ""
-    unique_texts = len({card["text"] for card in cards})
+    claims_found = len(claims)
 
-    if not cards:
-        return {
-            "mode": "blocked",
-            "language": language,
-            "source_line": source_line,
-            "reason": "no attested sentence or line hooks in transcript",
-            "cites": cites,
-            "cards": cards,
-            "claims": [],
-            "ear": ear,
-        }
+    if not claims:
+        return _blocked_payload(
+            language=language,
+            source_line=source_line,
+            reason="no attested sentence or line hooks in transcript",
+        )
+
+    if claims_found < TARGET_VARIANTS:
+        return _blocked_payload(
+            language=language,
+            source_line=source_line,
+            reason=(
+                f"transcript supports {claims_found} attested hook"
+                f"{'s' if claims_found != 1 else ''}; "
+                f"need {TARGET_VARIANTS} distinct on-screen texts"
+            ),
+            claims_found=claims_found,
+        )
+
+    selected = claims[:TARGET_VARIANTS]
+    cards = _assign_variant_cards(selected)
+    cites = [card["cite"] for card in cards]
+    ear = cards[0]["text"]
+    unique_texts = len({card["text"] for card in cards})
 
     return {
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{len(claims)} attested claim{'s' if len(claims) != 1 else ''}, {unique_texts} distinct on-screen texts",
+        "reason": (
+            f"{TARGET_VARIANTS} distinct attested on-screen texts "
+            f"from {claims_found} grammatical hook{'s' if claims_found != 1 else ''}"
+        ),
         "cites": cites,
         "cards": cards,
-        "claims": [{"text": claim["text"], "cite": claim["cite"]} for claim in claims],
+        "claims": [{"text": claim["text"], "cite": claim["cite"]} for claim in selected],
         "ear": ear,
         "unique_texts": unique_texts,
+        "claims_found": claims_found,
         "target_variants": TARGET_VARIANTS,
     }

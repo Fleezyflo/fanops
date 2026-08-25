@@ -1,14 +1,14 @@
 """Desk swarm — run the constrained hook writer across clips and validate output.
 
-Ship when hooks are attested sentences/lines. Stacks multiply outputs; claims may
-repeat across hook×stack slots when the transcript cannot honestly support more.
+Ship only when desk.json carries TARGET_VARIANTS actually different attested
+on-screen texts. No stack cycling, no nested windows, no invented words.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, is_contiguous_attested_span, write
+from lib.desk import HOOKS, TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -96,17 +96,28 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if not cards:
-        issues.append("no attested claim cards")
+    if len(cards) != TARGET_VARIANTS:
+        issues.append(f"expected {TARGET_VARIANTS} cards, got {len(cards)}")
 
     texts = [(card.get("text") or "").strip() for card in cards]
+    unique_texts = len({text for text in texts if text})
+    if unique_texts != TARGET_VARIANTS:
+        issues.append(
+            f"expected {TARGET_VARIANTS} distinct on-screen texts, got {unique_texts}"
+        )
+
     if len(set(texts)) != len(texts):
         issues.append("duplicate claim texts")
 
-    expected_hooks = [HOOKS[index % len(HOOKS)] for index in range(len(cards))]
+    expected_hooks = [hook for hook, _stack in VARIANT_SLOTS]
     hooks_seen = [card.get("hook") for card in cards]
     if hooks_seen != expected_hooks:
         issues.append(f"hook order mismatch: {hooks_seen}")
+
+    expected_stacks = [stack for _hook, stack in VARIANT_SLOTS]
+    stacks_seen = [card.get("stack") for card in cards]
+    if stacks_seen != expected_stacks:
+        issues.append(f"stack order mismatch: {stacks_seen}")
 
     for card in cards:
         if not _card_is_contiguous(card):
@@ -129,7 +140,7 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
         "mode": result.get("mode"),
         "card_count": len(cards),
         "claim_count": len(result.get("claims") or cards),
-        "unique_texts": len({text for text in texts if text}),
+        "unique_texts": unique_texts,
         "issues": issues,
     }
 

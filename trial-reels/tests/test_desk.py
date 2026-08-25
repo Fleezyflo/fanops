@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT))
 
-from lib.desk import HOOKS, TARGET_VARIANTS, is_contiguous_attested_span, write  # noqa: E402
+from lib.desk import HOOKS, TARGET_VARIANTS, expand_variant_slots, is_contiguous_attested_span, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result  # noqa: E402
 from lib.runner import plan_variants  # noqa: E402
 from lib.stacks import STACK_NAMES  # noqa: E402
@@ -34,52 +34,68 @@ EN_LIVE_SENTENCES = frozenset(
 )
 
 
-def test_live_arabic_clip_ships_two_attested_lines() -> None:
+def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
+    result = write(_load_fixture("clip_twenty_hooks.json"))
+
+    assert result["mode"] == "write"
+    assert result["unique_texts"] == TARGET_VARIANTS
+    assert len(result["cards"]) == TARGET_VARIANTS
+    assert len(result["claims"]) == TARGET_VARIANTS
+    assert len(set(_card_texts(result))) == TARGET_VARIANTS
+    validation = validate_desk_result(result)
+    assert validation["ok"], validation["issues"]
+    plans = plan_variants(result, clip_id="clip_twenty_hooks", source_duration_s=120.0)
+    assert len(plans) == TARGET_VARIANTS
+    assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
+    assert len(expand_variant_slots(result["cards"])) == TARGET_VARIANTS
+
+
+def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
-    assert result["mode"] == "write"
-    assert len(result["claims"]) == 2
-    assert result["unique_texts"] == 2
-    assert set(_card_texts(result)) == {"لك كفاية عزبتني", "عزبتني"}
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 2
+    assert result["target_variants"] == TARGET_VARIANTS
+    assert "need 20 distinct on-screen texts" in result["reason"]
+    assert result["cards"] == []
     validation = validate_desk_result(result)
-    assert validation["ok"], validation["issues"]
+    assert not validation["ok"]
     plans = plan_variants(result, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
-    assert len(plans) == TARGET_VARIANTS
+    assert plans == []
 
 
-def test_live_english_clip_ships_four_sentences_rejects_so_the_next() -> None:
+def test_live_english_clip_fails_closed_with_four_sentences() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
-    assert result["mode"] == "write"
-    assert len(result["claims"]) == 4
-    assert len(result["cards"]) == 4
-    assert result["unique_texts"] == 4
-    assert set(_card_texts(result)) == EN_LIVE_SENTENCES
-    assert "So the next" not in _card_texts(result)
-    assert all("framework for sustainable leadership" not in t for t in _card_texts(result))
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 4
+    assert result["cards"] == []
+    assert "need 20 distinct on-screen texts" in result["reason"]
     validation = validate_desk_result(result)
-    assert validation["ok"], validation["issues"]
+    assert not validation["ok"]
     plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
-    assert len(plans) == TARGET_VARIANTS
-    assert set(p.card["text"] for p in plans) == EN_LIVE_SENTENCES
+    assert plans == []
 
 
-def test_english_one_line_blob_still_splits_into_sentences() -> None:
+def test_english_live_transcript_still_finds_four_claims_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
-    assert result["mode"] == "write"
-    assert set(_card_texts(result)) == EN_LIVE_SENTENCES
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 4
+    assert "So the next" not in _card_texts(result)
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:
-    from lib.desk import _collect_tokens, _tokens_by_line
+    from lib.desk import _collect_tokens, _hook_units, _tokens_by_line
 
     fixture = _load_fixture("clip_5a92132dc6de.json")
-    tokens, _ = _collect_tokens(fixture)
+    tokens, language = _collect_tokens(fixture)
     lines = _tokens_by_line(tokens)
+    units = _hook_units(tokens, language)
     assert len(lines) == len(fixture["lines"])
+    assert {unit.text for unit in units} == {"لك كفاية عزبتني", "عزبتني"}
 
 
 def test_english_whisper_slices_do_not_ship() -> None:
@@ -116,3 +132,9 @@ def test_credit_only_arabic_transcript_blocks() -> None:
 
 def test_variant_slots_cover_hook_stack_grid() -> None:
     assert TARGET_VARIANTS == len(HOOKS) * len(STACK_NAMES)
+
+
+def test_is_contiguous_attested_span_matches_subsequence() -> None:
+    line = "Ross defines a true boss by the rare ability."
+    assert is_contiguous_attested_span("true boss by", line)
+    assert not is_contiguous_attested_span("boss Ross", line)

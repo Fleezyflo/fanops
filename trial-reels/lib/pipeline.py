@@ -170,8 +170,7 @@ def score_run(
     elif success:
         message = (
             f"{shippable}/{len(clip_scores)} clips shippable; "
-            f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
-            f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
+            f"only {distinct_verified}/{TARGET_VARIANTS} distinct hooks verified on covers"
         )
     elif stacks_landed and not shippable:
         message = (
