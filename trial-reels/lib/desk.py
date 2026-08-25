@@ -17,6 +17,7 @@ _CREDIT_RE = re.compile(
 )
 _TASHKEEL_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _PUNCT_RE = re.compile(r"[^\w\s\u0600-\u06FF]", re.UNICODE)
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"')\]]*$")
 
 _EN_FUNCTION = frozenset(
     {
@@ -148,14 +149,22 @@ def _direct_markers(language: str) -> frozenset[str]:
 
 
 class _Token:
-    __slots__ = ("word", "norm", "start", "line_index", "line_text")
+    __slots__ = ("word", "norm", "start", "line_index", "line_text", "sentence_index")
 
-    def __init__(self, word: str, start: float, line_index: int, line_text: str) -> None:
+    def __init__(
+        self,
+        word: str,
+        start: float,
+        line_index: int,
+        line_text: str,
+        sentence_index: int = 0,
+    ) -> None:
         self.word = word
         self.norm = _normalize_word(word)
         self.start = start
         self.line_index = line_index
         self.line_text = line_text
+        self.sentence_index = sentence_index
 
 
 class _Span:
@@ -202,27 +211,74 @@ def _line_start(raw: dict[str, Any]) -> float:
     return 0.0
 
 
-def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
-    tokens: list[_Token] = []
-    language = transcript.get("language")
-    source_parts: list[str] = []
+def _ends_sentence(word: str) -> bool:
+    return bool(_SENTENCE_END_RE.search(word))
 
-    for index, raw in enumerate(_parse_lines(transcript)):
+
+def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
+    """Merge Whisper fragments into sentence-sized chunks in source order."""
+    stitched: list[tuple[str, float, int]] = []
+    buffer: list[str] = []
+    buffer_start = 0.0
+    buffer_line_index = 0
+
+    def flush() -> None:
+        nonlocal buffer, buffer_start, buffer_line_index
+        if not buffer:
+            return
+        stitched.append((" ".join(buffer), buffer_start, buffer_line_index))
+        buffer = []
+
+    for index, raw in enumerate(lines):
         text = _line_text(raw)
         if not text:
             continue
-        source_parts.append(text)
-        if language is None:
-            language = _detect_language(text)
         start = _line_start(raw)
-        for word in text.split():
-            if word.strip():
-                tokens.append(_Token(word, start, index, text))
+        if not buffer:
+            buffer_start = start
+            buffer_line_index = index
+        buffer.append(text)
+        if language == "en" and _ends_sentence(text.split()[-1] if text.split() else text):
+            flush()
 
+    flush()
+    return stitched
+
+
+def _tokenize_stitched(
+    stitched: list[tuple[str, float, int]],
+    language: str,
+) -> list[_Token]:
+    tokens: list[_Token] = []
+    sentence_index = 0
+    for text, start, line_index in stitched:
+        words = [word for word in text.split() if word.strip()]
+        if not words:
+            continue
+        for word in words:
+            tokens.append(_Token(word, start, line_index, text, sentence_index))
+        if language == "en" and _ends_sentence(words[-1]):
+            sentence_index += 1
+    return tokens
+
+
+def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
+    raw_lines = _parse_lines(transcript)
+    language = transcript.get("language")
+    if language is None:
+        for raw in raw_lines:
+            text = _line_text(raw)
+            if text:
+                language = _detect_language(text)
+                break
     resolved_language = language or "en"
-    return tokens, resolved_language if resolved_language in {"ar", "en"} else _detect_language(
-        " ".join(source_parts) or ""
-    )
+    if resolved_language not in {"ar", "en"}:
+        joined = " ".join(_line_text(raw) for raw in raw_lines if _line_text(raw))
+        resolved_language = _detect_language(joined)
+
+    stitched = _stitch_line_texts(raw_lines, resolved_language)
+    tokens = _tokenize_stitched(stitched, resolved_language)
+    return tokens, resolved_language
 
 
 def _attested_vocabulary(tokens: list[_Token]) -> set[str]:
@@ -310,6 +366,28 @@ def _is_contiguous_in_line(span: _Span) -> bool:
     return span.text in line or span.text.replace("  ", " ") in line
 
 
+def _has_internal_sentence_break(text: str) -> bool:
+    trimmed = text.rstrip("\"')]}")
+    while trimmed and trimmed[-1] in ".!?…":
+        trimmed = trimmed[:-1].rstrip()
+    return bool(re.search(r"[.!?…]", trimmed))
+
+
+def _is_leftover_slice(span: _Span, language: str) -> bool:
+    """Reject Whisper crumbs and cross-sentence leftovers."""
+    if not span.tokens:
+        return True
+    if language == "en":
+        if _has_internal_sentence_break(span.text):
+            return True
+        if span.tokens[0].word.startswith((".", ",", ";", ":")):
+            return True
+        sentence_ids = {token.sentence_index for token in span.tokens}
+        if len(sentence_ids) > 1:
+            return True
+    return False
+
+
 def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     """Return True when *text* is a contiguous word subsequence of *line_text*."""
     hook = text.strip()
@@ -327,6 +405,8 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
 
 def _validate_span(span: _Span, language: str, vocabulary: set[str]) -> bool:
     if not _is_contiguous_in_line(span):
+        return False
+    if _is_leftover_slice(span, language):
         return False
     if _contains_forbidden_rewrite(span.text):
         return False
