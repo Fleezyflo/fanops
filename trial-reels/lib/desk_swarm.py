@@ -1,7 +1,7 @@
 """Desk swarm — run the constrained hook writer across clips and validate output.
 
-Ship when hooks are attested sentences/lines. Stacks multiply outputs; claims may
-repeat across hook×stack slots when the transcript cannot honestly support more.
+Pass requires TARGET_VARIANTS distinct attested hook texts on desk and scorecard.
+Stacks multiply render slots; cycling repeated claims across slots is not a pass.
 """
 
 from __future__ import annotations

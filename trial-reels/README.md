@@ -20,7 +20,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
   --out out/
 ```
 
-Desk returns `mode=write` with every honest attested sentence (English) or Whisper line (Arabic) — no padding to five hooks, no nested windows, no permutations. Claims repeat across hook×stack slots when the transcript cannot fill 20 distinct texts; sparse clips ship without aborting. Pass bar: **20 actually different attested on-screen hooks** when the source supports them. Fail only on empty, credit-only, or invented content. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk returns `mode=write` with every honest attested sentence (English) or Whisper line (Arabic) — no padding, no nested windows, no permutations. Claims may repeat across hook×stack slots when the transcript cannot fill 20 distinct texts; **that is not a pass**. Pass bar: **20 actually different attested on-screen hooks** verified on desk.json and scorecard. Fail closed on empty, credit-only, invented content, or fewer than 20 distinct hooks. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 

@@ -40,6 +40,8 @@ def test_live_arabic_clip_ships_two_attested_lines() -> None:
     assert result["mode"] == "write"
     assert len(result["claims"]) == 2
     assert result["unique_texts"] == 2
+    assert not result["passes_bar"]
+    assert result["verification"]["pass"] is False
     assert set(_card_texts(result)) == {"لك كفاية عزبتني", "عزبتني"}
     validation = validate_desk_result(result)
     assert validation["ok"], validation["issues"]
@@ -54,6 +56,8 @@ def test_live_english_clip_ships_four_sentences_rejects_so_the_next() -> None:
     assert len(result["claims"]) == 4
     assert len(result["cards"]) == 4
     assert result["unique_texts"] == 4
+    assert not result["passes_bar"]
+    assert result["verification"]["pass"] is False
     assert set(_card_texts(result)) == EN_LIVE_SENTENCES
     assert "So the next" not in _card_texts(result)
     assert all("framework for sustainable leadership" not in t for t in _card_texts(result))

@@ -109,7 +109,7 @@ def test_pipeline_marks_english_tess_eng() -> None:
     assert score.clip_scores[0].tess_langs == "eng"
 
 
-def test_pipeline_counts_distinct_attested_without_cover() -> None:
+def test_pipeline_counts_distinct_attested_without_cover_fails_below_twenty() -> None:
     desk = write(_load_fixture("clip_5a92132dc6de.json"))
     texts = tuple(card["text"] for card in desk["cards"])
     payloads = [
@@ -121,6 +121,7 @@ def test_pipeline_counts_distinct_attested_without_cover() -> None:
         for index, text in enumerate(texts)
     ]
     score = score_run(clip_payloads=payloads, stacks_landed=len(payloads), require_cover=False)
-    assert score.success
+    assert not score.success
+    assert not score.passes_bar
     assert score.distinct_verified_texts == 2
-    assert "2 distinct attested hook texts" in score.message
+    assert "cycling stacks is not a pass" in score.message

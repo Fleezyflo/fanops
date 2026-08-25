@@ -1,4 +1,4 @@
-"""Tests for trial-reels/pipeline.py live door — no five-unique abort."""
+"""Tests for trial-reels/pipeline.py live door — fail closed below 20 distinct hooks."""
 
 from __future__ import annotations
 
@@ -30,16 +30,16 @@ def test_english_four_claims_expand_to_twenty_without_fifth_duplicate() -> None:
     assert len(expand_variant_slots(desk["cards"])) == TARGET_VARIANTS
 
 
-def test_arabic_two_claims_do_not_abort_low_unique_count() -> None:
+def test_arabic_two_claims_fail_closed_below_twenty() -> None:
     desk = write(_load_fixture("clip_5a92132dc6de.json"))
     filled = _desk_hook_texts(desk)
 
     assert len(filled) == 2
     assert len(set(filled)) == 2
-    # Legacy Mac gate: if len(filled) < 5 or len(set(filled)) < 5: return 4
-    assert len(filled) < 5
-    assert len(set(filled)) < 5
-    assert EXIT_OK == 0
+    assert not desk["passes_bar"]
+    assert desk["verification"]["pass"] is False
+    assert desk["verification"]["actual_distinct"] == 2
+    assert desk["verification"]["required_distinct"] == TARGET_VARIANTS
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def minimal_clip_mp4(tmp_path: Path) -> Path:
     return clip
 
 
-def test_run_inbox_ships_sparse_arabic_without_five_unique_gate(
+def test_run_inbox_renders_sparse_arabic_but_does_not_pass_bar(
     tmp_path: Path,
     minimal_clip_mp4: Path,
 ) -> None:
@@ -91,11 +91,13 @@ def test_run_inbox_ships_sparse_arabic_without_five_unique_gate(
     assert summary["clips"] == 1
     assert summary["shipped"] == TARGET_VARIANTS
     assert summary["unique_hook_texts"] == 2
-    assert summary["honest_ship"]
-    assert (out_root / "clip" / "desk.json").exists()
+    assert not summary["passes_bar"]
+    desk_payload = json.loads((out_root / "clip" / "desk.json").read_text(encoding="utf-8"))
+    assert desk_payload["verification"]["pass"] is False
+    assert desk_payload["distinct_hook_texts"] == ["عزبتني", "لك كفاية عزبتني"]
 
 
-def test_pipeline_main_exits_ok_for_sparse_arabic(
+def test_pipeline_main_blocks_sparse_arabic_below_twenty(
     tmp_path: Path,
     minimal_clip_mp4: Path,
 ) -> None:
@@ -118,7 +120,42 @@ def test_pipeline_main_exits_ok_for_sparse_arabic(
         ]
     )
 
-    assert code == EXIT_OK
+    assert code == EXIT_BLOCKED
+    score = json.loads((out_root / "score.json").read_text(encoding="utf-8"))
+    assert not score["success"]
+    assert not score["passes_bar"]
+    assert score["distinct_verified_texts"] == 2
+
+
+def test_pipeline_main_blocks_english_four_sentences_cycled_to_twenty(
+    tmp_path: Path,
+    minimal_clip_mp4: Path,
+) -> None:
+    in_dir = tmp_path / "in"
+    out_root = tmp_path / "out"
+    in_dir.mkdir()
+    clip = in_dir / "clip.mp4"
+    clip.write_bytes(minimal_clip_mp4.read_bytes())
+    transcript_path = FIXTURES / "clip_004ae6d9098a.json"
+
+    code = main(
+        [
+            "--in-dir",
+            str(in_dir),
+            "--out",
+            str(out_root),
+            "--transcript",
+            str(transcript_path),
+            "--dry-run",
+        ]
+    )
+
+    assert code == EXIT_BLOCKED
+    score = json.loads((out_root / "score.json").read_text(encoding="utf-8"))
+    assert score["file_count"] == TARGET_VARIANTS
+    assert score["distinct_verified_texts"] == 4
+    assert not score["passes_bar"]
+    assert "cycling stacks is not a pass" in score["message"]
 
 
 def test_pipeline_main_blocks_credit_only(tmp_path: Path, minimal_clip_mp4: Path) -> None:

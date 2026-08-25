@@ -1,9 +1,9 @@
 """Trial-reels inbox pipeline — live door.
 
 Drain ``in/``, write ``desk.json`` per clip, render hook×stack variants, score cover OCR.
-Ships every honest attested claim; never aborts because unique hook count is below five.
-Pass bar: up to TARGET_VARIANTS distinct on-screen texts verified on covers when the
-transcript can support them; otherwise ship the verified subset without inventing text.
+Pass bar: **20 actually different attested on-screen hook texts** on desk and scorecard.
+File count, stack names, OCR hit-rate on repeated text, and cycling claims across stacks
+are not a pass. Sparse transcripts still render for inspection but exit blocked.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from lib.desk import TARGET_VARIANTS
+from lib.desk import TARGET_VARIANTS, desk_verification
 from lib.desk_swarm import validate_desk_result
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
@@ -26,7 +26,8 @@ EXIT_OK = 0
 
 def _write_desk_json(desk: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(desk, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = {**desk, "verification": desk_verification(desk)}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
@@ -45,7 +46,7 @@ def run_inbox(
     dry_run: bool = False,
     require_cover: bool = False,
 ) -> dict[str, Any]:
-    """Process every clip in *in_dir*; never abort on low unique-hook count."""
+    """Process every clip in *in_dir*; score fails closed when distinct hooks < 20."""
     sources = collect_sources(argparse.Namespace(in_dir=str(in_dir)))
     out_root.mkdir(parents=True, exist_ok=True)
 
@@ -66,15 +67,13 @@ def run_inbox(
 
     unique_hooks = len(set(all_hook_texts))
     shipped = sum(r.variants_rendered for r in results)
-    # Legacy Mac gate removed: do not return 4 when unique < 5.
-    honest_ship = any(r.desk.get("mode") == "write" and r.variants_rendered > 0 for r in results)
 
     return {
         "clips": len(results),
         "shipped": shipped,
         "unique_hook_texts": unique_hooks,
         "target_variants": TARGET_VARIANTS,
-        "honest_ship": honest_ship,
+        "passes_bar": unique_hooks >= TARGET_VARIANTS,
         "results": results,
     }
 
@@ -125,13 +124,15 @@ def main(argv: list[str] | None = None) -> int:
         "unique_hook_texts": summary["unique_hook_texts"],
         "distinct_verified_texts": score.distinct_verified_texts,
         "target_variants": TARGET_VARIANTS,
-        "success": score.success or summary["honest_ship"],
+        "passes_bar": score.passes_bar,
+        "success": score.success,
         "message": score.message,
         "results": [
             {
                 "clip_id": r.clip_id,
                 "desk_mode": r.desk.get("mode"),
                 "unique_texts": r.desk.get("unique_texts"),
+                "passes_bar": r.desk.get("passes_bar"),
                 "variants_rendered": r.variants_rendered,
                 "success": r.success,
                 "message": r.message,
@@ -155,9 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(payload["message"])
 
-    if summary["honest_ship"] or score.success:
-        return EXIT_OK
-    return EXIT_BLOCKED
+    return EXIT_OK if score.success else EXIT_BLOCKED
 
 
 if __name__ == "__main__":

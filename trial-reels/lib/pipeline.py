@@ -45,6 +45,7 @@ class PipelineScore:
     file_count: int
     distinct_verified_texts: int
     target_variants: int
+    passes_bar: bool
     success: bool
     message: str
     clip_scores: list[ClipScore] = field(default_factory=list)
@@ -60,6 +61,7 @@ class PipelineScore:
             "file_count": self.file_count,
             "distinct_verified_texts": self.distinct_verified_texts,
             "target_variants": self.target_variants,
+            "passes_bar": self.passes_bar,
             "success": self.success,
             "message": self.message,
             "clips": [
@@ -110,8 +112,10 @@ def score_clip(
         return score
 
     words = attested_words
-    if words is None and desk_result.get("mode") == "write":
-        words = tuple(card["text"] for card in desk_result.get("cards") or [])
+    if not words:
+        score.cover_ok = False
+        score.cover_message = "missing per-variant attested_words for cover QA"
+        return score
 
     cover = qa_cover(path, words, tess_langs=tess_langs)
     score.cover_ok = cover.ok
@@ -178,31 +182,28 @@ def score_run(
         )
     )
 
+    passes_bar = distinct_verified >= TARGET_VARIANTS
+
     if clip_scores:
-        success = shippable > 0
+        success = shippable > 0 and passes_bar
         if require_cover and cover_checked:
             success = success and cover_pass == cover_checked
     else:
         success = False
 
-    if success and distinct_verified >= TARGET_VARIANTS:
+    if success:
         qualifier = "verified on covers" if verified_on_cover else "attested on shipped cuts"
         message = (
             f"{shippable}/{len(clip_scores)} clips shippable; "
             f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks {qualifier}"
         )
-    elif success:
-        if verified_on_cover:
-            detail = (
-                f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
-                f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        else:
-            detail = (
-                f"{distinct_verified} distinct attested hook text{'s' if distinct_verified != 1 else ''} "
-                f"across {shippable} cuts (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        message = f"{shippable}/{len(clip_scores)} clips shippable; {detail}"
+    elif shippable > 0 and not passes_bar:
+        qualifier = "verified on covers" if verified_on_cover else "attested on shipped cuts"
+        message = (
+            f"{shippable}/{len(clip_scores)} clips shippable but only "
+            f"{distinct_verified}/{TARGET_VARIANTS} distinct hook texts {qualifier} — "
+            f"cycling stacks is not a pass"
+        )
     elif stacks_landed and not shippable:
         message = (
             f"stacks landed ({stacks_landed} files) but only {shippable}/{len(clip_scores)} "
@@ -221,6 +222,7 @@ def score_run(
         file_count=files,
         distinct_verified_texts=distinct_verified,
         target_variants=TARGET_VARIANTS,
+        passes_bar=passes_bar,
         success=success,
         message=message,
         clip_scores=clip_scores,

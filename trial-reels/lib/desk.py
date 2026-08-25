@@ -565,6 +565,50 @@ def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return expanded
 
 
+def passes_bar(desk: dict[str, Any]) -> bool:
+    """True when desk supplies TARGET_VARIANTS distinct attested hook texts."""
+    if desk.get("mode") != "write":
+        return False
+    texts = {str(item.get("text") or "").strip() for item in (desk.get("claims") or desk.get("cards") or [])}
+    texts.discard("")
+    return len(texts) >= TARGET_VARIANTS
+
+
+def desk_verification(desk: dict[str, Any]) -> dict[str, Any]:
+    """Structured pass/fail for desk.json and scorecard consumers."""
+    if desk.get("mode") != "write":
+        return {
+            "required_distinct": TARGET_VARIANTS,
+            "actual_distinct": 0,
+            "pass": False,
+            "reason": desk.get("reason") or f"desk mode is {desk.get('mode')!r}",
+        }
+    texts = sorted(
+        {
+            str(item.get("text") or "").strip()
+            for item in (desk.get("claims") or desk.get("cards") or [])
+            if str(item.get("text") or "").strip()
+        }
+    )
+    actual = len(texts)
+    ok = actual >= TARGET_VARIANTS
+    reason = (
+        f"{actual} distinct attested hook texts meet the {TARGET_VARIANTS}-hook bar"
+        if ok
+        else (
+            f"transcript supplies {actual} distinct attested hook text"
+            f"{'s' if actual != 1 else ''}; {TARGET_VARIANTS} required"
+        )
+    )
+    return {
+        "required_distinct": TARGET_VARIANTS,
+        "actual_distinct": actual,
+        "distinct_hook_texts": texts,
+        "pass": ok,
+        "reason": reason,
+    }
+
+
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
     """Return distinct attested claims; fail only on empty or credit-only input."""
     tokens, language = _collect_tokens(transcript)
@@ -614,7 +658,8 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "ear": ear,
         }
 
-    return {
+    distinct_hook_texts = sorted({card["text"] for card in cards})
+    result = {
         "mode": "write",
         "language": language,
         "source_line": source_line,
@@ -625,4 +670,8 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "ear": ear,
         "unique_texts": unique_texts,
         "target_variants": TARGET_VARIANTS,
+        "distinct_hook_texts": distinct_hook_texts,
+        "passes_bar": unique_texts >= TARGET_VARIANTS,
     }
+    result["verification"] = desk_verification(result)
+    return result
