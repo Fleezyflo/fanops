@@ -21,6 +21,7 @@ from lib.captions import (
     write_ass,
     write_ass_file,
 )
+from lib.hooks import hook_window
 
 # Frame 0 is often black or pre-roll; 0.4s lands on the burned hook for clip_5a92132dc6de-style covers.
 COVER_EXTRACT_S = 0.4
@@ -39,11 +40,31 @@ DEFAULT_ATTESTED_WORDS: tuple[str, ...] = (
 _FFMPEG_TIMEOUT = 60.0
 _TESS_TIMEOUT = 30.0
 
+_SCALE_ONLY = "scale=iw*2:ih*2:flags=lanczos"
 _ARABIC_PREPROCESS = (
-    "scale=iw*2:ih*2:flags=lanczos,format=gray,eq=contrast=2.8:brightness=0.04",
-    "scale=iw*2:ih*2:flags=lanczos,format=gray,geq=lum='if(gt(lum(X,Y),175),255,0)'",
+    f"{_SCALE_ONLY},format=gray,eq=contrast=2.8:brightness=0.04",
+    f"{_SCALE_ONLY},format=gray,geq=lum='if(gt(lum(X,Y),175),255,0)'",
 )
-_ENGLISH_PREPROCESS = ("scale=iw*2:ih*2:flags=lanczos,format=gray,eq=contrast=2.2:brightness=0.04",)
+_ENGLISH_PREPROCESS = (f"{_SCALE_ONLY},format=gray,eq=contrast=2.2:brightness=0.04",)
+
+
+def cover_extract_s_for_hook(
+    policy: str,
+    *,
+    cite_start_s: float,
+    total_duration_s: float,
+    fallback: float = COVER_EXTRACT_S,
+) -> float:
+    """Seconds into a rendered cut to sample the visible ASS hook stamp."""
+    try:
+        window = hook_window(policy, cite_start_s=cite_start_s, total_duration_s=total_duration_s)
+    except ValueError:
+        return fallback
+    rel_in = max(0.0, window.hook_in_s - window.cut_start_s)
+    rel_out = max(rel_in + 0.12, window.hook_out_s - window.cut_start_s)
+    sample = rel_in + (rel_out - rel_in) * 0.35
+    sample = max(0.15, min(rel_out - 0.08, sample))
+    return round(sample, 3)
 
 
 def ocr_langs_for_language(language: str | None) -> str:
@@ -175,6 +196,31 @@ def crop_hook_band(
     return out
 
 
+def scale_hook_band(image_path: str | Path, output_path: str | Path) -> Path:
+    """Upscale hook band for tesseract without contrast/threshold destruction."""
+    src = Path(image_path)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(src),
+        "-vf",
+        _SCALE_ONLY,
+        "-frames:v",
+        "1",
+        str(out),
+    ]
+    r = _run(cmd)
+    if r.returncode != 0 or not out.exists():
+        raise RuntimeError(f"ffmpeg hook-band scale failed: {(r.stderr or r.stdout or '').strip()}")
+    return out
+
+
 def preprocess_for_ocr(
     image_path: str | Path,
     output_path: str | Path,
@@ -182,7 +228,7 @@ def preprocess_for_ocr(
     language: str | None = None,
     variant: int = 0,
 ) -> Path:
-    """Contrast / white-stroke preprocessing for hook-band OCR (ffmpeg filters only)."""
+    """Contrast / white-stroke preprocessing for busy hook-band OCR (ffmpeg filters only)."""
     src = Path(image_path)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -235,31 +281,53 @@ def ocr_hook_band(
     language: str | None,
     langs: str,
     workdir: str | Path,
+    attested_words: tuple[str, ...] | list[str] | None = None,
+    min_hits: int = 1,
 ) -> str:
-    """Run language-aware OCR passes on the hook band and merge text."""
+    """Run language-aware OCR passes; pick the read that best matches attested card text."""
     band = Path(band_path)
     tmp = Path(workdir)
     tmp.mkdir(parents=True, exist_ok=True)
+    attested = tuple(attested_words or ())
     lang = (language or "").lower()
     if lang.startswith("en"):
-        filters = _ENGLISH_PREPROCESS
-        psms = (7,)
+        filter_count = len(_ENGLISH_PREPROCESS)
+        psms = (7, 6)
     else:
-        filters = _ARABIC_PREPROCESS
-        psms = (11, 7)
+        filter_count = len(_ARABIC_PREPROCESS)
+        psms = (7, 11, 6)
 
-    chunks: list[str] = []
-    for idx, _ in enumerate(filters):
+    strategies: list[Path] = []
+    scaled = tmp / "hook_band_scaled.png"
+    scale_hook_band(band, scaled)
+    strategies.append(scaled)
+    strategies.append(band)
+    for idx in range(filter_count):
         pre = tmp / f"hook_band_ocr_{idx}.png"
         preprocess_for_ocr(band, pre, language=language, variant=idx)
+        strategies.append(pre)
+
+    best_text = ""
+    best_hits = -1
+    for img in strategies:
         for psm in psms:
             try:
-                text = ocr_image(pre, langs=langs, psm=psm)
+                text = ocr_image(img, langs=langs, psm=psm)
             except RuntimeError:
                 continue
-            if text.strip():
-                chunks.append(text.strip())
-    return "\n".join(chunks)
+            cleaned = text.strip()
+            if not cleaned:
+                continue
+            if not attested:
+                if len(cleaned) > len(best_text):
+                    best_text = cleaned
+                continue
+            matched, _ = match_attested_words(cleaned, attested, min_hits=min_hits)
+            hits = len(matched)
+            if hits > best_hits or (hits == best_hits and len(cleaned) > len(best_text)):
+                best_hits = hits
+                best_text = cleaned
+    return best_text
 
 
 _ARABIC_DIACRITICS = re.compile(r"[\u064B-\u065F\u0670\u0640]")
@@ -381,7 +449,14 @@ def qa_cover(
         else:
             extract_cover_frame(src, frame, at=extract_s)
         crop_hook_band(frame, band)
-        text = ocr_hook_band(band, language=lang, langs=langs, workdir=tmp)
+        text = ocr_hook_band(
+            band,
+            language=lang,
+            langs=langs,
+            workdir=tmp,
+            attested_words=attested,
+            min_hits=min_hits,
+        )
         preprocess_for_ocr(band, pre, language=lang, variant=0)
         matched, missing = match_attested_words(text, attested, min_hits=min_hits)
         ok = len(matched) >= min_hits

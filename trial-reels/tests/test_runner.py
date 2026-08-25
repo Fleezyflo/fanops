@@ -232,3 +232,44 @@ def test_run_clip_blocks_credit_only(tmp_path: Path) -> None:
 
     assert result.blocked
     assert sum(1 for v in result.variants if v.ok) == 0
+
+
+@pytest.mark.skipif(not shutil.which("tesseract"), reason="tesseract required")
+def test_run_clip_verifies_each_rendered_cover_against_card_text(tmp_path: Path) -> None:
+    """Each rendered variant's hook card is OCR-checked on its actual cover frame."""
+    src = tmp_path / "source.mp4"
+    _make_source_video(src, duration_s=30.0)
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    work.mkdir()
+    transcript = {
+        "language": "ar",
+        "segments": [{"start": 12.4, "end": 14.0, "text": "لك كفاية عزبتني"}],
+    }
+    transcript_path = work / "transcript.json"
+    transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    recipes = json.loads((Path(__file__).resolve().parents[1] / "recipes.json").read_text())
+
+    result = run_clip(
+        src,
+        out_dir=out,
+        work_dir=work,
+        recipes=recipes,
+        transcript_path=transcript_path,
+        run_cover_qa=True,
+    )
+
+    checked = [v for v in result.variants if v.cover_ok is not None]
+    assert len(checked) == TARGET_VARIANTS
+    assert all(v.output_path.is_file() for v in checked)
+    assert all(v.hook_text == "لك كفاية عزبتني" for v in checked)
+    cover_pass = sum(1 for v in checked if v.cover_ok)
+    assert cover_pass == TARGET_VARIANTS, (
+        f"cover OCR {cover_pass}/{len(checked)} — "
+        + ", ".join(v.output_path.name for v in checked if not v.cover_ok)
+    )
+    assert sum(1 for v in result.variants if v.ok) == TARGET_VARIANTS
+    assert result.score is not None
+    assert result.score.cover_pass == TARGET_VARIANTS
+    assert result.score.cover_checked == TARGET_VARIANTS
+    assert not any(v.ok and v.cover_ok is False for v in result.variants)

@@ -80,6 +80,8 @@ def score_clip(
     output_path: str | Path | None = None,
     attested_words: tuple[str, ...] | list[str] | None = None,
     run_cover_qa: bool = True,
+    cover_ok: bool | None = None,
+    cover_message: str = "",
 ) -> ClipScore:
     """Score one clip on desk + optional cover OCR."""
     validation = validate_desk_result(desk_result)
@@ -93,6 +95,11 @@ def score_clip(
         tess_langs=tess_langs,
         output_path=str(output_path) if output_path else "",
     )
+
+    if cover_ok is not None:
+        score.cover_ok = cover_ok
+        score.cover_message = cover_message
+        return score
 
     if not run_cover_qa or not output_path:
         score.cover_ok = None
@@ -120,6 +127,8 @@ def score_run(
     stacks_landed: int = 0,
     file_count: int | None = None,
     require_cover: bool = True,
+    cover_checked: int | None = None,
+    cover_pass: int | None = None,
 ) -> PipelineScore:
     """Score a full trial-reels run. Success requires shippable clips, not file count."""
     clip_scores: list[ClipScore] = []
@@ -131,19 +140,25 @@ def score_run(
                 output_path=payload.get("output_path"),
                 attested_words=payload.get("attested_words"),
                 run_cover_qa=require_cover and bool(payload.get("output_path")),
+                cover_ok=payload.get("cover_ok"),
+                cover_message=str(payload.get("cover_message") or ""),
             )
         )
 
     desk_pass = sum(1 for c in clip_scores if c.desk_ok)
-    cover_checked = sum(1 for c in clip_scores if c.cover_ok is not None)
-    cover_pass = sum(1 for c in clip_scores if c.cover_ok is True)
+    cover_checked_count = cover_checked
+    if cover_checked_count is None:
+        cover_checked_count = sum(1 for c in clip_scores if c.cover_ok is not None)
+    cover_pass_count = cover_pass
+    if cover_pass_count is None:
+        cover_pass_count = sum(1 for c in clip_scores if c.cover_ok is True)
     shippable = sum(1 for c in clip_scores if c.shippable)
     files = file_count if file_count is not None else stacks_landed
 
     if clip_scores:
         success = shippable == len(clip_scores) and shippable > 0
-        if require_cover and cover_checked:
-            success = success and cover_pass == cover_checked
+        if require_cover and cover_checked_count:
+            success = success and cover_pass_count == cover_checked_count
     else:
         success = False
 
@@ -155,13 +170,16 @@ def score_run(
             f"clips shippable — file count is not success"
         )
     else:
-        message = f"desk {desk_pass}/{len(clip_scores)}, cover {cover_pass}/{cover_checked}, shippable {shippable}"
+        message = (
+            f"desk {desk_pass}/{len(clip_scores)}, cover {cover_pass_count}/{cover_checked_count}, "
+            f"shippable {shippable}"
+        )
 
     return PipelineScore(
         clips_scored=len(clip_scores),
         desk_pass=desk_pass,
-        cover_pass=cover_pass,
-        cover_checked=cover_checked,
+        cover_pass=cover_pass_count,
+        cover_checked=cover_checked_count,
         shippable=shippable,
         stacks_landed=stacks_landed,
         file_count=files,

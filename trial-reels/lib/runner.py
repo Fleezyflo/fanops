@@ -25,6 +25,7 @@ from lib.hooks import (
 )
 from lib.ingest import collect_sources
 from lib.media import MediaInfo, probe_media, vertical_filter_chain
+from lib.cover_qa import cover_extract_s_for_hook, qa_cover
 from lib.pipeline import PipelineScore, score_run, write_score_report
 from lib.stacks import (
     ffmpeg_cmd,
@@ -50,6 +51,9 @@ class VariantResult:
     hook_text: str
     ok: bool
     message: str = ""
+    cover_ok: bool | None = None
+    cover_message: str = ""
+    cover_extract_s: float = 0.0
 
 
 @dataclass
@@ -278,6 +282,7 @@ def run_clip(
     cards = list(desk_result.get("cards") or [])
     rehooks_s = tuple(recipes.get("rehooks_s") or (3, 8))
     variant_slots = expand_variant_slots(cards)
+    clip_language = str(desk_result.get("language") or transcript.get("language") or "en")
 
     for index, slot in enumerate(variant_slots):
         hook = str(slot.get("hook") or HOOKS[index % len(HOOKS)])
@@ -350,6 +355,27 @@ def run_clip(
                 ass_path=ass_path,
                 media=media,
             )
+            cover_ok: bool | None = None
+            cover_message = ""
+            cover_extract_s = cover_extract_s_for_hook(
+                hook,
+                cite_start_s=cite_start_s,
+                total_duration_s=media.duration_s,
+            )
+            variant_ok = True
+            if run_cover_qa and hook_text.strip():
+                cover = qa_cover(
+                    out_path,
+                    attested_words=(hook_text,),
+                    extract_s=cover_extract_s,
+                    workdir=work_dir / "cover_qa" / f"{clip_id}_{variant_tag}_{stack}",
+                    keep_artifacts=True,
+                    language=clip_language,
+                )
+                cover_ok = cover.ok
+                cover_message = cover.message
+                if not cover.ok:
+                    variant_ok = False
             result.variants.append(
                 VariantResult(
                     hook=hook,
@@ -358,7 +384,10 @@ def run_clip(
                     cite_start_s=cut_start,
                     cut_length_s=cut_length,
                     hook_text=hook_text,
-                    ok=True,
+                    ok=variant_ok,
+                    cover_ok=cover_ok,
+                    cover_message=cover_message,
+                    cover_extract_s=cover_extract_s,
                 )
             )
         except RuntimeError as exc:
@@ -375,6 +404,7 @@ def run_clip(
                 )
             )
 
+    checked_variants = [v for v in result.variants if v.cover_ok is not None]
     ok_variants = [v for v in result.variants if v.ok]
     clip_payloads = [
         {
@@ -382,14 +412,18 @@ def run_clip(
             "desk": desk_result,
             "output_path": str(v.output_path),
             "attested_words": (v.hook_text,),
+            "cover_ok": v.cover_ok,
+            "cover_message": v.cover_message,
         }
-        for v in ok_variants
+        for v in checked_variants
     ]
     result.score = score_run(
         clip_payloads=clip_payloads,
         stacks_landed=len(ok_variants),
         file_count=len(ok_variants),
-        require_cover=run_cover_qa,
+        require_cover=run_cover_qa and bool(checked_variants),
+        cover_checked=len(checked_variants),
+        cover_pass=sum(1 for v in checked_variants if v.cover_ok),
     )
     return result
 

@@ -58,11 +58,13 @@ PYTHONPATH=trial-reels python trial-reels /path/to/cover.png --json
 
 Pipeline:
 
-1. Extract still at **t=0.4s** (`--at` to override)
+1. Extract still at the hook-policy sample point inside the rendered cut (fallback **0.4s**, not frame 0)
 2. Crop tight **ASS stamp band** around Alignment 8 / MarginV 320 (not the whole top of frame)
-3. Preprocess: grayscale + contrast and white-stroke isolation (no invert/negate)
-4. Tesseract **`ara`** or **`eng`** per clip language (PSM 11 sparse for Arabic)
+3. OCR the band with scaled raw reads plus contrast/threshold passes (no invert/negate); pick the read that best matches the attested card
+4. Tesseract **`ara`** or **`eng`** per clip language
 5. Match attested on-screen card phrases (defaults include `عزبتني`, `كفاية`, `لك كفاية عزبتني` from `clip_5a92132dc6de`)
+
+Each runner variant checks its own card text on its rendered output cover. Failed OCR marks the variant not shippable — file count is not success.
 
 ### Attested words
 

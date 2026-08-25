@@ -11,6 +11,7 @@ from lib.captions import DEFAULT_MARGIN_V
 from lib.cover_qa import (
     COVER_EXTRACT_S,
     DEFAULT_ATTESTED_WORDS,
+    cover_extract_s_for_hook,
     generate_ass_stamp_cover,
     hook_band_crop_filter,
     hook_band_geometry,
@@ -58,6 +59,13 @@ def test_hook_band_crop_targets_margin_v_not_frame_top():
     vf = hook_band_crop_filter()
     assert "0:ih*" in vf
     assert vf.split(":0:ih*")[1] != "0"
+
+
+def test_cover_extract_s_follows_hook_policy_not_fixed_default():
+    assert cover_extract_s_for_hook("result_first", cite_start_s=12.4, total_duration_s=30.0) < 1.0
+    assert cover_extract_s_for_hook("mid_action", cite_start_s=12.4, total_duration_s=30.0) > 2.0
+    assert cover_extract_s_for_hook("cold_proof", cite_start_s=12.4, total_duration_s=30.0) > 3.0
+    assert COVER_EXTRACT_S == 0.4
 
 
 @pytest.fixture
@@ -174,8 +182,9 @@ def test_tight_crop_beats_loose_top_band_on_busy_cover(busy_ass_stamp_cover: Pat
 
 
 def test_cover_extract_s_is_not_frame_zero():
-    """Real covers (clip_5a92132dc6de) miss when extracted at t=0 — use 0.4s."""
+    """Default fallback stays off frame 0; per-policy extract lands inside hook window."""
     assert COVER_EXTRACT_S == 0.4
+    assert cover_extract_s_for_hook("result_first", cite_start_s=0.0, total_duration_s=30.0) >= 0.15
 
 
 @pytest.mark.skipif(not shutil.which("tesseract"), reason="tesseract required")
