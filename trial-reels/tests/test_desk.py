@@ -38,6 +38,7 @@ def test_live_arabic_clip_ships_two_attested_lines() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "write"
+    assert len(result["claims"]) == 2
     assert result["unique_texts"] == 2
     assert set(_card_texts(result)) == {"لك كفاية عزبتني", "عزبتني"}
     validation = validate_desk_result(result)
@@ -50,6 +51,8 @@ def test_live_english_clip_ships_four_sentences_rejects_so_the_next() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "write"
+    assert len(result["claims"]) == 4
+    assert len(result["cards"]) == 4
     assert result["unique_texts"] == 4
     assert set(_card_texts(result)) == EN_LIVE_SENTENCES
     assert "So the next" not in _card_texts(result)

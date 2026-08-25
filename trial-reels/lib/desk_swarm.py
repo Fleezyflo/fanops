@@ -1,7 +1,7 @@
 """Desk swarm — run the constrained hook writer across clips and validate output.
 
-Ship when hooks are attested sentences/lines. Stacks multiply outputs; text may
-repeat when the transcript cannot honestly support five distinct claims.
+Ship when hooks are attested sentences/lines. Stacks multiply outputs; claims may
+repeat across hook×stack slots when the transcript cannot honestly support more.
 """
 
 from __future__ import annotations
@@ -96,11 +96,16 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if len(cards) != len(HOOKS):
-        issues.append(f"expected {len(HOOKS)} hook cards, got {len(cards)}")
+    if not cards:
+        issues.append("no attested claim cards")
 
+    texts = [(card.get("text") or "").strip() for card in cards]
+    if len(set(texts)) != len(texts):
+        issues.append("duplicate claim texts")
+
+    expected_hooks = [HOOKS[index % len(HOOKS)] for index in range(len(cards))]
     hooks_seen = [card.get("hook") for card in cards]
-    if hooks_seen != HOOKS[: len(cards)]:
+    if hooks_seen != expected_hooks:
         issues.append(f"hook order mismatch: {hooks_seen}")
 
     for card in cards:
@@ -123,7 +128,8 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
         "language": language,
         "mode": result.get("mode"),
         "card_count": len(cards),
-        "unique_texts": len({(card.get("text") or "").strip() for card in cards}),
+        "claim_count": len(result.get("claims") or cards),
+        "unique_texts": len({text for text in texts if text}),
         "issues": issues,
     }
 

@@ -63,10 +63,10 @@ def test_english_whisper_slices_block_instead_of_shipping_crumbs() -> None:
 
 def test_ass_events_burn_only_hook_card_text() -> None:
     desk = write(_load_fixture("clip_5a92132dc6de.json"))
-    card = next(c for c in desk["cards"] if c["hook"] == "direct_you")
+    card = next(c for c in desk["cards"] if "لك" in c["text"])
     events = build_ass_events(
         card,
-        policy="direct_you",
+        policy=card["hook"],
         cite_start_s=float(card["cite"]["start"]),
         cut_length_s=8.0,
     )

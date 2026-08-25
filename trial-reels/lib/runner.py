@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
-from lib.desk import write as desk_write
+from lib.desk import expand_variant_slots, write as desk_write
 from lib.desk_swarm import validate_desk_result
 from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
@@ -164,31 +164,29 @@ def plan_variants(
         return []
 
     recipes = recipes or load_recipes()
-    hooks = list(recipes.get("hooks") or HOOK_POLICIES)
     stacks = list(recipes.get("stacks") or STACK_NAMES)
-    cards_by_hook = {card["hook"]: card for card in desk.get("cards") or []}
+    slots = expand_variant_slots(list(desk.get("cards") or []))
 
     plans: list[VariantPlan] = []
-    for hook in hooks:
-        card = cards_by_hook.get(hook)
-        if not card:
-            continue
+    for slot in slots:
+        hook = str(slot["hook"])
+        stack = str(slot["stack"])
+        card = {"hook": hook, "text": slot["text"], "cite": slot["cite"]}
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
-        for stack in stacks:
-            if not stack_gate_passes(stack, cut_length):
-                continue
-            plans.append(
-                VariantPlan(
-                    hook=hook,
-                    stack=stack,
-                    card=card,
-                    cite_start_s=cite_start,
-                    cut_length_s=cut_length,
-                    output_name=f"{clip_id}_{hook}_{stack}.mp4",
-                )
+        if not stack_gate_passes(stack, cut_length):
+            continue
+        plans.append(
+            VariantPlan(
+                hook=hook,
+                stack=stack,
+                card=card,
+                cite_start_s=cite_start,
+                cut_length_s=cut_length,
+                output_name=f"{clip_id}_{hook}_{stack}.mp4",
             )
+        )
     return plans
 
 

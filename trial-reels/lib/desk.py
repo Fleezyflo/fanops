@@ -1,8 +1,8 @@
 """Constrained hook writer for trial reels.
 
-Hooks are full attested sentences (English) or full Whisper lines (Arabic).
-Sub-window crumbs and nested farms are rejected. Short transcripts may reuse
-the same on-screen text across hook policies; stacks multiply outputs.
+Extracts distinct attested sentences (English) or full Whisper lines (Arabic).
+No nested windows, no permutations, no padding to five hooks. The runner expands
+honest claims across hook×stack slots (up to TARGET_VARIANTS cuts).
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from lib.stacks import STACK_NAMES
 
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
 TARGET_VARIANTS = len(HOOKS) * len(STACK_NAMES)
+VARIANT_SLOTS: list[tuple[str, str]] = [
+    (hook, stack) for hook in HOOKS for stack in STACK_NAMES
+]
 
 _CREDIT_RE = re.compile(
     r"(ترجمة|translation|subtitle|subtitles|credits?\b|translated by)",
@@ -515,54 +518,55 @@ def _validate_hook_unit(span: _Span, language: str, vocabulary: set[str]) -> boo
     return True
 
 
-def _pick_hook_unit(hook: str, units: list[_Span], language: str) -> _Span | None:
-    if not units:
-        return None
-
-    first = units[0]
-    last = units[-1]
-    middle = units[len(units) // 2]
-
-    if hook == "result_first":
-        return last
-
-    if hook == "mid_action":
-        return middle
-
-    if hook == "direct_you":
-        markers = _direct_markers(language)
-        for unit in units:
-            if any(token.norm in markers for token in unit.tokens):
-                return unit
-        return None
-
-    if hook == "bold_claim":
-        return first
-
-    if hook == "cold_proof":
-        return last
-
-    raise ValueError(f"unknown hook: {hook}")
+def _extract_claims(
+    units: list[_Span],
+    language: str,
+    vocabulary: set[str],
+) -> list[dict[str, Any]]:
+    """Distinct attested sentences/lines in source order — no nested windows."""
+    claims: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for unit in units:
+        if not _validate_hook_unit(unit, language, vocabulary):
+            continue
+        if not is_contiguous_attested_span(unit.text, unit.tokens[0].line_text):
+            continue
+        text = unit.text.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        claims.append({"text": text, "cite": unit.cite()})
+    return claims
 
 
-def _fallback_hook_unit(hook: str, units: list[_Span]) -> _Span:
-    if hook in {"result_first", "cold_proof"}:
-        return units[-1]
-    if hook == "mid_action":
-        return units[len(units) // 2]
-    return units[0]
+def _assign_hooks(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"hook": HOOKS[index % len(HOOKS)], "text": claim["text"], "cite": claim["cite"]}
+        for index, claim in enumerate(claims)
+    ]
 
 
-def _build_card(hook: str, span: _Span) -> dict[str, Any]:
-    return {
-        "hook": hook,
-        "text": span.text,
-        "cite": span.cite(),
-    }
+def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map attested claim cards onto hook×stack render slots (up to TARGET_VARIANTS)."""
+    if not cards:
+        return []
+    expanded: list[dict[str, Any]] = []
+    for index, (hook, stack) in enumerate(VARIANT_SLOTS):
+        claim = cards[index % len(cards)]
+        expanded.append(
+            {
+                "hook": hook,
+                "stack": stack,
+                "text": claim["text"],
+                "cite": claim["cite"],
+                "claim_index": index % len(cards),
+            }
+        )
+    return expanded
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write five hook-policy cards from attested sentences/lines."""
+    """Return distinct attested claims; fail only on empty or credit-only input."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
@@ -575,6 +579,7 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "reason": "credit-only transcript",
             "cites": [],
             "cards": [],
+            "claims": [],
             "ear": "",
         }
 
@@ -586,31 +591,13 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "reason": "empty transcript",
             "cites": [],
             "cards": [],
+            "claims": [],
             "ear": "",
         }
 
-    units = [unit for unit in _hook_units(tokens, language) if _validate_hook_unit(unit, language, vocabulary)]
-    if not units:
-        return {
-            "mode": "blocked",
-            "language": language,
-            "source_line": source_line,
-            "reason": "no attested sentence or line hooks in transcript",
-            "cites": [],
-            "cards": [],
-            "ear": "",
-        }
-
-    cards: list[dict[str, Any]] = []
-    for hook in HOOKS:
-        unit = _pick_hook_unit(hook, units, language)
-        if unit is None:
-            unit = _fallback_hook_unit(hook, units)
-        if not is_contiguous_attested_span(unit.text, unit.tokens[0].line_text):
-            continue
-        cards.append(_build_card(hook, unit))
-
-    cards = sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
+    units = _hook_units(tokens, language)
+    claims = _extract_claims(units, language, vocabulary)
+    cards = _assign_hooks(claims)
     cites = [card["cite"] for card in cards]
     ear = cards[0]["text"] if cards else ""
     unique_texts = len({card["text"] for card in cards})
@@ -620,9 +607,10 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "mode": "blocked",
             "language": language,
             "source_line": source_line,
-            "reason": "no shippable hook cards",
+            "reason": "no attested sentence or line hooks in transcript",
             "cites": cites,
             "cards": cards,
+            "claims": [],
             "ear": ear,
         }
 
@@ -630,9 +618,10 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{len(cards)} hook policies, {unique_texts} distinct on-screen texts",
+        "reason": f"{len(claims)} attested claim{'s' if len(claims) != 1 else ''}, {unique_texts} distinct on-screen texts",
         "cites": cites,
         "cards": cards,
+        "claims": [{"text": claim["text"], "cite": claim["cite"]} for claim in claims],
         "ear": ear,
         "unique_texts": unique_texts,
         "target_variants": TARGET_VARIANTS,
