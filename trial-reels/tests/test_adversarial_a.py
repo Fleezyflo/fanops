@@ -107,3 +107,20 @@ def test_pipeline_marks_english_tess_eng() -> None:
         require_cover=False,
     )
     assert score.clip_scores[0].tess_langs == "eng"
+
+
+def test_pipeline_counts_distinct_attested_without_cover() -> None:
+    desk = write(_load_fixture("clip_5a92132dc6de.json"))
+    texts = tuple(card["text"] for card in desk["cards"])
+    payloads = [
+        {
+            "clip_id": f"ar_{index}",
+            "desk": desk,
+            "attested_words": (text,),
+        }
+        for index, text in enumerate(texts)
+    ]
+    score = score_run(clip_payloads=payloads, stacks_landed=len(payloads), require_cover=False)
+    assert score.success
+    assert score.distinct_verified_texts == 2
+    assert "2 distinct attested hook texts" in score.message

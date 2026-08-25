@@ -119,6 +119,30 @@ def score_clip(
     return score
 
 
+def _distinct_hook_texts(
+    clip_payloads: list[dict[str, Any]],
+    clip_scores: list[ClipScore],
+    *,
+    verified_on_cover_only: bool,
+) -> set[str]:
+    """Collect distinct on-screen hook texts from shippable (or cover-verified) variants."""
+    texts: set[str] = set()
+    for payload, clip_score in zip(clip_payloads, clip_scores, strict=False):
+        words = payload.get("attested_words")
+        if not words:
+            continue
+        hook_text = str(words[0]).strip()
+        if not hook_text:
+            continue
+        if verified_on_cover_only:
+            if clip_score.cover_ok is not True:
+                continue
+        elif not clip_score.shippable:
+            continue
+        texts.add(hook_text)
+    return texts
+
+
 def score_run(
     *,
     clip_payloads: list[dict[str, Any]],
@@ -145,15 +169,14 @@ def score_run(
     shippable = sum(1 for c in clip_scores if c.shippable)
     files = file_count if file_count is not None else stacks_landed
 
-    verified_texts: set[str] = set()
-    for payload, clip_score in zip(clip_payloads, clip_scores, strict=False):
-        if clip_score.cover_ok is not True:
-            continue
-        words = payload.get("attested_words")
-        if words:
-            verified_texts.add(str(words[0]).strip())
-
-    distinct_verified = len(verified_texts)
+    verified_on_cover = require_cover and cover_checked > 0
+    distinct_verified = len(
+        _distinct_hook_texts(
+            clip_payloads,
+            clip_scores,
+            verified_on_cover_only=verified_on_cover,
+        )
+    )
 
     if clip_scores:
         success = shippable > 0
@@ -163,16 +186,23 @@ def score_run(
         success = False
 
     if success and distinct_verified >= TARGET_VARIANTS:
+        qualifier = "verified on covers" if verified_on_cover else "attested on shipped cuts"
         message = (
             f"{shippable}/{len(clip_scores)} clips shippable; "
-            f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks verified on covers"
+            f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks {qualifier}"
         )
     elif success:
-        message = (
-            f"{shippable}/{len(clip_scores)} clips shippable; "
-            f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
-            f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-        )
+        if verified_on_cover:
+            detail = (
+                f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
+                f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
+            )
+        else:
+            detail = (
+                f"{distinct_verified} distinct attested hook text{'s' if distinct_verified != 1 else ''} "
+                f"across {shippable} cuts (honest subset — transcript cannot fill {TARGET_VARIANTS})"
+            )
+        message = f"{shippable}/{len(clip_scores)} clips shippable; {detail}"
     elif stacks_landed and not shippable:
         message = (
             f"stacks landed ({stacks_landed} files) but only {shippable}/{len(clip_scores)} "

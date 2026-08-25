@@ -46,6 +46,7 @@ class RunResult:
     variants_planned: int
     variants_rendered: int
     outputs: list[Path] = field(default_factory=list)
+    clip_payloads: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     score: dict[str, Any] | None = None
     success: bool = False
@@ -388,6 +389,7 @@ def run_clip(
         variants_planned=len(plans),
         variants_rendered=len(outputs),
         outputs=outputs,
+        clip_payloads=clip_payloads,
         skipped=skipped,
         score=score.to_dict(),
         success=score.success and validation["ok"],

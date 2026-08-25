@@ -109,14 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     clip_payloads: list[dict[str, Any]] = []
     for result in summary["results"]:
-        for output in result.outputs:
-            clip_payloads.append(
-                {
-                    "clip_id": output.stem,
-                    "desk": result.desk,
-                    "output_path": str(output),
-                }
-            )
+        clip_payloads.extend(result.clip_payloads)
 
     score = score_run(
         clip_payloads=clip_payloads,

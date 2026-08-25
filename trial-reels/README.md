@@ -2,22 +2,25 @@
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
 
-## Runner
+## Pipeline door
 
-One clip in → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
+One clip in `in/` → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
 
 ```bash
-# With a pre-baked transcript (no whisper)
+# Drain in/, write desk.json per clip, render hook×stack variants, score
+PYTHONPATH=trial-reels python trial-reels/pipeline.py \
+  --in-dir in/ \
+  --out out/ \
+  --transcript /path/to/transcript.json
+
+# Same render path via runner module (single file)
 PYTHONPATH=trial-reels python -m lib.runner \
   --file /path/to/clip.mp4 \
   --transcript /path/to/transcript.json \
   --out out/
-
-# Drain in/ folder, transcribe via dual-ear whisper
-PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk must return `mode=write` with five hook-policy cards (full attested sentences or lines). On-screen text may repeat when the transcript cannot honestly support five distinct claims — stacks multiply to ~20 output cuts. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk returns `mode=write` with every honest attested sentence (English) or Whisper line (Arabic) — no padding to five hooks, no nested windows, no permutations. Claims repeat across hook×stack slots when the transcript cannot fill 20 distinct texts; sparse clips ship without aborting. Pass bar: **20 actually different attested on-screen hooks** when the source supports them. Fail only on empty, credit-only, or invented content. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 
