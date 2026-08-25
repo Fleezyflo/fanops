@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from lib.desk import HOOKS, TARGET_VARIANTS, expand_variant_slots, is_contiguous_attested_span, write  # noqa: E402
+from lib.desk import HOOKS, TARGET_VARIANTS, expand_variant_slots, is_contiguous_attested_span, plan_variants, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -62,6 +62,8 @@ def test_live_english_clip_004ae6d9098a_ships_four_sentences() -> None:
     texts = [claim["text"] for claim in result["claims"]]
     assert len(texts) == 4
     assert texts == list(LIVE_EN_SENTENCES)
+    assert result["unique_texts"] == 4
+    assert result["target_variants"] == TARGET_VARIANTS
     assert "So the next" not in texts
     assert "street ties" not in " ".join(texts).lower()
     assert "vocal isolation" not in " ".join(texts).lower()
@@ -71,6 +73,19 @@ def test_live_english_clip_004ae6d9098a_ships_four_sentences() -> None:
         assert is_contiguous_attested_span(card["text"], card["cite"]["line"])
     validation = validate_desk_result(result)
     assert validation["ok"], validation["issues"]
+    assert len(expand_variant_slots(result["cards"])) == TARGET_VARIANTS
+
+
+def test_director_brief_sparse_english_plans_twenty_treatments() -> None:
+    """Four attested sentences; hook×stack still plans 20 cuts with honest text ceiling."""
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    planned = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+
+    assert result["unique_texts"] == 4
+    assert result["unique_texts"] < TARGET_VARIANTS
+    assert len(planned) == TARGET_VARIANTS
+    assert len({slot["text"] for slot in planned}) == 4
+    assert len({(slot["hook"], slot["stack"]) for slot in planned}) == TARGET_VARIANTS
 
 
 def test_arabic_sung_line_keeps_spelling_and_does_not_permute() -> None:
@@ -122,3 +137,20 @@ def test_credit_only_arabic_transcript_blocks() -> None:
     assert result["mode"] == "blocked"
     assert result["reason"] == "credit-only transcript"
     assert result["cards"] == []
+    assert result["unique_texts"] == 0
+
+
+def test_live_fixtures_cannot_honestly_yield_twenty_distinct_texts() -> None:
+    """Physical ceiling: live clips attest 4 EN sentences or 1 AR line — not 20 texts."""
+    en = write(_load_fixture("clip_004ae6d9098a.json"))
+    ar = write(_load_fixture("clip_5a92132dc6de.json"))
+    assert en["unique_texts"] == 4
+    assert ar["unique_texts"] == 1
+    assert en["unique_texts"] < TARGET_VARIANTS
+    assert ar["unique_texts"] < TARGET_VARIANTS
+    assert len(plan_variants(en, clip_id="clip_004ae6d9098a", source_duration_s=60.0)) == TARGET_VARIANTS
+    assert len(plan_variants(ar, clip_id="clip_5a92132dc6de", source_duration_s=30.0)) == TARGET_VARIANTS
+
+
+def test_variant_slots_cover_hook_stack_grid() -> None:
+    assert TARGET_VARIANTS == len(HOOKS) * 4

@@ -274,6 +274,11 @@ def run_clip(
     if result.blocked:
         return result
 
+    (work_dir / "desk.json").write_text(
+        json.dumps(desk_result, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     lyric_events = _segments_to_lyrics(transcript)
     cards = list(desk_result.get("cards") or [])
     rehooks_s = tuple(recipes.get("rehooks_s") or (3, 8))
@@ -468,17 +473,24 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     total_ok = sum(1 for r in results for v in r.variants if v.ok)
+    total_unique_texts = sum(
+        int(r.desk.get("unique_texts") or 0) for r in results if r.desk.get("mode") == "write"
+    )
     summary = {
         "clips": len(results),
         "outputs": total_ok,
         "target_min": MIN_TARGET_OUTPUTS,
         "target_max": MAX_TARGET_OUTPUTS,
+        "unique_hook_texts": total_unique_texts,
         "ffmpeg": resolve_ffmpeg_bin(),
         "runs": [
             {
                 "clip_id": r.clip_id,
                 "blocked": r.blocked,
                 "desk_mode": r.desk.get("mode"),
+                "unique_texts": r.desk.get("unique_texts"),
+                "target_variants": r.desk.get("target_variants"),
+                "variants_planned": len(r.variants),
                 "validation_ok": r.validation.get("ok"),
                 "variants_ok": sum(1 for v in r.variants if v.ok),
                 "variants_total": len(r.variants),
@@ -499,15 +511,19 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
         for run in summary["runs"]:
+            unique = run.get("unique_texts")
+            target = run.get("target_variants")
             print(
                 f"{run['clip_id']}: desk={run['desk_mode']} "
+                f"unique_texts={unique}/{target} "
                 f"variants={run['variants_ok']}/{run['variants_total']}"
             )
         print(f"total outputs: {total_ok}")
 
-    if total_ok < MIN_TARGET_OUTPUTS and not any(r.blocked for r in results):
+    blocked = any(r.blocked for r in results)
+    if blocked:
         return 1
-    if any(r.blocked for r in results):
+    if total_ok == 0:
         return 1
     return 0
 

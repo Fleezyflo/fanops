@@ -515,6 +515,8 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "cards": [],
             "claims": [],
             "ear": "",
+            "unique_texts": 0,
+            "target_variants": TARGET_VARIANTS,
         }
 
     if not tokens:
@@ -527,12 +529,15 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "cards": [],
             "claims": [],
             "ear": "",
+            "unique_texts": 0,
+            "target_variants": TARGET_VARIANTS,
         }
 
     claims = _extract_claims(tokens, language, vocabulary)
     cards = _assign_hooks(claims, language)
     cites = [card["cite"] for card in cards]
     ear = cards[0]["text"] if cards else ""
+    unique_texts = len({claim["text"] for claim in claims})
 
     if not cards:
         return {
@@ -544,15 +549,54 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "cards": [],
             "claims": [],
             "ear": "",
+            "unique_texts": 0,
+            "target_variants": TARGET_VARIANTS,
         }
 
     return {
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{len(claims)} attested claim{'s' if len(claims) != 1 else ''}",
+        "reason": (
+            f"{len(claims)} attested claim{'s' if len(claims) != 1 else ''}, "
+            f"{unique_texts} distinct on-screen text{'s' if unique_texts != 1 else ''}"
+        ),
         "cites": cites,
         "cards": cards,
         "claims": [{"text": claim["text"], "cite": claim["cite"]} for claim in claims],
         "ear": ear,
+        "unique_texts": unique_texts,
+        "target_variants": TARGET_VARIANTS,
     }
+
+
+def plan_variants(
+    desk: dict[str, Any],
+    *,
+    clip_id: str,
+    source_duration_s: float,
+) -> list[dict[str, Any]]:
+    """Plan hook×stack render slots from desk claims; stacks may repeat on-screen text."""
+    if desk.get("mode") != "write":
+        return []
+    slots = expand_variant_slots(list(desk.get("cards") or []))
+    planned: list[dict[str, Any]] = []
+    for index, slot in enumerate(slots):
+        cite = slot.get("cite") or {}
+        cite_start = float(cite.get("start") or 0.0)
+        remaining = max(0.0, source_duration_s - cite_start)
+        cut_length = min(8.0, remaining)
+        planned.append(
+            {
+                "index": index,
+                "clip_id": clip_id,
+                "hook": slot["hook"],
+                "stack": slot["stack"],
+                "text": slot["text"],
+                "cite": cite,
+                "cite_start_s": cite_start,
+                "cut_length_s": cut_length,
+                "claim_index": slot.get("claim_index"),
+            }
+        )
+    return planned

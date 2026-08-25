@@ -4,15 +4,20 @@ Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. 
 
 ## Hook factory contract
 
-One source clip → **up to 20 vertical cuts** built from **attested sentence/clause claims**.
+One source clip → **up to 20 vertical cuts** (5 hook policies × 4 ffmpeg stacks).
 
-- `lib/desk.py` extracts contiguous attested **sentences and real clauses** only — no n-gram windows, no cross-sentence joins, no permutations.
-- When a clip has fewer claims than slots (e.g. one Arabic sung line), the runner **reuses the claim** across hook×stack slots; stacks and rehooks provide edit diversity.
-- Fail closed only on **empty**, **credit-only**, or **no valid claims** — never slice sentences to hit a quota.
+**Claim-lock:** `lib/desk.py` extracts contiguous attested **sentences and real lines** only — no n-gram windows, no cross-sentence joins, no permutations, no invented words. عزبتني keeps ز.
+
+**Honest ceiling:** the transcript may attest fewer than 20 distinct on-screen texts (live English prose → 4 sentences; live Arabic sung line → 1 line). The runner still ships 20 **edit treatments** (hook timing × stack) by cycling attested claims across slots; `unique_texts` in `desk.json` records the true distinct-text count — never padded to hit a quota.
+
+- Fail closed only on **empty**, **credit-only**, or **no valid claims** — never slice sentences to invent hooks.
+- Pass bar: contiguous claim-lock + cover OCR on attested text; **not** “20 unique texts” when the source cannot support them.
 
 ```bash
 PYTHONPATH=trial-reels python -m lib.runner --file clip.mp4 --transcript clip.transcript.json --out-dir out
 ```
+
+Desk output includes `unique_texts`, `target_variants`, and `plan_variants()` for the hook×stack grid before ffmpeg render.
 
 ## Why cover QA exists
 
@@ -25,7 +30,7 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
-| `lib/desk.py` | Sentence/clause claim extraction; `expand_variant_slots()` maps claims → hook×stack |
+| `lib/desk.py` | Sentence/line claim extraction; `expand_variant_slots()` + `plan_variants()` |
 | `lib/runner.py` | One clip → 20 vertical cuts (claims × hook policies × stacks) |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Tight ASS stamp band (MarginV 320) → language-aware preprocess → tesseract → match attested card words |

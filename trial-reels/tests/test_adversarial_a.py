@@ -17,6 +17,10 @@ from lib.pipeline import score_run  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
+def _load_fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
 def test_validate_rejects_permutation_anagrams() -> None:
     fake = {
         "mode": "write",
@@ -77,6 +81,20 @@ def test_pipeline_does_not_count_files_as_success() -> None:
     assert score.stacks_landed == 20
     assert score.shippable == 0
     assert "file count is not success" in score.message
+
+
+def test_pipeline_marks_honest_subset_when_texts_below_target() -> None:
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    score = score_run(
+        clip_payloads=[{"clip_id": "en_v01", "desk": desk, "attested_words": (desk["claims"][0]["text"],)}],
+        stacks_landed=1,
+        file_count=1,
+        require_cover=False,
+    )
+    assert score.success
+    assert score.distinct_verified_texts == 1
+    assert score.target_variants == 20
+    assert "honest subset" in score.message
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
