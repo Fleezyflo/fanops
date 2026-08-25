@@ -111,5 +111,17 @@ def test_credit_only_arabic_transcript_blocks() -> None:
     assert result["cards"] == []
 
 
+def test_live_fixtures_cannot_honestly_yield_twenty_distinct_texts() -> None:
+    """Physical ceiling: live clips attest 4 EN sentences or 2 AR lines — not 20 texts."""
+    en = write(_load_fixture("clip_004ae6d9098a.json"))
+    ar = write(_load_fixture("clip_5a92132dc6de.json"))
+    assert en["unique_texts"] == 4
+    assert ar["unique_texts"] == 2
+    assert en["unique_texts"] < TARGET_VARIANTS
+    assert ar["unique_texts"] < TARGET_VARIANTS
+    assert len(plan_variants(en, clip_id="clip_004ae6d9098a", source_duration_s=60.0)) == TARGET_VARIANTS
+    assert len(plan_variants(ar, clip_id="clip_5a92132dc6de", source_duration_s=30.0)) == TARGET_VARIANTS
+
+
 def test_variant_slots_cover_hook_stack_grid() -> None:
     assert TARGET_VARIANTS == len(HOOKS) * len(STACK_NAMES)
