@@ -1,8 +1,8 @@
 """Cover-frame OCR QA for trial Reels hooks.
 
 Extracts a cover still (default t=0.4s — not frame 0, which is often black/fade),
-crops the top hook band, preprocesses for tesseract, and matches attested card words.
-ffmpeg + tesseract only (no Pillow).
+crops the ASS hook stamp band (Alignment 8, MarginV 320), preprocesses for
+tesseract, and matches attested card words. ffmpeg + tesseract only (no Pillow).
 """
 from __future__ import annotations
 
@@ -13,10 +13,21 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib.captions import (
+    DEFAULT_FONTSIZE,
+    DEFAULT_MARGIN_V,
+    DEFAULT_OUTLINE,
+    DEFAULT_SHADOW,
+    write_ass,
+    write_ass_file,
+)
+
 # Frame 0 is often black or pre-roll; 0.4s lands on the burned hook for clip_5a92132dc6de-style covers.
 COVER_EXTRACT_S = 0.4
-HOOK_BAND_FRACTION = 0.28
-NOTO_NASKH_BOLD = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"
+PLAY_RES_Y = 1920
+HOOK_BAND_PAD_PX = 40
+HOOK_BAND_FONT_LINES = 1.5
+NOTO_NASKH_REGULAR = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"
 
 # Attested on-screen card phrases from clip_5a92132dc6de purple-neon covers.
 DEFAULT_ATTESTED_WORDS: tuple[str, ...] = (
@@ -28,6 +39,12 @@ DEFAULT_ATTESTED_WORDS: tuple[str, ...] = (
 _FFMPEG_TIMEOUT = 60.0
 _TESS_TIMEOUT = 30.0
 
+_ARABIC_PREPROCESS = (
+    "scale=iw*2:ih*2:flags=lanczos,format=gray,eq=contrast=2.8:brightness=0.04",
+    "scale=iw*2:ih*2:flags=lanczos,format=gray,geq=lum='if(gt(lum(X,Y),175),255,0)'",
+)
+_ENGLISH_PREPROCESS = ("scale=iw*2:ih*2:flags=lanczos,format=gray,eq=contrast=2.2:brightness=0.04",)
+
 
 def ocr_langs_for_language(language: str | None) -> str:
     """Pick tesseract language packs from clip language — never default English to ara."""
@@ -37,6 +54,40 @@ def ocr_langs_for_language(language: str | None) -> str:
     if lang.startswith("en"):
         return "eng"
     return "ara+eng"
+
+
+def hook_band_crop_filter(
+    *,
+    play_res_y: int = PLAY_RES_Y,
+    margin_v: int = DEFAULT_MARGIN_V,
+    fontsize: int = DEFAULT_FONTSIZE,
+    outline: int = DEFAULT_OUTLINE,
+    shadow: int = DEFAULT_SHADOW,
+    pad_px: int = HOOK_BAND_PAD_PX,
+    font_lines: float = HOOK_BAND_FONT_LINES,
+) -> str:
+    """ffmpeg crop filter for the burned ASS hook stamp (Alignment 8 / MarginV)."""
+    stamp_h = int(fontsize * font_lines + 2 * outline + shadow + pad_px * 2)
+    y0 = max(0, margin_v - outline - pad_px)
+    return f"crop=iw:ih*{stamp_h}/{play_res_y}:0:ih*{y0}/{play_res_y}"
+
+
+def hook_band_geometry(
+    frame_height: int,
+    *,
+    play_res_y: int = PLAY_RES_Y,
+    margin_v: int = DEFAULT_MARGIN_V,
+    fontsize: int = DEFAULT_FONTSIZE,
+    outline: int = DEFAULT_OUTLINE,
+    shadow: int = DEFAULT_SHADOW,
+    pad_px: int = HOOK_BAND_PAD_PX,
+    font_lines: float = HOOK_BAND_FONT_LINES,
+) -> tuple[int, int]:
+    """Return (y0_px, height_px) for the ASS hook band on a frame."""
+    stamp_h = int(fontsize * font_lines + 2 * outline + shadow + pad_px * 2)
+    y0 = max(0, margin_v - outline - pad_px)
+    scale = frame_height / play_res_y
+    return int(y0 * scale), max(1, int(stamp_h * scale))
 
 
 @dataclass(frozen=True)
@@ -56,6 +107,10 @@ def _run(cmd: list[str], *, timeout: float = _FFMPEG_TIMEOUT) -> subprocess.Comp
     return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
 
 
+def _ffmpeg_escape_path(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
 def extract_cover_frame(
     video_path: str | Path,
     output_path: str | Path,
@@ -66,7 +121,7 @@ def extract_cover_frame(
     src = Path(video_path)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-  # -ss before -i = input seek (fast). Prefer 0.4s over frame 0 — lead-in is often black/fade.
+    # -ss before -i = input seek (fast). Prefer 0.4s over frame 0 — lead-in is often black/fade.
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -93,14 +148,13 @@ def crop_hook_band(
     image_path: str | Path,
     output_path: str | Path,
     *,
-    fraction: float = HOOK_BAND_FRACTION,
+    crop_filter: str | None = None,
 ) -> Path:
-    """Crop the top `fraction` of the frame (hook safe zone)."""
+    """Crop the tight ASS hook stamp band (MarginV 320), not the whole top of frame."""
     src = Path(image_path)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    # crop=width:height:x:y — top band only.
-    vf = f"crop=iw:ih*{fraction}:0:0"
+    vf = crop_filter or hook_band_crop_filter()
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -126,20 +180,18 @@ def preprocess_for_ocr(
     output_path: str | Path,
     *,
     language: str | None = None,
+    variant: int = 0,
 ) -> Path:
-    """Contrast preprocessing for hook-band OCR (ffmpeg filters only).
-
-    Arabic on purple neon: grayscale + contrast lift (invert hurts ara reads).
-    English: same chain plus mild upscale for thin burned ASS strokes.
-    """
+    """Contrast / white-stroke preprocessing for hook-band OCR (ffmpeg filters only)."""
     src = Path(image_path)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     lang = (language or "").lower()
     if lang.startswith("en"):
-        vf = "scale=iw*2:ih*2:flags=lanczos,format=gray,eq=contrast=2.2:brightness=0.04"
+        filters = _ENGLISH_PREPROCESS
     else:
-        vf = "format=gray,eq=contrast=2.0:brightness=0.02"
+        filters = _ARABIC_PREPROCESS
+    vf = filters[min(variant, len(filters) - 1)]
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -175,6 +227,39 @@ def ocr_image(
     if r.returncode != 0:
         raise RuntimeError(f"tesseract failed: {(r.stderr or r.stdout or '').strip()}")
     return (r.stdout or "").strip()
+
+
+def ocr_hook_band(
+    band_path: str | Path,
+    *,
+    language: str | None,
+    langs: str,
+    workdir: str | Path,
+) -> str:
+    """Run language-aware OCR passes on the hook band and merge text."""
+    band = Path(band_path)
+    tmp = Path(workdir)
+    tmp.mkdir(parents=True, exist_ok=True)
+    lang = (language or "").lower()
+    if lang.startswith("en"):
+        filters = _ENGLISH_PREPROCESS
+        psms = (7,)
+    else:
+        filters = _ARABIC_PREPROCESS
+        psms = (11, 7)
+
+    chunks: list[str] = []
+    for idx, _ in enumerate(filters):
+        pre = tmp / f"hook_band_ocr_{idx}.png"
+        preprocess_for_ocr(band, pre, language=language, variant=idx)
+        for psm in psms:
+            try:
+                text = ocr_image(pre, langs=langs, psm=psm)
+            except RuntimeError:
+                continue
+            if text.strip():
+                chunks.append(text.strip())
+    return "\n".join(chunks)
 
 
 _ARABIC_DIACRITICS = re.compile(r"[\u064B-\u065F\u0670\u0640]")
@@ -233,7 +318,6 @@ def _levenshtein_leq(a: str, b: str, max_dist: int) -> bool:
         return False
     if a == b:
         return True
-    # Single-row DP capped at max_dist.
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         cur = [i]
@@ -246,6 +330,16 @@ def _levenshtein_leq(a: str, b: str, max_dist: int) -> bool:
             return False
         prev = cur
     return prev[-1] <= max_dist
+
+
+def _language_from_tess(tess_langs: str | None) -> str | None:
+    if not tess_langs:
+        return None
+    if tess_langs == "eng":
+        return "en"
+    if tess_langs == "ara":
+        return "ar"
+    return None
 
 
 def qa_cover(
@@ -274,7 +368,8 @@ def qa_cover(
             message=f"input not found: {src}",
         )
     attested = tuple(attested_words or DEFAULT_ATTESTED_WORDS)
-    langs = tess_langs or ocr_langs_for_language(language)
+    lang = language or _language_from_tess(tess_langs)
+    langs = tess_langs or ocr_langs_for_language(lang)
     tmp = Path(workdir) if workdir else Path(src.parent) / ".cover_qa_tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     frame = tmp / "cover_frame.png"
@@ -286,8 +381,8 @@ def qa_cover(
         else:
             extract_cover_frame(src, frame, at=extract_s)
         crop_hook_band(frame, band)
-        preprocess_for_ocr(band, pre, language=language)
-        text = ocr_image(pre, langs=langs)
+        text = ocr_hook_band(band, language=lang, langs=langs, workdir=tmp)
+        preprocess_for_ocr(band, pre, language=lang, variant=0)
         matched, missing = match_attested_words(text, attested, min_hits=min_hits)
         ok = len(matched) >= min_hits
         msg = "ok" if ok else f"missing attested hook text: {', '.join(missing)}"
@@ -322,6 +417,75 @@ def qa_cover(
                         p.unlink(missing_ok=True)
                     except OSError:
                         pass
+            for extra in tmp.glob("hook_band_ocr_*.png"):
+                try:
+                    extra.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def generate_ass_stamp_cover(
+    output_path: str | Path,
+    *,
+    text: str = "لك كفاية عزبتني",
+    width: int = 1080,
+    height: int = 1920,
+    wall_overlay: bool = False,
+) -> Path:
+    """Burn a production ASS hook stamp onto a purple studio still (ffmpeg + libass)."""
+    out = Path(output_path)
+    work = out.parent
+    work.mkdir(parents=True, exist_ok=True)
+    ass_path = work / "stamp.ass"
+    write_ass_file(write_ass([{"start": 0.0, "end": 2.5, "text": text}], width=width, height=height), ass_path)
+    sub = _ffmpeg_escape_path(ass_path)
+    fontsdir = _ffmpeg_escape_path(Path(NOTO_NASKH_REGULAR).parent)
+    if wall_overlay:
+        filter_complex = (
+            f"[0:v]scale={width}:{height},format=rgba,colorchannelmixer=aa=0.55[wall];"
+            f"color=c=0x6B00A8:s={width}x{height}:d=1,format=rgba[studio];"
+            f"[studio][wall]overlay=0:0:format=auto[bg];"
+            f"[bg]subtitles={sub}:fontsdir={fontsdir}[o]"
+        )
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc=s={width}x{height}:rate=1",
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[o]",
+            "-frames:v",
+            "1",
+            str(out),
+        ]
+    else:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=0x6B00A8:s={width}x{height}:d=1",
+            "-vf",
+            f"subtitles={sub}:fontsdir={fontsdir}",
+            "-frames:v",
+            "1",
+            str(out),
+        ]
+    r = _run(cmd)
+    if r.returncode != 0 or not out.exists():
+        raise RuntimeError(f"ASS stamp cover generation failed: {(r.stderr or r.stdout or '').strip()}")
+    return out
 
 
 def generate_purple_fixture(
@@ -331,50 +495,16 @@ def generate_purple_fixture(
     width: int = 1080,
     height: int = 1920,
 ) -> Path:
-    """Synthesize a purple-neon cover still for tests (ffmpeg drawtext, no Pillow)."""
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    font = NOTO_NASKH_BOLD
-    if not Path(font).exists():
-        font = "DejaVu Sans"
-    filters: list[str] = []
-    y = 120
-    for i, line in enumerate(text_lines):
-        size = 60 if i == 0 else 48
-        escaped = line.replace(":", r"\:").replace("'", r"\'")
-        filters.append(
-            f"drawtext=fontfile={font}:text='{escaped}':fontcolor=white:fontsize={size}:"
-            f"x=(w-text_w)/2:y={y}"
-        )
-        y += 90
-    vf = ",".join(filters)
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        f"color=c=0x6B00A8:s={width}x{height}:d=1",
-        "-vf",
-        vf,
-        "-frames:v",
-        "1",
-        str(out),
-    ]
-    r = _run(cmd)
-    if r.returncode != 0 or not out.exists():
-        raise RuntimeError(f"purple fixture generation failed: {(r.stderr or r.stdout or '').strip()}")
-    return out
+    """Backward-compatible alias: burn ASS stamp at MarginV 320, not drawtext at y=120."""
+    text = text_lines[-1] if text_lines else "لك كفاية عزبتني"
+    return generate_ass_stamp_cover(output_path, text=text, width=width, height=height)
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Cover-frame OCR QA for trial Reels hooks (crop top band, ara+eng tesseract)."
+        description="Cover-frame OCR QA for trial Reels hooks (ASS stamp band, language-aware tesseract)."
     )
     parser.add_argument("input", help="Video or still image path")
     parser.add_argument(
@@ -391,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--min-hits", type=int, default=1, help="Minimum attested phrase hits")
     parser.add_argument("--workdir", help="Keep intermediate frames in this directory")
+    parser.add_argument("--lang", help="Clip language (ar/en) for tess + preprocess routing")
     parser.add_argument("--json", action="store_true", help="Emit JSON result")
     args = parser.parse_args(argv)
 
@@ -401,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         workdir=args.workdir,
         min_hits=args.min_hits,
         keep_artifacts=bool(args.workdir),
+        language=args.lang,
     )
     if args.json:
         import json

@@ -28,7 +28,7 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 | `lib/desk.py` | Sentence/clause claim extraction; `expand_variant_slots()` maps claims → hook×stack |
 | `lib/runner.py` | One clip → 20 vertical cuts (claims × hook policies × stacks) |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
-| `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |
+| `lib/cover_qa.py` | Tight ASS stamp band (MarginV 320) → language-aware preprocess → tesseract → match attested card words |
 | `tests/` | Hermetic unit tests + ffmpeg/tesseract integration on a generated purple fixture |
 
 ## ASS captions
@@ -59,9 +59,9 @@ PYTHONPATH=trial-reels python trial-reels /path/to/cover.png --json
 Pipeline:
 
 1. Extract still at **t=0.4s** (`--at` to override)
-2. Crop top **28%** hook band
-3. Preprocess: grayscale + contrast (`format=gray,eq=contrast=2.0`)
-4. Tesseract **`ara+eng`** (PSM 6)
+2. Crop tight **ASS stamp band** around Alignment 8 / MarginV 320 (not the whole top of frame)
+3. Preprocess: grayscale + contrast and white-stroke isolation (no invert/negate)
+4. Tesseract **`ara`** or **`eng`** per clip language (PSM 11 sparse for Arabic)
 5. Match attested on-screen card phrases (defaults include `عزبتني`, `كفاية`, `لك كفاية عزبتني` from `clip_5a92132dc6de`)
 
 ### Attested words

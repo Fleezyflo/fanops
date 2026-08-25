@@ -108,7 +108,7 @@ def score_clip(
     if words is None and desk_result.get("mode") == "write":
         words = tuple(card["text"] for card in desk_result.get("cards") or [])
 
-    cover = qa_cover(path, words, tess_langs=tess_langs)
+    cover = qa_cover(path, words, tess_langs=tess_langs, language=language)
     score.cover_ok = cover.ok
     score.cover_message = cover.message
     return score
