@@ -18,10 +18,10 @@ from typing import Any
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
 from lib.desk import write as desk_write
 from lib.desk_swarm import validate_desk_result
-from lib.hooks import LyricEvent, cut_spec, hook_window
+from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
-from lib.stacks import ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
+from lib.stacks import STACK_NAMES, ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
 
 RECIPES_PATH = Path(__file__).resolve().parents[1] / "recipes.json"
 TARGET_WIDTH = 1080
@@ -164,28 +164,31 @@ def plan_variants(
         return []
 
     recipes = recipes or load_recipes()
-    plans: list[VariantPlan] = []
+    hooks = list(recipes.get("hooks") or HOOK_POLICIES)
+    stacks = list(recipes.get("stacks") or STACK_NAMES)
+    cards_by_hook = {card["hook"]: card for card in desk.get("cards") or []}
 
-    for card in desk.get("cards") or []:
-        hook = card.get("hook")
-        stack = card.get("stack")
-        if not hook or not stack:
+    plans: list[VariantPlan] = []
+    for hook in hooks:
+        card = cards_by_hook.get(hook)
+        if not card:
             continue
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
-        if not stack_gate_passes(stack, cut_length):
-            continue
-        plans.append(
-            VariantPlan(
-                hook=hook,
-                stack=stack,
-                card=card,
-                cite_start_s=cite_start,
-                cut_length_s=cut_length,
-                output_name=f"{clip_id}_{hook}_{stack}.mp4",
+        for stack in stacks:
+            if not stack_gate_passes(stack, cut_length):
+                continue
+            plans.append(
+                VariantPlan(
+                    hook=hook,
+                    stack=stack,
+                    card=card,
+                    cite_start_s=cite_start,
+                    cut_length_s=cut_length,
+                    output_name=f"{clip_id}_{hook}_{stack}.mp4",
+                )
             )
-        )
     return plans
 
 

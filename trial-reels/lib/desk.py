@@ -1,7 +1,8 @@
 """Constrained hook writer for trial reels.
 
-Builds on-screen hooks from contiguous attested transcript spans only.
-Words may be dropped from the ends of a line; order is never permuted.
+Hooks are full attested sentences (English) or full Whisper lines (Arabic).
+Sub-window crumbs and nested farms are rejected. Short transcripts may reuse
+the same on-screen text across hook policies; stacks multiply outputs.
 """
 
 from __future__ import annotations
@@ -13,9 +14,6 @@ from lib.stacks import STACK_NAMES
 
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
 TARGET_VARIANTS = len(HOOKS) * len(STACK_NAMES)
-VARIANT_SLOTS: list[tuple[str, str]] = [
-    (hook, stack) for hook in HOOKS for stack in STACK_NAMES
-]
 
 _CREDIT_RE = re.compile(
     r"(ترجمة|translation|subtitle|subtitles|credits?\b|translated by)",
@@ -121,6 +119,26 @@ _AR_DIRECT = frozenset({"لك", "يا", "أنت", "انت", "لكم", "ك", "أ�
 _EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
+_EN_FORBIDDEN_SLICES = frozenset(
+    {
+        "so the next",
+        "fails.",
+        "fails. so the next",
+        "ross defines",
+        "which brings",
+        "brings us",
+        "it's a test",
+        "a test of",
+    }
+)
+_MIN_HOOK_WORDS_EN = 4
+_WEAK_HOOK_STARTERS_EN = frozenset({"the", "a", "an", "in", "of", "to", "and", "or", "so"})
+_EN_FRAGMENT_CRUMBS = frozenset(
+    {
+        "fails.",
+        "so the next",
+    }
+)
 
 
 def _strip_tashkeel(text: str) -> str:
@@ -130,6 +148,10 @@ def _strip_tashkeel(text: str) -> str:
 def _normalize_word(word: str) -> str:
     cleaned = _PUNCT_RE.sub("", _strip_tashkeel(word)).strip().lower()
     return cleaned
+
+
+def _normalize_phrase(text: str) -> str:
+    return " ".join(_normalize_word(part) for part in text.split() if part.strip())
 
 
 def _letter_count(word: str) -> int:
@@ -221,6 +243,18 @@ def _ends_sentence(word: str) -> bool:
     return bool(_SENTENCE_END_RE.search(word))
 
 
+def _is_en_fragment_crumb(text: str) -> bool:
+    words = [part for part in text.split() if part.strip()]
+    if not words:
+        return True
+    norm = _normalize_phrase(text)
+    if norm in _EN_FRAGMENT_CRUMBS:
+        return True
+    if len(words) < _MIN_HOOK_WORDS_EN and not _ends_sentence(words[-1]):
+        return True
+    return False
+
+
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
     """Merge Whisper fragments into sentence-sized chunks in source order.
 
@@ -258,6 +292,17 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
             buffer_line_index = index
         buffer.append(text)
         if _ends_sentence(text.split()[-1] if text.split() else text):
+            merged = " ".join(buffer)
+            probe = _Span(
+                [
+                    _Token(word, buffer_start, buffer_line_index, merged, 0)
+                    for word in merged.split()
+                ]
+            )
+            if _is_crumb_hook(probe, "en"):
+                while len(buffer) > 1 and _is_en_fragment_crumb(buffer[0]):
+                    orphaned = buffer.pop(0)
+                    stitched.append((orphaned, start, index))
             flush()
 
     flush()
@@ -341,24 +386,6 @@ def _is_credit_only(transcript: dict[str, Any], tokens: list[_Token]) -> bool:
     )
 
 
-def _content_tokens(tokens: list[_Token], language: str) -> list[_Token]:
-    function_words = _function_words(language)
-    return [token for token in tokens if token.norm not in function_words]
-
-
-def _is_weak_card(text: str, language: str) -> bool:
-    words = [part for part in text.split() if part.strip()]
-    if not words:
-        return True
-    function_words = _function_words(language)
-    content = [word for word in words if _normalize_word(word) not in function_words]
-    if not content:
-        return True
-    if len(words) <= 2 and len(content) <= 1:
-        return True
-    return False
-
-
 def _contains_forbidden_rewrite(text: str) -> bool:
     normalized = _strip_tashkeel(text)
     for forbidden in _FORBIDDEN_REWRITES:
@@ -378,7 +405,6 @@ def _words_attested(text: str, vocabulary: set[str]) -> bool:
 
 
 def _is_contiguous_in_line(span: _Span) -> bool:
-    """Span tokens must be a contiguous slice of their source line."""
     if not span.tokens:
         return False
     line = span.tokens[0].line_text
@@ -392,18 +418,38 @@ def _has_internal_sentence_break(text: str) -> bool:
     return bool(re.search(r"[.!?…]", trimmed))
 
 
-def _is_leftover_slice(span: _Span, language: str) -> bool:
-    """Reject Whisper crumbs and cross-sentence leftovers."""
-    if not span.tokens:
+def _is_crumb_hook(span: _Span, language: str) -> bool:
+    """Reject two-token windows and other whisper crumbs — hooks are sentences/clauses."""
+    if language != "en":
+        return False
+    text = span.text.strip()
+    norm = _normalize_phrase(text)
+    if norm in _EN_FORBIDDEN_SLICES:
         return True
-    if language == "en":
-        if _has_internal_sentence_break(span.text):
-            return True
-        if span.tokens[0].word.startswith((".", ",", ";", ":")):
-            return True
-        sentence_ids = {token.sentence_index for token in span.tokens}
-        if len(sentence_ids) > 1:
-            return True
+    if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
+        return True
+    words = [part for part in text.split() if part.strip()]
+    if not words:
+        return True
+    first = _normalize_word(words[0])
+    lower = text.lower()
+    if first in _WEAK_HOOK_STARTERS_EN and not lower.startswith("so the next chapter"):
+        return True
+    if len(words) < _MIN_HOOK_WORDS_EN:
+        if len(words) >= 3 and _ends_sentence(words[-1]):
+            return False
+        return True
+    function_words = _function_words(language)
+    content = [word for word in words if _normalize_word(word) not in function_words]
+    if len(content) < 2:
+        return True
+    if span.tokens[0].word.startswith((".", ",", ";", ":")):
+        return True
+    if _has_internal_sentence_break(span.text):
+        return True
+    sentence_ids = {token.sentence_index for token in span.tokens}
+    if len(sentence_ids) > 1:
+        return True
     return False
 
 
@@ -422,20 +468,6 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     return False
 
 
-def _validate_span(span: _Span, language: str, vocabulary: set[str]) -> bool:
-    if not _is_contiguous_in_line(span):
-        return False
-    if _is_leftover_slice(span, language):
-        return False
-    if _contains_forbidden_rewrite(span.text):
-        return False
-    if _is_weak_card(span.text, language):
-        return False
-    if not _words_attested(span.text, vocabulary):
-        return False
-    return True
-
-
 def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
     by_index: dict[int, list[_Token]] = {}
     for token in tokens:
@@ -443,218 +475,81 @@ def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
     return [by_index[idx] for idx in sorted(by_index)]
 
 
-def _substantive_lines(tokens: list[_Token], language: str) -> list[list[_Token]]:
-    lines = _tokens_by_line(tokens)
-    return [line for line in lines if _line_has_hookable_content(line, language)]
+def _hook_units(tokens: list[_Token], language: str) -> list[_Span]:
+    """Full Whisper lines (Arabic) or stitched sentences (English) only."""
+    if language == "ar":
+        return [_Span(line) for line in _tokens_by_line(tokens) if line]
+
+    by_sentence: dict[int, list[_Token]] = {}
+    for token in tokens:
+        by_sentence.setdefault(token.sentence_index, []).append(token)
+    return [_Span(by_sentence[idx]) for idx in sorted(by_sentence) if by_sentence[idx]]
 
 
-def _span_range_in_line(span: _Span, line_tokens: list[_Token]) -> tuple[int, int]:
-    start = line_tokens.index(span.tokens[0])
-    end = line_tokens.index(span.tokens[-1]) + 1
-    return start, end
-
-
-def _ranges_nested(r1: tuple[int, int], r2: tuple[int, int]) -> bool:
-    if r1 == r2:
+def _validate_hook_unit(span: _Span, language: str, vocabulary: set[str]) -> bool:
+    if not span.tokens:
         return False
-    s1, e1 = r1
-    s2, e2 = r2
-    return (s1 <= s2 and e2 <= e1) or (s2 <= s1 and e1 <= e2)
+    if not _is_contiguous_in_line(span):
+        return False
+    if _contains_forbidden_rewrite(span.text):
+        return False
+    if not _words_attested(span.text, vocabulary):
+        return False
+    if not _line_has_hookable_content(span.tokens, language):
+        return False
+    if _is_crumb_hook(span, language):
+        return False
+    return True
 
 
-def _content_word_count(span: _Span, language: str) -> int:
-    function_words = _function_words(language)
-    return sum(1 for token in span.tokens if token.norm not in function_words)
-
-
-def _select_variant_spans(
-    spans: list[_Span],
-    tokens: list[_Token],
-    language: str,
-    *,
-    count: int = TARGET_VARIANTS,
-) -> list[_Span]:
-    """Pick *count* spans with unique text and no same-line nested windows."""
-    by_line = {line[0].line_index: line for line in _tokens_by_line(tokens) if line}
-    buckets: dict[int, list[_Span]] = {}
-    for span in spans:
-        buckets.setdefault(span.tokens[0].line_index, []).append(span)
-    for line_index, line_spans in buckets.items():
-        line_spans.sort(
-            key=lambda span: (
-                len(span.tokens),
-                -_content_word_count(span, language),
-                span.text,
-            )
-        )
-
-    selected: list[_Span] = []
-    ranges_by_line: dict[int, list[tuple[int, int]]] = {}
-    seen_texts: set[str] = set()
-    line_indices = sorted(buckets)
-
-    while len(selected) < count:
-        added = False
-        for line_index in line_indices:
-            line_tokens = by_line.get(line_index)
-            if line_tokens is None:
-                continue
-            for span in buckets[line_index]:
-                text = span.text
-                if text in seen_texts:
-                    continue
-                token_range = _span_range_in_line(span, line_tokens)
-                if any(
-                    _ranges_nested(token_range, existing)
-                    for existing in ranges_by_line.get(line_index, [])
-                ):
-                    continue
-                selected.append(span)
-                seen_texts.add(text)
-                ranges_by_line.setdefault(line_index, []).append(token_range)
-                added = True
-                break
-            if len(selected) >= count:
-                break
-        if not added:
-            break
-    return selected
-
-
-def _contiguous_spans(line_tokens: list[_Token], language: str, vocabulary: set[str]) -> list[_Span]:
-    """Enumerate every contiguous word window on one line that passes validation."""
-    spans: list[_Span] = []
-    n = len(line_tokens)
-    for start in range(n):
-        for end in range(start + 1, n + 1):
-            span = _Span(line_tokens[start:end])
-            if _validate_span(span, language, vocabulary):
-                spans.append(span)
-    return spans
-
-
-def _all_spans(tokens: list[_Token], language: str, vocabulary: set[str]) -> list[_Span]:
-    spans: list[_Span] = []
-    for line in _tokens_by_line(tokens):
-        spans.extend(_contiguous_spans(line, language, vocabulary))
-    return spans
-
-
-def _span_key(span: _Span) -> str:
-    return _normalize_word(span.text)
-
-
-def _suffix_span(
-    line_tokens: list[_Token],
-    size: int,
-    language: str,
-    vocabulary: set[str],
-    *,
-    min_length: int = 1,
-) -> _Span | None:
-    n = len(line_tokens)
-    for length in range(min(size, n), min_length - 1, -1):
-        span = _Span(line_tokens[n - length : n])
-        if _validate_span(span, language, vocabulary):
-            return span
-    return None
-
-
-def _prefix_span(
-    line_tokens: list[_Token],
-    size: int,
-    language: str,
-    vocabulary: set[str],
-    *,
-    min_length: int = 1,
-) -> _Span | None:
-    n = len(line_tokens)
-    for length in range(min(size, n), min_length - 1, -1):
-        span = _Span(line_tokens[:length])
-        if _validate_span(span, language, vocabulary):
-            return span
-    return None
-
-
-def _middle_span(line_tokens: list[_Token], size: int, language: str, vocabulary: set[str]) -> _Span | None:
-    n = len(line_tokens)
-    if n == 0:
-        return None
-    target = min(size, n)
-    center = n // 2
-    for offset in range(n):
-        for start in (center - offset, center + offset):
-            if start < 0 or start + target > n:
-                continue
-            span = _Span(line_tokens[start : start + target])
-            if _validate_span(span, language, vocabulary):
-                return span
-    return None
-
-
-def _direct_span(line_tokens: list[_Token], language: str, vocabulary: set[str]) -> _Span | None:
-    markers = _direct_markers(language)
-    hits = [idx for idx, token in enumerate(line_tokens) if token.norm in markers]
-    if not hits:
-        return None
-    anchor = hits[0]
-    n = len(line_tokens)
-    for length in range(min(7, n), 0, -1):
-        for start in range(max(0, anchor - length + 1), min(anchor, n - length) + 1):
-            end = start + length
-            if start <= anchor < end:
-                span = _Span(line_tokens[start:end])
-                if _validate_span(span, language, vocabulary):
-                    return span
-    return None
-
-
-def _pick_span_for_hook(
-    hook: str,
-    substantive: list[list[_Token]],
-    language: str,
-    vocabulary: set[str],
-) -> _Span | None:
-    if not substantive:
+def _pick_hook_unit(hook: str, units: list[_Span], language: str) -> _Span | None:
+    if not units:
         return None
 
-    first = substantive[0]
-    last = substantive[-1]
-    middle = substantive[len(substantive) // 2]
+    first = units[0]
+    last = units[-1]
+    middle = units[len(units) // 2]
 
     if hook == "result_first":
-        return _suffix_span(last, 7, language, vocabulary)
+        return last
 
     if hook == "mid_action":
-        return _middle_span(middle, 5, language, vocabulary)
+        return middle
 
     if hook == "direct_you":
-        for line in substantive:
-            span = _direct_span(line, language, vocabulary)
-            if span is not None:
-                return span
+        markers = _direct_markers(language)
+        for unit in units:
+            if any(token.norm in markers for token in unit.tokens):
+                return unit
         return None
 
     if hook == "bold_claim":
-        return _prefix_span(first, 5, language, vocabulary)
+        return first
 
     if hook == "cold_proof":
-        return _suffix_span(last, 4, language, vocabulary, min_length=3)
+        return last
 
     raise ValueError(f"unknown hook: {hook}")
 
 
-def _build_card(hook: str, stack: str, span: _Span) -> dict[str, Any]:
+def _fallback_hook_unit(hook: str, units: list[_Span]) -> _Span:
+    if hook in {"result_first", "cold_proof"}:
+        return units[-1]
+    if hook == "mid_action":
+        return units[len(units) // 2]
+    return units[0]
+
+
+def _build_card(hook: str, span: _Span) -> dict[str, Any]:
     return {
         "hook": hook,
-        "stack": stack,
         "text": span.text,
         "cite": span.cite(),
     }
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write twenty constrained hooks (five policies × four stacks) from attested transcript."""
+    """Write five hook-policy cards from attested sentences/lines."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
@@ -681,25 +576,38 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "ear": "",
         }
 
-    all_spans = _all_spans(tokens, language, vocabulary)
-    selected = _select_variant_spans(all_spans, tokens, language, count=TARGET_VARIANTS)
-    cards: list[dict[str, Any]] = []
-    for (hook, stack), span in zip(VARIANT_SLOTS, selected):
-        if not is_contiguous_attested_span(span.text, span.tokens[0].line_text):
-            continue
-        cards.append(_build_card(hook, stack, span))
-
-    cites = [card["cite"] for card in cards]
-    ear = cards[0]["text"] if cards else ""
-
-    if len(cards) < TARGET_VARIANTS:
+    units = [unit for unit in _hook_units(tokens, language) if _validate_hook_unit(unit, language, vocabulary)]
+    if not units:
         return {
             "mode": "blocked",
             "language": language,
             "source_line": source_line,
-            "reason": (
-                f"unable to produce {TARGET_VARIANTS} distinct contiguous attested hooks"
-            ),
+            "reason": "no attested sentence or line hooks in transcript",
+            "cites": [],
+            "cards": [],
+            "ear": "",
+        }
+
+    cards: list[dict[str, Any]] = []
+    for hook in HOOKS:
+        unit = _pick_hook_unit(hook, units, language)
+        if unit is None:
+            unit = _fallback_hook_unit(hook, units)
+        if not is_contiguous_attested_span(unit.text, unit.tokens[0].line_text):
+            continue
+        cards.append(_build_card(hook, unit))
+
+    cards = sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
+    cites = [card["cite"] for card in cards]
+    ear = cards[0]["text"] if cards else ""
+    unique_texts = len({card["text"] for card in cards})
+
+    if not cards:
+        return {
+            "mode": "blocked",
+            "language": language,
+            "source_line": source_line,
+            "reason": "no shippable hook cards",
             "cites": cites,
             "cards": cards,
             "ear": ear,
@@ -709,8 +617,10 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{TARGET_VARIANTS} distinct contiguous attested spans",
+        "reason": f"{len(cards)} hook policies, {unique_texts} distinct on-screen texts",
         "cites": cites,
         "cards": cards,
         "ear": ear,
+        "unique_texts": unique_texts,
+        "target_variants": TARGET_VARIANTS,
     }

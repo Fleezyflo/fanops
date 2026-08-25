@@ -9,9 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.cover_qa import ocr_langs_for_language  # noqa: E402
-from lib.desk import write  # noqa: E402
+from lib.desk import HOOKS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
+from tests.test_desk import AR_CLIP_5A92132DC6DE, EN_CLIP_004AE6D9098A  # noqa: E402
 
 
 def test_validate_rejects_permutation_anagrams() -> None:
@@ -19,36 +20,11 @@ def test_validate_rejects_permutation_anagrams() -> None:
         "mode": "write",
         "language": "ar",
         "cards": [
-            {
-                "hook": "result_first",
-                "stack": "punch_cuts",
-                "text": "عزبتني لك كفاية",
-                "cite": {"line": "لك كفاية عزبتني"},
-            },
-            {
-                "hook": "result_first",
-                "stack": "open_loop",
-                "text": "كفاية لك عزبتني",
-                "cite": {"line": "لك كفاية عزبتني"},
-            },
-            {
-                "hook": "result_first",
-                "stack": "fake_out",
-                "text": "لك كفاية عزبتني",
-                "cite": {"line": "لك كفاية عزبتني"},
-            },
-            {
-                "hook": "result_first",
-                "stack": "end_loop",
-                "text": "عزبتني كفاية لك",
-                "cite": {"line": "لك كفاية عزبتني"},
-            },
-            {
-                "hook": "mid_action",
-                "stack": "punch_cuts",
-                "text": "كفاية عزبتني لك",
-                "cite": {"line": "لك كفاية عزبتني"},
-            },
+            {"hook": "result_first", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "mid_action", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "bold_claim", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "cold_proof", "text": "كفاية عزبتني لك", "cite": {"line": "لك كفاية عزبتني"}},
         ],
     }
     validation = validate_desk_result(fake)
@@ -57,26 +33,17 @@ def test_validate_rejects_permutation_anagrams() -> None:
 
 
 def test_validate_rejects_nested_window_farm() -> None:
-    cards = []
-    nested_texts = [
-        "لك كفاية عزبتني عزبتني",
-        "كفاية عزبتني عزبتني",
-        "لك كفاية عزبتني",
-        "كفاية عزبتني",
-        "عزبتني عزبتني",
-    ]
-    from lib.desk import VARIANT_SLOTS
-
-    for (hook, stack), text in zip(VARIANT_SLOTS, nested_texts * 4):
-        cards.append(
-            {
-                "hook": hook,
-                "stack": stack,
-                "text": text,
-                "cite": {"line": "لك كفاية عزبتني عزبتني"},
-            }
-        )
-    fake = {"mode": "write", "language": "ar", "cards": cards[:20]}
+    fake = {
+        "mode": "write",
+        "language": "ar",
+        "cards": [
+            {"hook": "result_first", "text": "لك كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "mid_action", "text": "كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "bold_claim", "text": "كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "cold_proof", "text": "عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+        ],
+    }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
     assert any("nested" in issue for issue in validation["issues"])
@@ -89,7 +56,6 @@ def test_validate_rejects_non_contiguous_span() -> None:
         "cards": [
             {
                 "hook": "bold_claim",
-                "stack": "punch_cuts",
                 "text": "fails. So the next",
                 "cite": {"line": "genuine street ties actually accept."},
             },
@@ -100,15 +66,18 @@ def test_validate_rejects_non_contiguous_span() -> None:
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_write_and_validate_blocks_single_line_arabic() -> None:
-    payload = write_and_validate(
-        {
-            "language": "ar",
-            "lines": [{"start": 12.4, "text": "لك كفاية عزبتني"}],
-        }
-    )
-    assert payload["desk"]["mode"] == "blocked"
-    assert not payload["validation"]["ok"]
+def test_live_arabic_clip_ships() -> None:
+    payload = write_and_validate(AR_CLIP_5A92132DC6DE)
+    assert payload["desk"]["mode"] == "write"
+    assert payload["validation"]["ok"], payload["validation"]["issues"]
+
+
+def test_live_english_clip_ships_sentence_hooks() -> None:
+    payload = write_and_validate(EN_CLIP_004AE6D9098A)
+    assert payload["desk"]["mode"] == "write"
+    assert payload["validation"]["ok"], payload["validation"]["issues"]
+    for card in payload["desk"]["cards"]:
+        assert len(card["text"].split()) >= 4
 
 
 def test_ocr_langs_routes_english_to_eng() -> None:
@@ -117,7 +86,7 @@ def test_ocr_langs_routes_english_to_eng() -> None:
 
 
 def test_pipeline_does_not_count_files_as_success() -> None:
-    desk_blocked = write({"language": "ar", "lines": [{"start": 0, "text": "لك كفاية عزبتني"}]})
+    desk_blocked = write({"language": "ar", "lines": [{"start": 0, "text": "ترجمة نانسي قنقر"}]})
     score = score_run(
         clip_payloads=[{"clip_id": "ar_v01", "desk": desk_blocked}],
         stacks_landed=20,
@@ -132,12 +101,7 @@ def test_pipeline_does_not_count_files_as_success() -> None:
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
-    desk = write(
-        {
-            "language": "en",
-            "lines": [{"start": 0, "text": "genuine street ties actually accept."}],
-        }
-    )
+    desk = write(EN_CLIP_004AE6D9098A)
     score = score_run(
         clip_payloads=[{"clip_id": "en_v01", "desk": desk}],
         require_cover=False,

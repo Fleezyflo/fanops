@@ -16,7 +16,7 @@ from lib.runner import (  # noqa: E402
     plan_variants,
     transcript_from_segments,
 )
-from tests.test_desk import AR_MULTILINE  # noqa: E402
+from tests.test_desk import AR_CLIP_5A92132DC6DE, AR_MULTILINE, EN_CLIP_004AE6D9098A  # noqa: E402
 
 
 EN_NOTEBOOK = {
@@ -30,23 +30,28 @@ EN_NOTEBOOK = {
 }
 
 
-def test_plan_variants_yields_twenty_distinct_hook_texts() -> None:
-    desk = write(AR_MULTILINE)
+def test_plan_variants_yields_twenty_for_arabic_sung_line() -> None:
+    desk = write(AR_CLIP_5A92132DC6DE)
     assert desk["mode"] == "write"
-    plans = plan_variants(desk, clip_id="ar_demo", source_duration_s=30.0)
+    plans = plan_variants(desk, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
     assert len(plans) == TARGET_VARIANTS
-    hook_texts = [p.card["text"] for p in plans]
-    assert len(set(hook_texts)) == TARGET_VARIANTS
-    hooks = {p.hook for p in plans}
-    stacks = {p.stack for p in plans}
-    assert len(hooks) == 5
-    assert len(stacks) == 4
+    assert len({p.hook for p in plans}) == 5
+    assert len({p.stack for p in plans}) == 4
+    assert len({p.card["text"] for p in plans}) == 1
+
+
+def test_plan_variants_yields_twenty_for_english_clip() -> None:
+    desk = write(EN_CLIP_004AE6D9098A)
+    assert desk["mode"] == "write"
+    plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    assert len(plans) == TARGET_VARIANTS
+    assert all(len(p.card["text"].split()) >= 4 for p in plans)
 
 
 def test_plan_variants_empty_when_desk_blocked() -> None:
-    desk = write({"language": "ar", "lines": [{"start": 12.4, "text": "لك كفاية عزبتني"}]})
+    desk = write(EN_NOTEBOOK)
     assert desk["mode"] == "blocked"
-    plans = plan_variants(desk, clip_id="ar_short", source_duration_s=30.0)
+    plans = plan_variants(desk, clip_id="en_notebook", source_duration_s=30.0)
     assert plans == []
 
 

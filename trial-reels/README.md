@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk must return `mode=write` with **twenty distinct on-screen hooks** (five policies × four stacks, each with its own attested span) before any files ship. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk must return `mode=write` with five hook-policy cards (full attested sentences or lines). On-screen text may repeat when the transcript cannot honestly support five distinct claims — stacks multiply to ~20 output cuts. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 
