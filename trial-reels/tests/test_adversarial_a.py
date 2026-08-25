@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -9,9 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.cover_qa import ocr_langs_for_language  # noqa: E402
-from lib.desk import write  # noqa: E402
+from lib.desk import expand_variant_slots, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def test_validate_rejects_permutation_anagrams() -> None:
@@ -22,9 +25,8 @@ def test_validate_rejects_permutation_anagrams() -> None:
             {"hook": "result_first", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
             {"hook": "mid_action", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
             {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "bold_claim", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "cold_proof", "text": "كفاية عزبتني لك", "cite": {"line": "لك كفاية عزبتني"}},
         ],
+        "claims": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
@@ -42,21 +44,19 @@ def test_validate_rejects_non_contiguous_span() -> None:
                 "cite": {"line": "genuine street ties actually accept."},
             },
         ],
+        "claims": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_write_and_validate_blocks_single_line_arabic() -> None:
-    payload = write_and_validate(
-        {
-            "language": "ar",
-            "lines": [{"start": 12.4, "text": "لك كفاية عزبتني"}],
-        }
-    )
-    assert payload["desk"]["mode"] == "blocked"
-    assert not payload["validation"]["ok"]
+def test_write_and_validate_ships_live_arabic_clip() -> None:
+    transcript = json.loads((FIXTURES / "clip_5a92132dc6de.json").read_text(encoding="utf-8"))
+    payload = write_and_validate(transcript)
+    assert payload["desk"]["mode"] == "write"
+    assert payload["validation"]["ok"]
+    assert len(expand_variant_slots(payload["desk"]["cards"])) == 20
 
 
 def test_ocr_langs_routes_english_to_eng() -> None:
@@ -65,7 +65,7 @@ def test_ocr_langs_routes_english_to_eng() -> None:
 
 
 def test_pipeline_does_not_count_files_as_success() -> None:
-    desk_blocked = write({"language": "ar", "lines": [{"start": 0, "text": "لك كفاية عزبتني"}]})
+    desk_blocked = write({"language": "ar", "lines": [{"start": 0, "text": "ترجمة نانسي قنقر"}]})
     score = score_run(
         clip_payloads=[{"clip_id": "ar_v01", "desk": desk_blocked}],
         stacks_landed=20,

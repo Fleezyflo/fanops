@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.captions import write_ass, write_ass_file
-from lib.desk import HOOKS, write
+from lib.desk import HOOKS, TARGET_VARIANTS, expand_variant_slots, write
 from lib.desk_swarm import validate_desk_result
 from lib.hooks import (
     LyricEvent,
@@ -36,8 +36,8 @@ from lib.stacks import (
 REHOOK_DURATION_S = 1.8
 DEFAULT_OUT_WIDTH = 1080
 DEFAULT_OUT_HEIGHT = 1920
-MIN_TARGET_OUTPUTS = 15
-MAX_TARGET_OUTPUTS = 20
+MIN_TARGET_OUTPUTS = TARGET_VARIANTS
+MAX_TARGET_OUTPUTS = TARGET_VARIANTS
 
 
 @dataclass
@@ -276,16 +276,14 @@ def run_clip(
 
     lyric_events = _segments_to_lyrics(transcript)
     cards = list(desk_result.get("cards") or [])
-    stacks = list(recipes.get("stacks") or [])
-    if not stacks:
-        stacks = ["punch_cuts"]
     rehooks_s = tuple(recipes.get("rehooks_s") or (3, 8))
+    variant_slots = expand_variant_slots(cards)
 
-    for index, card in enumerate(cards):
-        hook = str(card.get("hook") or HOOKS[index % len(HOOKS)])
-        stack = stacks[index % len(stacks)]
-        cite_start_s = float((card.get("cite") or {}).get("start") or 0.0)
-        hook_text = str(card.get("text") or "").strip()
+    for index, slot in enumerate(variant_slots):
+        hook = str(slot.get("hook") or HOOKS[index % len(HOOKS)])
+        stack = str(slot.get("stack") or "punch_cuts")
+        cite_start_s = float((slot.get("cite") or {}).get("start") or 0.0)
+        hook_text = str(slot.get("text") or "").strip()
         cut_start, cut_length = cut_spec(cite_start_s, media.duration_s)
         window = hook_window(hook, cite_start_s=cite_start_s, total_duration_s=media.duration_s)
         variant_tag = f"v{index + 1:02d}"

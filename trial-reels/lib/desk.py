@@ -1,19 +1,24 @@
 """Constrained hook writer for trial reels.
 
-Builds on-screen hooks from contiguous attested transcript spans only.
-Words may be dropped from the ends of a line; order is never permuted.
+A hook is a contiguous attested sentence or real clause — never a permuted bag,
+never an invented word, never a cross-sentence whisper crumb or n-gram window.
+
+Desk returns the distinct claims the transcript actually supports. The runner
+expands those claims across hook×stack slots (15–20 cuts) when fewer claims exist.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable
+
+from lib.stacks import STACK_NAMES
 
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
-
-MIN_HOOKS = 15
-MAX_HOOKS = 20
-MIN_SOURCE_LINES = 3
+TARGET_VARIANTS = len(HOOKS) * len(STACK_NAMES)
+VARIANT_SLOTS: list[tuple[str, str]] = [
+    (hook, stack) for hook in HOOKS for stack in STACK_NAMES
+]
 
 _CREDIT_RE = re.compile(
     r"(ترجمة|translation|subtitle|subtitles|credits?\b|translated by)",
@@ -21,6 +26,7 @@ _CREDIT_RE = re.compile(
 )
 _TASHKEEL_RE = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")
 _PUNCT_RE = re.compile(r"[^\w\s\u0600-\u06FF]", re.UNICODE)
+_SENTENCE_END_RE = re.compile(r"[.!?…][\"')\]]*$")
 
 _EN_FUNCTION = frozenset(
     {
@@ -119,6 +125,9 @@ _EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
 
+_EN_MIN_CLAUSE_WORDS = 4
+_EN_MIN_CLAUSE_CONTENT = 3
+
 
 def _strip_tashkeel(text: str) -> str:
     return _TASHKEEL_RE.sub("", text)
@@ -152,34 +161,22 @@ def _direct_markers(language: str) -> frozenset[str]:
 
 
 class _Token:
-    __slots__ = ("word", "norm", "start", "line_index", "line_text")
+    __slots__ = ("word", "norm", "start", "line_index", "line_text", "sentence_index")
 
-    def __init__(self, word: str, start: float, line_index: int, line_text: str) -> None:
+    def __init__(
+        self,
+        word: str,
+        start: float,
+        line_index: int,
+        line_text: str,
+        sentence_index: int,
+    ) -> None:
         self.word = word
         self.norm = _normalize_word(word)
         self.start = start
         self.line_index = line_index
         self.line_text = line_text
-
-
-class _Span:
-    __slots__ = ("tokens", "text", "line_index", "start", "end")
-
-    def __init__(self, tokens: list[_Token]) -> None:
-        self.tokens = tokens
-        self.text = " ".join(token.word for token in tokens)
-        self.line_index = tokens[0].line_index if tokens else -1
-        self.start = 0
-        self.end = len(tokens)
-
-    def cite(self) -> dict[str, Any]:
-        if not self.tokens:
-            return {"start": 0.0, "words": []}
-        return {
-            "start": min(token.start for token in self.tokens),
-            "words": [token.word for token in self.tokens],
-            "line": self.tokens[0].line_text,
-        }
+        self.sentence_index = sentence_index
 
 
 def _parse_lines(transcript: dict[str, Any]) -> list[dict[str, Any]]:
@@ -206,27 +203,83 @@ def _line_start(raw: dict[str, Any]) -> float:
     return 0.0
 
 
-def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
-    tokens: list[_Token] = []
-    language = transcript.get("language")
-    source_parts: list[str] = []
+def _ends_sentence(word: str) -> bool:
+    return bool(_SENTENCE_END_RE.search(word))
 
-    for index, raw in enumerate(_parse_lines(transcript)):
+
+def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
+    """Merge English Whisper crumbs into sentences; keep Arabic lines separate."""
+    if language != "en":
+        stitched: list[tuple[str, float, int]] = []
+        for index, raw in enumerate(lines):
+            text = _line_text(raw)
+            if text:
+                stitched.append((text, _line_start(raw), index))
+        return stitched
+
+    stitched: list[tuple[str, float, int]] = []
+    buffer: list[str] = []
+    buffer_start = 0.0
+    buffer_line_index = 0
+
+    def flush() -> None:
+        nonlocal buffer
+        if not buffer:
+            return
+        stitched.append((" ".join(buffer), buffer_start, buffer_line_index))
+        buffer = []
+
+    for index, raw in enumerate(lines):
         text = _line_text(raw)
         if not text:
             continue
-        source_parts.append(text)
-        if language is None:
-            language = _detect_language(text)
         start = _line_start(raw)
-        for word in text.split():
-            if word.strip():
-                tokens.append(_Token(word, start, index, text))
+        if not buffer:
+            buffer_start = start
+            buffer_line_index = index
+        buffer.append(text)
+        words = text.split()
+        if words and (_ends_sentence(words[-1]) or len(words) >= 6):
+            flush()
 
+    flush()
+    return stitched
+
+
+def _tokenize_stitched(
+    stitched: list[tuple[str, float, int]],
+    language: str,
+) -> list[_Token]:
+    tokens: list[_Token] = []
+    sentence_index = 0
+    for text, start, line_index in stitched:
+        words = [word for word in text.split() if word.strip()]
+        if not words:
+            continue
+        for word in words:
+            tokens.append(_Token(word, start, line_index, text, sentence_index))
+        if language == "en" and _ends_sentence(words[-1]):
+            sentence_index += 1
+    return tokens
+
+
+def _collect_tokens(transcript: dict[str, Any]) -> tuple[list[_Token], str]:
+    raw_lines = _parse_lines(transcript)
+    language = transcript.get("language")
+    if language is None:
+        for raw in raw_lines:
+            text = _line_text(raw)
+            if text:
+                language = _detect_language(text)
+                break
     resolved_language = language or "en"
-    return tokens, resolved_language if resolved_language in {"ar", "en"} else _detect_language(
-        " ".join(source_parts) or ""
-    )
+    if resolved_language not in {"ar", "en"}:
+        joined = " ".join(_line_text(raw) for raw in raw_lines if _line_text(raw))
+        resolved_language = _detect_language(joined)
+
+    stitched = _stitch_line_texts(raw_lines, resolved_language)
+    tokens = _tokenize_stitched(stitched, resolved_language)
+    return tokens, resolved_language
 
 
 def _attested_vocabulary(tokens: list[_Token]) -> set[str]:
@@ -265,9 +318,33 @@ def _is_credit_only(transcript: dict[str, Any], tokens: list[_Token]) -> bool:
         by_line.setdefault(token.line_index, []).append(token)
 
     return not any(
-        _line_has_hookable_content(line_tokens, _detect_language(" ".join(t.word for t in line_tokens)))
+        _line_has_hookable_content(
+            line_tokens,
+            _detect_language(" ".join(t.word for t in line_tokens)),
+        )
         for line_tokens in by_line.values()
     )
+
+
+def _cite(tokens: list[_Token]) -> dict[str, Any]:
+    if not tokens:
+        return {"start": 0.0, "words": []}
+    return {
+        "start": min(token.start for token in tokens),
+        "words": [token.word for token in tokens],
+        "line": tokens[0].line_text,
+    }
+
+
+def _join_tokens(tokens: list[_Token]) -> str:
+    if not tokens:
+        return ""
+    return " ".join(token.word for token in tokens)
+
+
+def _content_tokens(tokens: list[_Token], language: str) -> list[_Token]:
+    function_words = _function_words(language)
+    return [token for token in tokens if token.norm not in function_words]
 
 
 def _is_weak_card(text: str, language: str) -> bool:
@@ -301,12 +378,11 @@ def _words_attested(text: str, vocabulary: set[str]) -> bool:
     return True
 
 
-def _is_contiguous_in_line(span: _Span) -> bool:
-    """Span tokens must be a contiguous slice of their source line."""
-    if not span.tokens:
-        return False
-    line = span.tokens[0].line_text
-    return span.text in line or span.text.replace("  ", " ") in line
+def _has_internal_sentence_break(text: str) -> bool:
+    trimmed = text.rstrip("\"')]}")
+    while trimmed and trimmed[-1] in ".!?…":
+        trimmed = trimmed[:-1].rstrip()
+    return bool(re.search(r"[.!?…]", trimmed))
 
 
 def is_contiguous_attested_span(text: str, line_text: str) -> bool:
@@ -324,150 +400,175 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     return False
 
 
-def _validate_span(span: _Span, language: str, vocabulary: set[str]) -> bool:
-    if not _is_contiguous_in_line(span):
-        return False
-    if _contains_forbidden_rewrite(span.text):
-        return False
-    if _is_weak_card(span.text, language):
-        return False
-    if not _words_attested(span.text, vocabulary):
-        return False
-    return True
-
-
-def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
-    by_index: dict[int, list[_Token]] = {}
-    for token in tokens:
-        by_index.setdefault(token.line_index, []).append(token)
-    return [by_index[idx] for idx in sorted(by_index)]
-
-
-def _contiguous_spans(line_tokens: list[_Token], language: str, vocabulary: set[str]) -> list[_Span]:
-    """Enumerate every contiguous word window on one line that passes validation."""
-    spans: list[_Span] = []
-    n = len(line_tokens)
-    for start in range(n):
-        for end in range(start + 1, n + 1):
-            span = _Span(line_tokens[start:end])
-            if _validate_span(span, language, vocabulary):
-                spans.append(span)
-    return spans
-
-
-def _all_spans(tokens: list[_Token], language: str, vocabulary: set[str]) -> list[_Span]:
-    spans: list[_Span] = []
-    for line in _tokens_by_line(tokens):
-        spans.extend(_contiguous_spans(line, language, vocabulary))
-    return spans
-
-
-def _span_key(span: _Span) -> str:
-    return _normalize_word(span.text)
-
-
-def _spans_nested(a: _Span, b: _Span) -> bool:
-    """True when two spans from the same line overlap by containment."""
-    if a.line_index != b.line_index:
-        return False
-    if a.text == b.text:
+def _is_whisper_crumb(text: str, language: str) -> bool:
+    words = [part for part in text.split() if part.strip()]
+    if not words:
         return True
-    shorter, longer = (a.text, b.text) if len(a.text.split()) <= len(b.text.split()) else (b.text, a.text)
-    if shorter == longer:
-        return False
-    short_words = shorter.split()
-    long_words = longer.split()
-    if len(short_words) >= len(long_words):
-        return False
-    for start in range(len(long_words) - len(short_words) + 1):
-        if long_words[start : start + len(short_words)] == short_words:
+    if words[0].startswith((".", ",", ";", ":")):
+        return True
+    if _has_internal_sentence_break(text):
+        return True
+    if language == "en":
+        content = [word for word in words if _normalize_word(word) not in _EN_FUNCTION]
+        if len(words) == 1 and _ends_sentence(words[0]) and _letter_count(_normalize_word(words[0])) < 5:
+            return True
+        if len(words) < _EN_MIN_CLAUSE_WORDS and len(content) < _EN_MIN_CLAUSE_CONTENT:
             return True
     return False
 
 
-def _span_score(span: _Span, language: str) -> float:
-    function_words = _function_words(language)
-    words = span.text.split()
-    content = [word for word in words if _normalize_word(word) not in function_words]
-    score = float(len(content) * 10 + len(words))
-    if any(token.norm in _direct_markers(language) for token in span.tokens):
-        score += 5.0
+def _validate_claim(text: str, tokens: list[_Token], language: str, vocabulary: set[str]) -> bool:
+    if _contains_forbidden_rewrite(text):
+        return False
+    if _is_weak_card(text, language):
+        return False
+    if not _words_attested(text, vocabulary):
+        return False
+    if _is_whisper_crumb(text, language):
+        return False
+    if language == "en":
+        sentence_ids = {token.sentence_index for token in tokens}
+        if len(sentence_ids) > 1:
+            return False
+    line_text = tokens[0].line_text if tokens else ""
+    return is_contiguous_attested_span(text, line_text)
+
+
+def _sentence_token_groups(tokens: list[_Token], language: str) -> list[list[_Token]]:
+    if language == "ar":
+        by_line: dict[int, list[_Token]] = {}
+        for token in tokens:
+            by_line.setdefault(token.line_index, []).append(token)
+        return [by_line[index] for index in sorted(by_line)]
+
+    by_sentence: dict[int, list[_Token]] = {}
+    for token in tokens:
+        by_sentence.setdefault(token.sentence_index, []).append(token)
+    return [by_sentence[index] for index in sorted(by_sentence)]
+
+
+def _clause_token_groups(sentence_tokens: list[_Token]) -> list[list[_Token]]:
+    if not sentence_tokens:
+        return []
+    groups: list[list[_Token]] = []
+    current: list[_Token] = []
+    for token in sentence_tokens:
+        current.append(token)
+        word = token.word.rstrip("\"')]}")
+        if word.endswith(",") or word.endswith(";"):
+            groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups if len(groups) > 1 else [sentence_tokens]
+
+
+def _extract_claims(tokens: list[_Token], language: str, vocabulary: set[str]) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for sentence_tokens in _sentence_token_groups(tokens, language):
+        for clause_tokens in _clause_token_groups(sentence_tokens):
+            text = _join_tokens(clause_tokens)
+            norm = _normalize_word(text)
+            if norm in seen:
+                continue
+            if not _validate_claim(text, clause_tokens, language, vocabulary):
+                continue
+            seen.add(norm)
+            claims.append({"text": text, "cite": _cite(clause_tokens), "tokens": clause_tokens})
+
+    return claims
+
+
+def _claim_score(claim: dict[str, Any], language: str) -> int:
+    tokens = claim["tokens"]
+    return len(_content_tokens(tokens, language)) * 10 + len(tokens)
+
+
+def _hook_scorer(hook: str, language: str) -> Callable[[dict[str, Any]], int]:
+    markers = _direct_markers(language)
+
+    def score(claim: dict[str, Any]) -> int:
+        tokens = claim["tokens"]
+        if not tokens:
+            return -1
+        pool = _sentence_token_groups(tokens, language)[0]
+        start = pool.index(tokens[0])
+        end = start + len(tokens)
+        n = len(pool)
+        content_score = _claim_score(claim, language)
+
+        if hook == "result_first":
+            return content_score + (100 if end == n else end * 2)
+
+        if hook == "mid_action":
+            center = (n - 1) / 2
+            span_center = (start + end - 1) / 2
+            distance = abs(span_center - center)
+            return content_score + max(0, 50 - int(distance * 10))
+
+        if hook == "direct_you":
+            if not any(token.norm in markers for token in tokens):
+                return -1
+            return content_score + 80 + max(0, 20 - len(tokens))
+
+        if hook == "bold_claim":
+            return content_score + max(0, 30 - start * 3) + len(tokens) * 5
+
+        if hook == "cold_proof":
+            return content_score + start * 3 + len(tokens) * 2
+
+        raise ValueError(f"unknown hook: {hook}")
+
     return score
 
 
-def _dedupe_spans(spans: list[_Span]) -> list[_Span]:
-    seen: set[str] = set()
-    unique: list[_Span] = []
-    for span in spans:
-        key = _span_key(span)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(span)
-    return unique
+def _assign_hooks(claims: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    used_texts: set[str] = set()
+
+    for hook in HOOKS:
+        scorer = _hook_scorer(hook, language)
+        ranked = sorted(
+            claims,
+            key=lambda claim: (scorer(claim), _claim_score(claim, language)),
+            reverse=True,
+        )
+        for claim in ranked:
+            norm = _normalize_word(claim["text"])
+            if norm in used_texts:
+                continue
+            if scorer(claim) < 0:
+                continue
+            cards.append({"hook": hook, "text": claim["text"], "cite": claim["cite"]})
+            used_texts.add(norm)
+            break
+
+    return sorted(cards, key=lambda card: HOOKS.index(card["hook"]))
 
 
-def _select_hook_inventory(
-    spans: list[_Span],
-    language: str,
-    *,
-    min_hooks: int = MIN_HOOKS,
-    max_hooks: int = MAX_HOOKS,
-    min_source_lines: int = MIN_SOURCE_LINES,
-) -> list[_Span]:
-    """Pick up to *max_hooks* non-nested distinct spans; fail when under *min_hooks*."""
-    candidates = _dedupe_spans(spans)
-    by_line: dict[int, list[_Span]] = {}
-    for span in candidates:
-        by_line.setdefault(span.line_index, []).append(span)
-
-    if len(by_line) < min_source_lines:
+def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map attested claim cards onto hook×stack render slots."""
+    if not cards:
         return []
-
-    lengths = sorted({len(span.text.split()) for span in candidates})
-    selected: list[_Span] = []
-    for length in lengths:
-        if length < 3:
-            continue
-        line_indices = sorted(by_line)
-        per_length = {
-            line_index: [span for span in by_line[line_index] if len(span.text.split()) == length]
-            for line_index in line_indices
-        }
-        for line_index in line_indices:
-            per_length[line_index].sort(key=lambda span: _span_score(span, language), reverse=True)
-        max_per_line = max((len(per_length[line_index]) for line_index in line_indices), default=0)
-        for round_index in range(max_per_line):
-            for line_index in line_indices:
-                if len(selected) >= max_hooks:
-                    break
-                pool = per_length[line_index]
-                if round_index >= len(pool):
-                    continue
-                span = pool[round_index]
-                if any(_spans_nested(span, chosen) for chosen in selected):
-                    continue
-                if span.text in {chosen.text for chosen in selected}:
-                    continue
-                selected.append(span)
-
-    line_count = len({span.line_index for span in selected})
-    if len(selected) < min_hooks or line_count < min_source_lines:
-        return []
-    return selected[:max_hooks]
-
-
-def _build_card(hook: str, span: _Span, index: int) -> dict[str, Any]:
-    return {
-        "hook": hook,
-        "index": index,
-        "text": span.text,
-        "cite": span.cite(),
-    }
+    expanded: list[dict[str, Any]] = []
+    for index, (hook, stack) in enumerate(VARIANT_SLOTS):
+        claim = cards[index % len(cards)]
+        expanded.append(
+            {
+                "hook": hook,
+                "stack": stack,
+                "text": claim["text"],
+                "cite": claim["cite"],
+                "claim_index": index % len(cards),
+            }
+        )
+    return expanded
 
 
 def write(transcript: dict[str, Any]) -> dict[str, Any]:
-    """Write 15–20 distinct contiguous attested hooks when the transcript supports them."""
+    """Return attested sentence/clause claims; fail only on empty or credit-only input."""
     tokens, language = _collect_tokens(transcript)
     source_line = " ".join(dict.fromkeys(token.line_text for token in tokens))
     vocabulary = _attested_vocabulary(tokens)
@@ -480,6 +581,7 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "reason": "credit-only transcript",
             "cites": [],
             "cards": [],
+            "claims": [],
             "ear": "",
         }
 
@@ -491,39 +593,34 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
             "reason": "empty transcript",
             "cites": [],
             "cards": [],
+            "claims": [],
             "ear": "",
         }
 
-    inventory = _select_hook_inventory(_all_spans(tokens, language, vocabulary), language)
-    cards: list[dict[str, Any]] = []
-    for index, span in enumerate(inventory):
-        if not is_contiguous_attested_span(span.text, span.tokens[0].line_text):
-            continue
-        cards.append(_build_card(HOOKS[index % len(HOOKS)], span, index))
-
+    claims = _extract_claims(tokens, language, vocabulary)
+    cards = _assign_hooks(claims, language)
     cites = [card["cite"] for card in cards]
     ear = cards[0]["text"] if cards else ""
 
-    if len(cards) < MIN_HOOKS:
+    if not cards:
         return {
             "mode": "blocked",
             "language": language,
             "source_line": source_line,
-            "reason": (
-                f"unable to produce {MIN_HOOKS} distinct contiguous attested hooks "
-                f"(got {len(cards)}; nested single-line spans do not count)"
-            ),
-            "cites": cites,
-            "cards": cards,
-            "ear": ear,
+            "reason": "no valid contiguous attested claims",
+            "cites": [],
+            "cards": [],
+            "claims": [],
+            "ear": "",
         }
 
     return {
         "mode": "write",
         "language": language,
         "source_line": source_line,
-        "reason": f"{len(cards)} distinct contiguous attested spans",
+        "reason": f"{len(claims)} attested claim{'s' if len(claims) != 1 else ''}",
         "cites": cites,
         "cards": cards,
+        "claims": [{"text": claim["text"], "cite": claim["cite"]} for claim in claims],
         "ear": ear,
     }

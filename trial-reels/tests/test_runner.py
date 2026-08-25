@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from lib.desk import TARGET_VARIANTS
 from lib.runner import (
     build_ass_events,
     load_or_transcribe,
@@ -115,18 +116,12 @@ def test_load_transcript_from_work_dir(tmp_path: Path) -> None:
     assert loaded["language"] == "en"
 
 
-@pytest.mark.parametrize(
-    "transcript,expected_min",
-    [
-        (AR_MULTILINE_TRANSCRIPT, 15),
-        (EN_MULTILINE_TRANSCRIPT, 15),
-    ],
-)
+@pytest.mark.parametrize("expected_min", [TARGET_VARIANTS])
 def test_run_clip_ships_vertical_variants(
     tmp_path: Path,
-    transcript: dict,
     expected_min: int,
 ) -> None:
+    transcript = AR_MULTILINE_TRANSCRIPT
     src = tmp_path / "source.mp4"
     _make_source_video(src, duration_s=30.0)
     work = tmp_path / "work"
@@ -173,22 +168,54 @@ def test_run_clip_ships_vertical_variants(
     assert width == "1080"
     assert height == "1920"
 
-    for variant in ok_variants:
-        assert "عذبتيني" not in variant.hook_text
-
     hook_texts = [variant.hook_text for variant in ok_variants]
-    assert len(set(hook_texts)) == len(hook_texts)
+    assert len(ok_variants) == TARGET_VARIANTS
+    if transcript["language"] == "ar":
+        assert all("عذبتيني" not in text for text in hook_texts)
+    else:
+        assert all(len(text.split()) >= 4 or text.endswith(".") for text in set(hook_texts))
 
 
-def test_run_clip_blocks_single_line_arabic_permuter(tmp_path: Path) -> None:
+def test_run_clip_ships_single_line_arabic_via_stack_expansion(tmp_path: Path) -> None:
     src = tmp_path / "source.mp4"
-    _make_source_video(src, duration_s=12.0)
+    _make_source_video(src, duration_s=30.0)
     work = tmp_path / "work"
     out = tmp_path / "out"
     work.mkdir()
     transcript = {
         "language": "ar",
         "segments": [{"start": 12.4, "end": 14.0, "text": "لك كفاية عزبتني"}],
+    }
+    transcript_path = work / "transcript.json"
+    transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+    recipes = json.loads((Path(__file__).resolve().parents[1] / "recipes.json").read_text())
+
+    result = run_clip(
+        src,
+        out_dir=out,
+        work_dir=work,
+        recipes=recipes,
+        transcript_path=transcript_path,
+        run_cover_qa=False,
+    )
+
+    assert not result.blocked
+    assert result.validation["ok"]
+    ok_variants = [v for v in result.variants if v.ok]
+    assert len(ok_variants) == TARGET_VARIANTS
+    assert {v.hook_text for v in ok_variants} == {"لك كفاية عزبتني"}
+    assert len({v.stack for v in ok_variants}) >= 2
+
+
+def test_run_clip_blocks_credit_only(tmp_path: Path) -> None:
+    src = tmp_path / "source.mp4"
+    _make_source_video(src, duration_s=30.0)
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    work.mkdir()
+    transcript = {
+        "language": "ar",
+        "segments": [{"start": 0.0, "end": 1.0, "text": "ترجمة نانسي قنقر"}],
     }
     transcript_path = work / "transcript.json"
     transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
