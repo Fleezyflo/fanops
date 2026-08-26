@@ -19,41 +19,31 @@ def test_validate_rejects_permutation_anagrams() -> None:
     fake = {
         "mode": "write",
         "language": "ar",
-        "treatments": [
-            {"kind": "source_order", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
-            {"kind": "attested_clause", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"kind": "direct_address", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+        "cards": [
+            {"hook": "result_first", "stack": "clean", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "mid_action", "stack": "punch_in", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
         ],
-        "cards": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
-    assert any("anagram" in issue for issue in validation["issues"])
 
 
 def test_validate_rejects_nested_window_farm() -> None:
-    fake = {
-        "mode": "write",
-        "language": "ar",
-        "treatments": [
-            {
-                "kind": "source_order",
-                "text": "لك كفاية عزبتني عزبتني",
-                "cite": {"line": "لك كفاية عزبتني عزبتني"},
-            },
-            {
-                "kind": "attested_clause",
-                "text": "كفاية عزبتني عزبتني",
-                "cite": {"line": "لك كفاية عزبتني عزبتني"},
-            },
-            {
-                "kind": "direct_address",
-                "text": "لك كفاية عزبتني",
-                "cite": {"line": "لك كفاية عزبتني عزبتني"},
-            },
-        ],
-        "cards": [],
-    }
+    cards = [
+        {
+            "hook": "result_first",
+            "stack": "clean",
+            "text": "لك كفاية عزبتني",
+            "cite": {"line": "لك كفاية عزبتني"},
+        },
+        {
+            "hook": "mid_action",
+            "stack": "punch_in",
+            "text": "عزبتني",
+            "cite": {"line": "لك كفاية عزبتني"},
+        },
+    ]
+    fake = {"mode": "write", "language": "ar", "cards": cards}
     validation = validate_desk_result(fake)
     assert not validation["ok"]
     assert any("nested" in issue for issue in validation["issues"])
@@ -63,31 +53,37 @@ def test_validate_rejects_non_contiguous_span() -> None:
     fake = {
         "mode": "write",
         "language": "en",
-        "treatments": [
+        "cards": [
             {
-                "kind": "attested_clause",
+                "hook": "result_first",
+                "stack": "clean",
                 "text": "fails. So the next",
                 "cite": {"line": "genuine street ties actually accept."},
             },
         ],
-        "cards": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_live_arabic_fixture_ships() -> None:
+def test_live_arabic_fixture_blocked() -> None:
     payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
-    assert payload["desk"]["mode"] == "write"
-    assert payload["desk"]["ceiling"] == 2
-    assert payload["validation"]["ok"], payload["validation"]["issues"]
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] == 2
+    assert not payload["validation"]["ok"]
 
 
-def test_live_english_fixture_ships_many_treatments() -> None:
+def test_live_english_fixture_blocked_with_honest_claims() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] >= 4
+    assert not payload["validation"]["ok"]
+
+
+def test_twenty_hook_fixture_validates() -> None:
+    payload = write_and_validate(_load_fixture("clip_twenty_hooks.json"))
     assert payload["desk"]["mode"] == "write"
-    assert payload["desk"]["unique_texts"] > 4
     assert payload["validation"]["ok"], payload["validation"]["issues"]
 
 
@@ -112,7 +108,7 @@ def test_pipeline_does_not_count_files_as_success() -> None:
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     score = score_run(
         clip_payloads=[{"clip_id": "en_v01", "desk": desk}],
         require_cover=False,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import TARGET_VARIANTS, _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, is_contiguous_attested_span, write
-from lib.treatments import MAX_TREATMENTS, TREATMENT_KINDS
+from lib.desk import TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
+from lib.treatments import _EN_FRAGMENT_CRUMBS, _normalize_phrase, is_nested_hook_text
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -17,21 +17,21 @@ def _card_is_contiguous(card: dict[str, Any]) -> bool:
     return is_contiguous_attested_span(text, line)
 
 
-def _is_permutation_fake(items: list[dict[str, Any]]) -> bool:
-    if len(items) < 2:
+def _is_permutation_fake(cards: list[dict[str, Any]]) -> bool:
+    if len(cards) < 2:
         return False
-    bags = [frozenset((item.get("text") or "").split()) for item in items]
+    bags = [frozenset((card.get("text") or "").split()) for card in cards]
     if len(set(bags)) > 1:
         return False
-    texts = [(item.get("text") or "") for item in items]
+    texts = [(card.get("text") or "") for card in cards]
     return len(set(texts)) > 1
 
 
-def _hook_ranges_on_line(items: list[dict[str, Any]], line: str) -> list[tuple[int, int]]:
+def _hook_ranges_on_line(cards: list[dict[str, Any]], line: str) -> list[tuple[int, int]]:
     words = line.split()
     ranges: list[tuple[int, int]] = []
-    for item in items:
-        text = (item.get("text") or "").strip()
+    for card in cards:
+        text = (card.get("text") or "").strip()
         hook_words = text.split()
         for start in range(len(words) - len(hook_words) + 1):
             if words[start : start + len(hook_words)] == hook_words:
@@ -40,59 +40,53 @@ def _hook_ranges_on_line(items: list[dict[str, Any]], line: str) -> list[tuple[i
     return ranges
 
 
-def _is_nested_window_farm(items: list[dict[str, Any]]) -> bool:
-    if len(items) < 2:
+def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
+    if len(cards) < 2:
         return False
-    texts = {(item.get("text") or "").strip() for item in items}
+    texts = {(card.get("text") or "").strip() for card in cards}
     texts.discard("")
     if len(texts) < 2:
         return False
 
-    lines = {(item.get("cite") or {}).get("line") or "" for item in items}
+    lines = {(card.get("cite") or {}).get("line") or "" for card in cards}
     lines.discard("")
     if len(lines) != 1:
         return False
 
     line = next(iter(lines))
-    ranges = _hook_ranges_on_line(items, line)
-    if len(ranges) < 2:
-        return False
-
-    for i, r1 in enumerate(ranges):
-        for r2 in ranges[i + 1 :]:
-            s1, e1 = r1
-            s2, e2 = r2
-            if r1 == r2:
+    for left in cards:
+        for right in cards:
+            if left is right:
                 continue
-            if (s1 <= s2 and e2 <= e1) or (s2 <= s1 and e1 <= e2):
+            outer = (left.get("text") or "").strip()
+            inner = (right.get("text") or "").strip()
+            if is_nested_hook_text(outer, inner, line_text=line) or is_nested_hook_text(
+                inner, outer, line_text=line
+            ):
                 return True
     return False
 
 
-def _is_forbidden_english_crumb(item: dict[str, Any], language: str) -> bool:
+def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
     if language != "en":
         return False
-    from lib.treatments import _ends_sentence, _normalize_phrase  # noqa: PLC0415
+    from lib.desk import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN
+    from lib.treatments import _ends_sentence
 
-    text = (item.get("text") or "").strip()
+    text = (card.get("text") or "").strip()
     norm = _normalize_phrase(text)
-    if norm in _EN_FORBIDDEN_SLICES:
+    if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
         return True
     words = text.split()
     if len(words) >= _MIN_HOOK_WORDS_EN:
         return False
-    if len(words) >= 2 and words and _ends_sentence(words[-1]):
+    if len(words) >= 3 and words and _ends_sentence(words[-1]):
         return False
     return len(words) < _MIN_HOOK_WORDS_EN
 
 
-def _treatment_items(result: dict[str, Any]) -> list[dict[str, Any]]:
-    return list(result.get("treatments") or [])
-
-
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     """Validate a desk write payload; return structured pass/fail with reasons."""
-    treatments = _treatment_items(result)
     cards = list(result.get("cards") or [])
     language = result.get("language") or "en"
     issues: list[str] = []
@@ -100,47 +94,54 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("mode") != "write":
         issues.append(f"desk mode is {result.get('mode')!r}, not write")
 
-    if not treatments:
-        issues.append("no hook treatments")
-
-    if len(treatments) > MAX_TREATMENTS:
-        issues.append(f"expected at most {MAX_TREATMENTS} treatments, got {len(treatments)}")
-
-    for item in treatments:
-        kind = item.get("kind")
-        if kind not in TREATMENT_KINDS:
-            issues.append(f"unknown treatment kind: {kind!r}")
-
-    for item in treatments:
-        if not _card_is_contiguous(item):
-            issues.append(f"{item.get('kind')}: not a contiguous attested span")
-
-    if _is_permutation_fake(treatments):
-        issues.append("treatments are anagram permutations of the same word-bag")
-
-    if _is_nested_window_farm(treatments):
-        issues.append("treatments are nested windows on one sung line")
-
-    for item in treatments:
-        if _is_forbidden_english_crumb(item, language):
-            issues.append(f"{item.get('kind')}: leftover whisper slice or crumb hook")
-
     if len(cards) != TARGET_VARIANTS:
-        issues.append(f"expected {TARGET_VARIANTS} variant cards, got {len(cards)}")
+        issues.append(f"expected {TARGET_VARIANTS} cards, got {len(cards)}")
 
-    unique_treatments = len({(item.get("text") or "").strip() for item in treatments})
-    unique_cards = len({(card.get("text") or "").strip() for card in cards})
+    texts = [(card.get("text") or "").strip() for card in cards]
+    unique_texts = len({text for text in texts if text})
+    if unique_texts != TARGET_VARIANTS:
+        issues.append(
+            f"expected {TARGET_VARIANTS} distinct on-screen texts, got {unique_texts}"
+        )
+
+    if len(set(texts)) != len(texts):
+        issues.append("duplicate claim texts")
+
+    expected_hooks = [hook for hook, _stack in VARIANT_SLOTS]
+    hooks_seen = [card.get("hook") for card in cards]
+    if hooks_seen != expected_hooks:
+        issues.append(f"hook order mismatch: {hooks_seen}")
+
+    expected_stacks = [stack for _hook, stack in VARIANT_SLOTS]
+    stacks_seen = [card.get("stack") for card in cards]
+    if stacks_seen != expected_stacks:
+        issues.append(f"stack order mismatch: {stacks_seen}")
+
+    for card in cards:
+        if not _card_is_contiguous(card):
+            issues.append(f"{card.get('hook')}: not a contiguous attested span")
+
+    if _is_permutation_fake(cards):
+        issues.append("cards are anagram permutations of the same word-bag")
+
+    if _is_permutation_fake(cards):
+        issues.append("cards are anagram permutations of the same word-bag")
+
+    if _is_nested_window_farm(cards):
+        issues.append("cards are nested windows on one sung line")
+
+    for card in cards:
+        if _is_forbidden_english_crumb(card, language):
+            issues.append(f"{card.get('hook')}: leftover whisper slice or crumb hook")
 
     ok = not issues
     return {
         "ok": ok,
         "language": language,
         "mode": result.get("mode"),
-        "treatment_count": len(treatments),
         "card_count": len(cards),
-        "unique_treatments": unique_treatments,
-        "unique_texts": unique_cards,
-        "ceiling": result.get("ceiling", unique_treatments),
+        "claim_count": len(result.get("claims") or cards),
+        "unique_texts": unique_texts,
         "issues": issues,
     }
 

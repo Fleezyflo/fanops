@@ -1,9 +1,7 @@
 """Trial-reels inbox pipeline — live door.
 
 Drain ``in/``, write ``desk.json`` per clip, render hook×stack variants, score cover OCR.
-Ships every honest attested claim; never aborts because unique hook count is below five.
-Pass bar: up to TARGET_VARIANTS distinct on-screen texts verified on covers when the
-transcript can support them; otherwise ship the verified subset without inventing text.
+Pass bar: exactly TARGET_VARIANTS distinct on-screen texts verified on covers and desk.json.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from lib.desk import TARGET_VARIANTS
+from lib.desk import TARGET_VARIANTS, contract_met
 from lib.desk_swarm import validate_desk_result
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
@@ -69,8 +67,7 @@ def run_inbox(
 
     unique_hooks = len(set(all_hook_texts))
     shipped = sum(r.variants_rendered for r in results)
-    # Legacy Mac gate removed: do not return 4 when unique < 5.
-    honest_ship = any(r.desk.get("mode") == "write" and r.variants_rendered > 0 for r in results)
+    honest_ship = any(contract_met(r.desk) and r.variants_rendered > 0 for r in results)
 
     return {
         "clips": len(results),
@@ -127,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         "shipped": summary["shipped"],
         "unique_hook_texts": summary["unique_hook_texts"],
         "target_variants": TARGET_VARIANTS,
-        "success": score.success or summary["honest_ship"],
+        "success": score.success,
         "message": score.message,
         "results": [
             {
@@ -157,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(payload["message"])
 
-    if summary["honest_ship"] or score.success:
+    if score.success:
         return EXIT_OK
     return EXIT_BLOCKED
 

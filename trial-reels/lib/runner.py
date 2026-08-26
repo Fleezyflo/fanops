@@ -169,20 +169,7 @@ def plan_variants(
     stacks = list(recipes.get("stacks") or STACK_NAMES)
     cards = list(desk.get("cards") or [])
     if not cards:
-        treatments = list(desk.get("treatments") or [])
-        cards = [
-            {
-                "hook": hook,
-                "stack": stack,
-                "text": treatments[i % len(treatments)]["text"],
-                "cite": treatments[i % len(treatments)]["cite"],
-                "kind": treatments[i % len(treatments)].get("kind"),
-            }
-            for i, (hook, stack) in enumerate(
-                (h, s) for h in hooks for s in stacks
-            )
-            if treatments
-        ]
+        return []
 
     plans: list[VariantPlan] = []
     for card in cards:
