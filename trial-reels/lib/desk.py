@@ -1,6 +1,7 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
-Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
+Treatments are enumerated in lib.treatments (full attested whisper lines for
+Arabic, stitched grammatical sentences for English — no sub-spans or invented
 words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
 """
 
@@ -87,6 +88,8 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
     payload = enumerate_treatments(transcript)
     treatments = list(payload.get("treatments") or [])
     cards = _build_variant_cards(treatments)
+    card_texts = [str(card.get("text") or "").strip() for card in cards]
+    unique_card_texts = len({text for text in card_texts if text})
     cites = [card["cite"] for card in cards]
     claims = [{"text": t["text"], "cite": t["cite"]} for t in treatments[:TARGET_VARIANTS]]
 
@@ -99,10 +102,29 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "treatment_kinds": list(TREATMENT_KINDS),
         "max_treatments": MAX_TREATMENTS,
         "contract_met": False,
+        "unique_texts": unique_card_texts,
+        "ceiling": unique_card_texts or payload.get("ceiling", 0),
     }
-    if payload.get("mode") == "write" and treatments:
-        unique = len({item["text"] for item in treatments[:TARGET_VARIANTS]})
-        result["unique_texts"] = unique
-        result["ceiling"] = unique
+
+    if payload.get("mode") == "write" and unique_card_texts == TARGET_VARIANTS:
         result["contract_met"] = contract_met(result)
+        return result
+
+    if payload.get("mode") == "write":
+        ceiling = unique_card_texts or len({item["text"] for item in treatments})
+        result.update(
+            {
+                "mode": "blocked",
+                "cards": [],
+                "claims": [],
+                "cites": [],
+                "contract_met": False,
+                "unique_texts": ceiling,
+                "ceiling": ceiling,
+                "reason": (
+                    f"transcript supports {ceiling} distinct attested hook"
+                    f"{'s' if ceiling != 1 else ''}; need {TARGET_VARIANTS}"
+                ),
+            }
+        )
     return result

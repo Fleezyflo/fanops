@@ -65,6 +65,21 @@ _WEAK_HOOK_ENDINGS_EN = frozenset(
     {"by", "to", "that", "and", "or", "a", "an", "of", "in", "for", "its", "is", "one", "us", "the"}
 )
 _EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves", "one"})
+_EN_VALID_LOWERCASE_STARTERS = frozenset(
+    {
+        "inside",
+        "it's",
+        "its",
+        "one",
+        "which",
+        "what",
+        "when",
+        "where",
+        "who",
+        "how",
+        "why",
+    }
+)
 _EN_FRAGMENT_CRUMBS = frozenset(
     {
         "fails.",
@@ -396,6 +411,18 @@ def _content_word_count(text: str, language: str) -> int:
     return sum(1 for word in text.split() if _normalize_word(word) not in function_words)
 
 
+def _is_orphan_continuation_line(text: str) -> bool:
+    """True when a stitched unit is a lowercase whisper tail without its head."""
+    words = [part for part in text.split() if part.strip()]
+    if not words:
+        return False
+    raw_first = words[0]
+    first = _normalize_word(raw_first)
+    if not raw_first[0].islower():
+        return False
+    return first not in _EN_VALID_LOWERCASE_STARTERS
+
+
 def _starts_grammatically(text: str) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
@@ -463,6 +490,8 @@ def _is_crumb(
             if not _ends_sentence(words[-1]):
                 return True
             if len(words) < _MIN_HOOK_WORDS_EN:
+                return True
+            if _is_orphan_continuation_line(text):
                 return True
             if (
                 _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN
