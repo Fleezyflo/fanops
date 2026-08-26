@@ -1,0 +1,30 @@
+{
+  "primary": {
+    "language": "ar",
+    "ear": "large-v3",
+    "segments": [
+      {
+        "start": 0.0,
+        "end": 3.2,
+        "text": "ترجمة نانسي قنقر",
+        "avg_logprob": -0.18,
+        "no_speech_prob": 0.08
+      }
+    ]
+  },
+  "secondary": {
+    "language": "en",
+    "ear": "large-v3-turbo",
+    "segments": [
+      {
+        "start": 0.0,
+        "end": 3.2,
+        "text": "Credit to the voice actor for this performance",
+        "avg_logprob": -0.31,
+        "no_speech_prob": 0.04
+      }
+    ]
+  },
+  "expected_text": "Credit to the voice actor for this performance",
+  "forbidden": "ترجمة"
+}

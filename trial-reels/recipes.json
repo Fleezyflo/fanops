@@ -1,0 +1,17 @@
+{
+  "target_seconds": 30,
+  "hooks": [
+    "result_first",
+    "mid_action",
+    "direct_you",
+    "bold_claim",
+    "cold_proof"
+  ],
+  "stacks": [
+    "punch_cuts",
+    "open_loop",
+    "fake_out",
+    "end_loop"
+  ],
+  "rehooks_s": [3, 8]
+}
