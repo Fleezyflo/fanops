@@ -1,8 +1,9 @@
 # src/fanops/fanops_hashtags.py
 """Layer A — the ONLY writer of the hashtag measurement cache (00_control/hashtags.json).
 
-Network source is instagrapi (`ig_hashtag_scrape`); the Meta Graph hashtag path is deferred
-(helpers remain in meta_graph for later — refresh never falls back to Graph).
+Runtime network source is Safari web (`ig_web_scrape.open_web_session`); instagrapi
+(`ig_hashtag_scrape.open_client`) is scrape-login envelope promote only. The Meta Graph
+hashtag path is deferred (helpers remain in meta_graph for later — refresh never falls back to Graph).
 
 One pass, per persona that actually posts:
 
@@ -761,10 +762,15 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     same-pass platform stop still arms a fresh cooldown from streak 1 for that user."""
     from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
-                                          open_client, resolve_hashtag_scrape, scrape_users)
+                                          resolve_hashtag_scrape, scrape_users)
     now = now or datetime.now(timezone.utc)
     stamp = now.isoformat()
     harvest = known_names is None
+    if harvest and scrape_client is None:
+        return {"written": False, "aborted": "safari_only",
+                "reason": ("Layer A instagrapi discovery removed — hashtag network is Safari web only; "
+                           "operator `fanops hashtags refresh` remesures sidecar names via Safari"),
+                "backend": "safari"}
     if harvest:
         from fanops.persona_research import persona_terms
         try:
@@ -954,9 +960,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         return cd
 
     def _open_pass_client(user=None):
-        """Harvest: instagrapi envelope. Tick remesure: Safari web session. Never Chrome."""
-        if harvest:
-            return open_client(cfg, now=now) if user is None else open_client(cfg, user=user, now=now)
+        """Safari web session only. Never instagrapi / Chrome cookie inject."""
         from fanops.ig_web_scrape import open_web_session
         return open_web_session(cfg) if user is None else open_web_session(cfg, user=user)
 
@@ -1167,14 +1171,34 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
 
 
 def cmd_hashtags_refresh(cfg: Config) -> int:
-    """`fanops hashtags refresh` — run a measurement pass now. Writes ONLY the cache; needs no ledger.
-    Without scrape session the pass aborts loudly (exit 2). Corrupt personas.json also exits 2."""
-    r = refresh_store(cfg)
+    """`fanops hashtags refresh` — Safari remesure of sidecar pile∪lock names. No instagrapi discovery.
+
+    Without FANOPS_IG_SCRAPE_USER or with no sidecar names / quota exhausted, aborts loudly (exit 2)."""
+    from fanops.ig_hashtag_scrape import scrape_users
+    if not scrape_users(cfg):
+        get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
+                        aborted="no_scrape", reason="FANOPS_IG_SCRAPE_USER unset",
+                        detail=("set FANOPS_IG_SCRAPE_USER and run fanops hashtags scrape-login"))
+        return 2
+    names = _sidecar_tick_names(cfg)
+    if not names:
+        get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
+                        aborted="no_sidecar", reason="no sidecar pile∪lock names to remesure",
+                        detail=("populate source_tag_locks.json with pile or lock names first"))
+        return 2
+    now_dt = datetime.now(timezone.utc)
+    visit = _quota_sidecar_names(names, load_measurements(cfg), now_dt)
+    if not visit:
+        get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
+                        aborted="quota", reason="exact-name quota exhausted for this window",
+                        detail=("wait for the 7-day quota window or rely on the unattended tick"))
+        return 2
+    r = _remesure_sidecar(cfg, now=now_dt, names=visit)
     if not r.get("written"):
         get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
                         aborted=r.get("aborted", "unknown"), reason=r.get("reason", ""),
                         detail=("00_control/hashtags.json left untouched; "
-                                "fanops hashtags scrape-login / fix personas.json"))
+                                "fanops hashtags scrape-login for Safari session"))
         return 2
     unresolved = r.get("unresolved") or []
     codes = sorted({u.get("code") for u in unresolved if u.get("code") is not None})

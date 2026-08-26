@@ -126,108 +126,6 @@ def scrape_chrome_profile_dir(cfg: Config, user: str) -> Path:
     return cfg.control / "scrape_chrome" / user
 
 
-def _profile_cookie_files(cfg: Config, user: str) -> tuple[Path, ...]:
-    """Known cookie paths inside THIS user's FanOps profile. No glob, no system Chrome."""
-    root = scrape_chrome_profile_dir(cfg, user)
-    return (
-        root / "Default" / "Network" / "Cookies",
-        root / "Default" / "Cookies",
-        root / "Network" / "Cookies",
-        root / "Cookies",
-    )
-
-
-def _client_ds(client) -> str:
-    return str((getattr(client, "authorization_data", None) or {}).get("ds_user_id")
-               or getattr(client, "user_id", "") or "")
-
-
-def _profile_auth_for(cfg: Config, user: str) -> tuple[str, str] | None:
-    """Read (sessionid, ds_user_id) from THIS user's FanOps Chrome profile. Never logs values.
-
-    Optional: browser_cookie3 may be absent. Fail closed to None. Never walks system Chrome.
-    """
-    if not user:
-        return None
-    try:
-        import browser_cookie3
-    except ImportError:
-        return None
-    cookie_err = getattr(browser_cookie3, "BrowserCookieError", OSError)
-    root = scrape_chrome_profile_dir(cfg, user).resolve()
-    for cookie_file in _profile_cookie_files(cfg, user):
-        try:
-            resolved = cookie_file.resolve()
-            resolved.relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if not resolved.is_file():
-            continue
-        try:
-            jar = browser_cookie3.chrome(domain_name="instagram.com", cookie_file=str(resolved))
-        except (OSError, ValueError, cookie_err):
-            continue
-        got: dict[str, str] = {}
-        for c in jar:
-            if "instagram" in (c.domain or "") and c.name in {"sessionid", "ds_user_id", "ds_user"}:
-                if c.value:
-                    got[c.name] = c.value
-        sid = got.get("sessionid")
-        if not sid:
-            continue
-        return sid, got.get("ds_user_id") or got.get("ds_user") or ""
-    return None
-
-
-def profile_instagram_cookies(cfg: Config, user: str) -> dict[str, str]:
-    """All Instagram cookies from THIS user's FanOps Chrome profile. Never system Chrome."""
-    if not user:
-        return {}
-    try:
-        import browser_cookie3
-    except ImportError:
-        return {}
-    cookie_err = getattr(browser_cookie3, "BrowserCookieError", OSError)
-    root = scrape_chrome_profile_dir(cfg, user).resolve()
-    for cookie_file in _profile_cookie_files(cfg, user):
-        try:
-            resolved = cookie_file.resolve()
-            resolved.relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if not resolved.is_file():
-            continue
-        try:
-            jar = browser_cookie3.chrome(domain_name="instagram.com", cookie_file=str(resolved))
-        except (OSError, ValueError, cookie_err):
-            continue
-        got: dict[str, str] = {}
-        for c in jar:
-            if "instagram" in (c.domain or "") and c.name and c.value:
-                got[c.name] = c.value
-        if got.get("sessionid"):
-            return got
-    return {}
-
-
-def _inject_sessionid(client, sessionid: str, ds_user_id: str) -> None:
-    """Put a FanOps-profile sessionid onto the loaded client. Keep device/uuids."""
-    auth = dict(getattr(client, "authorization_data", None) or {})
-    auth["sessionid"] = sessionid
-    if ds_user_id:
-        auth["ds_user_id"] = ds_user_id
-    client.authorization_data = auth
-    private = getattr(client, "private", None)
-    cookies = getattr(private, "cookies", None)
-    if cookies is not None and hasattr(cookies, "set"):
-        cookies.set("sessionid", sessionid)
-        if ds_user_id:
-            cookies.set("ds_user_id", ds_user_id)
-    inject = getattr(client, "inject_sessionid_to_public", None)
-    if callable(inject):
-        inject()
-
-
 # Safari window title is "{profile} — …". Personal is cisum's daily profile.
 _SAFARI_PROFILES = {
     "cisumwolfhom": "Personal",
@@ -455,30 +353,20 @@ def _promote_envelope(client, dump_sess: Path) -> None:
 
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
-    """Open an authenticated instagrapi Client, PACED. Lazy-imports. Never echoes secrets.
+    """Open an instagrapi Client from the on-disk device envelope ONLY. PACED. Never echoes secrets.
 
-    Two files, two lifetimes:
-      device envelope — `ig_scrape_session_<user>.json` (uuids / device_settings / user_agent / mid).
-        Write-once at enroll / scrape-login promote. The unattended tick never calls dump_settings.
-      live auth — `sessionid` from `cfg.control/scrape_chrome/<user>/` only. Never system Chrome.
+    Sole live call site: `fanops hashtags scrape-login` best-effort envelope promote
+    (`allow_reauth=True`). Unattended hashtag network work (tick remesure, lock walk, manual
+    refresh) uses Safari web via `ig_web_scrape.open_web_session` — never Chrome cookie inject,
+    never this client on default paths.
 
-    `allow_reauth` defaults False (Layer A remesure): load envelope if present, inject a
-    sessionid only when the private API will accept it, search_hashtags probe (never
-    account_info, never login). Lock scrape does not use this client — see ig_web_scrape.
-    Live → return, write nothing. Dead / no profile sid / ds mismatch → write nothing,
-    raise ScrapeUnavailable so callers rotate. Unattended MUST stay False —
-    instagrapi>=2.18.12 escalates LoginRequired inside login() into a password re-auth.
-    Only `fanops hashtags scrape-login` passes `allow_reauth=True` (best-effort envelope
-    promote). No password login.
+    Loads `ig_scrape_session_<user>.json`, search_hashtags-probes (account_info only when
+    allow_reauth). Dead envelope → ScrapeUnavailable. No password login. No browser_cookie3.
 
-    Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`
-    (LRU among healthy peers; env order is tiebreak only). Unattended needs a session file;
-    `allow_reauth=True` may use password-usable peers and ignores freeze. scrape-login passes
-    an explicit `user` per account.
+    Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`.
+    scrape-login passes an explicit `user` per account.
 
-    `delay_range` is set before any network call, so every request this client ever makes — the
-    operator probe / login included — carries the jitter (MOL-698); the whole Layer A pass runs on
-    this one client."""
+    `delay_range` is set before any network call (MOL-698)."""
     users = scrape_users(cfg)
     if not users:
         raise ScrapeUnavailable("FANOPS_IG_SCRAPE_USER unset")
@@ -507,32 +395,22 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     client = client_factory()
     client.delay_range = _scrape_delay_range()
     sess = scrape_session_path(cfg, user)
-    # Promote always writes the per-user named path (migrate legacy perca.late off ig_scrape_session.json).
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
-    if sess.exists():
-        client.load_settings(str(sess))
-    elif not allow_reauth:
+    if not sess.exists():
         raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
-    profile = _profile_auth_for(cfg, user)
-    if profile is not None:
-        sid, profile_ds = profile
-        envelope_ds = _client_ds(client)
-        if envelope_ds and profile_ds and envelope_ds != profile_ds:
-            raise ScrapeUnavailable("scrape profile ds_user_id mismatch")
-        _inject_sessionid(client, sid, profile_ds or envelope_ds)
-        try:
-            _probe_scrape_session(client, allow_account_info=allow_reauth)
-        except Exception as e:                          # noqa: BLE001 — probe surface is opaque
-            get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__, via="profile")
-            if not scrape_session_needs_restore(e):
-                raise
-            raise ScrapeUnavailable(
-                "scrape session dead — run fanops hashtags scrape-login") from e
-        if allow_reauth:
-            _promote_envelope(client, dump_sess)
-        setattr(client, "_fanops_scrape_user", user)
-        return client
-    raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
+    client.load_settings(str(sess))
+    try:
+        _probe_scrape_session(client, allow_account_info=allow_reauth)
+    except Exception as e:                              # noqa: BLE001 — probe surface is opaque
+        get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__, via="envelope")
+        if not scrape_session_needs_restore(e):
+            raise
+        raise ScrapeUnavailable(
+            "scrape session dead — run fanops hashtags scrape-login") from e
+    if allow_reauth:
+        _promote_envelope(client, dump_sess)
+    setattr(client, "_fanops_scrape_user", user)
+    return client
 
 
 # `session_client` — a Client cloned from the dumped session, no login — lived here until MOL-698.

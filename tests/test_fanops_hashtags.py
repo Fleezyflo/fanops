@@ -8,6 +8,7 @@
 import inspect
 import json
 import pytest
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.hashtags import METRIC_FIELD, _metric, load_measurements, ranked_tags
 from fanops.fanops_hashtags import refresh_store
@@ -24,11 +25,6 @@ def _persona(cfg, *, pid="curator"):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "a", "platforms": ["instagram"], "status": "active", "persona_id": pid}]}))
     return pid
-
-
-def _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1"):
-    import fanops.ig_hashtag_scrape as igs
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: (sid, ds))
 
 
 def _write_sidecar(cfg, names, *, sid="src_1", lock=None):
@@ -167,28 +163,30 @@ def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
 
 
 def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
-    # Missing scrape -> written:False / aborted:no_scrape. No silent Graph fallback; cache untouched.
+    # Default harvest without injected client refuses instagrapi (Safari-only runtime).
     monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path); _persona(cfg)
     out = refresh_store(cfg)
-    assert out["written"] is False and out["aborted"] == "no_scrape"
+    assert out["written"] is False and out["aborted"] == "safari_only"
+    assert "Safari" in out["reason"]
     assert not cfg.hashtags_path.exists()
 
 
 def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
-    """A locked account must abort as `checkpoint`, not `no_scrape` — ChallengeError → _freeze_for."""
-    import fanops.ig_hashtag_scrape as igs
+    """Injected harvest pass: ChallengeError → checkpoint abort (via Safari opener in production)."""
     from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
-    def locked(_cfg, **_k):
-        raise ChallengeRequired("challenge_required")
-    monkeypatch.setattr(igs, "open_client", locked)
-    out = refresh_store(cfg)
+
+    class _Dead:
+        _fanops_scrape_user = "u"
+        def hashtag_info(self, _n):
+            raise ChallengeRequired("challenge_required")
+
+    out = refresh_store(cfg, scrape_client=_Dead())
     assert out["written"] is False and out["aborted"] == "checkpoint"
-    assert out["reason"] == "challenge_required"  # byte-identical platform str()
+    assert out["reason"] == "challenge_required"
     assert not cfg.hashtags_path.exists()
 
 
@@ -197,7 +195,6 @@ def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-must-not-leak")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
@@ -639,7 +636,6 @@ def test_scrape_login_loops_comma_users(tmp_path, monkeypatch):
 def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch):
     """The operator escape hatch: scrape-login is an explicit human act AFTER an unlock, so it must run
     with a freeze armed and clear it on success — otherwise a fixed account stays frozen for 12h."""
-    from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown,
                                         _CHECKPOINT_DELAY_S)
@@ -674,7 +670,6 @@ def test_open_client_stale_session_opens_without_probe_or_login(tmp_path, monkey
     from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: None)
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -699,7 +694,7 @@ def test_open_client_stale_session_opens_without_probe_or_login(tmp_path, monkey
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "profile" in str(e)
+        assert "scrape session" in str(e)
     assert seen == {"login": 0, "account_info": 0, "dump": 0}
     assert sess.read_text() == original
 
@@ -709,7 +704,6 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
@@ -726,85 +720,62 @@ def test_open_client_default_path_never_reads_password(tmp_path, monkeypatch):
     open_client(cfg, client_factory=_Ok)
 
 
-def test_open_client_allow_reauth_without_profile_does_not_password_login(tmp_path, monkeypatch):
-    """scrape-login with no FanOps profile sid refuses. Never password-login. Envelope untouched."""
-    import fanops.ig_hashtag_scrape as igs
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
+def test_open_client_allow_reauth_promotes_when_envelope_live(tmp_path, monkeypatch):
+    """scrape-login with live envelope probes + promotes; never password-login."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: None)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
-    original = '{"keep": true}'
-    sess.write_text(original)
+    sess.write_text('{"keep": true}')
     seen = {"login": 0, "dump": 0}
 
     class _Stale:
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
-            raise AssertionError("no profile sid — must not probe dump auth")
+            return []
         def login(self, *_a, **_k):
             seen["login"] += 1
         def dump_settings(self, _p):
             seen["dump"] += 1
-    try:
-        open_client(cfg, client_factory=_Stale, allow_reauth=True, user="u")
-        raise AssertionError("expected ScrapeUnavailable")
-    except ScrapeUnavailable as e:
-        assert "profile" in str(e)
-    assert seen == {"login": 0, "dump": 0}
-    assert sess.read_text() == original
+    open_client(cfg, client_factory=_Stale, allow_reauth=True, user="u")
+    assert seen == {"login": 0, "dump": 1}
 
 
-def test_open_client_restores_from_browser_session_without_login(tmp_path, monkeypatch):
-    """Operator path: profile sid inject + probe + promote; never password-login."""
-    from types import SimpleNamespace
+def test_open_client_allow_reauth_promotes_envelope_without_login(tmp_path, monkeypatch):
+    """scrape-login: envelope probe + promote; never password-login; no cookie inject."""
+    from pathlib import Path
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1")
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    seen = {"search": 0, "login": 0}
-
-    class _Jar:
-        def set(self, *a, **k):
-            seen.setdefault("cookies", []).append(a[0] if a else None)
-        def clear(self):
-            seen["cleared"] = True
+    seen = {"search": 0, "login": 0, "dump": 0}
 
     class _Live:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={})
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
             seen["search"] += 1
             return []
         def login(self, *_a, **_k):
             seen["login"] += 1
-        def dump_settings(self, _p): pass
-        def inject_sessionid_to_public(self):
-            seen["injected"] = True
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            Path(p).write_text('{"promoted": true}')
     c = open_client(cfg, client_factory=_Live, allow_reauth=True, user="u")
     assert c is not None
     assert seen["search"] == 1
     assert seen["login"] == 0
-    assert seen.get("injected") is True
-    assert c.authorization_data.get("sessionid") == "profile-sid"
+    assert seen["dump"] == 1
 
 
-def test_open_client_unattended_profile_sid_does_not_dump(tmp_path, monkeypatch):
-    """Unattended envelope + profile sid → inject, one probe, no login, no dump."""
-    from types import SimpleNamespace
+
+def test_open_client_unattended_envelope_probe_no_dump(tmp_path, monkeypatch):
+    """Unattended envelope → one search probe, no login, no dump."""
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1")
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -813,42 +784,24 @@ def test_open_client_unattended_profile_sid_does_not_dump(tmp_path, monkeypatch)
     sess.parent.mkdir(parents=True, exist_ok=True)
     original = '{"keep": "dead"}'
     sess.write_text(original)
-    seen = {"search": 0, "login": 0, "account_info": 0, "dump": 0}
-
-    class _Jar:
-        def set(self, *a, **k):
-            seen.setdefault("cookies", []).append(a[0] if a else None)
-        def clear(self):
-            seen["cleared"] = True
+    seen = {"search": 0, "login": 0, "dump": 0}
 
     class _Live:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={})
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
             seen["search"] += 1
             return []
-        def account_info(self):
-            seen["account_info"] += 1
-            raise AssertionError("unattended must not probe account_info")
         def login(self, *_a, **_k):
             seen["login"] += 1
         def dump_settings(self, p):
             seen["dump"] += 1
             from pathlib import Path
             Path(p).write_text('{"healed": true}')
-        def inject_sessionid_to_public(self):
-            seen["injected"] = True
     c = open_client(cfg, client_factory=_Live, user="u")
     assert c is not None
-    assert seen["search"] == 1
-    assert seen["login"] == 0
-    assert seen["account_info"] == 0
-    assert seen["dump"] == 0
-    assert seen.get("injected") is True
-    assert c.authorization_data.get("sessionid") == "profile-sid"
+    assert seen == {"search": 1, "login": 0, "dump": 0}
     assert sess.read_text() == original
+
 
 
 def test_open_client_unattended_loginrequired_without_chrome_leaves_dump(tmp_path, monkeypatch):
@@ -858,7 +811,6 @@ def test_open_client_unattended_loginrequired_without_chrome_leaves_dump(tmp_pat
     from instagrapi.exceptions import ClientLoginRequired as _CLR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: None)
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -885,7 +837,7 @@ def test_open_client_unattended_loginrequired_without_chrome_leaves_dump(tmp_pat
         open_client(cfg, client_factory=_Dead)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "profile" in str(e)
+        assert "scrape session" in str(e)
     assert seen == {"dump": 0, "login": 0, "account_info": 0}
     assert sess.read_text() == original
 
@@ -896,7 +848,6 @@ def test_open_client_unattended_live_dump_search_probes_then_dumps(tmp_path, mon
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch)
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -927,7 +878,6 @@ def test_open_client_probe_throttle_does_not_login(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -957,7 +907,6 @@ def test_open_client_unattended_throttle_does_not_overwrite_dump(tmp_path, monke
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch)
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -996,7 +945,6 @@ def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -1025,7 +973,6 @@ def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypat
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
@@ -1071,16 +1018,15 @@ def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypat
 
 
 def test_open_client_callers_keep_reauth_default(tmp_path):
-    """doctor + _refresh_pass must call open_client without allow_reauth (password re-auth is operator-only)."""
+    """Safari-only runtime: _refresh_pass never calls open_client; scrape-login alone uses allow_reauth."""
     import inspect
-    import fanops.doctor as doctor
     import fanops.fanops_hashtags as fh
-    src_doc = inspect.getsource(doctor._hashtag_scrape_check)
     src_ref = inspect.getsource(fh._refresh_pass)
     src_login = inspect.getsource(fh.cmd_hashtags_scrape_login)
-    assert "allow_reauth=True" not in src_doc
-    assert "allow_reauth=True" not in src_ref
+    assert "open_client" not in src_ref
+    assert "open_web_session" in src_ref
     assert "allow_reauth=True" in src_login
+
 
 
 def test_layer_a_fetch_does_not_call_graph_hashtag_apis():
@@ -1122,7 +1068,6 @@ def test_healthy_scrape_users_lru_oldest_updated_at_first(tmp_path, monkeypatch)
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     cfg = Config(root=tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b,c")
-    _stub_profile_auth(monkeypatch)
     t0 = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
     for u in ("a", "b", "c"):
         p = scrape_session_path(cfg, u)
@@ -1623,17 +1568,15 @@ def test_refresh_store_if_due_corrupt_personas_does_not_abort(tmp_path, monkeypa
     assert "#measured" in load_measurements(cfg)
 
 
-def test_cmd_hashtags_refresh_corrupt_personas_exits_2_and_no_keyerror(tmp_path, monkeypatch):
+def test_cmd_hashtags_refresh_no_sidecar_exits_2(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_refresh
-    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
-    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
-    _write_corrupt_personas(cfg)
     rc = cmd_hashtags_refresh(cfg)
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
     assert rc == 2
     aborted = next(r for r in recs if r["outcome"] == "refresh_aborted")
-    assert "personas.json invalid:" in aborted.get("reason", "")
+    assert aborted.get("aborted") == "no_sidecar"
 
 
 def test_layer_a_emits_one_client_no_session_clones(tmp_path, monkeypatch):
@@ -1672,7 +1615,6 @@ def test_open_client_sets_delay_range_on_the_client(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     monkeypatch.delenv("FANOPS_HASHTAG_SCRAPE_DELAY", raising=False)
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
@@ -1713,7 +1655,6 @@ def test_per_account_freeze_rotates_via_open_client(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     from fanops.fanops_hashtags import _persist_cooldown, _read_active_cooldown
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,live")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     for u in ("dead", "live"):
@@ -1740,7 +1681,6 @@ def test_open_client_uses_budget_exhausted_unfrozen_session(tmp_path, monkeypatc
     from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _cooldown_path
     from fanops.controlio import write_json_atomic
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,spent")
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     for u in ("dead", "spent"):
@@ -1790,7 +1730,6 @@ def test_read_active_cooldown_used_peer_is_healthy(tmp_path, monkeypatch):
 
 def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
     """used is not a skip. Harvest still opens instagrapi."""
-    from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store
@@ -1845,7 +1784,6 @@ def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
 
 def test_scrape_login_clears_only_that_user_freeze(tmp_path, monkeypatch):
     """MOL-858: scrape-login success clears THAT user's freeze; peer freeze remains."""
-    from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import (cmd_hashtags_scrape_login, _cooldown_path, _persist_cooldown)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
@@ -1920,7 +1858,6 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
 
 def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
     """MOL-900: one pass opens and charges ≥2 session-ready users on the same due queue."""
-    from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import refresh_store, _cooldown_path
@@ -1960,7 +1897,6 @@ def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
 
 def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
     """MOL-900: head in-loop throttle freezes head; peer continues same queue cursor."""
-    from datetime import datetime, timezone
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from instagrapi.exceptions import RateLimitError
@@ -2193,10 +2129,44 @@ def _boom_chrome_tick(monkeypatch):
     def boom(*_a, **_k):
         raise AssertionError("tick remesure must not use open_client / Chrome dumps")
     monkeypatch.setattr(igs, "open_client", boom)
-    monkeypatch.setattr(igs, "_profile_auth_for", boom)
     monkeypatch.setattr(igs, "launch_scrape_chrome", boom)
     monkeypatch.setattr(igs, "ensure_scrape_chrome", boom)
     monkeypatch.setattr(igs, "ensure_scrape_safari", boom)
+
+
+
+def test_ht4_cmd_hashtags_refresh_uses_safari_remesure(tmp_path, monkeypatch):
+    """Manual refresh must open Safari web session, never open_client / cookie inject."""
+    import fanops.ig_hashtag_scrape as igs
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import cmd_hashtags_refresh
+    from fanops.hashtags import load_measurements
+    from fanops.ig_web_scrape import IgWebSession
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#alpha"])
+    monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("cmd_hashtags_refresh must not call open_client")))
+    opened = []
+
+    def fake_open(_cfg, user=None, **_k):
+        opened.append(user)
+        return IgWebSession(user or "u", fetch=_web_fetch_for("alpha"))
+
+    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    assert cmd_hashtags_refresh(cfg) == 0
+    assert opened == ["u"]
+    assert "#alpha" in load_measurements(cfg)
+
+
+def test_ht4_refresh_store_harvest_without_client_refuses_instagrapi(tmp_path, monkeypatch):
+    """Default refresh_store harvest path refuses silent instagrapi (Safari-only runtime)."""
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = Config(root=tmp_path)
+    _persona(cfg)
+    out = refresh_store(cfg)
+    assert out["aborted"] == "safari_only"
+    assert "Safari" in out["reason"]
 
 
 def test_tick_remesure_safari_no_envelope_not_no_scrape(tmp_path, monkeypatch):
