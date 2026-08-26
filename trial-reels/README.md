@@ -2,6 +2,23 @@
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
 
+## Runner
+
+One clip in → **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks), each with a **distinct** attested on-screen hook:
+
+```bash
+# With a pre-baked transcript (no whisper)
+PYTHONPATH=trial-reels python -m lib.runner \
+  --file /path/to/clip.mp4 \
+  --transcript /path/to/transcript.json \
+  --out out/
+
+# Drain in/ folder, transcribe via dual-ear whisper
+PYTHONPATH=trial-reels python -m lib.runner --out out/
+```
+
+Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). File count and stack cycling are not success — see `lib/pipeline.py` scoring.
+
 ## Why this exists
 
 Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, but cover QA was failing because:
@@ -13,6 +30,7 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
+| `lib/runner.py` | End-to-end pipeline: ingest → desk → ASS → ffmpeg stacks → score |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |
 | `tests/` | Hermetic unit tests + ffmpeg/tesseract integration on a generated purple fixture |

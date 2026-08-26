@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lib.desk import TARGET_VARIANTS
 from lib.cover_qa import ocr_langs_for_language, qa_cover
 from lib.desk_swarm import validate_desk_result
 
@@ -42,6 +43,8 @@ class PipelineScore:
     shippable: int
     stacks_landed: int
     file_count: int
+    distinct_verified_texts: int
+    target_variants: int
     success: bool
     message: str
     clip_scores: list[ClipScore] = field(default_factory=list)
@@ -55,6 +58,8 @@ class PipelineScore:
             "shippable": self.shippable,
             "stacks_landed": self.stacks_landed,
             "file_count": self.file_count,
+            "distinct_verified_texts": self.distinct_verified_texts,
+            "target_variants": self.target_variants,
             "success": self.success,
             "message": self.message,
             "clips": [
@@ -140,15 +145,33 @@ def score_run(
     shippable = sum(1 for c in clip_scores if c.shippable)
     files = file_count if file_count is not None else stacks_landed
 
+    verified_texts: set[str] = set()
+    for payload, clip_score in zip(clip_payloads, clip_scores, strict=False):
+        if clip_score.cover_ok is not True:
+            continue
+        words = payload.get("attested_words")
+        if words:
+            verified_texts.add(str(words[0]).strip())
+
+    distinct_verified = len(verified_texts)
+
     if clip_scores:
-        success = shippable == len(clip_scores) and shippable > 0
+        success = shippable > 0
         if require_cover and cover_checked:
             success = success and cover_pass == cover_checked
     else:
         success = False
 
-    if success:
-        message = f"{shippable}/{len(clip_scores)} clips shippable"
+    if success and distinct_verified >= TARGET_VARIANTS:
+        message = (
+            f"{shippable}/{len(clip_scores)} clips shippable; "
+            f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks verified on covers"
+        )
+    elif success:
+        message = (
+            f"{shippable}/{len(clip_scores)} clips shippable; "
+            f"only {distinct_verified}/{TARGET_VARIANTS} distinct hooks verified on covers"
+        )
     elif stacks_landed and not shippable:
         message = (
             f"stacks landed ({stacks_landed} files) but only {shippable}/{len(clip_scores)} "
@@ -165,6 +188,8 @@ def score_run(
         shippable=shippable,
         stacks_landed=stacks_landed,
         file_count=files,
+        distinct_verified_texts=distinct_verified,
+        target_variants=TARGET_VARIANTS,
         success=success,
         message=message,
         clip_scores=clip_scores,

@@ -76,7 +76,7 @@ def _punch_segments(duration_s: float) -> list[tuple[float, float]]:
 def _video_trim_chain(label_in: str, start: float, end: float, label_out: str) -> str:
     return (
         f"[{label_in}]{_FMT},trim=start={start:.6f}:end={end:.6f},"
-        f"setpts=PTS-STARTPTS[{label_out}]"
+        f"setpts=PTS-STARTPTS,setsar=1[{label_out}]"
     )
 
 
@@ -149,7 +149,7 @@ def _fake_out_graph(duration_s: float, width: int, height: int, *, has_audio: bo
         _video_trim_chain("0:v", 0.0, pre_end, "vpre"),
         (
             f"color=c=black:s={width}x{height}:d={FAKE_OUT_FLASH_S:.3f},"
-            f"fps=30,{_FMT}[vflash]"
+            f"fps=30,{_FMT},setsar=1[vflash]"
         ),
         _video_trim_chain("0:v", post_start, post_end, "vpost"),
         "[vpre][vflash][vpost]concat=n=3:v=1:a=0[vcat]",
@@ -157,7 +157,7 @@ def _fake_out_graph(duration_s: float, width: int, height: int, *, has_audio: bo
     if has_audio:
         parts.extend([
             _audio_trim_chain("0:a", 0.0, pre_end, "apre"),
-            f"anullsrc=r=48000:cl=stereo,duration={FAKE_OUT_FLASH_S:.3f}[aflash]",
+            f"anullsrc=r=48000:cl=stereo:duration={FAKE_OUT_FLASH_S:.3f}[aflash]",
             _audio_trim_chain("0:a", post_start, post_end, "apost"),
             "[apre][aflash][apost]concat=n=3:v=0:a=1[acat]",
             _loudnorm_chain("acat"),
