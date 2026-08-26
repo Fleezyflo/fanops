@@ -50,6 +50,29 @@ def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
     assert len(expand_variant_slots(result["cards"])) == TARGET_VARIANTS
 
 
+def test_arabic_live_nested_window_farm_collapses_to_one_hook() -> None:
+    """Live Mac cycled 5 nested sub-windows of one sung line across 4 stacks."""
+    transcript = {
+        "language": "ar",
+        "lines": [{"start": 12.2, "text": "لك كفاية عزبتني عزبتني"}],
+    }
+    result = write(transcript)
+
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 1
+    texts = [item["text"] for item in result.get("treatments") or []]
+    assert texts == ["لك كفاية عزبتني عزبتني"]
+    assert "عذبتيني" not in texts[0]
+    nested_farm = {
+        "كفاية عزبتني عزبتني",
+        "لك كفاية عزبتني",
+        "كفاية عزبتني",
+        "عزبتني عزبتني",
+        "عزبتني",
+    }
+    assert set(texts).isdisjoint(nested_farm)
+
+
 def test_live_arabic_clip_fails_closed_with_one_maximal_hook() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
