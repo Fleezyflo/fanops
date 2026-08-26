@@ -68,7 +68,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 2
     assert result["cards"] == []
     assert "need 20" in result["reason"]
     validation = validate_desk_result(result)
@@ -78,17 +78,21 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     texts = {item["text"] for item in result.get("treatments") or []}
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) == 4
+    assert len(texts) == 2
+    assert all(text.endswith(".") for text in texts)
 
 
-def test_english_live_transcript_still_finds_full_sentences_before_blocking() -> None:
+def test_english_live_transcript_rejects_stitched_crumbs_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
-    assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
+    assert result.get("claims_found", 0) <= 2
+    texts = {item["text"] for item in result.get("treatments") or []}
+    assert "So the next" not in texts
+    assert "inside a padded recording booth creates a powerful illusion," not in texts
+    assert "Which brings us to the missing reality layer," not in texts
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:

@@ -1,6 +1,6 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: one treatment per stitched grammatical sentence (whisper fragments merged first).
+English: one treatment per raw Whisper line that is a complete grammatical sentence.
 Arabic: one treatment per raw Whisper line (nested substrings dropped globally).
 No sliding windows, clause crumbs, permutations, cross-sentence joins, or nested farms.
 """
@@ -57,14 +57,33 @@ _MIN_HOOK_WORDS_EN = 4
 _MIN_CONTENT_WORDS_EN = 2
 _WEAK_HOOK_STARTERS_EN = frozenset(
     {
-        "the", "a", "an", "in", "of", "to", "and", "or", "so", "by", "at", "for", "with", "from", "on",
-        "inside", "booth", "recording",
+        "the", "in", "of", "to", "and", "or", "so", "by", "at", "for", "with", "from", "on",
+        "inside",
     }
 )
 _WEAK_HOOK_ENDINGS_EN = frozenset(
     {"by", "to", "that", "and", "or", "a", "an", "of", "in", "for", "its", "is", "one", "us", "the"}
 )
-_EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves", "one"})
+_EN_SUBORDINATE_STARTERS = frozenset(
+    {
+        "that", "which", "who", "whom", "whose", "what", "when", "where", "why", "how",
+        "one", "inside", "outside", "within", "under", "over", "so", "and", "or", "but",
+    }
+)
+_EN_PRONOUN_STARTERS = frozenset(
+    {"i", "it", "he", "she", "they", "we", "you", "it's", "its", "they're", "theyre", "you're", "youre", "we're", "were", "i'm", "im"}
+)
+_EN_COMMON_VERBS = frozenset(
+    {
+        "is", "are", "was", "were", "am", "be", "been", "being",
+        "has", "have", "had", "do", "does", "did", "will", "would", "can", "could",
+        "shall", "should", "may", "might", "must",
+        "defines", "creates", "fails", "accept", "brings", "evaporates", "matters", "decides",
+        "lands", "hooks", "need", "work", "keep", "show", "invite", "win", "reward", "punish",
+        "separates", "follows", "stays", "owe", "sharpens", "breaks", "returns", "collapses",
+        "executes", "accepts",
+    }
+)
 _EN_FRAGMENT_CRUMBS = frozenset(
     {
         "fails.",
@@ -372,22 +391,34 @@ def _content_word_count(text: str, language: str) -> int:
     return sum(1 for word in text.split() if _normalize_word(word) not in function_words)
 
 
+def _has_predicate_verb(text: str) -> bool:
+    for word in text.split():
+        norm = _normalize_word(word)
+        if not norm or norm in _EN_FUNCTION:
+            continue
+        if norm in _EN_COMMON_VERBS:
+            return True
+        if len(norm) >= 4 and re.search(r"(ies|es|ed|ing|s)$", norm):
+            return True
+    return False
+
+
 def _starts_grammatically(text: str) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
         return False
     first = _normalize_word(words[0])
-    if first == "one" and len(words) > 1 and _normalize_word(words[1]) == "that":
+    if first in _EN_PRONOUN_STARTERS:
         return True
-    if first in _EN_RELATIVE_STARTERS:
+    if first in {"a", "an"} and len(words) >= 5:
         return True
-    if first in {"which", "moves"}:
-        return True
-    if first == "the" and len(words) >= 4:
-        return True
+    if first in _EN_SUBORDINATE_STARTERS:
+        return False
     if first in _WEAK_HOOK_STARTERS_EN:
         return False
-    return True
+    if words[0][0].isupper() and first not in _EN_FUNCTION:
+        return True
+    return False
 
 
 def _ends_grammatically(text: str) -> bool:
@@ -395,10 +426,28 @@ def _ends_grammatically(text: str) -> bool:
     if not words:
         return False
     last = words[-1].rstrip("\"')]}")
-    if last.endswith(",") or _ends_sentence(last):
-        return True
+    if last.endswith(","):
+        return False
+    if not _ends_sentence(last):
+        return False
     bare = _normalize_word(last)
     if bare in _WEAK_HOOK_ENDINGS_EN:
+        return False
+    return True
+
+
+def _is_complete_english_sentence(text: str) -> bool:
+    """True when *text* is one grammatical sentence: subject through terminal punctuation."""
+    words = [part for part in text.split() if part.strip()]
+    if len(words) < _MIN_HOOK_WORDS_EN:
+        return False
+    if not _starts_grammatically(text):
+        return False
+    if not _ends_grammatically(text):
+        return False
+    if not _has_predicate_verb(text):
+        return False
+    if _has_internal_sentence_break(text):
         return False
     return True
 
@@ -420,18 +469,13 @@ def _is_crumb(
             return True
         if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
             return True
-        if is_full_whisper_line and _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN:
-            if _ends_sentence(words[-1]) or words[-1].rstrip().endswith(","):
-                return False
+        if is_full_whisper_line:
+            return not _is_complete_english_sentence(text)
         if not _starts_grammatically(text):
             return True
         if not _ends_grammatically(text):
             return True
         if len(words) < _MIN_HOOK_WORDS_EN:
-            if len(words) >= 3 and _ends_sentence(words[-1]):
-                return False
-            if len(words) >= 2 and _ends_sentence(words[-1]) and _content_word_count(text, language) >= 1:
-                return False
             return True
         if _content_word_count(text, language) < _MIN_CONTENT_WORDS_EN:
             return True
@@ -569,9 +613,7 @@ def _stitched_sentence_groups(transcript: dict[str, Any], language: str) -> list
 
 
 def _hook_source_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
-    """Hook sources: stitched sentences (en) or raw Whisper lines (ar)."""
-    if language == "en":
-        return _stitched_sentence_groups(transcript, language)
+    """Hook sources: one raw Whisper line per candidate (en and ar)."""
     return _whisper_line_groups(transcript, language)
 
 

@@ -41,18 +41,21 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_stitched_sentence_hooks() -> None:
+def test_english_fixture_yields_complete_whisper_line_hooks() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) == 4
-    assert len(set(texts)) == 4
+    assert len(texts) == 2
+    assert len(set(texts)) == 2
     assert "So the next" not in texts
-    assert "inside a padded recording booth creates a powerful illusion," in " ".join(texts)
+    assert "inside a padded recording booth creates a powerful illusion," not in texts
+    assert "Which brings us to the missing reality layer," not in texts
+    assert "behind-the-scenes power." not in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
+        assert item["text"].endswith(".")
 
 
 def test_arabic_fixture_honest_ceiling_one_maximal_line() -> None:
@@ -102,3 +105,17 @@ def test_english_enumeration_rejects_whisper_crumbs() -> None:
     assert texts == []
     assert "fails." not in texts
     assert "So the next" not in texts
+
+
+def test_english_live_rejects_stitched_pseudo_sentences() -> None:
+    """Clause tails and appositions from clip_004ae6d9098a must not count as hooks."""
+    from lib.desk import write
+
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    texts = {item["text"] for item in result.get("treatments") or []}
+    assert (
+        "inside a padded recording booth creates a powerful illusion, "
+        "one that completely evaporates the second real-world leverage is required."
+    ) not in texts
+    assert "Which brings us to the missing reality layer, behind-the-scenes power." not in texts
+    assert result["claims_found"] == 2
