@@ -19,8 +19,16 @@ from pipeline import EXIT_BLOCKED, EXIT_OK, main, run_inbox  # noqa: E402
 from tests.test_desk import _load_fixture  # noqa: E402
 
 
-def test_english_live_fixture_expands_to_twenty_distinct_cards() -> None:
+def test_english_live_fixture_blocks_without_twenty_sentences() -> None:
     desk = write(_load_fixture("clip_004ae6d9098a.json"))
+
+    assert desk["mode"] == "blocked"
+    assert desk["claims_found"] == 4
+    assert desk["cards"] == []
+
+
+def test_twenty_sentence_fixture_expands_to_twenty_distinct_cards() -> None:
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
 
     assert desk["mode"] == "write"
     assert len(desk["cards"]) == TARGET_VARIANTS
@@ -72,7 +80,7 @@ def test_run_inbox_english_dry_run_plans_twenty(
     clip = in_dir / "clip.mp4"
     clip.write_bytes(minimal_clip_mp4.read_bytes())
 
-    transcript = _load_fixture("clip_004ae6d9098a.json")
+    transcript = _load_fixture("clip_twenty_hooks.json")
     summary = run_inbox(
         in_dir=in_dir,
         out_root=out_root,
@@ -96,7 +104,7 @@ def test_pipeline_main_exits_ok_for_english_twenty_hook_contract(
     in_dir.mkdir()
     clip = in_dir / "clip.mp4"
     clip.write_bytes(minimal_clip_mp4.read_bytes())
-    transcript_path = FIXTURES / "clip_004ae6d9098a.json"
+    transcript_path = FIXTURES / "clip_twenty_hooks.json"
 
     code = main(
         [

@@ -20,7 +20,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
   --out out/
 ```
 
-Desk returns `mode=write` with **20 distinct** contiguous attested clause hooks (English) or full Whisper lines (Arabic) when the transcript honestly supports them — no padding, no nested windows, no permutations. Sparse transcripts fail closed instead of shipping repeated or nested farms. Pass bar: **20 actually different attested on-screen hooks** proven in `desk.json` and cover JPGs. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk returns `mode=write` with **20 distinct** contiguous attested full sentences (English) or full Whisper lines (Arabic) when the transcript honestly supports them — no padding, no nested windows, no clause crumbs, no permutations. Sparse transcripts fail closed instead of shipping repeated or nested farms. Pass bar: **20 actually different attested on-screen hooks** proven in `desk.json` and cover JPGs. File count alone is not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 

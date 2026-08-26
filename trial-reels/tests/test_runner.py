@@ -38,10 +38,10 @@ def test_plan_variants_empty_for_blocked_arabic() -> None:
     assert plans == []
 
 
-def test_plan_variants_yields_twenty_distinct_for_live_english() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+def test_plan_variants_yields_twenty_distinct_for_twenty_sentence_fixture() -> None:
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     assert desk["mode"] == "write"
-    plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    plans = plan_variants(desk, clip_id="clip_twenty_hooks", source_duration_s=60.0)
     assert len(plans) == TARGET_VARIANTS
     assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
 
@@ -61,7 +61,7 @@ def test_english_whisper_slices_block_instead_of_shipping_crumbs() -> None:
 
 
 def test_ass_events_burn_only_hook_card_text() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     card = desk["cards"][0]
     events = build_ass_events(
         card,

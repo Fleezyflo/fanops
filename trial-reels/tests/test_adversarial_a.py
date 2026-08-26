@@ -65,8 +65,15 @@ def test_validate_rejects_non_contiguous_span() -> None:
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_live_english_fixture_ships_twenty_distinct_hooks() -> None:
+def test_live_english_fixture_blocks_without_twenty_sentences() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] == 4
+    assert not payload["validation"]["ok"]
+
+
+def test_twenty_sentence_fixture_ships_twenty_distinct_hooks() -> None:
+    payload = write_and_validate(_load_fixture("clip_twenty_hooks.json"))
     assert payload["desk"]["mode"] == "write"
     assert payload["desk"]["unique_texts"] == TARGET_VARIANTS
     assert payload["validation"]["ok"], payload["validation"]["issues"]
@@ -100,7 +107,7 @@ def test_pipeline_does_not_count_files_as_success() -> None:
 
 
 def test_pipeline_marks_english_tess_eng() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     score = score_run(
         clip_payloads=[{"clip_id": "en_v01", "desk": desk}],
         require_cover=False,
@@ -109,7 +116,7 @@ def test_pipeline_marks_english_tess_eng() -> None:
 
 
 def test_pipeline_counts_twenty_distinct_attested_without_cover() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     payloads = [
         {
             "clip_id": f"en_{index}",

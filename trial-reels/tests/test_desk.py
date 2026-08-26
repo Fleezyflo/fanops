@@ -24,23 +24,32 @@ def _card_texts(result: dict) -> list[str]:
     return [card["text"] for card in result["cards"]]
 
 
-def test_live_english_fixture_ships_twenty_distinct_clause_hooks() -> None:
+def test_live_english_fixture_fails_closed_without_twenty_sentences() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
+
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 4
+    assert result["cards"] == []
+    assert "need 20 distinct on-screen texts" in result["reason"]
+    validation = validate_desk_result(result)
+    assert not validation["ok"]
+    plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    assert plans == []
+
+
+def test_twenty_sentence_fixture_ships_twenty_distinct_hooks() -> None:
+    result = write(_load_fixture("clip_twenty_hooks.json"))
 
     assert result["mode"] == "write"
     assert result["unique_texts"] == TARGET_VARIANTS
     assert len(result["cards"]) == TARGET_VARIANTS
     assert len(set(_card_texts(result))) == TARGET_VARIANTS
     assert contract_met(result)
-    assert "So the next" not in _card_texts(result)
     validation = validate_desk_result(result)
     assert validation["ok"], validation["issues"]
-    plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    plans = plan_variants(result, clip_id="clip_twenty_hooks", source_duration_s=60.0)
     assert len(plans) == TARGET_VARIANTS
     assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
-    cite_starts = {card["cite"]["start"] for card in result["cards"]}
-    assert 7.2 in cite_starts
-    assert 12.6 in cite_starts
 
 
 def test_live_arabic_fixture_fails_closed_without_twenty_hooks() -> None:
