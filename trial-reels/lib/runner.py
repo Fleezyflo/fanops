@@ -18,10 +18,10 @@ from typing import Any
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
 from lib.desk import expand_variant_slots, write as desk_write
 from lib.desk_swarm import validate_desk_result
-from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
+from lib.hooks import LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
-from lib.stacks import STACK_NAMES, ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
+from lib.stacks import ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
 
 RECIPES_PATH = Path(__file__).resolve().parents[1] / "recipes.json"
 TARGET_WIDTH = 1080
@@ -164,7 +164,6 @@ def plan_variants(
         return []
 
     recipes = recipes or load_recipes()
-    stacks = list(recipes.get("stacks") or STACK_NAMES)
     slots = expand_variant_slots(list(desk.get("cards") or []))
 
     plans: list[VariantPlan] = []

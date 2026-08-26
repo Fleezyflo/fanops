@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 from lib.desk import (
-    HOOKS,
     TARGET_VARIANTS,
     VARIANT_SLOTS,
     is_contiguous_attested_span,

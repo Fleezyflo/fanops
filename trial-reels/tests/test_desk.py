@@ -120,7 +120,13 @@ def test_arabic_whisper_lines_stay_separate() -> None:
     lines = _tokens_by_line(tokens)
     units = _hook_units(tokens, language, fixture, _attested_vocabulary(tokens))
     assert len(lines) == len(fixture["lines"])
-    assert {unit.text for unit in units} == {"لك كفاية عزبتني", "عزبتني"}
+    assert {unit.text for unit in units} == {
+        "لك كفاية عزبتني عزبتني",
+        "كفاية عزبتني عزبتني",
+        "لك كفاية عزبتني",
+        "كفاية عزبتني",
+        "عزبتني عزبتني",
+    }
 
 
 def test_arabic_nested_whisper_farm_counts_one_distinct_hook() -> None:
@@ -203,6 +209,31 @@ def test_credit_only_arabic_transcript_blocks() -> None:
 
 def test_variant_slots_cover_hook_stack_grid() -> None:
     assert TARGET_VARIANTS == len(HOOKS) * len(STACK_NAMES)
+
+
+def test_stack_cycling_four_texts_to_twenty_cards_fails_validation() -> None:
+    """Four unique texts × stack cycling must not pass as 20 distinct hooks."""
+    four_texts = list(EN_LIVE_SENTENCES)
+    fake = {
+        "mode": "write",
+        "language": "en",
+        "cards": [
+            {
+                "hook": hook,
+                "stack": stack,
+                "text": four_texts[index % len(four_texts)],
+                "cite": {"line": four_texts[index % len(four_texts)]},
+            }
+            for index, (hook, stack) in enumerate(
+                [(h, s) for h in HOOKS for s in STACK_NAMES]
+            )
+        ],
+    }
+    validation = validate_desk_result(fake)
+    assert not validation["ok"]
+    assert any("distinct" in issue for issue in validation["issues"])
+    plans = plan_variants(fake, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    assert plans == []
 
 
 def test_is_contiguous_attested_span_matches_subsequence() -> None:
