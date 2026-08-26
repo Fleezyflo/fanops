@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lib.desk import HOOKS, TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
+from lib.desk import TARGET_VARIANTS, VARIANT_SLOTS, is_contiguous_attested_span, write
 
 
 def _card_is_contiguous(card: dict[str, Any]) -> bool:
@@ -77,14 +77,17 @@ def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
 def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
     if language != "en":
         return False
-    from lib.desk import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, _normalize_phrase
+    from lib.desk import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN
+    from lib.treatments import _EN_FRAGMENT_CRUMBS, _ends_sentence, _normalize_phrase
 
     text = (card.get("text") or "").strip()
     norm = _normalize_phrase(text)
-    if norm in _EN_FORBIDDEN_SLICES:
+    if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
         return True
     words = text.split()
-    return len(words) < _MIN_HOOK_WORDS_EN
+    if len(words) < _MIN_HOOK_WORDS_EN:
+        return not (len(words) >= 3 and _ends_sentence(words[-1]))
+    return False
 
 
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
