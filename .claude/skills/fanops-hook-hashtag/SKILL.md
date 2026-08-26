@@ -61,9 +61,9 @@ MEGA_SLOT_MAX=1
 3. **Hashtags come from the source lock via `ship_from_lock`** — never words the
    model invents, never the 80-pile / store ∪ corpus. Membership is the lock
    (`hashtag_store` on every surface of that source). Rank for the lock menu is
-   `play_count` then 7-day reel max (`current_top_reel_play_max_7d`). Empty
-   lock → empty tag line. Invented / off-lock tags die. No AR floor, no mega
-   slot, no `VETTED` pool, no semantic ban-list on the ship path.
+   `play_count` then 7-day reel max (`current_top_reel_play_max_7d`). Empty lock
+   → empty tag line. Invented / off-lock tags die. No AR floor, no mega slot,
+   no `VETTED` pool, no semantic ban-list on the ship path.
 
 ---
 
