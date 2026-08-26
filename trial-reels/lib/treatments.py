@@ -1,7 +1,8 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: one treatment per raw Whisper line plus clause-boundary siblings on the same
-line (comma / major markers only — never sliding windows). Arabic: one treatment per
+English: stitch whisper fragments into grammatical sentences, then enumerate
+clause-boundary spans on each raw whisper line and each stitched sentence
+(comma / major markers only — never sliding windows). Arabic: one treatment per
 Whisper line with global strict-substring drop (عزبتني inside لك كفاية عزبتني).
 Ships exactly MAX_TREATMENTS distinct on-screen texts or fails closed.
 """
@@ -184,13 +185,6 @@ def _is_en_fragment_crumb(text: str) -> bool:
     return False
 
 
-def _fragment_continues(text: str) -> bool:
-    words = text.split()
-    if not words:
-        return False
-    last = words[-1].rstrip("\"')]}")
-    return last.endswith(",") or last.endswith(";")
-
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
     if language != "en":
@@ -219,8 +213,6 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
         if _is_en_fragment_crumb(text):
             flush()
             continue
-        if buffer and not _fragment_continues(buffer[-1]):
-            flush()
         if not buffer:
             buffer_start = start
             buffer_line_index = index
@@ -486,6 +478,32 @@ def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list
     return groups
 
 
+def _stitched_sentence_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """Token groups for each stitched grammatical sentence (English only)."""
+    groups: list[list[_Token]] = []
+    for text, start, line_index in _stitch_line_texts(_parse_lines(transcript), language):
+        for unit in _split_stitched_sentences(text) if language == "en" else [text]:
+            words = [word for word in unit.split() if word.strip()]
+            if not words:
+                continue
+            groups.append(
+                [
+                    _Token(word, start, line_index, unit, 0, word_index)
+                    for word_index, word in enumerate(words)
+                ]
+            )
+    return groups
+
+
+def _hook_source_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """English: raw whisper lines plus stitched sentences; Arabic: whisper lines only."""
+    if language == "ar":
+        return _whisper_line_groups(transcript, language)
+    whisper = _whisper_line_groups(transcript, language)
+    stitched = _stitched_sentence_groups(transcript, language)
+    return whisper + stitched
+
+
 def _sentence_groups(tokens: list[_Token], language: str) -> list[list[_Token]]:
     if language == "ar":
         by_line: dict[int, list[_Token]] = {}
@@ -570,6 +588,9 @@ def _ends_cleanly(
 
 
 def _starts_cleanly(start: int, boundaries: set[int]) -> bool:
+    """Clause spans must start on an attested boundary; line-open (0) uses grammar rules."""
+    if start == 0:
+        return True
     return start in boundaries
 
 
@@ -742,7 +763,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    token_groups = _whisper_line_groups(transcript, language)
+    token_groups = _hook_source_groups(transcript, language)
 
     for sentence_tokens in token_groups:
         spans = _candidate_spans(sentence_tokens, language)

@@ -68,7 +68,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 8
+    assert result["claims_found"] == 12
     assert result["cards"] == []
     assert "need 20" in result["reason"]
     validation = validate_desk_result(result)
@@ -78,7 +78,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     texts = {item["text"] for item in result.get("treatments") or []}
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) == 8
+    assert len(texts) == 12
 
 
 def test_english_live_transcript_still_finds_full_sentences_before_blocking() -> None:
@@ -86,7 +86,7 @@ def test_english_live_transcript_still_finds_full_sentences_before_blocking() ->
     result = write(fixture)
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 8
+    assert result["claims_found"] == 12
     assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
 
 

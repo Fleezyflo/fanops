@@ -76,7 +76,7 @@ def test_live_arabic_fixture_fails_closed() -> None:
 def test_live_english_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
     assert payload["desk"]["mode"] == "blocked"
-    assert payload["desk"]["claims_found"] == 8
+    assert payload["desk"]["claims_found"] == 12
     assert not payload["validation"]["ok"]
 
 
