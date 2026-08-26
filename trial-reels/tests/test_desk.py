@@ -68,7 +68,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 13
+    assert result["claims_found"] == 4
     assert result["claims_found"] < TARGET_VARIANTS
     assert result["cards"] == []
     assert "need 20" in result["reason"]
@@ -79,16 +79,17 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     texts = {item["text"] for item in result.get("treatments") or []}
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) == 13
+    assert len(texts) == 4
+    assert texts == EN_LIVE_SENTENCES
 
 
-def test_english_live_transcript_still_finds_clause_hooks_before_blocking() -> None:
+def test_english_live_transcript_still_finds_stitched_sentences_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 13
+    assert result["claims_found"] == 4
     assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
 
 
