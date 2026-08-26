@@ -76,7 +76,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 6
+    assert result["claims_found"] == 4
     assert result["cards"] == []
     assert "So the next" not in _treatment_texts(result)
     validation = validate_desk_result(result)

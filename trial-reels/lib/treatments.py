@@ -599,18 +599,25 @@ def _collect_hook_candidates(
     language: str,
     vocabulary: set[str],
 ) -> list[HookTreatment]:
-    """Whisper lines maximize distinct hooks; English falls back to stitched sentences."""
+    """English: stitched full sentences only. Arabic: one Whisper line per candidate."""
     seen: set[str] = set()
-    whisper_candidates: list[HookTreatment] = []
+    candidates: list[HookTreatment] = []
     source_order = 0
 
-    for line_tokens in _whisper_line_token_groups(transcript, language):
+    if language == "en":
+        groups = _sentence_groups(tokens, language)
+        at_boundary = True
+    else:
+        groups = _whisper_line_token_groups(transcript, language)
+        at_boundary = False
+
+    for group_tokens in groups:
         candidate = _build_candidate(
-            line_tokens,
+            group_tokens,
             language=language,
             vocabulary=vocabulary,
             source_order=source_order,
-            at_boundary=False,
+            at_boundary=at_boundary,
         )
         if candidate is None:
             continue
@@ -618,33 +625,10 @@ def _collect_hook_candidates(
         if norm in seen:
             continue
         seen.add(norm)
-        whisper_candidates.append(candidate)
+        candidates.append(candidate)
         source_order += 1
 
-    sentence_candidates: list[HookTreatment] = []
-    if language == "en":
-        for sentence_tokens in _sentence_groups(tokens, language):
-            candidate = _build_candidate(
-                sentence_tokens,
-                language=language,
-                vocabulary=vocabulary,
-                source_order=source_order,
-                at_boundary=True,
-            )
-            if candidate is None:
-                continue
-            norm = _normalize_phrase(candidate.text)
-            if norm in seen:
-                continue
-            seen.add(norm)
-            sentence_candidates.append(candidate)
-            source_order += 1
-
-    if language == "en" and len(whisper_candidates) >= len(sentence_candidates):
-        return whisper_candidates
-    if language == "en":
-        return sentence_candidates
-    return whisper_candidates
+    return candidates
 
 
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:

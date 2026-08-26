@@ -40,14 +40,21 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_whisper_line_treatments() -> None:
+def test_english_fixture_yields_full_sentence_treatments() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
-    assert len(treatments) == 6
+    assert len(treatments) == 4
     texts = [item["text"] for item in treatments]
-    assert len(set(texts)) == 6
+    assert len(set(texts)) == 4
     assert "So the next" not in texts
+    forbidden_crumbs = {
+        "inside a padded recording booth creates a powerful illusion,",
+        "one that completely evaporates the second real-world leverage is required.",
+        "Which brings us to the missing reality layer,",
+        "behind-the-scenes power.",
+    }
+    assert not forbidden_crumbs.intersection(texts)
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
