@@ -491,8 +491,6 @@ def run_clip(
         stacks_landed=len(outputs),
         file_count=len(outputs),
         require_cover=bool(checked),
-        cover_checked=len(checked) if checked else None,
-        cover_pass=sum(1 for p in checked if p.get("cover_ok")) if checked else None,
     )
     report_path = workdir / "score.json"
     write_score_report(score, report_path)

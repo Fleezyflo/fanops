@@ -77,14 +77,16 @@ def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
 def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
     if language != "en":
         return False
-    from lib.desk import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, _normalize_phrase
+    from lib.treatments import _EN_FORBIDDEN_SLICES, _MIN_HOOK_WORDS_EN, _ends_sentence, _normalize_phrase
 
     text = (card.get("text") or "").strip()
     norm = _normalize_phrase(text)
     if norm in _EN_FORBIDDEN_SLICES:
         return True
     words = text.split()
-    return len(words) < _MIN_HOOK_WORDS_EN
+    if len(words) < _MIN_HOOK_WORDS_EN:
+        return not (len(words) >= 3 and _ends_sentence(words[-1]))
+    return False
 
 
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
