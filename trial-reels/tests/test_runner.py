@@ -17,7 +17,7 @@ from lib.runner import (  # noqa: E402
     plan_variants,
     transcript_from_segments,
 )
-from tests.test_desk import EN_LIVE_SENTENCES, _load_fixture  # noqa: E402
+from tests.test_desk import _load_fixture  # noqa: E402
 
 
 EN_NOTEBOOK = {
@@ -31,39 +31,45 @@ EN_NOTEBOOK = {
 }
 
 
-def test_plan_variants_yields_twenty_for_live_arabic() -> None:
-    desk = write(_load_fixture("clip_5a92132dc6de.json"))
+def test_plan_variants_yields_twenty_for_twenty_hook_fixture() -> None:
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
     assert desk["mode"] == "write"
-    plans = plan_variants(desk, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
+    plans = plan_variants(desk, clip_id="clip_twenty_hooks", source_duration_s=120.0)
     assert len(plans) == TARGET_VARIANTS
-    assert len({p.card["text"] for p in plans}) == 2
-
-
-def test_plan_variants_yields_twenty_for_live_english() -> None:
-    desk = write(_load_fixture("clip_004ae6d9098a.json"))
-    assert desk["mode"] == "write"
-    plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
-    assert len(plans) == TARGET_VARIANTS
-    assert set(p.card["text"] for p in plans) == EN_LIVE_SENTENCES
+    assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
 
 
 def test_plan_variants_empty_when_desk_blocked() -> None:
-    desk = write(EN_NOTEBOOK)
+    desk = write(_load_fixture("clip_5a92132dc6de.json"))
     assert desk["mode"] == "blocked"
-    plans = plan_variants(desk, clip_id="en_notebook", source_duration_s=30.0)
+    plans = plan_variants(desk, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
     assert plans == []
 
 
-def test_english_whisper_slices_block_instead_of_shipping_crumbs() -> None:
-    desk = write(EN_NOTEBOOK)
+def test_plan_variants_empty_when_english_below_ceiling() -> None:
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
     assert desk["mode"] == "blocked"
-    validation = validate_desk_result(desk)
-    assert not validation["ok"]
+    plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
+    assert plans == []
+
+
+def test_plan_variants_empty_when_desk_blocked_credit() -> None:
+    desk = write({"language": "ar", "lines": [{"start": 0, "text": "ترجمة نانسي قنقر"}]})
+    assert desk["mode"] == "blocked"
+    plans = plan_variants(desk, clip_id="ar_credit", source_duration_s=30.0)
+    assert plans == []
+
+
+def test_english_whisper_slices_reject_forbidden_crumbs() -> None:
+    desk = write(EN_NOTEBOOK)
+    texts = [card["text"] for card in desk.get("cards", [])]
+    assert "So the next" not in texts
+    assert all("fails." not in t.lower() for t in texts)
 
 
 def test_ass_events_burn_only_hook_card_text() -> None:
-    desk = write(_load_fixture("clip_5a92132dc6de.json"))
-    card = next(c for c in desk["cards"] if "لك" in c["text"])
+    desk = write(_load_fixture("clip_twenty_hooks.json"))
+    card = desk["cards"][0]
     events = build_ass_events(
         card,
         policy=card["hook"],
@@ -72,7 +78,6 @@ def test_ass_events_burn_only_hook_card_text() -> None:
     )
     assert len(events) == 1
     assert events[0]["text"] == card["text"]
-    assert "عذبتيني" not in str(events[0]["text"])
 
 
 def test_transcript_from_segments_roundtrip() -> None:

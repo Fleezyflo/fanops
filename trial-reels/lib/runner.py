@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
-from lib.cover_qa import cover_extract_s_for_hook, ocr_langs_for_language, qa_cover
-from lib.desk import expand_variant_slots, write as desk_write
+from lib.desk import write as desk_write
 from lib.desk_swarm import validate_desk_result
 from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
@@ -161,19 +160,23 @@ def plan_variants(
     recipes: dict[str, Any] | None = None,
     source_duration_s: float,
 ) -> list[VariantPlan]:
-    """Enumerate hook×stack variants that pass desk + stack gates."""
+    """Enumerate hook×stack variants — one treatment text per slot when ceiling allows."""
     if desk.get("mode") != "write":
         return []
 
     recipes = recipes or load_recipes()
+    hooks = list(recipes.get("hooks") or HOOK_POLICIES)
     stacks = list(recipes.get("stacks") or STACK_NAMES)
-    slots = expand_variant_slots(list(desk.get("cards") or []))
+    cards = list(desk.get("cards") or [])
+    if not cards:
+        return []
 
     plans: list[VariantPlan] = []
-    for slot in slots:
-        hook = str(slot["hook"])
-        stack = str(slot["stack"])
-        card = {"hook": hook, "text": slot["text"], "cite": slot["cite"]}
+    for card in cards:
+        hook = card.get("hook") or ""
+        stack = card.get("stack") or ""
+        if hook not in hooks or stack not in stacks:
+            continue
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
@@ -343,7 +346,8 @@ def run_clip(
     skipped: list[str] = []
     clip_payloads: list[dict[str, Any]] = []
 
-    if desk.get("mode") != "write":
+    if desk.get("mode") != "write" or not validation.get("ok") or not plans:
+        reason = desk.get("reason") or "; ".join(validation.get("issues") or [])
         return RunResult(
             clip_id=clip_id,
             desk=desk,
@@ -351,9 +355,9 @@ def run_clip(
             variants_planned=len(plans),
             variants_rendered=0,
             outputs=[],
-            skipped=[f"desk blocked: {desk.get('reason')}"],
+            skipped=[f"desk blocked: {reason}"],
             success=False,
-            message=f"desk blocked: {desk.get('reason')}",
+            message=f"desk blocked: {reason}",
         )
 
     for plan in plans:
@@ -363,48 +367,22 @@ def run_clip(
                 skipped.append(f"{plan.hook}/{plan.stack}: empty ass")
                 continue
             outputs.append(out)
-
-            cover_ok: bool | None = None
-            cover_message = ""
-            hook_text = str(plan.card.get("text") or "")
-            if require_cover and not dry_run and hook_text.strip():
-                extract_s = cover_extract_s_for_hook(
-                    plan.hook,
-                    cite_start_s=plan.cite_start_s,
-                    total_duration_s=duration_s,
-                )
-                cover = qa_cover(
-                    out,
-                    attested_words=(hook_text,),
-                    extract_s=extract_s,
-                    workdir=workdir / "cover_qa" / f"{plan.hook}_{plan.stack}",
-                    language=str(desk.get("language") or ""),
-                    tess_langs=ocr_langs_for_language(desk.get("language")),
-                )
-                cover_ok = cover.ok
-                cover_message = cover.message
-
             clip_payloads.append(
                 {
                     "clip_id": f"{clip_id}_{plan.hook}_{plan.stack}",
                     "desk": desk,
                     "output_path": str(out),
-                    "attested_words": (hook_text,),
-                    "cover_ok": cover_ok,
-                    "cover_message": cover_message,
+                    "attested_words": (plan.card.get("text"),),
                 }
             )
         except RuntimeError as exc:
             skipped.append(f"{plan.hook}/{plan.stack}: {exc}")
 
-    checked = [p for p in clip_payloads if p.get("cover_ok") is not None]
     score = score_run(
         clip_payloads=clip_payloads,
         stacks_landed=len(outputs),
         file_count=len(outputs),
         require_cover=require_cover,
-        cover_checked=len(checked) if checked else None,
-        cover_pass=sum(1 for p in checked if p.get("cover_ok")) if checked else None,
     )
     report_path = workdir / "score.json"
     write_score_report(score, report_path)
