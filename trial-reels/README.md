@@ -4,17 +4,17 @@ Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. 
 
 ## Runner
 
-One clip in → **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks), each with a **distinct** attested on-screen hook:
+One clip in → **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks), each with a **distinct** attested on-screen hook. **`pipeline.py` is the sole CLI runner.**
 
 ```bash
-# With a pre-baked transcript (no whisper)
-PYTHONPATH=trial-reels python -m lib.runner \
-  --file /path/to/clip.mp4 \
+# Drain in/ with pre-baked transcript (no whisper)
+PYTHONPATH=trial-reels python trial-reels/pipeline.py \
+  --in-dir in/ \
   --transcript /path/to/transcript.json \
   --out out/
 
-# Drain in/ folder, transcribe via dual-ear whisper
-PYTHONPATH=trial-reels python -m lib.runner --out out/
+# Or as a module
+PYTHONPATH=trial-reels python -m trial-reels --out out/
 ```
 
 Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). File count and stack cycling are not success — see `lib/pipeline.py` scoring.

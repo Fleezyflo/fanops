@@ -138,3 +138,79 @@ def test_is_contiguous_attested_span_matches_subsequence() -> None:
     line = "Ross defines a true boss by the rare ability."
     assert is_contiguous_attested_span("true boss by", line)
     assert not is_contiguous_attested_span("boss Ross", line)
+
+
+def test_arabic_single_sung_line_blocks_not_nested_windows() -> None:
+    """Live clip_5a92132dc6de attested line — one line, not five nested windows."""
+    transcript = {
+        "language": "ar",
+        "lines": [{"start": 12.2, "text": "لك كفاية عزبتني عزبتني"}],
+    }
+    result = write(transcript)
+
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 1
+    assert result["cards"] == []
+    nested_farm = {
+        "لك كفاية عزبتني عزبتني",
+        "كفاية عزبتني عزبتني",
+        "لك كفاية عزبتني",
+        "كفاية عزبتني",
+        "عزبتني عزبتني",
+    }
+    assert not nested_farm.intersection(set(_card_texts(result)))
+
+
+def test_english_ross_whisper_crumbs_do_not_ship() -> None:
+    transcript = {
+        "language": "en",
+        "lines": [
+            {"start": 0.0, "text": "Ross defines a true"},
+            {"start": 1.0, "text": "boss by the rare ability"},
+            {"start": 2.0, "text": "to execute moves the real streets actually accept."},
+            {"start": 3.0, "text": "So the next"},
+        ],
+    }
+    result = write(transcript)
+
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 1
+    assert result["cards"] == []
+    texts = _card_texts(result)
+    assert "So the next" not in texts
+    assert not any(t.startswith("Ross defines a true") and t.endswith("ability") for t in texts)
+
+
+def test_four_claims_cannot_cycle_to_twenty_cards() -> None:
+    """Stack cycling 4 unique texts × 5 hooks is a fail — not write()."""
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
+    assert desk["mode"] == "blocked"
+    assert desk["claims_found"] == 4
+    assert len(desk["cards"]) == 0
+
+    from lib.desk_swarm import validate_desk_result
+
+    cycled = {
+        "mode": "write",
+        "language": "en",
+        "cards": [
+            {
+                "hook": HOOKS[i % len(HOOKS)],
+                "stack": STACK_NAMES[i % len(STACK_NAMES)],
+                "text": text,
+                "cite": {"line": text, "start": float(i)},
+            }
+            for i, text in enumerate(
+                [
+                    "Ross defines a true boss by the rare ability to execute moves the real streets actually accept.",
+                    "inside a padded recording booth creates a powerful illusion, one that completely evaporates the second real-world leverage is required.",
+                    "Which brings us to the missing reality layer, behind-the-scenes power.",
+                    "It's a test of genuine respect that the modern corporate industry completely fails.",
+                ]
+                * 5
+            )
+        ],
+    }
+    validation = validate_desk_result(cycled)
+    assert not validation["ok"]
+    assert any("distinct" in issue for issue in validation["issues"])
