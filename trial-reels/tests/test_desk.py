@@ -64,11 +64,11 @@ def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
     assert plans == []
 
 
-def test_live_english_clip_fails_closed_with_four_sentences() -> None:
+def test_live_english_clip_fails_closed_below_twenty_hooks() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 5
     assert result["cards"] == []
     assert "need 20 distinct on-screen texts" in result["reason"]
     validation = validate_desk_result(result)
@@ -77,23 +77,40 @@ def test_live_english_clip_fails_closed_with_four_sentences() -> None:
     assert plans == []
 
 
-def test_english_live_transcript_still_finds_four_claims_before_blocking() -> None:
+def test_english_rejects_pr1073_mid_sentence_crumbs() -> None:
+    """Sliding-window crumbs must not ship."""
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    texts = _card_texts(result) if result.get("cards") else [c["text"] for c in result.get("claims", [])]
+    forbidden = {
+        "Ross defines a true",
+        "boss by the rare ability",
+        "the modern corporate industry completely",
+        "by the rare ability",
+        "one that completely evaporates",
+        "the missing reality layer,",
+        "the real streets actually accept.",
+        "moves the real streets actually accept.",
+    }
+    assert not forbidden.intersection(texts)
+
+
+def test_english_live_transcript_still_finds_clause_claims_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 5
     assert "So the next" not in _card_texts(result)
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:
-    from lib.desk import _collect_tokens, _hook_units, _tokens_by_line
+    from lib.desk import _attested_vocabulary, _collect_tokens, _hook_units, _tokens_by_line
 
     fixture = _load_fixture("clip_5a92132dc6de.json")
     tokens, language = _collect_tokens(fixture)
     lines = _tokens_by_line(tokens)
-    units = _hook_units(tokens, language)
+    units = _hook_units(tokens, language, fixture, _attested_vocabulary(tokens))
     assert len(lines) == len(fixture["lines"])
     assert {unit.text for unit in units} == {"لك كفاية عزبتني", "عزبتني"}
 
