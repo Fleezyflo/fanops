@@ -49,7 +49,7 @@ def test_english_fixture_yields_stitched_sentence_hooks() -> None:
     assert len(set(texts)) == 8
     assert "So the next" not in texts
     assert "Ross defines a true boss" in texts
-    assert "by the rare ability to execute moves the real streets actually accept." in texts
+    assert "moves the real streets actually accept." in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])

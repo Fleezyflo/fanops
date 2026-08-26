@@ -185,11 +185,15 @@ def _is_en_fragment_crumb(text: str) -> bool:
 
 
 def _fragment_continues(text: str) -> bool:
+    """True when a stitched English buffer should absorb the next Whisper line."""
     words = text.split()
     if not words:
         return False
     last = words[-1].rstrip("\"')]}")
-    return last.endswith(",") or last.endswith(";")
+    if last.endswith(",") or last.endswith(";"):
+        return True
+    # Mid-sentence Whisper breaks (no comma) still belong to one sentence.
+    return not _ends_sentence(last)
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
@@ -664,8 +668,13 @@ def _max_antichain_on_line(candidates: list[HookTreatment]) -> list[HookTreatmen
 
 
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Maximize distinct non-nested clause hooks; prefer siblings over strict supersets."""
+    """Prefer full attested sentences; else maximize non-nested clause-boundary siblings."""
     del language
+    full_units = _drop_nested_globally([item for item in candidates if item.is_full_line])
+    full_units.sort(key=lambda item: (item.source_order, item.word_start, item.text))
+    if len(full_units) >= MAX_TREATMENTS:
+        return full_units[:MAX_TREATMENTS]
+
     by_line: dict[str, list[HookTreatment]] = {}
     for candidate in candidates:
         by_line.setdefault(candidate.line_text, []).append(candidate)
@@ -742,7 +751,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    token_groups = _whisper_line_groups(transcript, language)
+    token_groups = _sentence_groups(tokens, language)
 
     for sentence_tokens in token_groups:
         spans = _candidate_spans(sentence_tokens, language)
