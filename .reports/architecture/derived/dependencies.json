@@ -308,7 +308,6 @@
         "fanops.models",
         "fanops.overlay_reburn",
         "fanops.paths_rebase",
-        "fanops.persona_research",
         "fanops.pipeline",
         "fanops.pipeline_run",
         "fanops.pipeline_status",
@@ -2546,7 +2545,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 259,
+  "lazy_downward_count": 258,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3904,7 +3903,7 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 612,
-    "lazy_edges": 387,
+    "lazy_edges": 386,
     "lazy_edges_lateral": 48,
     "lazy_edges_strictly_upward": 80,
     "lazy_edges_to_equal_or_higher_level": 128,

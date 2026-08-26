@@ -2320,40 +2320,20 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
 
 
 def test_lock_then_remesure_still_runs(tmp_path, monkeypatch):
-    """Injected lock does not spend used; remesure via fetch still remesures."""
+    """HT5: after lock walk claims the tick Safari slot, remesure must not run."""
     from datetime import datetime, timezone
-    from types import SimpleNamespace
-    import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import refresh_store_if_due
-    from fanops.hashtags import load_measurements
-    from fanops.ig_web_scrape import IgWebSession
-    from fanops.source_tags import ensure_source_lock, load_source_tag_locks
-    from hashtag_scrape_fakes import _Media
+    from fanops.source_tags import _iter_lock_clients
+    from test_source_tags import _Hit, _SearchClient, _Media
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
-    t0 = datetime.now(timezone.utc)
-
-    class _LockCli:
-        _fanops_scrape_user = "u"
-
-        def search_hashtags(self, query):
-            return [SimpleNamespace(name="alpha", id="1", media_count=2)]
-
-        def hashtag_medias_top(self, name, amount=9):
-            return [_Media(1, "", play_count=8)]
-
-    ensure_source_lock(cfg, SimpleNamespace(id="src_1", title="t", language="en", transcript="x"),
-                       client=_LockCli(), research_fn=lambda *_a: ["alpha"],
-                       resolve_fn=lambda *_a: "gid-alpha", measure_fn=lambda *_a: (10.0, {}))
-    rec = load_source_tag_locks(cfg)["src_1"]
-    assert rec["researched_at"] and rec["lock"] == ["#alpha"]
-    _boom_chrome_tick(monkeypatch)
-    monkeypatch.setattr(iws, "open_web_session",
-                        lambda _c, user=None, **_k: IgWebSession(user or "u",
-                                                                 fetch=_web_fetch_for("alpha")))
-    out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert out["refreshed"] is True
-    assert "#alpha" in load_measurements(cfg)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    list(_iter_lock_clients(cfg, client=None, open_client_fn=lambda c, user=None, **k: client, now=t0))
+    out = refresh_store_if_due(cfg, max_age_s=1, now=t0, scrape_client=_FakeClient({"#alpha": 10}))
+    assert out["refreshed"] is False and out["reason"] == "safari_tick_slot"
 
 
 def test_tick_remesure_source_has_no_dump_login_or_chrome():
