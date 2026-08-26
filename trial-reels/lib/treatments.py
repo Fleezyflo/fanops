@@ -63,8 +63,18 @@ _WEAK_HOOK_STARTERS_EN = frozenset(
 _WEAK_HOOK_ENDINGS_EN = frozenset(
     {"by", "to", "that", "and", "or", "a", "an", "of", "in", "for", "its", "is", "one", "us", "the"}
 )
-_EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves"})
-_EN_FRAGMENT_CRUMBS = frozenset({"fails.", "so the next"})
+_EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its"})
+_EN_BARE_VERB_STARTERS = frozenset({"moves", "evaporates", "accept"})
+_EN_FRAGMENT_CRUMBS = frozenset(
+    {
+        "fails.",
+        "so the next",
+        "behind-the-scenes power.",
+        "moves the real streets actually accept.",
+        "ross defines a true",
+        "boss by the rare ability",
+    }
+)
 
 # Clause splits inside one English sentence — never cross a sentence boundary.
 # Only major clause markers; avoid " the "/" of "/" in " sliding crumbs.
@@ -380,16 +390,16 @@ def _content_word_count(text: str, language: str) -> int:
     return sum(1 for word in text.split() if _normalize_word(word) not in function_words)
 
 
-def _starts_grammatically(text: str) -> bool:
+def _starts_grammatically(text: str, *, is_full_line: bool = False) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
         return False
     first = _normalize_word(words[0])
+    if not is_full_line and first in _EN_BARE_VERB_STARTERS:
+        return False
     if first == "one" and len(words) > 1 and _normalize_word(words[1]) == "that":
         return True
     if first in _EN_RELATIVE_STARTERS:
-        return True
-    if first in {"which", "moves"}:
         return True
     if first == "the" and len(words) >= 4:
         return True
@@ -432,7 +442,7 @@ def _is_crumb(
             return True
         if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
             return True
-        if not _starts_grammatically(text):
+        if not _starts_grammatically(text, is_full_line=is_full_line):
             return True
         if not _ends_grammatically(text):
             return True

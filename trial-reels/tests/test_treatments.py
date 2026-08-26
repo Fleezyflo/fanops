@@ -78,3 +78,25 @@ def test_arabic_fixture_honest_ceiling_one_maximal_line() -> None:
 def test_nested_hook_text_detects_subspan() -> None:
     assert is_nested_hook_text("عزبتني", "لك كفاية عزبتني")
     assert not is_nested_hook_text("لك كفاية عزبتني", "عزبتني")
+
+
+EXPLICIT_NON_HOOKS = frozenset(
+    {
+        "Ross defines a true",
+        "boss by the rare ability",
+        "moves the real streets actually accept.",
+        "behind-the-scenes power.",
+        "So the next",
+        "fails.",
+        "عزبتني",
+    }
+)
+
+
+def test_live_payloads_never_emit_explicit_non_hooks() -> None:
+    for name in ("clip_004ae6d9098a.json", "clip_5a92132dc6de.json", "clip_twenty_hooks.json"):
+        result = enumerate_treatments(_load_fixture(name))
+        texts = {item["text"] for item in result.get("treatments") or []}
+        for card in result.get("cards") or []:
+            texts.add(card["text"])
+        assert texts.isdisjoint(EXPLICIT_NON_HOOKS), f"{name} leaked non-hooks: {texts & EXPLICIT_NON_HOOKS}"

@@ -41,7 +41,17 @@ __all__ = [
 ]
 
 # Re-exported for desk_swarm and tests.
-_EN_FORBIDDEN_SLICES = frozenset({"so the next", "fails.", "fails. so the next"})
+_EN_FORBIDDEN_SLICES = frozenset(
+    {
+        "so the next",
+        "fails.",
+        "fails. so the next",
+        "behind-the-scenes power.",
+        "moves the real streets actually accept.",
+        "ross defines a true",
+        "boss by the rare ability",
+    }
+)
 _MIN_HOOK_WORDS_EN = 4
 
 
