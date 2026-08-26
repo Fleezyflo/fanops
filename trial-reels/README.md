@@ -2,25 +2,22 @@
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
 
-## Pipeline door
+## Runner
 
-One clip in `in/` → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
+One clip in → **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks), each with a **distinct** attested on-screen hook:
 
 ```bash
-# Drain in/, write desk.json per clip, render hook×stack variants, score
-PYTHONPATH=trial-reels python trial-reels/pipeline.py \
-  --in-dir in/ \
-  --out out/ \
-  --transcript /path/to/transcript.json
-
-# Same render path via runner module (single file)
+# With a pre-baked transcript (no whisper)
 PYTHONPATH=trial-reels python -m lib.runner \
   --file /path/to/clip.mp4 \
   --transcript /path/to/transcript.json \
   --out out/
+
+# Drain in/ folder, transcribe via dual-ear whisper
+PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk returns `mode=write` with **20 distinct** contiguous attested clause hooks (English) or full Whisper lines (Arabic) when the transcript honestly supports them — no padding, no nested windows, no permutations. Sparse transcripts fail closed instead of shipping repeated or nested farms. Pass bar: **20 actually different attested on-screen hooks** proven in `desk.json` and cover JPGs. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). File count and stack cycling are not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 

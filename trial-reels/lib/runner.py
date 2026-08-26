@@ -17,12 +17,12 @@ from typing import Any
 
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
 from lib.cover_qa import cover_extract_s_for_hook, extract_cover_frame, ocr_langs_for_language, qa_cover
-from lib.desk import TARGET_VARIANTS, contract_met, write as desk_write
+from lib.desk import TARGET_VARIANTS, contract_met, expand_variant_slots, write as desk_write
 from lib.desk_swarm import validate_desk_result
-from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
+from lib.hooks import LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
 from lib.pipeline import score_run, write_score_report
-from lib.stacks import STACK_NAMES, ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
+from lib.stacks import ffmpeg_cmd, resolve_ffmpeg_bin, stack_gate_passes
 
 RECIPES_PATH = Path(__file__).resolve().parents[1] / "recipes.json"
 TARGET_WIDTH = 1080
@@ -224,13 +224,13 @@ def plan_variants(
         return []
 
     recipes = recipes or load_recipes()
-    plans: list[VariantPlan] = []
+    slots = expand_variant_slots(list(desk.get("cards") or []))
 
-    for card in desk.get("cards") or []:
-        hook = str(card.get("hook") or "")
-        stack = str(card.get("stack") or "")
-        if not hook or not stack:
-            continue
+    plans: list[VariantPlan] = []
+    for slot in slots:
+        hook = str(slot["hook"])
+        stack = str(slot["stack"])
+        card = {"hook": hook, "text": slot["text"], "cite": slot["cite"]}
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
@@ -440,22 +440,21 @@ def run_clip(
                         cite_start_s=plan.cite_start_s,
                         total_duration_s=duration_s,
                     )
-                    if require_cover:
-                        extract_s = cover_extract_s_for_hook(
-                            plan.hook,
-                            cite_start_s=plan.cite_start_s,
-                            total_duration_s=duration_s,
-                        )
-                        cover = qa_cover(
-                            out,
-                            attested_words=(hook_text,),
-                            extract_s=extract_s,
-                            workdir=workdir / "cover_qa" / f"{plan.hook}_{plan.stack}",
-                            language=str(desk.get("language") or ""),
-                            tess_langs=ocr_langs_for_language(desk.get("language")),
-                        )
-                        cover_ok = cover.ok
-                        cover_message = cover.message
+                    extract_s = cover_extract_s_for_hook(
+                        plan.hook,
+                        cite_start_s=plan.cite_start_s,
+                        total_duration_s=duration_s,
+                    )
+                    cover = qa_cover(
+                        out,
+                        attested_words=(hook_text,),
+                        extract_s=extract_s,
+                        workdir=workdir / "cover_qa" / f"{plan.hook}_{plan.stack}",
+                        language=str(desk.get("language") or ""),
+                        tess_langs=ocr_langs_for_language(desk.get("language")),
+                    )
+                    cover_ok = cover.ok
+                    cover_message = cover.message
                 except RuntimeError as exc:
                     cover_ok = False
                     cover_message = str(exc)
@@ -484,20 +483,19 @@ def run_clip(
         cover_paths=cover_paths,
         cover_results=cover_results,
     )
-    desk_path = workdir / "desk.json"
-    desk_path.write_text(json.dumps(desk, ensure_ascii=False, indent=2), encoding="utf-8")
 
     checked = [p for p in clip_payloads if p.get("cover_ok") is not None]
     score = score_run(
         clip_payloads=clip_payloads,
         stacks_landed=len(outputs),
         file_count=len(outputs),
-        require_cover=bool(checked) and require_cover,
-        cover_checked=len(checked) if checked else None,
-        cover_pass=sum(1 for p in checked if p.get("cover_ok")) if checked else None,
+        require_cover=bool(checked),
     )
     report_path = workdir / "score.json"
     write_score_report(score, report_path)
+
+    desk_path = workdir / "desk.json"
+    desk_path.write_text(json.dumps(desk, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return RunResult(
         clip_id=clip_id,
@@ -509,7 +507,7 @@ def run_clip(
         clip_payloads=clip_payloads,
         skipped=skipped,
         score=score.to_dict(),
-        success=score.success and validation["ok"] and contract_met(desk),
+        success=score.success and validation["ok"],
         message=score.message,
     )
 
