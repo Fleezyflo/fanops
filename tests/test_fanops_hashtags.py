@@ -1858,6 +1858,7 @@ def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
     import fanops.ig_web_scrape as iws
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import _remesure_sidecar
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "2")
     cfg = Config(root=tmp_path)
     niches = [f"seed{i}" for i in range(6)]
