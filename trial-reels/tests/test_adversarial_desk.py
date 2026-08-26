@@ -189,3 +189,21 @@ def test_enumerate_never_emits_clause_windows_on_english_fixture() -> None:
     assert "Ross defines a true" not in texts
     assert "boss by the rare ability" not in texts
     assert "So the next" not in texts
+
+
+def test_write_never_ships_nested_substring_pair() -> None:
+    """Regression: two valid lines where one is a strict sub-span must fail closed."""
+    transcript = {
+        "language": "ar",
+        "lines": [
+            {"start": 0.0, "text": "لك كفاية عزبتني"},
+            {"start": 1.0, "text": "عزبتني"},
+        ],
+    }
+    result = write(transcript)
+
+    assert result["mode"] == "blocked"
+    assert result["cards"] == []
+    texts = [item["text"] for item in result.get("treatments") or []]
+    assert texts == ["لك كفاية عزبتني"]
+    assert "عزبتني" not in texts

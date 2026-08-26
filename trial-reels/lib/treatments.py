@@ -655,8 +655,20 @@ def _drop_strict_substring_hooks(treatments: list[HookTreatment]) -> list[HookTr
     return kept
 
 
+def _any_nested_pair(treatments: list[HookTreatment]) -> bool:
+    """True when any two treatments are strict contiguous word sub-spans of each other."""
+    texts = [item.text for item in treatments]
+    for index, left in enumerate(texts):
+        for right in texts[index + 1 :]:
+            if left == right:
+                continue
+            if is_nested_hook_text(left, right) or is_nested_hook_text(right, left):
+                return True
+    return False
+
+
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Per-line non-nested antichain, then drop global strict substrings for Arabic."""
+    """Per-line non-nested antichain, then drop global strict substrings."""
     by_line: dict[str, list[HookTreatment]] = {}
     for candidate in candidates:
         by_line.setdefault(candidate.line_text, []).append(candidate)
@@ -674,8 +686,7 @@ def _select_treatments(candidates: list[HookTreatment], language: str) -> list[H
             line_packed.append(candidate)
         packed.extend(line_packed)
 
-    if language == "ar":
-        packed = _drop_strict_substring_hooks(packed)
+    packed = _drop_strict_substring_hooks(packed)
 
     packed.sort(key=lambda item: (item.source_order, item.word_start, item.text))
     return packed[:MAX_TREATMENTS]
@@ -738,6 +749,16 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
     treatments = _select_treatments(candidates, language)
     if not treatments:
         return {**blocked, "reason": "no attested hook treatments in transcript"}
+    if _any_nested_pair(treatments):
+        return {
+            **blocked,
+            "reason": "nested attested hook spans in transcript",
+            "treatments": [item.to_dict() for item in treatments],
+            "ceiling": len({item.text for item in treatments}),
+            "unique_texts": len({item.text for item in treatments}),
+            "claims_found": len({item.text for item in treatments}),
+            "target_variants": MAX_TREATMENTS,
+        }
 
     unique_texts = len({item.text for item in treatments})
     ceiling = unique_texts
