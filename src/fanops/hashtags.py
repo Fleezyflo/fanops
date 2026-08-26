@@ -190,26 +190,20 @@ def _scrape_number(rec) -> float | None:
     return None
 
 
-def lock_from_pile(names, measurements, n=15) -> list[str]:
-    """First-n scrape-admitted names. Graph-present ranks first; LLM order within each tier.
-
-    scrape-only IN; graph-only OUT; unmeasured OUT. `graph_metric` ranks, never vetoes.
-    Do not sort by play_rank_key."""
+def lock_from_pile(names, measurements, n=12) -> list[str]:
+    """Top-n names with a positive play_count, ordered by play_rank_key. Unmeasured stay off the lock."""
     recs = measurements if isinstance(measurements, dict) else {}
-    with_graph: list[str] = []
-    scrape_only: list[str] = []
+    kept: list[str] = []
     for name in _dedupe_norm(names):
         rec = recs.get(name)
         if not isinstance(rec, dict):
             continue
-        if _scrape_number(rec) is None:
+        plays = _num(rec.get("play_count"))
+        if plays is None or plays <= 0:
             continue
-        graph = _num(rec.get("graph_metric"))
-        if graph is not None and graph > 0:
-            with_graph.append(name)
-        else:
-            scrape_only.append(name)
-    return (with_graph + scrape_only)[:n]
+        kept.append(name)
+    kept.sort(key=lambda t: play_rank_key(t, recs.get(t)))
+    return kept[:n]
 
 
 def ship_from_lock(picks, lock, n=4) -> list[str]:

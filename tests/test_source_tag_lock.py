@@ -1,5 +1,5 @@
 # tests/test_source_tag_lock.py
-"""lock_from_pile is scrape-admit; Graph ranks first among admits. ship_from_lock is picks ∩ lock."""
+"""lock_from_pile is positive play_count, play_rank_key order, cap 12. ship_from_lock is picks ∩ lock."""
 from fanops.hashtags import lock_from_pile, play_rank_key, ship_from_lock, size_rank_key, _ARABIC
 
 # Same mid band (10k–2M) so size_rank_key is media_count DESC, not a band flip.
@@ -9,10 +9,10 @@ HIGH_PLAY = {"media_count": 50_000, "play_count": 9_000, "current_top_reel_play_
              "graph_metric": 5}
 
 
-def test_dual_qualify_keeps_llm_order_not_play_rank():
+def test_high_media_low_play_loses_to_high_play():
     names = ["#bigfolder", "#highplay"]
     measurements = {"#bigfolder": BIG_FOLDER, "#highplay": HIGH_PLAY}
-    assert lock_from_pile(names, measurements) == ["#bigfolder", "#highplay"]
+    assert lock_from_pile(names, measurements) == ["#highplay", "#bigfolder"]
 
 
 def test_unmeasured_names_excluded():
@@ -25,8 +25,8 @@ def test_unmeasured_names_excluded():
     assert lock_from_pile(names, measurements) == ["#kept"]
 
 
-def test_scrape_only_and_graph_only_are_excluded():
-    # scrape-only IN; graph-only OUT; unmeasured OUT. Graph-present ranks first (LLM order in-tier).
+def test_like_count_only_is_excluded():
+    # play_count is the admit key — like_count alone must not enter the lock.
     names = ["#likes", "#plays", "#graphonly", "#both"]
     measurements = {
         "#likes": {"like_count": 99_000, "media_count": 1_000_000},
@@ -34,46 +34,34 @@ def test_scrape_only_and_graph_only_are_excluded():
         "#graphonly": {"graph_metric": 80},
         "#both": {"like_count": 10, "graph_metric": 3},
     }
-    assert lock_from_pile(names, measurements) == ["#both", "#likes", "#plays"]
+    assert lock_from_pile(names, measurements) == ["#plays"]
 
 
-def test_graph_present_ranks_first_among_scrape_admitted():
-    names = ["#scrape_a", "#both", "#scrape_b", "#graphonly"]
-    measurements = {
-        "#scrape_a": {"play_count": 99},
-        "#both": {"like_count": 10, "graph_metric": 80},
-        "#scrape_b": {"like_count": 5},
-        "#graphonly": {"graph_metric": 999},
-    }
-    assert lock_from_pile(names, measurements) == ["#both", "#scrape_a", "#scrape_b"]
-
-
-def test_like_count_plus_graph_qualifies():
+def test_like_count_plus_graph_still_excluded():
     names = ["#likes", "#plays"]
     measurements = {
         "#likes": {"like_count": 99_000, "graph_metric": 4},
         "#plays": {"play_count": 1, "graph_metric": 4},
     }
-    assert lock_from_pile(names, measurements) == ["#likes", "#plays"]
+    assert lock_from_pile(names, measurements) == ["#plays"]
 
 
-def test_equal_meters_keep_input_order():
+def test_equal_play_higher_reel_max_wins():
     names = ["#a", "#b"]
     measurements = {
         "#a": {"play_count": 100, "current_top_reel_play_max_7d": 10, "graph_metric": 1},
         "#b": {"play_count": 100, "current_top_reel_play_max_7d": 50, "graph_metric": 1},
     }
-    assert lock_from_pile(names, measurements) == ["#a", "#b"]
+    assert lock_from_pile(names, measurements) == ["#b", "#a"]
 
 
-def test_cap_fifteen_llm_order():
-    names = [f"#t{i}" for i in range(20)]
-    measurements = {f"#t{i}": {"play_count": i + 1, "graph_metric": 1} for i in range(20)}
+def test_cap_twelve_highest_play_first():
+    names = [f"#t{i}" for i in range(13)]
+    measurements = {f"#t{i}": {"play_count": i + 1, "graph_metric": 1} for i in range(13)}
     lock = lock_from_pile(names, measurements)
-    assert len(lock) == 15
-    assert lock == names[:15]
-    assert "#t19" not in lock
-    assert lock[0] == "#t0"
+    assert len(lock) == 12
+    assert lock[0] == "#t12"
+    assert "#t0" not in lock
 
 
 def test_incomplete_and_nondict_recs_do_not_raise():
