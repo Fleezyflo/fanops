@@ -77,10 +77,15 @@ def _is_nested_window_farm(cards: list[dict[str, Any]]) -> bool:
 def _is_forbidden_english_crumb(card: dict[str, Any], language: str) -> bool:
     if language != "en":
         return False
-    from lib.desk import _is_whisper_crumb
+    from lib.desk import _EN_FRAGMENT_CRUMBS, _EN_FORBIDDEN_SLICES, _normalize_phrase
 
     text = (card.get("text") or "").strip()
-    return _is_whisper_crumb(text, language)
+    if not text:
+        return True
+    norm = _normalize_phrase(text)
+    if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
+        return True
+    return text.lower().startswith("so the next")
 
 
 def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -95,14 +100,25 @@ def validate_desk_result(result: dict[str, Any]) -> dict[str, Any]:
     if not cards:
         issues.append("no attested claim cards")
 
+    from lib.desk import TARGET_VARIANTS, VARIANT_SLOTS
+
+    if len(cards) != TARGET_VARIANTS:
+        issues.append(f"expected {TARGET_VARIANTS} cards, got {len(cards)}")
+
     texts = [(card.get("text") or "").strip() for card in cards]
     if len(set(texts)) != len(texts):
         issues.append("duplicate claim texts")
 
-    expected_hooks = [HOOKS[index % len(HOOKS)] for index in range(len(cards))]
-    hooks_seen = [card.get("hook") for card in cards]
-    if hooks_seen != expected_hooks:
-        issues.append(f"hook order mismatch: {hooks_seen}")
+    expected_slots = [
+        {"hook": hook, "stack": stack}
+        for hook, stack in VARIANT_SLOTS[: len(cards)]
+    ]
+    for index, card in enumerate(cards):
+        expected = expected_slots[index]
+        if card.get("hook") != expected["hook"]:
+            issues.append(f"hook order mismatch at {index}: {card.get('hook')}")
+        if card.get("stack") != expected["stack"]:
+            issues.append(f"stack mismatch at {index}: {card.get('stack')}")
 
     for card in cards:
         if not _card_is_contiguous(card):

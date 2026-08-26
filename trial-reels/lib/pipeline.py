@@ -194,7 +194,7 @@ def score_run(
     )
 
     if clip_scores:
-        success = shippable > 0
+        success = shippable > 0 and distinct_verified >= TARGET_VARIANTS
         if require_cover and cover_checked_count:
             success = success and cover_pass_count == cover_checked_count
     else:
@@ -206,18 +206,12 @@ def score_run(
             f"{shippable}/{len(clip_scores)} clips shippable; "
             f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks {qualifier}"
         )
-    elif success:
-        if verified_on_cover:
-            detail = (
-                f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
-                f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        else:
-            detail = (
-                f"{distinct_verified} distinct attested hook text{'s' if distinct_verified != 1 else ''} "
-                f"across {shippable} cuts (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        message = f"{shippable}/{len(clip_scores)} clips shippable; {detail}"
+    elif shippable and distinct_verified > 0:
+        message = (
+            f"{shippable}/{len(clip_scores)} clips shippable; "
+            f"only {distinct_verified}/{TARGET_VARIANTS} distinct attested hooks — "
+            "file count is not success"
+        )
     elif stacks_landed and not shippable:
         message = (
             f"stacks landed ({stacks_landed} files) but only {shippable}/{len(clip_scores)} "

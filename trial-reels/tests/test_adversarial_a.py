@@ -9,10 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.cover_qa import ocr_langs_for_language  # noqa: E402
-from lib.desk import HOOKS, write  # noqa: E402
+from lib.desk import TARGET_VARIANTS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
-from tests.test_desk import EN_LIVE_SENTENCES, _load_fixture  # noqa: E402
+from tests.test_desk import _load_fixture  # noqa: E402
 
 
 def test_validate_rejects_permutation_anagrams() -> None:
@@ -20,11 +20,10 @@ def test_validate_rejects_permutation_anagrams() -> None:
         "mode": "write",
         "language": "ar",
         "cards": [
-            {"hook": "result_first", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "mid_action", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "bold_claim", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": "cold_proof", "text": "كفاية عزبتني لك", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "result_first", "stack": "punch_cuts", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "mid_action", "stack": "open_loop", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "direct_you", "stack": "fake_out", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+            {"hook": "bold_claim", "stack": "end_loop", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
         ],
     }
     validation = validate_desk_result(fake)
@@ -37,11 +36,10 @@ def test_validate_rejects_nested_window_farm() -> None:
         "mode": "write",
         "language": "ar",
         "cards": [
-            {"hook": "result_first", "text": "لك كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": "mid_action", "text": "كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": "direct_you", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": "bold_claim", "text": "كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": "cold_proof", "text": "عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "result_first", "stack": "punch_cuts", "text": "لك كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "mid_action", "stack": "open_loop", "text": "كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "direct_you", "stack": "fake_out", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+            {"hook": "bold_claim", "stack": "end_loop", "text": "كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
         ],
     }
     validation = validate_desk_result(fake)
@@ -56,6 +54,7 @@ def test_validate_rejects_non_contiguous_span() -> None:
         "cards": [
             {
                 "hook": "bold_claim",
+                "stack": "punch_cuts",
                 "text": "fails. So the next",
                 "cite": {"line": "genuine street ties actually accept."},
             },
@@ -66,18 +65,18 @@ def test_validate_rejects_non_contiguous_span() -> None:
     assert any("contiguous" in issue for issue in validation["issues"])
 
 
-def test_live_arabic_fixture_ships() -> None:
-    payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
-    assert payload["desk"]["mode"] == "write"
-    assert payload["desk"]["unique_texts"] == 2
-    assert payload["validation"]["ok"], payload["validation"]["issues"]
-
-
-def test_live_english_fixture_ships_four_sentences() -> None:
+def test_live_english_fixture_ships_twenty_distinct_hooks() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
     assert payload["desk"]["mode"] == "write"
-    assert set(card["text"] for card in payload["desk"]["cards"]) == EN_LIVE_SENTENCES
+    assert payload["desk"]["unique_texts"] == TARGET_VARIANTS
     assert payload["validation"]["ok"], payload["validation"]["issues"]
+
+
+def test_live_arabic_fixture_blocks() -> None:
+    payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
+    assert payload["desk"]["mode"] == "blocked"
+    assert payload["desk"]["claims_found"] == 1
+    assert not payload["validation"]["ok"]
 
 
 def test_ocr_langs_routes_english_to_eng() -> None:
@@ -109,18 +108,17 @@ def test_pipeline_marks_english_tess_eng() -> None:
     assert score.clip_scores[0].tess_langs == "eng"
 
 
-def test_pipeline_counts_distinct_attested_without_cover() -> None:
-    desk = write(_load_fixture("clip_5a92132dc6de.json"))
-    texts = tuple(card["text"] for card in desk["cards"])
+def test_pipeline_counts_twenty_distinct_attested_without_cover() -> None:
+    desk = write(_load_fixture("clip_004ae6d9098a.json"))
     payloads = [
         {
-            "clip_id": f"ar_{index}",
+            "clip_id": f"en_{index}",
             "desk": desk,
-            "attested_words": (text,),
+            "attested_words": (card["text"],),
         }
-        for index, text in enumerate(texts)
+        for index, card in enumerate(desk["cards"])
     ]
     score = score_run(clip_payloads=payloads, stacks_landed=len(payloads), require_cover=False)
     assert score.success
-    assert score.distinct_verified_texts == 2
-    assert "2 distinct attested hook texts" in score.message
+    assert score.distinct_verified_texts == TARGET_VARIANTS
+    assert f"{TARGET_VARIANTS}/{TARGET_VARIANTS} distinct hooks" in score.message
