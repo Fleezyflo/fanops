@@ -246,7 +246,7 @@ def test_cmd_hashtags_discover_no_personas(tmp_path):
 def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     # MOL-525: gate on last_complete_pass inside the cache, NOT file mtime.
     from datetime import datetime, timezone, timedelta
-    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot
     monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
@@ -266,6 +266,7 @@ def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
     blob["last_complete_pass"] = (t0 - timedelta(hours=13)).isoformat()
     blob["#hiphop"]["measured_at"] = (t0 - timedelta(days=31)).isoformat()  # remesure-due (≥30d)
     cfg.hashtags_path.write_text(json.dumps(blob))
+    reset_safari_tick_slot()  # new tick after aged remesure window
     assert refresh_store_if_due(cfg, max_age_s=10, scrape_client=client, now=t0)["refreshed"] is True
 
 
@@ -2096,7 +2097,7 @@ def test_refresh_store_if_due_does_not_harvest_cotags_or_call_layer_a(tmp_path, 
 def test_refresh_store_if_due_caps_30_unique_names_per_7_days(tmp_path, monkeypatch):
     """Exact-name quota: at most 30 unique sidecar names remesured in 7 days."""
     from datetime import datetime, timezone, timedelta
-    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "40")  # pass cap is 25; quota is 30
     cfg = Config(root=tmp_path)
     names = [f"#t{i:02d}" for i in range(35)]
@@ -2116,6 +2117,7 @@ def test_refresh_store_if_due_caps_30_unique_names_per_7_days(tmp_path, monkeypa
     assert skip["refreshed"] is False and skip["reason"] == "quota"
     assert nxt.media_calls == []
     later = _FakeClient(metrics)
+    reset_safari_tick_slot()  # new tick after quota window rolls
     aged = refresh_store_if_due(cfg, max_age_s=10, scrape_client=later,
                                 now=t0 + timedelta(days=8))
     assert aged["refreshed"] is True

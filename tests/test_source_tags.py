@@ -1038,6 +1038,8 @@ def test_unattended_lock_walks_one_tag(tmp_path, monkeypatch):
     assert rec.get("verified") == ["#t0"]
     assert rec.get("remaining") == ["#t1", "#t2"]
     assert seen == ["u"]
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()  # second unattended tick
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
                        **_ok_graph())
     rec2 = load_source_tag_locks(cfg)["src_1"]
