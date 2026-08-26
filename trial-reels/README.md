@@ -4,20 +4,20 @@ Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. 
 
 ## Runner
 
-One clip in → **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks), each with a **distinct** attested on-screen hook:
+One clip in → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks). Use `pipeline.py` as the live door:
 
 ```bash
 # With a pre-baked transcript (no whisper)
-PYTHONPATH=trial-reels python -m lib.runner \
-  --file /path/to/clip.mp4 \
+PYTHONPATH=trial-reels python3 trial-reels/pipeline.py \
+  --in-dir in/ \
   --transcript /path/to/transcript.json \
   --out out/
 
-# Drain in/ folder, transcribe via dual-ear whisper
-PYTHONPATH=trial-reels python -m lib.runner --out out/
+# Same pipeline with cover OCR scoring
+PYTHONPATH=trial-reels python3 trial-reels/pipeline.py --out out/ --require-cover
 ```
 
-Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). File count and stack cycling are not success — see `lib/pipeline.py` scoring.
+Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
 
 ## Why this exists
 
@@ -30,6 +30,8 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
+| `lib/treatments.py` | Attested hook treatment enumeration (clause spans, honest ceiling) |
+| `lib/desk.py` | Maps treatments onto hook×stack render cards |
 | `lib/runner.py` | End-to-end pipeline: ingest → desk → ASS → ffmpeg stacks → score |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |

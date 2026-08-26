@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.cover_qa import ocr_langs_for_language  # noqa: E402
-from lib.desk import HOOKS, TARGET_VARIANTS, write  # noqa: E402
+from lib.desk import TARGET_VARIANTS, write  # noqa: E402
 from lib.desk_swarm import validate_desk_result, write_and_validate  # noqa: E402
 from lib.pipeline import score_run  # noqa: E402
 from tests.test_desk import _load_fixture  # noqa: E402
@@ -19,51 +19,62 @@ def test_validate_rejects_permutation_anagrams() -> None:
     fake = {
         "mode": "write",
         "language": "ar",
-        "cards": [
-            {"hook": HOOKS[0], "stack": "punch_cuts", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": HOOKS[1], "stack": "open_loop", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": HOOKS[2], "stack": "fake_out", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": HOOKS[3], "stack": "end_loop", "text": "عزبتني كفاية لك", "cite": {"line": "لك كفاية عزبتني"}},
-            {"hook": HOOKS[4], "stack": "punch_cuts", "text": "كفاية عزبتني لك", "cite": {"line": "لك كفاية عزبتني"}},
+        "treatments": [
+            {"kind": "source_order", "text": "عزبتني لك كفاية", "cite": {"line": "لك كفاية عزبتني"}},
+            {"kind": "attested_clause", "text": "كفاية لك عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
+            {"kind": "direct_address", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني"}},
         ],
+        "cards": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
-    assert any("distinct" in issue or "cards" in issue for issue in validation["issues"])
+    assert any("anagram" in issue for issue in validation["issues"])
 
 
 def test_validate_rejects_nested_window_farm() -> None:
     fake = {
         "mode": "write",
         "language": "ar",
-        "cards": [
-            {"hook": HOOKS[0], "stack": "punch_cuts", "text": "لك كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": HOOKS[1], "stack": "open_loop", "text": "كفاية عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": HOOKS[2], "stack": "fake_out", "text": "لك كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": HOOKS[3], "stack": "end_loop", "text": "كفاية عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
-            {"hook": HOOKS[4], "stack": "punch_cuts", "text": "عزبتني عزبتني", "cite": {"line": "لك كفاية عزبتني عزبتني"}},
+        "treatments": [
+            {
+                "kind": "source_order",
+                "text": "لك كفاية عزبتني عزبتني",
+                "cite": {"line": "لك كفاية عزبتني عزبتني"},
+            },
+            {
+                "kind": "attested_clause",
+                "text": "كفاية عزبتني عزبتني",
+                "cite": {"line": "لك كفاية عزبتني عزبتني"},
+            },
+            {
+                "kind": "direct_address",
+                "text": "لك كفاية عزبتني",
+                "cite": {"line": "لك كفاية عزبتني عزبتني"},
+            },
         ],
+        "cards": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
+    assert any("nested" in issue for issue in validation["issues"])
 
 
 def test_validate_rejects_non_contiguous_span() -> None:
     fake = {
         "mode": "write",
         "language": "en",
-        "cards": [
+        "treatments": [
             {
-                "hook": "bold_claim",
-                "stack": "punch_cuts",
+                "kind": "attested_clause",
                 "text": "fails. So the next",
                 "cite": {"line": "genuine street ties actually accept."},
             },
         ],
+        "cards": [],
     }
     validation = validate_desk_result(fake)
     assert not validation["ok"]
-    assert any("contiguous" in issue or "cards" in issue for issue in validation["issues"])
+    assert any("contiguous" in issue for issue in validation["issues"])
 
 
 def test_live_arabic_fixture_fails_closed() -> None:
@@ -76,7 +87,7 @@ def test_live_arabic_fixture_fails_closed() -> None:
 def test_live_english_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
     assert payload["desk"]["mode"] == "blocked"
-    assert payload["desk"]["claims_found"] == 4
+    assert payload["desk"]["claims_found"] >= 8
     assert not payload["validation"]["ok"]
 
 

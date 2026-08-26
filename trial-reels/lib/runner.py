@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
-from lib.desk import expand_variant_slots, write as desk_write
+from lib.desk import write as desk_write
 from lib.desk_swarm import validate_desk_result
 from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
@@ -46,6 +46,7 @@ class RunResult:
     variants_planned: int
     variants_rendered: int
     outputs: list[Path] = field(default_factory=list)
+    clip_payloads: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     score: dict[str, Any] | None = None
     success: bool = False
@@ -159,19 +160,23 @@ def plan_variants(
     recipes: dict[str, Any] | None = None,
     source_duration_s: float,
 ) -> list[VariantPlan]:
-    """Enumerate hook×stack variants that pass desk + stack gates."""
+    """Enumerate hook×stack variants — one treatment text per slot when ceiling allows."""
     if desk.get("mode") != "write":
         return []
 
     recipes = recipes or load_recipes()
+    hooks = list(recipes.get("hooks") or HOOK_POLICIES)
     stacks = list(recipes.get("stacks") or STACK_NAMES)
-    slots = expand_variant_slots(list(desk.get("cards") or []))
+    cards = list(desk.get("cards") or [])
+    if not cards:
+        return []
 
     plans: list[VariantPlan] = []
-    for slot in slots:
-        hook = str(slot["hook"])
-        stack = str(slot["stack"])
-        card = {"hook": hook, "text": slot["text"], "cite": slot["cite"]}
+    for card in cards:
+        hook = card.get("hook") or ""
+        stack = card.get("stack") or ""
+        if hook not in hooks or stack not in stacks:
+            continue
         cite = card.get("cite") or {}
         cite_start = float(cite.get("start") or 0.0)
         _, cut_length = cut_spec(cite_start, source_duration_s)
@@ -341,7 +346,7 @@ def run_clip(
     skipped: list[str] = []
     clip_payloads: list[dict[str, Any]] = []
 
-    if desk.get("mode") != "write" or not validation.get("ok"):
+    if desk.get("mode") != "write" or not validation.get("ok") or not plans:
         reason = desk.get("reason") or "; ".join(validation.get("issues") or [])
         return RunResult(
             clip_id=clip_id,
@@ -389,6 +394,7 @@ def run_clip(
         variants_planned=len(plans),
         variants_rendered=len(outputs),
         outputs=outputs,
+        clip_payloads=clip_payloads,
         skipped=skipped,
         score=score.to_dict(),
         success=score.success and validation["ok"],

@@ -31,7 +31,15 @@ def _write_desk_json(desk: dict[str, Any], path: Path) -> Path:
 
 def _desk_hook_texts(desk: dict[str, Any]) -> list[str]:
     if desk.get("mode") != "write":
-        return []
+        treatments = desk.get("treatments") or []
+        return [
+            str(item.get("text") or "").strip()
+            for item in treatments
+            if str(item.get("text") or "").strip()
+        ]
+    treatments = desk.get("treatments") or []
+    if treatments:
+        return [str(item.get("text") or "").strip() for item in treatments if str(item.get("text") or "").strip()]
     claims = desk.get("claims") or desk.get("cards") or []
     return [str(item.get("text") or "").strip() for item in claims if str(item.get("text") or "").strip()]
 
@@ -107,14 +115,7 @@ def main(argv: list[str] | None = None) -> int:
 
     clip_payloads: list[dict[str, Any]] = []
     for result in summary["results"]:
-        for output in result.outputs:
-            clip_payloads.append(
-                {
-                    "clip_id": output.stem,
-                    "desk": result.desk,
-                    "output_path": str(output),
-                }
-            )
+        clip_payloads.extend(result.clip_payloads)
 
     score = score_run(
         clip_payloads=clip_payloads,

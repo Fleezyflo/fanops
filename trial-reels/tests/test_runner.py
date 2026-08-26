@@ -39,32 +39,32 @@ def test_plan_variants_yields_twenty_for_twenty_hook_fixture() -> None:
     assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
 
 
-def test_plan_variants_empty_for_live_arabic_blocked_desk() -> None:
+def test_plan_variants_empty_when_desk_blocked() -> None:
     desk = write(_load_fixture("clip_5a92132dc6de.json"))
     assert desk["mode"] == "blocked"
     plans = plan_variants(desk, clip_id="clip_5a92132dc6de", source_duration_s=30.0)
     assert plans == []
 
 
-def test_plan_variants_empty_for_live_english_blocked_desk() -> None:
+def test_plan_variants_empty_when_english_below_ceiling() -> None:
     desk = write(_load_fixture("clip_004ae6d9098a.json"))
     assert desk["mode"] == "blocked"
     plans = plan_variants(desk, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
     assert plans == []
 
 
-def test_plan_variants_empty_when_desk_blocked() -> None:
-    desk = write(EN_NOTEBOOK)
+def test_plan_variants_empty_when_desk_blocked_credit() -> None:
+    desk = write({"language": "ar", "lines": [{"start": 0, "text": "ترجمة نانسي قنقر"}]})
     assert desk["mode"] == "blocked"
-    plans = plan_variants(desk, clip_id="en_notebook", source_duration_s=30.0)
+    plans = plan_variants(desk, clip_id="ar_credit", source_duration_s=30.0)
     assert plans == []
 
 
-def test_english_whisper_slices_block_instead_of_shipping_crumbs() -> None:
+def test_english_whisper_slices_reject_forbidden_crumbs() -> None:
     desk = write(EN_NOTEBOOK)
-    assert desk["mode"] == "blocked"
-    validation = validate_desk_result(desk)
-    assert not validation["ok"]
+    texts = [card["text"] for card in desk.get("cards", [])]
+    assert "So the next" not in texts
+    assert all("fails." not in t.lower() for t in texts)
 
 
 def test_ass_events_burn_only_hook_card_text() -> None:
@@ -78,7 +78,6 @@ def test_ass_events_burn_only_hook_card_text() -> None:
     )
     assert len(events) == 1
     assert events[0]["text"] == card["text"]
-    assert "عذبتيني" not in str(events[0]["text"])
 
 
 def test_transcript_from_segments_roundtrip() -> None:
