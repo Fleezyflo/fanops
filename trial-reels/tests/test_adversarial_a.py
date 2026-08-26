@@ -80,14 +80,14 @@ def test_validate_rejects_non_contiguous_span() -> None:
 def test_live_arabic_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_5a92132dc6de.json"))
     assert payload["desk"]["mode"] == "blocked"
-    assert payload["desk"]["claims_found"] == 2
+    assert payload["desk"]["claims_found"] == 1
     assert not payload["validation"]["ok"]
 
 
 def test_live_english_fixture_fails_closed() -> None:
     payload = write_and_validate(_load_fixture("clip_004ae6d9098a.json"))
     assert payload["desk"]["mode"] == "blocked"
-    assert payload["desk"]["claims_found"] == 4
+    assert payload["desk"]["claims_found"] == 6
     assert not payload["validation"]["ok"]
 
 

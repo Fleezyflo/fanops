@@ -330,6 +330,15 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     return False
 
 
+def is_nested_hook_text(shorter: str, longer: str) -> bool:
+    """True when *shorter* is a strict contiguous word sub-span of *longer*."""
+    short = shorter.strip()
+    long = longer.strip()
+    if not short or not long or short == long:
+        return False
+    return is_contiguous_attested_span(short, long)
+
+
 def _contains_forbidden_rewrite(text: str) -> bool:
     normalized = _strip_tashkeel(text)
     return any(forbidden in normalized for forbidden in _FORBIDDEN_REWRITES)
@@ -517,36 +526,139 @@ def _validate_span(
     return is_contiguous_attested_span(text, chunk[0].line_text)
 
 
-def _nested_on_line(a: HookTreatment, b: HookTreatment) -> bool:
-    if a.line_text != b.line_text:
+def _treatments_nested(a: HookTreatment, b: HookTreatment) -> bool:
+    if a.text.strip() == b.text.strip():
         return False
-    if a.word_start == b.word_start and a.word_end == b.word_end:
-        return False
-    return (a.word_start <= b.word_start and b.word_end <= a.word_end) or (
-        b.word_start <= a.word_start and a.word_end <= b.word_end
+    return is_nested_hook_text(a.text, b.text) or is_nested_hook_text(b.text, a.text)
+
+
+def _whisper_line_token_groups(
+    transcript: dict[str, Any],
+    language: str,
+) -> list[list[_Token]]:
+    """One token group per raw Whisper line — never stitched across lines."""
+    groups: list[list[_Token]] = []
+    for index, raw in enumerate(_parse_lines(transcript)):
+        text = _line_text(raw)
+        if not text:
+            continue
+        if language == "en" and _is_en_fragment_crumb(text):
+            continue
+        words = [word for word in text.split() if word.strip()]
+        if not words:
+            continue
+        start = _line_start(raw)
+        groups.append(
+            [
+                _Token(word, start, index, text, 0, word_index)
+                for word_index, word in enumerate(words)
+            ]
+        )
+    return groups
+
+
+def _build_candidate(
+    chunk: list[_Token],
+    *,
+    language: str,
+    vocabulary: set[str],
+    source_order: int,
+    at_boundary: bool,
+) -> HookTreatment | None:
+    if not chunk:
+        return None
+    text = " ".join(token.word for token in chunk)
+    if not _validate_span(
+        chunk,
+        0,
+        len(chunk),
+        language,
+        vocabulary,
+        at_clause_boundary=at_boundary,
+    ):
+        return None
+    is_full = True
+    kind = _classify_kind(text, language, is_full_line=is_full)
+    if kind not in TREATMENT_KINDS:
+        kind = "attested_clause"
+    return HookTreatment(
+        kind=kind,
+        text=text,
+        cite=_cite(chunk),
+        line_index=chunk[0].line_index,
+        line_text=chunk[0].line_text,
+        word_start=chunk[0].word_index,
+        word_end=chunk[-1].word_index + 1,
+        source_order=source_order,
     )
 
 
-def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Pick the largest non-nested antichain per line, then take up to MAX_TREATMENTS."""
-    by_line: dict[str, list[HookTreatment]] = {}
-    for candidate in candidates:
-        by_line.setdefault(candidate.line_text, []).append(candidate)
+def _collect_hook_candidates(
+    transcript: dict[str, Any],
+    tokens: list[_Token],
+    language: str,
+    vocabulary: set[str],
+) -> list[HookTreatment]:
+    """Whisper lines maximize distinct hooks; English falls back to stitched sentences."""
+    seen: set[str] = set()
+    whisper_candidates: list[HookTreatment] = []
+    source_order = 0
 
-    packed: list[HookTreatment] = []
-    for line_text in sorted(by_line, key=lambda line: by_line[line][0].source_order):
-        line_candidates = sorted(
-            by_line[line_text],
-            key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
+    for line_tokens in _whisper_line_token_groups(transcript, language):
+        candidate = _build_candidate(
+            line_tokens,
+            language=language,
+            vocabulary=vocabulary,
+            source_order=source_order,
+            at_boundary=False,
         )
-        line_packed: list[HookTreatment] = []
-        for candidate in line_candidates:
-            if any(_nested_on_line(candidate, picked) for picked in line_packed):
-                continue
-            line_packed.append(candidate)
-        packed.extend(line_packed)
+        if candidate is None:
+            continue
+        norm = _normalize_phrase(candidate.text)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        whisper_candidates.append(candidate)
+        source_order += 1
 
-    packed.sort(key=lambda item: (item.source_order, item.word_start, item.text))
+    sentence_candidates: list[HookTreatment] = []
+    if language == "en":
+        for sentence_tokens in _sentence_groups(tokens, language):
+            candidate = _build_candidate(
+                sentence_tokens,
+                language=language,
+                vocabulary=vocabulary,
+                source_order=source_order,
+                at_boundary=True,
+            )
+            if candidate is None:
+                continue
+            norm = _normalize_phrase(candidate.text)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            sentence_candidates.append(candidate)
+            source_order += 1
+
+    if language == "en" and len(whisper_candidates) >= len(sentence_candidates):
+        return whisper_candidates
+    if language == "en":
+        return sentence_candidates
+    return whisper_candidates
+
+
+def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
+    """Keep maximal non-nested attested texts — prefer longer spans on conflict."""
+    ordered = sorted(
+        candidates,
+        key=lambda item: (-len(item.text.split()), item.source_order, item.text),
+    )
+    packed: list[HookTreatment] = []
+    for candidate in ordered:
+        if any(_treatments_nested(candidate, picked) for picked in packed):
+            continue
+        packed.append(candidate)
+    packed.sort(key=lambda item: (item.source_order, item.text))
     return packed[:MAX_TREATMENTS]
 
 
@@ -570,53 +682,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
     if not tokens:
         return {**blocked, "reason": "empty transcript"}
 
-    candidates: list[HookTreatment] = []
-    seen_texts: set[str] = set()
-    source_order = 0
-
-    def _append_span(sentence_tokens: list[_Token], start: int, end: int, *, at_boundary: bool) -> None:
-        chunk = sentence_tokens[start:end]
-        text = " ".join(token.word for token in chunk)
-        norm = _normalize_phrase(text)
-        if norm in seen_texts:
-            return
-        line_index = sentence_tokens[0].line_index
-        line_text = sentence_tokens[0].line_text
-        if not _validate_span(
-            sentence_tokens,
-            start,
-            end,
-            language,
-            vocabulary,
-            at_clause_boundary=at_boundary,
-        ):
-            return
-        is_full = start == 0 and end == len(sentence_tokens)
-        kind = _classify_kind(text, language, is_full_line=is_full)
-        if kind not in TREATMENT_KINDS:
-            kind = "attested_clause"
-        seen_texts.add(norm)
-        candidates.append(
-            HookTreatment(
-                kind=kind,
-                text=text,
-                cite=_cite(chunk),
-                line_index=line_index,
-                line_text=line_text,
-                word_start=chunk[0].word_index,
-                word_end=chunk[-1].word_index + 1,
-                source_order=source_order,
-            )
-        )
-
-    token_groups = _sentence_groups(tokens, language)
-
-    for sentence_tokens in token_groups:
-        spans = _candidate_spans(sentence_tokens, language)
-        for start, end, at_boundary in spans:
-            _append_span(sentence_tokens, start, end, at_boundary=at_boundary)
-        source_order += 1
-
+    candidates = _collect_hook_candidates(transcript, tokens, language, vocabulary)
     treatments = _select_treatments(candidates, language)
     if not treatments:
         return {**blocked, "reason": "no attested hook treatments in transcript"}

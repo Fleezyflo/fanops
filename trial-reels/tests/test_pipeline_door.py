@@ -46,7 +46,7 @@ def test_live_arabic_fixture_blocks_below_twenty() -> None:
 
     assert desk["mode"] == "blocked"
     assert len(filled) == 0
-    assert len(treatments) == 2
+    assert len(treatments) == 1
     assert desk["cards"] == []
 
 

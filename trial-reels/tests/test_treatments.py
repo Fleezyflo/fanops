@@ -40,21 +40,21 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_full_sentence_treatments() -> None:
+def test_english_fixture_yields_whisper_line_treatments() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
-    assert len(treatments) == 4
+    assert len(treatments) == 6
     texts = [item["text"] for item in treatments]
-    assert len(set(texts)) == 4
+    assert len(set(texts)) == 6
     assert "So the next" not in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_arabic_fixture_honest_ceiling_two() -> None:
+def test_arabic_fixture_honest_ceiling_one() -> None:
     result = enumerate_treatments(_load_fixture("clip_5a92132dc6de.json"))
     assert result["mode"] == "blocked"
-    assert result["ceiling"] == 2
-    assert len(result["treatments"]) == 2
+    assert result["ceiling"] == 1
+    assert len(result["treatments"]) == 1

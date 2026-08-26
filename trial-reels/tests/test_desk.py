@@ -44,11 +44,11 @@ def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
     assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
 
 
-def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
+def test_live_arabic_clip_fails_closed_with_one_maximal_hook() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 2
+    assert result["claims_found"] == 1
     assert result["target_variants"] == TARGET_VARIANTS
     assert "need 20" in result["reason"]
     assert result["cards"] == []
@@ -76,7 +76,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 6
     assert result["cards"] == []
     assert "So the next" not in _treatment_texts(result)
     validation = validate_desk_result(result)
@@ -111,16 +111,13 @@ def test_english_one_line_blob_yields_full_sentences_only() -> None:
     assert all("." in text or text.endswith(",") for text in treatments)
 
 
-def test_arabic_whisper_lines_stay_separate() -> None:
-    from lib.desk import _collect_tokens, _tokens_by_line
+def test_arabic_whisper_lines_collapse_to_maximal_span() -> None:
     from lib.treatments import enumerate_treatments
 
     fixture = _load_fixture("clip_5a92132dc6de.json")
-    tokens, _ = _collect_tokens(fixture)
-    lines = _tokens_by_line(tokens)
-    assert len(lines) == len(fixture["lines"])
     units = enumerate_treatments(fixture)["treatments"]
-    assert {item["text"] for item in units} == {"لك كفاية عزبتني", "عزبتني"}
+    assert {item["text"] for item in units} == {"لك كفاية عزبتني"}
+    assert "عذبتيني" not in " ".join(item["text"] for item in units)
 
 
 def test_english_whisper_slices_do_not_ship() -> None:
