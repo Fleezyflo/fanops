@@ -41,16 +41,20 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_whisper_line_clause_hooks() -> None:
+def test_english_fixture_yields_stitched_sentence_hooks() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) >= 10
-    assert len(texts) < MAX_TREATMENTS
-    assert len(set(texts)) == len(texts)
+    assert len(texts) == 4
+    assert len(set(texts)) == 4
     assert "So the next" not in texts
-    assert "Which brings us to the missing reality layer," in texts
+    assert "Ross defines a true" not in texts
+    assert "boss by the rare ability" not in texts
+    assert "Which brings us to the missing reality layer," not in texts
+    assert "behind-the-scenes power." not in texts
+    assert any("inside a padded recording booth creates a powerful illusion" in t for t in texts)
+    assert any("Which brings us to the missing reality layer, behind-the-scenes power." in t for t in texts)
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])

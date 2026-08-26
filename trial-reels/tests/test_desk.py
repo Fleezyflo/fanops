@@ -68,8 +68,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 10
-    assert result["claims_found"] < TARGET_VARIANTS
+    assert result["claims_found"] == 4
     assert result["cards"] == []
     assert "need 20" in result["reason"]
     validation = validate_desk_result(result)
@@ -77,19 +76,42 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
     assert plans == []
     texts = {item["text"] for item in result.get("treatments") or []}
+    assert texts == EN_LIVE_SENTENCES
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) >= 10
 
 
-def test_english_live_transcript_still_finds_clause_hooks_before_blocking() -> None:
+def test_english_live_transcript_still_finds_full_sentences_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 10
+    assert result["claims_found"] == 4
+    assert {item["text"] for item in result.get("treatments") or []} == EN_LIVE_SENTENCES
     assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
+
+
+def test_english_mid_sentence_crumbs_never_emitted() -> None:
+    fixture = _load_fixture("clip_004ae6d9098a.json")
+    result = write(fixture)
+    crumbs = {
+        "Ross defines a true",
+        "boss by the rare ability",
+        "So the next",
+        "fails.",
+        "creates a powerful illusion,",
+        "genuine respect that the modern",
+    }
+    texts = {item["text"] for item in result.get("treatments") or []}
+    assert texts.isdisjoint(crumbs)
+
+
+def test_four_hooks_never_cycles_into_twenty_cards() -> None:
+    result = write(_load_fixture("clip_004ae6d9098a.json"))
+    assert result["mode"] == "blocked"
+    assert result["cards"] == []
+    assert result.get("claims_found") == 4
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:
