@@ -1,13 +1,12 @@
 """Drift guard: the fanops-hook-hashtag SKILL.md is DOCUMENTATION; the source of truth is the code
-(the hashtags.py COMPOSITION floors + F3 band/slot constants + prompts._hook_spec). The doc
-duplicates those values, so without a test it can silently drift from what actually runs. These
-tests parse the machine-readable DRIFT-GUARD blocks in SKILL.md and assert they match the code —
-mutate either side and this goes red.
+(ship_from_lock for caption ship; Layer B / vet_hashtags constants still mirrored for honesty;
+prompts._hook_spec for hooks). The doc duplicates those values, so without a test it can silently
+drift from what actually runs. These tests parse the machine-readable DRIFT-GUARD blocks in
+SKILL.md and assert they match the code — mutate either side and this goes red.
 
-The hashtag block used to mirror `hashtags.VETTED`, a hand-ranked reach pool. That pool is DELETED:
-a tag's worth is now its live platform measurement, so there is no canonical tag list to document.
-What remains frozen — and therefore documentable — is the AR region floor (`_ARABIC`) and the F3
-band + slot constants. The platform discovery floor is deleted."""
+Caption ship is `ship_from_lock` (source lock only). AR floor / mega / store∪corpus are NOT the
+ship path — the skill must not teach them as consume/ship. Drift-guard blocks still mirror the
+legacy constants that exist for Layer B / vet_hashtags so those lists cannot silently rot."""
 import re
 from pathlib import Path
 from fanops.hashtags import (
@@ -68,7 +67,7 @@ def _operator_rule(n: int) -> str:
 
 
 def _composition_floors() -> list[str]:
-    """The only frozen tag list left in hashtags.py: the AR region floor. Sorted so the doc has ONE
+    """Legacy Layer B AR list still mirrored in the drift guard. Sorted so the doc has ONE
     canonical ordering to mirror."""
     return sorted(set(_ARABIC))
 
@@ -102,16 +101,21 @@ def test_skill_composition_constants_match_code():
     assert _composition_constants() == _COMPOSITION
 
 
-def test_skill_part2_is_not_mega_relevance_discovery_recipe():
+def test_skill_part2_is_ship_from_lock_not_banded_composition():
     part2 = _part("Part 2").lower()
     for stale in _STALE_PART2:
         assert stale not in part2, f"Part 2 still teaches stale recipe {stale!r}"
+    assert "ship_from_lock" in part2
     assert "source lock" in part2
     assert "play_count" in part2
     assert "7-day" in part2 or "current_top_reel_play_max_7d" in part2
-    assert "mega_slot_max" in part2
     assert "80-pile" in part2 or "_per_account_hashtag_stores" in part2
-    assert "store ∪ corpus" in part2 or "store u corpus" in part2  # named as the dead caption menu
+    assert "store ∪ corpus" in part2 or "store u corpus" in part2  # named as NOT the caption menu
+    # Ship path must NOT claim AR floor / mega slot as consume rules.
+    assert "ar region floor" not in part2 or "no** ar region" in part2 or "no ar region" in part2
+    assert re.search(r"\bno\b.*\bar region floor\b|\bno\b.*\b_arabic\b", part2)
+    assert re.search(r"\bno\b.*\bmega", part2)
+    assert "vet_hashtags" in part2  # named as legacy / not the posted line
 
 
 def test_skill_caption_is_sentence_plus_tags_not_tag_line():
@@ -121,14 +125,23 @@ def test_skill_caption_is_sentence_plus_tags_not_tag_line():
     assert re.search(r"3\s*[–-]\s*4\s+tags", text, re.I)
 
 
+def test_skill_operator_rule2_cites_ship_from_lock():
+    rule2 = _operator_rule(2)
+    assert "ship_from_lock" in rule2
+    assert "vet_hashtags" not in rule2
+
+
 def test_skill_operator_rule3_is_lock_membership():
     rule3 = _operator_rule(3)
+    assert "ship_from_lock" in rule3
     assert "source lock" in rule3.lower()
     assert "play_count" in rule3
     assert "7-day" in rule3 or "current_top_reel_play_max_7d" in rule3
     assert "80-pile" in rule3 or "store ∪ corpus" in rule3 or "store u corpus" in rule3
     assert "empty lock" in rule3.lower()
-    assert re.search(r"at most 1|≤\s*1|<=\s*1", rule3)
     assert "VETTED" in rule3 and re.search(r"no `?VETTED", rule3)
     assert re.search(r"no semantic ban", rule3, re.I)
     assert "size_rank_key" not in rule3          # caption path; Layer B stays in Part 3
+    # No AR / mega consume claims on the ship rule.
+    assert re.search(r"no AR floor|no ar floor", rule3, re.I)
+    assert re.search(r"no mega", rule3, re.I)

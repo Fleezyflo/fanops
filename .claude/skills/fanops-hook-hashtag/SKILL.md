@@ -1,18 +1,17 @@
 ---
 name: fanops-hook-hashtag
-description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen from the source lock (play_count then 7-day reel max) — never words the model invents, never the 80-pile / store∪corpus. Evidence-backed; sources cited inline.
+description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook's only job is RETENTION (stop the scroll, force watch-through) — never artist praise. The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen via ship_from_lock from the source lock only — never words the model invents, never the 80-pile / store∪corpus, never AR floor / mega composition. Evidence-backed; sources cited inline.
 ---
 
 # FanOps Hooks & Hashtags — researched, platform-measured
 
-> **Source of truth = code.** Hook patterns live in `prompts._hook_spec`; hashtag
-> composition floors live in `hashtags._ARABIC` (the only frozen tag list — format,
-> not a reach claim). Band + slot constants live in `hashtags.MEGA_MEDIA_FLOOR`,
-> `MID_MEDIA_FLOOR`, `INT32_MEDIA_COUNT`, `MEGA_SLOT_MAX`. The DRIFT-GUARD blocks
-> below are mirror-tested by `tests/test_skill_drift.py` — if this doc and the
-> code disagree, that test goes red. Edit code + doc together. Caption membership
-> is the source lock, never the 80-pile / store ∪ corpus / a hand-ranked `VETTED`
-> pool. Caption rank is `play_count` then 7-day reel max, not `size_rank_key`.
+> **Source of truth = code.** Hook patterns live in `prompts._hook_spec`. Caption
+> ship is `hashtags.ship_from_lock` (picks ∩ source lock, cap 4) — no AR floor,
+> no mega slot, no store ∪ corpus. The DRIFT-GUARD blocks below still mirror
+> constants that exist for Layer B / legacy `vet_hashtags` (observatory only —
+> not posted tags); `tests/test_skill_drift.py` keeps those lists honest. Edit
+> code + doc together. Caption membership is the source lock only. Lock order
+> for the menu is `play_count` then 7-day reel max, not `size_rank_key`.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **posted caption** — one hook sentence
@@ -23,7 +22,7 @@ actually works, with proof.
 
 ## Drift guards (machine-readable; mirror-tested against the code)
 
-<!-- DRIFT-GUARD:hashtags — the COMPOSITION floors (hashtags._ARABIC only), sorted. These are the only frozen tag lists left: format, not a reach claim. The old hand-ranked VETTED pool and the platform discovery floor are deleted — a tag's worth is its live platform measurement. -->
+<!-- DRIFT-GUARD:hashtags — legacy Layer B / vet_hashtags AR region list (hashtags._ARABIC), sorted. NOT the caption ship path (ship_from_lock has no floors). Format constant only; not a reach claim. -->
 ```text
 #arabicmusic #arabicmusiclovers #arabtiktok
 ```
@@ -41,7 +40,7 @@ social proof
 fomo
 ```
 
-<!-- DRIFT-GUARD:composition — F3 band + slot constants (hashtags.py). Integers only; equals MEGA_MEDIA_FLOOR / MID_MEDIA_FLOOR / INT32_MEDIA_COUNT / MEGA_SLOT_MAX. -->
+<!-- DRIFT-GUARD:composition — legacy Layer B / vet_hashtags band + slot constants (hashtags.py). Integers only; equals MEGA_MEDIA_FLOOR / MID_MEDIA_FLOOR / INT32_MEDIA_COUNT / MEGA_SLOT_MAX. NOT applied by ship_from_lock. -->
 ```text
 MEGA_MEDIA_FLOOR=2_000_000
 MID_MEDIA_FLOOR=10_000
@@ -56,15 +55,15 @@ MEGA_SLOT_MAX=1
    line" — yes. "his coldest verse ever" — no. Hyping the artist is explicitly
    banned. Ground only enough that the clip *pays the loop off* (no bait).
 2. **Max 4 hashtags. Hard.** More than 4 is forbidden. Enforced in code
-   ([hashtags.py](../../../src/fanops/hashtags.py) `vet_hashtags`), not by asking
+   ([hashtags.py](../../../src/fanops/hashtags.py) `ship_from_lock`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
    The posted `caption` is one hook sentence; the 3–4 tags live in `hashtags`.
-3. **Hashtags come from the source lock** — never words the model invents, never
-   the 80-pile / store ∪ corpus. Membership is the lock (`hashtag_store` on every
-   surface of that source). Rank is `play_count` then 7-day reel max
-   (`current_top_reel_play_max_7d`). Empty lock → empty tag line. Invented tags
-   die. Mega/untrusted occupy at most 1 of 4 slots. There is no `VETTED` pool
-   and no semantic ban-list.
+3. **Hashtags come from the source lock via `ship_from_lock`** — never words the
+   model invents, never the 80-pile / store ∪ corpus. Membership is the lock
+   (`hashtag_store` on every surface of that source). Rank for the lock menu is
+   `play_count` then 7-day reel max (`current_top_reel_play_max_7d`). Empty
+   lock → empty tag line. Invented / off-lock tags die. No AR floor, no mega
+   slot, no `VETTED` pool, no semantic ban-list on the ship path.
 
 ---
 
@@ -160,10 +159,7 @@ Read the clip's **visual** energy (frames) + **audio** transient (signal peaks) 
 - **C — dense Arabic verse** non-Arabic scrollers can't parse → Curiosity/Tension as a high-contrast
   **English** hook that frames the feeling (never a literal translation).
 
-### Render concerns (deferred)
-
-Stacked EN/AR on-screen typography and the 100–200ms caption-lead **anticipation timing** remain
-*render* concerns out of scope for the generator. HOOK placement is Alignment 5 (middle-centre),
+HOOK placement is Alignment 5 (middle-centre),
 MarginV 0, `\fad(0,200)` in `overlay.build_ass`. Existing Review `{cid}.mp4` files burned with the
 old top-third hook are recut in place by `fanops overlay-reburn` (ass-only; proved crop; never
 center fail-open). The author still emits a **single high-contrast string** the renderer ships
@@ -171,7 +167,7 @@ unchanged.
 
 ---
 
-## Part 2 — Caption is language; tags are banded composition
+## Part 2 — Caption is language; tags are lock membership
 
 ### Posted caption
 
@@ -188,24 +184,26 @@ field.
 Membership = **the source lock**. Same list on every surface of that source.
 Invented tags die. Off-lock tags die. Empty lock / missing sidecar → empty tag
 line (sentence still ships). **Never** the persona 80-pile
-(`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus.
+(`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus — those are
+not the caption menu.
 
-Rank / choose-key: `play_count` DESC, then `current_top_reel_play_max_7d`
-(7-day reel max). `media_count` may appear as a number on the metrics row; it
-is **not** the caption menu order. `size_band` / `size_rank_key` are Layer B
-corpus derivation (Part 3), not the caption menu.
+Rank / choose-key for the lock menu: `play_count` DESC, then
+`current_top_reel_play_max_7d` (7-day reel max). `media_count` may appear as a
+number on the metrics row; it is **not** the caption menu order.
+`size_band` / `size_rank_key` are Layer B observatory derivation (Part 3), not
+the caption menu.
 
-### Shipped line (when a lock exists)
+### Shipped line (`ship_from_lock`)
 
-- pick at most 4 from the lock
-- invented / off-lock tags die at vet
+- `ship_from_lock(picks, lock, n=4)` — picks ∩ lock, pick order, hard cap 4
+- invented / off-lock tags die (not in the intersection)
 - empty lock → empty tag line; tags-only HOLD still holds
-- AR region floor (`_ARABIC`) still applies on Arabic-language clips
-- mega/untrusted occupy **at most 1** slot (`MEGA_SLOT_MAX`)
+- **no** AR region floor, **no** mega/untrusted slot cap, **no** backfill
 - no `VETTED` / `_MEGA` pool, no semantic ban-list
 - no mega / relevance / discovery-slot recipe
 
-`cfg is None` / no measurements: mega cap and platform reorder do not fire.
+`vet_hashtags` (store ∪ corpus, AR floor, `MEGA_SLOT_MAX`) remains in tree as
+Layer B / legacy composition — it does **not** write the posted tag line.
 
 ---
 
@@ -213,50 +211,37 @@ corpus derivation (Part 3), not the caption menu.
 
 Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 
-1. **A persona declares a niche** (`Persona.niche: list[str]`) in `00_control/personas.json`. Accounts
-   link via `Account.persona_id`. Edited in the Studio **Personas** tab. There is no operator
-   pin/ban/recommend lane and no global ban list.
-2. **Layer A — measurement** (`fanops_hashtags.refresh_store` via `ig_hashtag_scrape` / instagrapi;
-   Graph hashtag path deferred — no silent fallback): `persona_terms` = declared niche ∪ durable LLM
-   vocab → each term resolves via `hashtag_info` (which is ALSO the only source of `media_count`, so
-   volume re-resolves on its own 7-day `media_count_at` stamp — MOL-691) → one `hashtag_medias_top` at
-   `TOP_SAMPLE_N` = 27 rows yields Top-grid median `play_count`/`like_count`, the 7-day Reels max
-   (`current_top_reel_play_max_7d` + `top_reel_sample_n`), and co-occurring tags →
-   `00_control/hashtags.json` (measured tags only; field set = `RECORD_NUM_FIELDS`/`RECORD_STR_FIELDS`,
-   which the reader must retain or the whole-file rewrite strips it). Exclusive writer lease on
-   `hashtags.lock`. Throttle / try_cap ends a pass without advancing `last_complete_pass`. Missing scrape
-   aborts loudly (`no_scrape`). `fanops hashtags discover` is read-only (zero network).
-3. **Layer B — derivation** (`persona_research.derive_corpus`, zero network): relatedness→candidate
-   (anchors always; else inbound_hits≥2 or n_roots≥2 — the magnet soft lane is DELETED, MOL-692);
-   then SIZE→rank via `hashtags.size_rank_key` (band first: mid → small → mega/untrusted → unknown;
-   within a band, `media_count` DESC then 7-day Reels max) + the `corpus_target` cut. Non-anchor
-   category-scale tags (high `media_count`) still need multi-root relatedness to be ADMITTED, but
-   once admitted they rank by `size_band` / `size_rank_key` — INT32-saturated volume is untrusted
-   mega, not gold. Outage / empty pool holds the previous corpus. An empty corpus is honest (no
-   padding). Runs ONCE at the end of a Layer A pass that measured something, plus the input-driven
-   safety net `refresh_corpora_if_due` — gated on a personas.json+hashtags.json fingerprint in
-   `.corpora_refresh.json`, never a clock (MOL-694).
-4. **Selection** (`vet_hashtags`): membership = store ∪ corpus; corpus leads when present (capped
-   by `_CORPUS_LEAD_MAX`); hard cap 4; mega/untrusted ≤ `MEGA_SLOT_MAX`; mid-band order splits IG
-   (size-then-trend) from TikTok (trend-then-size). No hand-ranked mega pools, no discovery floor,
-   no ban list. Empty store AND empty corpus (and non-AR) → empty line.
-5. **Attribution severance** — a tag's worth is Instagram's own number for the tag, never a post that
-   used it (`tests/test_hashtag_attribution_severance.py`).
+1. **Source lock produce** (`source_tags` + Safari scrape) — per-source sidecar
+   `source_tag_locks.json`: pile → lock (positive `play_count`, `play_rank_key`,
+   cap 12). Caption surfaces read that lock as `hashtag_store`.
+2. **Tick remesure** (`fanops_hashtags.refresh_store_if_due` on the run loop) —
+   remesure sidecar pile∪lock names only. **Not** persona discovery, **not**
+   `persona_terms`, **not** vocab expand on the loop (HV1-PR4).
+3. **Ship** (`caption` → `hashtags.ship_from_lock`) — picks ∩ lock, cap 4. That
+   is every posted tag.
+4. **Layer B — observatory / legacy** (`persona_research.derive_corpus`,
+   `vet_hashtags`) — zero-network corpus derivation and old store∪corpus
+   composition. Still on disk; **does not** decide posted tags. Studio / discover
+   may show it; caption does not ship it.
+5. **Attribution severance** — a tag's worth is Instagram's own number for the
+   tag, never a post that used it (`tests/test_hashtag_attribution_severance.py`).
 
 ## Wiring (where this lives in the engine)
 
-- [personas.py](../../../src/fanops/personas.py) / [persona_store.py](../../../src/fanops/persona_store.py)
-  — `Persona` + niche/corpus writers; accounts hydrate via `persona_id`.
-- [persona_research.py](../../../src/fanops/persona_research.py) — `persona_terms` (niche only),
-  `_aligned_pool`, `derive_corpus`, `refresh_corpora_if_due` (fingerprint-gated safety net).
-- [hashtags.py](../../../src/fanops/hashtags.py) — `vet_hashtags` / measurement cache readers.
-- [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network (`resolve_hashtag_scrape`,
-  `measure_and_harvest_scrape`); OUR-state `ScrapeUnavailable`; platform errors pass through untouched.
-- [meta_graph.py](../../../src/fanops/meta_graph.py) — Graph hashtag helpers deferred (`resolve_hashtag`,
-  `measure_and_harvest` kept for later).
-- [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — `refresh_store` +
-  `refresh_store_if_due` (12h stamp gate inside `fanops run`).
-- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface `hashtag_store` is the source lock.
+- [source_tags.py](../../../src/fanops/source_tags.py) — per-source lock produce / sidecar.
+- [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — tick remesure
+  (`refresh_store_if_due` / `_remesure_sidecar`); manual `refresh_store` for Layer A.
+- [hashtags.py](../../../src/fanops/hashtags.py) — `ship_from_lock` (caption ship);
+  `vet_hashtags` / band constants = Layer B legacy only.
+- [caption.py](../../../src/fanops/caption.py) — ingest/compose call `ship_from_lock`
+  against the source lock.
+- [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface
+  `hashtag_store` is the source lock.
+- [persona_research.py](../../../src/fanops/persona_research.py) — Layer B observatory
+  (`derive_corpus`, `refresh_corpora_if_due`); not the posted line.
+- [ig_web_scrape.py](../../../src/fanops/ig_web_scrape.py) — Safari XHR for lock + remesure.
+- [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network helpers
+  (manual refresh / harvest).
 
 ## Sources
 
