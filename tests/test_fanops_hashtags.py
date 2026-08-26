@@ -1990,6 +1990,51 @@ def test_run_once_does_not_expand_vocab():
     assert "expand_vocab_if_due" not in src
     assert "hashtag_vocab" not in src
     assert "refresh_store_if_due" in src
+    assert "refresh_corpora_if_due" not in src
+
+
+def test_refresh_store_if_due_skips_when_lock_claimed_safari_slot(tmp_path):
+    """HT5: remesure must not open Safari when lock walk already claimed the tick slot."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import mark_safari_tick_slot, refresh_store_if_due
+    cfg = Config(root=tmp_path); _persona(cfg)
+    _write_sidecar(cfg, ["#alpha"])
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    mark_safari_tick_slot("lock")
+    client = _FakeClient({"#alpha": 10})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0, max_age_s=10)
+    assert out["refreshed"] is False and out["reason"] == "safari_tick_slot"
+    assert client.media_calls == [] and client.info_calls == []
+
+
+def test_tick_lock_then_remesure_one_safari_consumer(tmp_path, monkeypatch):
+    """HT5: lock walk marks the tick slot; remesure on the same tick stays off Safari."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot, safari_tick_slot_claimed
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.source_tags import lock_ready_sources
+    from test_source_tags import _Hit, _SearchClient, _Media, _ok_graph, _write_whisper
+
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    _write_sidecar(cfg, ["#side"], sid="src_side")
+    reset_safari_tick_slot()
+    scrape = _SearchClient({"music": [_Hit("music")]},
+                             media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, open_client_fn=lambda c, user=None, **k: scrape,
+                       research_fn=lambda *_a: ["music"], **_ok_graph())
+    assert safari_tick_slot_claimed() == "lock"
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    rem = _FakeClient({"#side": 10, "#alpha": 9})
+    out = refresh_store_if_due(cfg, scrape_client=rem, now=t0, max_age_s=10)
+    assert out["refreshed"] is False and out["reason"] == "safari_tick_slot"
+    assert rem.media_calls == []
 
 
 def test_refresh_store_if_due_empty_sidecar_is_clean_noop(tmp_path, monkeypatch):

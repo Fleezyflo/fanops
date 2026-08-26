@@ -67,6 +67,25 @@ _SCRAPE_TRY_CAP = _SCRAPE_TRY_CAP_DEFAULT
 _SCRAPE_COTAG_ENQUEUE_CAP = _SCRAPE_COTAG_ENQUEUE_DEFAULT
 # FANOPS_HASHTAG_SCRAPE_PARALLEL read retained via cfg; fetch sequential (MOL-855/912).
 
+_SAFARI_TICK_SLOT: str | None = None   # HT5: one Safari opener per daemon tick (lock OR remesure)
+
+
+def reset_safari_tick_slot() -> None:
+    """Clear the per-tick Safari slot. `_cmd_run_pass` calls this at tick start."""
+    global _SAFARI_TICK_SLOT
+    _SAFARI_TICK_SLOT = None
+
+
+def mark_safari_tick_slot(consumer: str) -> None:
+    """Record which path opened Safari this tick (`lock` or `remesure`)."""
+    global _SAFARI_TICK_SLOT
+    _SAFARI_TICK_SLOT = consumer
+
+
+def safari_tick_slot_claimed() -> str | None:
+    """Return the tick's Safari consumer, or None if the slot is still free."""
+    return _SAFARI_TICK_SLOT
+
 
 def _scrape_parallel() -> int:
     return Config().hashtag_scrape_parallel
@@ -1195,6 +1214,9 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
         visit = _quota_sidecar_names(names, load_measurements(cfg), now_dt)
         if not visit:
             return {"refreshed": False, "reason": "quota"}
+        if safari_tick_slot_claimed():
+            return {"refreshed": False, "reason": "safari_tick_slot"}
+        mark_safari_tick_slot("remesure")
         r = _remesure_sidecar(cfg, scrape_client=scrape_client, now=now_dt, names=visit)
         if not r.get("written"):                              # no_scrape/no_progress: preserve, report
             return {"refreshed": False, **r}

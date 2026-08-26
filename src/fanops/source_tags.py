@@ -379,9 +379,13 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     if client is not None:
         yield client
         return
+    from fanops.fanops_hashtags import mark_safari_tick_slot, safari_tick_slot_claimed
+    if safari_tick_slot_claimed():
+        return
     opener = open_client_fn or open_web_session
     from fanops.ig_web_scrape import _lock_web_users
     now = now or datetime.now(timezone.utc)
+    marked = False
     for user in _lock_web_users(cfg, now):
         try:
             cli = _call_opener(opener, cfg, user=user)
@@ -390,6 +394,9 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
         if cli is not None:
             if not getattr(cli, "_fanops_scrape_user", None):
                 setattr(cli, "_fanops_scrape_user", user)
+            if not marked:
+                mark_safari_tick_slot("lock")
+                marked = True
             yield cli
 
 

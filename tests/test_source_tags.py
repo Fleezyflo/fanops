@@ -535,6 +535,26 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
     assert seen == ["mark", "wolf"]
 
 
+
+
+def test_lock_walk_marks_safari_tick_slot(tmp_path, monkeypatch):
+    """HT5: opening Safari for lock walk claims the one-per-tick slot."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot, safari_tick_slot_claimed
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    reset_safari_tick_slot()
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, open_client_fn=lambda c, user=None, **k: client,
+                       research_fn=lambda *_a: ["music"], **_ok_graph())
+    assert safari_tick_slot_claimed() == "lock"
 def test_lock_ready_sources_at_most_one(tmp_path):
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState

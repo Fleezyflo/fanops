@@ -1215,7 +1215,9 @@ def _fresh_run_base_time() -> str:
 
 def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
     from fanops.pipeline_run import paused, run_lease
+    reset_safari_tick_slot()
     # T1.3: the operator brake, checked BEFORE the lease is taken — a paused pump must not even
     # contend for the run flock, so `fanops advance` by hand stays unblocked while paused. Returning a
     # DICT (not None) is load-bearing twice over: the --loop path still emits its heartbeat (a silent
@@ -1336,20 +1338,6 @@ def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
             get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
     except Exception:
         with fail_open("cli._run_once account_stats refresh degrade:"):
-            raise
-    # S12: automated persona corpus refresh — INPUT-DRIVEN (personas.json+hashtags.json fingerprint in
-    # .corpora_refresh.json, MOL-694), never a clock; own try/except.
-    try:
-        from fanops.persona_research import refresh_corpora_if_due
-        cr = refresh_corpora_if_due(cfg)
-        if cr.get("aborted"):
-            get_logger(cfg)("hashtags", "-", "corpora_refresh_aborted", aborted=cr.get("aborted"), reason=cr.get("reason", ""))
-        elif cr.get("refreshed") and cr.get("changed"):
-            get_logger(cfg)("hashtags", "-", "corpora_refreshed", changed=cr.get("changed", 0), added=cr.get("added", 0))
-        elif cr.get("reason") == "unchanged":               # inputs never moved — the quiet, normal tick
-            get_logger(cfg)("hashtags", "-", "corpora_refresh_skipped", reason=cr.get("reason", ""))
-    except Exception:
-        with fail_open("cli._run_once corpora refresh degrade:"):
             raise
     return s
 
