@@ -16,7 +16,7 @@ import json
 import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState, Platform
+from fanops.models import Clip, ClipState, Moment, MomentState, Post, PostState, Platform
 from fanops.post.run import publish_due
 from fanops.track import pull_metrics
 
@@ -34,6 +34,9 @@ def test_live_published_post_reaches_analyzed(tmp_path, monkeypatch, mocker):
         {"handle": "@a", "account_id": "42", "platforms": ["instagram"], "status": "active"}]}))
     # A due (past-scheduled) queued post with already-http media, so publish_due needs no ffmpeg/upload
     # — it exercises exactly the publish->state path under test.
+    led.add_moment(Moment(id="m1", parent_id="src1", start=0.0, end=7.0, reason="r", state=MomentState.clipped))
+    led.add_clip(Clip(id="c1", parent_id="m1", path=str(tmp_path / "c1.mp4"), state=ClipState.rendered))
+    (tmp_path / "c1.mp4").write_bytes(b"")
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="42",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
