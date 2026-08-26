@@ -125,30 +125,18 @@ def _unique_searches_in_window(cache: dict, now: datetime) -> int:
     return len(seen)
 
 
-def _quota_exhausted_unexpired(cache: dict, now: datetime) -> bool:
-    ts = _parse_iso(cache.get("quota_exhausted_at") if isinstance(cache, dict) else None)
-    if ts is None:
-        return False
-    return now - ts < timedelta(days=_SEARCH_WINDOW_DAYS)
-
-
 def graph_search_quota_status(cfg, *, now=None) -> tuple[int, int, bool]:
     """(unique IDs spent in 7d, limit 30, exhausted). File read only — no Graph HTTP."""
     now = now or datetime.now(timezone.utc)
     cache = load_graph_tag_cache(cfg)
     spent = _unique_searches_in_window(cache, now)
-    exhausted = spent >= _SEARCH_QUOTA or _quota_exhausted_unexpired(cache, now)
+    exhausted = spent >= _SEARCH_QUOTA
     return spent, _SEARCH_QUOTA, exhausted
 
 
 def _write_graph_cache(cfg, cache: dict) -> None:
+    cache.pop("quota_exhausted_at", None)
     write_json_atomic(graph_tag_cache_path(cfg), cache)
-
-
-def _mark_quota_exhausted(cfg) -> None:
-    cache = load_graph_tag_cache(cfg)
-    cache["quota_exhausted_at"] = iso_z(datetime.now(timezone.utc))
-    _write_graph_cache(cfg, cache)
 
 
 def _cache_lookup(cfg, tag: str) -> dict | None:
@@ -649,19 +637,19 @@ def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
                         continue
                     _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
                     continue
-                if graph_search_quota_status(cfg)[2]:
-                    _mark_quota_exhausted(cfg)
+                spent, limit, exhausted = graph_search_quota_status(cfg)
+                if exhausted:
                     log("source_tags", sid, "quota_exhausted", level="error", err="ration",
-                        spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                        spent=spent, limit=limit)
                     break
                 hid = resolve_fn(cfg, tag) if resolve_fn is not None else resolve_hashtag(cfg, tag)
                 _note_graph_id(cfg, tag, hid)
                 if hid:
                     _measure_graph_tag(cfg, tag, hid, measurements, measure_fn=measure_fn)
             except GraphQuotaExhausted as exc:
-                _mark_quota_exhausted(cfg)
+                spent, limit, _exhausted = graph_search_quota_status(cfg)
                 log("source_tags", sid, "quota_exhausted", level="error", err=_graph_message(exc),
-                    spent=graph_search_quota_status(cfg)[0], limit=_SEARCH_QUOTA)
+                    spent=spent, limit=limit)
                 break
             except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
