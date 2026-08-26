@@ -1,7 +1,8 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
-Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
-words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
+Treatments are enumerated in lib.treatments (stitched sentences / whisper lines,
+clause-boundary spans only, no invented words). Ships exactly TARGET_VARIANTS
+distinct on-screen texts or fails closed.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from lib.treatments import (
     collect_tokens,
     enumerate_treatments,
     is_contiguous_attested_span,
-    is_credit_only,
     is_nested_hook_text,
 )
 
@@ -23,6 +23,22 @@ HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
 TARGET_VARIANTS = len(HOOKS) * len(STACK_NAMES)
 VARIANT_SLOTS: list[tuple[str, str]] = [
     (hook, stack) for hook in HOOKS for stack in STACK_NAMES
+]
+
+__all__ = [
+    "HOOKS",
+    "TARGET_VARIANTS",
+    "VARIANT_SLOTS",
+    "collect_tokens",
+    "contract_met",
+    "expand_variant_slots",
+    "is_contiguous_attested_span",
+    "is_nested_hook_text",
+    "write",
+    "_collect_tokens",
+    "_tokens_by_line",
+    "_EN_FORBIDDEN_SLICES",
+    "_MIN_HOOK_WORDS_EN",
 ]
 
 # Re-exported for desk_swarm and tests.
@@ -41,6 +57,25 @@ def _tokens_by_line(tokens: list) -> list[list]:
 
 def _collect_tokens(transcript: dict[str, Any]):
     return collect_tokens(transcript)
+
+
+def contract_met(desk: dict[str, Any]) -> bool:
+    """True when desk shipped TARGET_VARIANTS distinct attested hook texts."""
+    if desk.get("mode") != "write":
+        return False
+    texts = [str(item.get("text") or "").strip() for item in desk.get("cards") or []]
+    return len(texts) == TARGET_VARIANTS and len(set(texts)) == TARGET_VARIANTS
+
+
+def expand_variant_slots(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return hook×stack cards when desk shipped TARGET_VARIANTS unique texts."""
+    if not cards:
+        return []
+    if len(cards) != TARGET_VARIANTS:
+        return []
+    if len({(card.get("text") or "").strip() for card in cards}) != TARGET_VARIANTS:
+        return []
+    return list(cards)
 
 
 def _build_variant_cards(treatments: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -66,21 +101,23 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
     """Enumerate attested hook treatments and map them to render slots."""
     payload = enumerate_treatments(transcript)
     treatments = list(payload.get("treatments") or [])
-    cards = _build_variant_cards(treatments) if payload.get("mode") == "write" else []
+    cards = _build_variant_cards(treatments)
     cites = [card["cite"] for card in cards]
+    claims = [{"text": t["text"], "cite": t["cite"]} for t in treatments[:TARGET_VARIANTS]]
 
     result = {
         **payload,
         "cards": cards,
+        "claims": claims,
         "cites": cites,
         "target_variants": TARGET_VARIANTS,
         "treatment_kinds": list(TREATMENT_KINDS),
         "max_treatments": MAX_TREATMENTS,
+        "contract_met": False,
     }
-    if payload.get("mode") == "write" and cards:
-        result["unique_texts"] = len({card["text"] for card in cards})
-        result["ceiling"] = result["unique_texts"]
-    elif payload.get("mode") == "blocked":
-        result["cards"] = []
-        result["cites"] = []
+    if payload.get("mode") == "write" and treatments:
+        unique = len({item["text"] for item in treatments[:TARGET_VARIANTS]})
+        result["unique_texts"] = unique
+        result["ceiling"] = unique
+        result["contract_met"] = contract_met(result)
     return result

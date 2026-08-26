@@ -35,7 +35,7 @@ def test_live_english_fixture_blocks_below_twenty() -> None:
     filled = _desk_hook_texts(desk)
 
     assert desk["mode"] == "blocked"
-    assert len(filled) >= 8
+    assert len(filled) == 4
     assert len(filled) < TARGET_VARIANTS
     assert desk["cards"] == []
 
@@ -45,7 +45,7 @@ def test_live_arabic_fixture_blocks_below_twenty() -> None:
     filled = _desk_hook_texts(desk)
 
     assert desk["mode"] == "blocked"
-    assert len(filled) == 2
+    assert len(filled) == 1
     assert desk["cards"] == []
 
 
@@ -97,7 +97,7 @@ def test_run_inbox_blocks_sparse_arabic(
 
     assert summary["clips"] == 1
     assert summary["shipped"] == 0
-    assert summary["unique_hook_texts"] == 2
+    assert summary["unique_hook_texts"] == 1
     assert not summary["desk_ok"]
     assert (out_root / "clip" / "desk.json").exists()
 

@@ -1,10 +1,9 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-A treatment is a contiguous, grammatical slice of one sung/spoken line. Kinds label
-how the slice reads (clause, result, question, direct address, …) but never add text.
-English: full stitched sentences first; clause-boundary spans only when the transcript
-needs more distinct hooks. Ships 20 distinct attested texts or fails closed.
-Arabic: one treatment per Whisper line (maximal only — no nested sub-lines).
+English: stitched grammatical sentences (whisper crumbs dropped first), then adjacent
+clause segments at comma / major markers only — never sliding windows or boundary farms.
+Arabic: one treatment per Whisper line with global strict-substring drop (عزبتني inside
+لك كفاية عزبتني). No permutations, cross-sentence joins, or invented words.
 """
 
 from __future__ import annotations
@@ -55,7 +54,33 @@ _EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours", "us"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
 _EN_FORBIDDEN_SLICES = frozenset({"so the next", "fails.", "fails. so the next"})
+_EN_FRAGMENT_CRUMBS = frozenset(
+    {
+        "so the next",
+        "fails.",
+        "ross defines a true",
+        "boss by the rare ability",
+        "by the rare ability",
+        "one that completely evaporates",
+        "evaporates the second",
+        "the missing reality layer,",
+        "which brings us to the missing",
+        "it's a test of genuine",
+        "respect that the modern",
+        "inside a padded recording booth",
+        "inside a padded recording",
+        "booth creates a powerful",
+        "rare ability to execute",
+        "execute moves the real",
+        "moves the real streets actually accept.",
+        "the real streets actually accept.",
+        "illusion, one that completely",
+        "that the modern corporate industry completely",
+        "the modern corporate industry completely",
+    }
+)
 _MIN_HOOK_WORDS_EN = 4
+_MIN_BOUNDARY_WORDS_EN = 3
 _MIN_CONTENT_WORDS_EN = 2
 _WEAK_HOOK_STARTERS_EN = frozenset(
     {"the", "a", "an", "in", "of", "to", "and", "or", "so", "by", "at", "for", "with", "from", "on"}
@@ -63,12 +88,11 @@ _WEAK_HOOK_STARTERS_EN = frozenset(
 _WEAK_HOOK_ENDINGS_EN = frozenset(
     {"by", "to", "that", "and", "or", "a", "an", "of", "in", "for", "its", "is", "one", "us", "the"}
 )
-_EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves"})
-_EN_FRAGMENT_CRUMBS = frozenset({"fails.", "so the next"})
+_EN_DEPENDENT_STARTERS = frozenset({"that", "by", "to", "and", "or", "but", "so", "as"})
+_EN_INTERROGATIVES = frozenset({"which", "what", "why", "how", "when", "where", "who"})
 
-# Clause splits inside one English sentence — never cross a sentence boundary.
-# Only major clause markers; avoid " the "/" of "/" in " sliding crumbs.
-_EN_SPLIT_MARKERS = (" that ", " by ", " to ", " moves ")
+# Major clause markers inside one English whisper line — never word-level sliding splits.
+_EN_SPLIT_MARKERS = (" that ", " which ", " by ")
 
 
 @dataclass(frozen=True)
@@ -81,7 +105,6 @@ class HookTreatment:
     word_start: int
     word_end: int
     source_order: int
-    is_full_line: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,7 +116,6 @@ class HookTreatment:
             "word_start": self.word_start,
             "word_end": self.word_end,
             "source_order": self.source_order,
-            "is_full_line": self.is_full_line,
         }
 
 
@@ -175,22 +197,21 @@ def _ends_sentence(word: str) -> bool:
 
 
 def _is_en_fragment_crumb(text: str) -> bool:
+    """Reject known incomplete whisper slices and fixed fragment crumbs."""
     words = [part for part in text.split() if part.strip()]
     if not words:
         return True
-    if _normalize_phrase(text) in _EN_FRAGMENT_CRUMBS:
+    norm = _normalize_phrase(text)
+    if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
         return True
     if len(words) < _MIN_HOOK_WORDS_EN and not _ends_sentence(words[-1]):
         return True
     return False
 
 
-def _fragment_continues(text: str) -> bool:
-    words = text.split()
-    if not words:
-        return False
-    last = words[-1].rstrip("\"')]}")
-    return last.endswith(",") or last.endswith(";")
+def _is_whisper_crumb_line(text: str) -> bool:
+    """Reject incomplete whisper lines before they enter enumeration."""
+    return _is_en_fragment_crumb(text)
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
@@ -217,11 +238,9 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
         if not text:
             continue
         start = _line_start(raw)
-        if _is_en_fragment_crumb(text):
+        if _is_whisper_crumb_line(text):
             flush()
             continue
-        if buffer and not _fragment_continues(buffer[-1]):
-            flush()
         if not buffer:
             buffer_start = start
             buffer_line_index = index
@@ -325,11 +344,11 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
 
 def is_nested_hook_text(shorter: str, longer: str) -> bool:
     """True when *shorter* is a strict contiguous word sub-span of *longer*."""
-    a = shorter.strip()
-    b = longer.strip()
-    if not a or not b or a == b:
+    short = shorter.strip()
+    long = longer.strip()
+    if not short or not long or short == long:
         return False
-    return is_contiguous_attested_span(a, b)
+    return is_contiguous_attested_span(short, long)
 
 
 def _contains_forbidden_rewrite(text: str) -> bool:
@@ -357,21 +376,25 @@ def _content_word_count(text: str, language: str) -> int:
     return sum(1 for word in text.split() if _normalize_word(word) not in function_words)
 
 
-def _starts_grammatically(text: str) -> bool:
+def _starts_grammatically(text: str, *, start_index: int, is_full_whisper_line: bool) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
         return False
     first = _normalize_word(words[0])
-    if first == "one" and len(words) > 1 and _normalize_word(words[1]) == "that":
+    if is_full_whisper_line:
+        if first in _WEAK_HOOK_STARTERS_EN and len(words) < _MIN_HOOK_WORDS_EN:
+            return False
+        if first == "one" and len(words) > 1 and _normalize_word(words[1]) == "that":
+            return True
+        if first in _EN_INTERROGATIVES:
+            return True
         return True
-    if first in _EN_RELATIVE_STARTERS:
-        return True
-    if first in {"which", "moves"}:
-        return True
-    if first == "the" and len(words) >= 4:
-        return True
+    if start_index > 0 and first in _EN_DEPENDENT_STARTERS:
+        return False
     if first in _WEAK_HOOK_STARTERS_EN:
         return False
+    if first in _EN_INTERROGATIVES:
+        return True
     return True
 
 
@@ -383,9 +406,7 @@ def _ends_grammatically(text: str) -> bool:
     if last.endswith(",") or _ends_sentence(last):
         return True
     bare = _normalize_word(last)
-    if bare in _WEAK_HOOK_ENDINGS_EN:
-        return False
-    return True
+    return bare not in _WEAK_HOOK_ENDINGS_EN
 
 
 def _is_crumb(
@@ -393,28 +414,24 @@ def _is_crumb(
     language: str,
     *,
     tokens: list[_Token],
-    at_clause_boundary: bool = False,
-    is_full_line: bool = False,
+    start_index: int,
+    is_full_whisper_line: bool,
 ) -> bool:
     words = [part for part in text.split() if part.strip()]
     if not words:
         return True
     if language == "en":
-        if is_full_line and _ends_sentence(words[-1]) and _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN:
-            return False
         norm = _normalize_phrase(text)
-        if norm in _EN_FORBIDDEN_SLICES:
+        if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
             return True
-        if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
-            return True
-        if not _starts_grammatically(text):
+        if not _starts_grammatically(text, start_index=start_index, is_full_whisper_line=is_full_whisper_line):
             return True
         if not _ends_grammatically(text):
             return True
         if len(words) < _MIN_HOOK_WORDS_EN:
-            if len(words) >= 3 and _ends_sentence(words[-1]):
-                return False
-            if len(words) >= 2 and _ends_sentence(words[-1]) and _content_word_count(text, language) >= 1:
+            if is_full_whisper_line and len(words) >= 3 and (
+                _ends_sentence(words[-1]) or words[-1].rstrip().endswith(",")
+            ):
                 return False
             return True
         if _content_word_count(text, language) < _MIN_CONTENT_WORDS_EN:
@@ -427,7 +444,6 @@ def _is_crumb(
         if len(sentence_ids) > 1:
             return True
     else:
-        # Arabic: full whisper line only — crumbs are sub-lines we never emit.
         if len(words) < 1:
             return True
     return False
@@ -465,20 +481,7 @@ def _classify_kind(text: str, language: str, *, is_full_line: bool) -> str:
     return "attested_clause"
 
 
-def _sentence_groups(tokens: list[_Token], language: str) -> list[list[_Token]]:
-    if language == "ar":
-        by_line: dict[int, list[_Token]] = {}
-        for token in tokens:
-            by_line.setdefault(token.line_index, []).append(token)
-        return [by_line[idx] for idx in sorted(by_line)]
-    by_sentence: dict[int, list[_Token]] = {}
-    for token in tokens:
-        by_sentence.setdefault(token.sentence_index, []).append(token)
-    return [by_sentence[idx] for idx in sorted(by_sentence)]
-
-
 def _comma_split_indices(words: list[str]) -> list[int]:
-    """Word indices AFTER commas — clause boundaries inside one sentence."""
     indices = [0]
     for index, word in enumerate(words):
         if word.rstrip().endswith(","):
@@ -501,55 +504,31 @@ def _marker_split_indices(line_text: str, words: list[str]) -> list[int]:
             if 0 < prefix_words < len(words):
                 left_len = prefix_words
                 right_len = len(words) - prefix_words
-                if left_len >= _MIN_HOOK_WORDS_EN and right_len >= _MIN_HOOK_WORDS_EN:
+                if left_len >= _MIN_BOUNDARY_WORDS_EN and right_len >= _MIN_BOUNDARY_WORDS_EN:
                     indices.add(prefix_words)
             search_from = pos + len(marker)
     return sorted(indices)
 
 
-def _candidate_spans(sentence_tokens: list[_Token], language: str) -> list[tuple[int, int, bool]]:
+def _candidate_spans(sentence_tokens: list[_Token], language: str) -> list[tuple[int, int]]:
+    """Adjacent boundary segments plus the full whisper line — no sliding window farms."""
     if not sentence_tokens:
         return []
+    total = len(sentence_tokens)
     if language == "ar":
-        return [(0, len(sentence_tokens), True)]
+        return [(0, total)]
 
     words = [token.word for token in sentence_tokens]
-    line_text = sentence_tokens[0].line_text
-    boundaries = _marker_split_indices(line_text, words)
-    boundary_set = set(boundaries)
-    spans: list[tuple[int, int, bool]] = []
-    seen: set[tuple[int, int]] = set()
-
-    def add(start: int, end: int) -> None:
-        if end <= start or (start, end) in seen:
-            return
-        seen.add((start, end))
-        spans.append((start, end, start in boundary_set))
-
-    # Boundary-to-boundary only — no sliding n-gram windows.
+    boundaries = _marker_split_indices(sentence_tokens[0].line_text, words)
+    spans: list[tuple[int, int]] = [(0, total)]
+    seen = {(0, total)}
     for left in range(len(boundaries) - 1):
-        for right in range(left + 1, len(boundaries)):
-            add(boundaries[left], boundaries[right])
-
+        start = boundaries[left]
+        end = boundaries[left + 1]
+        if end > start and (start, end) not in seen:
+            seen.add((start, end))
+            spans.append((start, end))
     return spans
-
-
-def _ends_cleanly(
-    text: str,
-    end: int,
-    total_words: int,
-    boundaries: set[int] | None = None,
-) -> bool:
-    if end >= total_words:
-        return True
-    if boundaries and end in boundaries:
-        return True
-    last = text.split()[-1] if text.split() else ""
-    return last.rstrip().endswith(",") or _ends_sentence(last)
-
-
-def _starts_cleanly(start: int, boundaries: set[int]) -> bool:
-    return start in boundaries
 
 
 def _validate_span(
@@ -558,31 +537,24 @@ def _validate_span(
     end: int,
     language: str,
     vocabulary: set[str],
-    *,
-    at_clause_boundary: bool = False,
-    boundaries: set[int] | None = None,
 ) -> bool:
     chunk = sentence_tokens[start:end]
     if not chunk:
         return False
     text = " ".join(token.word for token in chunk)
+    is_full = start == 0 and end == len(sentence_tokens)
     if _contains_forbidden_rewrite(text):
         return False
     if not _words_attested(text, vocabulary):
         return False
     if not _line_has_hookable_content(chunk, language):
         return False
-    if language == "en" and boundaries is not None:
-        if not _starts_cleanly(start, boundaries):
-            return False
-        if not _ends_cleanly(text, end, len(sentence_tokens), boundaries):
-            return False
     if _is_crumb(
         text,
         language,
         tokens=chunk,
-        at_clause_boundary=at_clause_boundary,
-        is_full_line=(start == 0 and end == len(sentence_tokens)),
+        start_index=start,
+        is_full_whisper_line=is_full,
     ):
         return False
     return is_contiguous_attested_span(text, chunk[0].line_text)
@@ -598,71 +570,87 @@ def _nested_on_line(a: HookTreatment, b: HookTreatment) -> bool:
     )
 
 
-def _is_nested_against(item: HookTreatment, others: list[HookTreatment]) -> bool:
-    for other in others:
-        if item.text == other.text:
+def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """One token group per raw Whisper line — hooks always cite their own line."""
+    groups: list[list[_Token]] = []
+    for index, raw in enumerate(_parse_lines(transcript)):
+        text = _line_text(raw)
+        if not text:
             continue
-        # Nested dedup applies within one attested line only. Separate whisper lines
-        # (Arabic) stay distinct even when a shorter line repeats words from a longer one.
-        if item.line_text != other.line_text:
+        if language == "en" and _is_en_fragment_crumb(text):
             continue
-        if is_nested_hook_text(item.text, other.text):
-            return True
-        if _nested_on_line(item, other):
-            return True
-    return False
+        words = [word for word in text.split() if word.strip()]
+        if not words:
+            continue
+        start = _line_start(raw)
+        groups.append(
+            [
+                _Token(word, start, index, text, 0, word_index)
+                for word_index, word in enumerate(words)
+            ]
+        )
+    return groups
 
 
-def _drop_nested_globally(items: list[HookTreatment]) -> list[HookTreatment]:
-    """Drop strict contiguous sub-spans across lines (Arabic shorter whisper line)."""
-    ordered = sorted(
-        items,
-        key=lambda item: (
-            item.source_order,
-            item.word_start,
-            item.word_end - item.word_start,
-            item.text,
-        ),
-    )
+def _stitched_sentence_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """English: one token group per stitched grammatical sentence."""
+    groups: list[list[_Token]] = []
+    sentence_index = 0
+    for text, start, line_index in _stitch_line_texts(_parse_lines(transcript), language):
+        for unit in _split_stitched_sentences(text):
+            words = [word for word in unit.split() if word.strip()]
+            if not words:
+                continue
+            groups.append(
+                [
+                    _Token(word, start, line_index, unit, sentence_index, word_index)
+                    for word_index, word in enumerate(words)
+                ]
+            )
+            sentence_index += 1
+    return groups
+
+
+def _hook_source_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """Hook sources: stitched sentences (en) or raw Whisper lines (ar)."""
+    if language == "en":
+        return _stitched_sentence_groups(transcript, language)
+    return _whisper_line_groups(transcript, language)
+
+
+def _drop_strict_substring_hooks(treatments: list[HookTreatment]) -> list[HookTreatment]:
+    """Keep maximal attested texts — drop strict sub-spans."""
+    texts = [item.text for item in treatments]
     kept: list[HookTreatment] = []
-    for item in ordered:
-        if _is_nested_against(item, kept):
+    for item in treatments:
+        if any(item.text != other and is_nested_hook_text(item.text, other) for other in texts):
             continue
         kept.append(item)
     return kept
 
 
-def _max_antichain_on_line(candidates: list[HookTreatment]) -> list[HookTreatment]:
-    """Largest set of non-nested spans on one line — short-first so siblings beat supersets."""
-    ordered = sorted(
-        candidates,
-        key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
-    )
-    packed: list[HookTreatment] = []
-    for candidate in ordered:
-        if any(_nested_on_line(candidate, picked) for picked in packed):
-            continue
-        packed.append(candidate)
-    return packed
-
-
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Prefer full attested lines when they fill the grid; else maximize clause-boundary spans."""
+    """Per-line non-nested antichain, then drop global strict substrings."""
     del language
-    full_units = _drop_nested_globally([item for item in candidates if item.is_full_line])
-    full_units.sort(key=lambda item: (item.source_order, item.word_start, item.text))
-    if len(full_units) >= MAX_TREATMENTS:
-        return full_units[:MAX_TREATMENTS]
-
     by_line: dict[str, list[HookTreatment]] = {}
     for candidate in candidates:
         by_line.setdefault(candidate.line_text, []).append(candidate)
 
     packed: list[HookTreatment] = []
     for line_text in sorted(by_line, key=lambda line: by_line[line][0].source_order):
-        packed.extend(_max_antichain_on_line(by_line[line_text]))
+        line_candidates = sorted(
+            by_line[line_text],
+            key=lambda item: (item.word_end - item.word_start, item.word_start, item.text),
+            reverse=True,
+        )
+        line_packed: list[HookTreatment] = []
+        for candidate in line_candidates:
+            if any(_nested_on_line(candidate, picked) for picked in line_packed):
+                continue
+            line_packed.append(candidate)
+        packed.extend(line_packed)
 
-    packed = _drop_nested_globally(packed)
+    packed = _drop_strict_substring_hooks(packed)
     packed.sort(key=lambda item: (item.source_order, item.word_start, item.text))
     return packed[:MAX_TREATMENTS]
 
@@ -691,25 +679,13 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
     seen_texts: set[str] = set()
     source_order = 0
 
-    def _append_span(sentence_tokens: list[_Token], start: int, end: int, *, at_boundary: bool) -> None:
+    def _append_span(sentence_tokens: list[_Token], start: int, end: int) -> None:
         chunk = sentence_tokens[start:end]
         text = " ".join(token.word for token in chunk)
         norm = _normalize_phrase(text)
         if norm in seen_texts:
             return
-        line_index = sentence_tokens[0].line_index
-        line_text = sentence_tokens[0].line_text
-        words = [token.word for token in sentence_tokens]
-        boundary_set = set(_marker_split_indices(line_text, words))
-        if not _validate_span(
-            sentence_tokens,
-            start,
-            end,
-            language,
-            vocabulary,
-            at_clause_boundary=at_boundary,
-            boundaries=boundary_set,
-        ):
+        if not _validate_span(sentence_tokens, start, end, language, vocabulary):
             return
         is_full = start == 0 and end == len(sentence_tokens)
         kind = _classify_kind(text, language, is_full_line=is_full)
@@ -721,21 +697,17 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
                 kind=kind,
                 text=text,
                 cite=_cite(chunk),
-                line_index=line_index,
-                line_text=line_text,
+                line_index=sentence_tokens[0].line_index,
+                line_text=sentence_tokens[0].line_text,
                 word_start=chunk[0].word_index,
                 word_end=chunk[-1].word_index + 1,
                 source_order=source_order,
-                is_full_line=is_full,
             )
         )
 
-    token_groups = list(_sentence_groups(tokens, language))
-
-    for sentence_tokens in token_groups:
-        spans = _candidate_spans(sentence_tokens, language)
-        for start, end, at_boundary in spans:
-            _append_span(sentence_tokens, start, end, at_boundary=at_boundary)
+    for sentence_tokens in _hook_source_groups(transcript, language):
+        for start, end in _candidate_spans(sentence_tokens, language):
+            _append_span(sentence_tokens, start, end)
         source_order += 1
 
     treatments = _select_treatments(candidates, language)

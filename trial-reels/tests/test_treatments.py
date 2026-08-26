@@ -12,10 +12,10 @@ sys.path.insert(0, str(ROOT))
 
 from lib.desk import TARGET_VARIANTS  # noqa: E402
 from lib.treatments import (  # noqa: E402
-    MAX_TREATMENTS,
     TREATMENT_KINDS,
     enumerate_treatments,
     is_contiguous_attested_span,
+    is_nested_hook_text,
 )
 
 
@@ -40,21 +40,29 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_many_non_nested_treatments() -> None:
+def test_english_fixture_yields_stitched_sentence_hooks() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
-    assert 8 <= len(treatments) < MAX_TREATMENTS
     texts = [item["text"] for item in treatments]
-    assert len(set(texts)) == len(texts)
+    assert len(texts) == 4
+    assert len(set(texts)) == 4
+    assert "So the next" not in texts
+    assert "behind-the-scenes power." not in texts
+    assert "Ross defines a true boss by the rare ability to execute moves the real streets actually accept." in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_arabic_fixture_honest_ceiling_two_whisper_lines() -> None:
+def test_arabic_fixture_honest_ceiling_one_maximal_line() -> None:
     result = enumerate_treatments(_load_fixture("clip_5a92132dc6de.json"))
     assert result["mode"] == "blocked"
-    assert result["ceiling"] == 2
-    assert len(result["treatments"]) == 2
-    assert {item["text"] for item in result["treatments"]} == {"لك كفاية عزبتني", "عزبتني"}
+    assert result["ceiling"] == 1
+    assert len(result["treatments"]) == 1
+    assert result["treatments"][0]["text"] == "لك كفاية عزبتني"
+
+
+def test_nested_hook_text_detects_subspan() -> None:
+    assert is_nested_hook_text("عزبتني", "لك كفاية عزبتني")
+    assert not is_nested_hook_text("لك كفاية عزبتني", "عزبتني")
