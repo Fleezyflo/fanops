@@ -468,6 +468,43 @@ def is_contiguous_attested_span(text: str, line_text: str) -> bool:
     return False
 
 
+def is_nested_hook_text(shorter: str, longer: str) -> bool:
+    """True when *shorter* is a strict contiguous word sub-span of *longer*."""
+    a = shorter.strip()
+    b = longer.strip()
+    if not a or not b or a == b:
+        return False
+    return is_contiguous_attested_span(a, b)
+
+
+def _drop_nested_substring_claims(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reject nested substring farms — keep only maximal grammatical hook texts."""
+    texts = [str(claim.get("text") or "").strip() for claim in claims]
+    kept: list[dict[str, Any]] = []
+    for index, claim in enumerate(claims):
+        text = texts[index]
+        if not text:
+            continue
+        if any(
+            is_nested_hook_text(text, other)
+            for other_index, other in enumerate(texts)
+            if other_index != index
+        ):
+            continue
+        kept.append(claim)
+    return kept
+
+
+def contract_met(desk: dict[str, Any]) -> bool:
+    """True when desk shipped TARGET_VARIANTS distinct attested on-screen texts."""
+    if desk.get("mode") != "write":
+        return False
+    cards = list(desk.get("cards") or [])
+    if len(cards) != TARGET_VARIANTS:
+        return False
+    return len({(card.get("text") or "").strip() for card in cards if (card.get("text") or "").strip()}) == TARGET_VARIANTS
+
+
 def _tokens_by_line(tokens: list[_Token]) -> list[list[_Token]]:
     by_index: dict[int, list[_Token]] = {}
     for token in tokens:
@@ -538,7 +575,7 @@ def _extract_claims(
             continue
         seen.add(text)
         claims.append({"text": text, "cite": unit.cite()})
-    return claims
+    return _drop_nested_substring_claims(claims)
 
 
 def _assign_variant_cards(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -652,4 +689,5 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "unique_texts": unique_texts,
         "claims_found": claims_found,
         "target_variants": TARGET_VARIANTS,
+        "contract_met": unique_texts >= TARGET_VARIANTS,
     }

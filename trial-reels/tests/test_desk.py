@@ -50,11 +50,11 @@ def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
     assert len(expand_variant_slots(result["cards"])) == TARGET_VARIANTS
 
 
-def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
+def test_live_arabic_clip_fails_closed_with_one_maximal_hook() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 2
+    assert result["claims_found"] == 1
     assert result["target_variants"] == TARGET_VARIANTS
     assert "need 20 distinct on-screen texts" in result["reason"]
     assert result["cards"] == []
@@ -96,6 +96,15 @@ def test_arabic_whisper_lines_stay_separate() -> None:
     units = _hook_units(tokens, language)
     assert len(lines) == len(fixture["lines"])
     assert {unit.text for unit in units} == {"لك كفاية عزبتني", "عزبتني"}
+
+
+def test_arabic_nested_substring_drops_shorter_line() -> None:
+    from lib.desk import is_nested_hook_text
+
+    assert is_nested_hook_text("عزبتني", "لك كفاية عزبتني")
+    result = write(_load_fixture("clip_5a92132dc6de.json"))
+    assert result["mode"] == "blocked"
+    assert result["claims_found"] == 1
 
 
 def test_english_whisper_slices_do_not_ship() -> None:

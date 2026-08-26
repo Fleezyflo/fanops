@@ -107,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
 
     clip_payloads: list[dict[str, Any]] = []
     for result in summary["results"]:
+        if result.clip_payloads:
+            clip_payloads.extend(result.clip_payloads)
+            continue
         for output in result.outputs:
             clip_payloads.append(
                 {
@@ -116,11 +119,15 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
 
+    cover_checked = sum(1 for p in clip_payloads if p.get("cover_ok") is not None)
+    cover_pass = sum(1 for p in clip_payloads if p.get("cover_ok") is True)
     score = score_run(
         clip_payloads=clip_payloads,
         stacks_landed=summary["shipped"],
         file_count=summary["shipped"],
-        require_cover=args.require_cover,
+        require_cover=args.require_cover or cover_checked > 0,
+        cover_checked=cover_checked or None,
+        cover_pass=cover_pass or None,
     )
     write_score_report(score, out_root / "score.json")
 
