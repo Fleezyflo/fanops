@@ -27,7 +27,6 @@ def _card_texts(result: dict) -> list[str]:
 EN_LIVE_SENTENCES = frozenset(
     {
         "inside a padded recording booth creates a powerful illusion, one that completely evaporates the second real-world leverage is required.",
-        "Which brings us to the missing reality layer, behind-the-scenes power.",
         "Ross defines a true boss by the rare ability to execute moves the real streets actually accept.",
         "It's a test of genuine respect that the modern corporate industry completely fails.",
     }
@@ -68,7 +67,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 3
     assert result["cards"] == []
     assert "need 20" in result["reason"]
     validation = validate_desk_result(result)
@@ -78,7 +77,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     texts = {item["text"] for item in result.get("treatments") or []}
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) == 4
+    assert len(texts) == 3
 
 
 def test_english_live_transcript_still_finds_full_sentences_before_blocking() -> None:
@@ -87,7 +86,7 @@ def test_english_live_transcript_still_finds_full_sentences_before_blocking() ->
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 4
+    assert result["claims_found"] == 3
     assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
 
 

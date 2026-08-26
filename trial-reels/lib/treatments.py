@@ -208,6 +208,30 @@ def _fragment_continues(text: str) -> bool:
     return last.endswith(",") or last.endswith(";")
 
 
+_EN_CONTINUATION_STARTERS = frozenset(
+    {"one", "that", "which", "who", "and", "but", "or", "a", "an", "the", "its", "it's", "it"}
+)
+
+
+def _whisper_line_continues_buffer(buffer_tail: str, next_text: str) -> bool:
+    """True when *next_text* continues the same grammatical unit — not a new whisper sentence."""
+    if not _fragment_continues(buffer_tail):
+        return False
+    words = [part for part in next_text.split() if part.strip()]
+    if not words:
+        return False
+    # Short nominal whisper line ending a sentence is its own unit, not a comma tail.
+    if len(words) <= 4 and _ends_sentence(words[-1]):
+        return False
+    first = words[0]
+    first_norm = _normalize_word(first)
+    if first_norm in _EN_CONTINUATION_STARTERS:
+        return True
+    if first[0].islower():
+        return True
+    return False
+
+
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
     if language != "en":
         return [
@@ -235,7 +259,7 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
         if _is_en_fragment_crumb(text):
             flush()
             continue
-        if buffer and not _fragment_continues(buffer[-1]):
+        if buffer and not _whisper_line_continues_buffer(buffer[-1], text):
             flush()
         if not buffer:
             buffer_start = start
@@ -403,6 +427,19 @@ def _ends_grammatically(text: str) -> bool:
     return True
 
 
+def _is_apposition_crumb_tail(text: str) -> bool:
+    """Comma + short trailing nominal phrase — cross-whisper join, not one hook."""
+    if "," not in text:
+        return False
+    before, after = text.rsplit(",", 1)
+    after_words = [part for part in after.strip().split() if part.strip()]
+    if not after_words or len(after_words) > 3:
+        return False
+    if not _ends_sentence(after_words[-1]):
+        return False
+    return len([part for part in before.split() if part.strip()]) >= 4
+
+
 def _is_crumb(
     text: str,
     language: str,
@@ -420,18 +457,21 @@ def _is_crumb(
             return True
         if _normalize_phrase(text.split(".", 1)[0]) in _EN_FRAGMENT_CRUMBS:
             return True
-        if is_full_whisper_line and _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN:
-            if _ends_sentence(words[-1]) or words[-1].rstrip().endswith(","):
+        if _is_apposition_crumb_tail(text):
+            return True
+        if is_full_whisper_line:
+            if not _ends_sentence(words[-1]):
+                return True
+            if len(words) < _MIN_HOOK_WORDS_EN:
+                return True
+            if (
+                _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN
+                and not _has_internal_sentence_break(text)
+            ):
                 return False
         if not _starts_grammatically(text):
             return True
         if not _ends_grammatically(text):
-            return True
-        if len(words) < _MIN_HOOK_WORDS_EN:
-            if len(words) >= 3 and _ends_sentence(words[-1]):
-                return False
-            if len(words) >= 2 and _ends_sentence(words[-1]) and _content_word_count(text, language) >= 1:
-                return False
             return True
         if _content_word_count(text, language) < _MIN_CONTENT_WORDS_EN:
             return True

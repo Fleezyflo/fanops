@@ -46,10 +46,12 @@ def test_english_fixture_yields_stitched_sentence_hooks() -> None:
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) == 4
-    assert len(set(texts)) == 4
+    assert len(texts) == 3
+    assert len(set(texts)) == 3
     assert "So the next" not in texts
-    assert "inside a padded recording booth creates a powerful illusion," in " ".join(texts)
+    assert "behind-the-scenes power." not in texts
+    assert "Which brings us to the missing reality layer," not in texts
+    assert any("inside a padded recording booth creates a powerful illusion" in t for t in texts)
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
