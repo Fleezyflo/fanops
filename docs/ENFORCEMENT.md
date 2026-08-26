@@ -141,7 +141,7 @@ from "passed silently" would rebuild the blind spot it exists to close.
   independent; never touches the e2e job. Whether it is actually ENABLED in GitHub is DC-8's
   question — from 2026-07-14 it was not, and nothing here could tell.
 
-## Scheduled lane — cron/dispatch only; nothing of it runs on a PR
+## Scheduled lane — cron only; nothing of it runs on a PR
 - `ci-e2e.yml` — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`
   turns integration skips into failures) + the `@slow` cross-face proofs. Runs on the 04:00 UTC
   cron schedule ONLY. `ci.yml` has no E2E job and no `workflow_dispatch`. A render or publish
