@@ -6,10 +6,11 @@ never vetoes membership or withholds researched_at after scrape finished. Empty
 lock = scrape finished with zero admits. Caption waits on researched_at.
 
 LLM names THIS video (mild→provocative). Search verifies the exact name (no
-siblings on the pile). Lock is (1) this source's already-used tags that have
-scrape meters — not the persona store ∪ corpus — then (2) scrape-admitted pile
-names, Graph-present first, LLM order within tier, cap 15. Sidecar is
-cfg.control / source_tag_locks.json — not a Config field, not hashtags.json.
+siblings on the pile). Lock is positive play_count only, play_rank_key order,
+cap 12. Optional `hydrate_locks_from_known` may write `hydrated_at` + lock from
+already-used tags (zero network) but must never write `researched_at` or open
+the caption gate. Sidecar is cfg.control / source_tag_locks.json — not a Config
+field, not hashtags.json.
 
 Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
 (graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
@@ -33,7 +34,7 @@ from fanops.timeutil import iso_z
 
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
 GRAPH_TAG_CACHE_NAME = "graph_hashtag_cache.json"
-_LOCK_N = 15
+_LOCK_N = 12
 _RESEARCH_CAP = 20
 _SEARCH_QUOTA = 30
 _SEARCH_WINDOW_DAYS = 7
@@ -516,10 +517,11 @@ def _union_lock_meters(table: dict, measurements: dict) -> None:
             _restore_meters(measurements, rec.get("measurements"))
 
 
-def known_lock(names, measurements, used, n=15, keep=None) -> list[str]:
-    """This-source used tags (measured first, play then 7d reel), then keep, then scrape-admitted pile.
+def known_lock(names, measurements, used, n=12, keep=None) -> list[str]:
+    """This-source used tags (measured first, play then 7d reel), then keep, then play-ranked pile.
 
-    Unmeasured used tags still belong — they already shipped on this video. The global store does not.
+    Unmeasured used tags still belong — they already shipped on this video. Cap at n (12).
+    The global store does not belong.
     """
     seen: set[str] = set()
     out: list[str] = []
@@ -531,15 +533,21 @@ def known_lock(names, measurements, used, n=15, keep=None) -> list[str]:
         if t not in seen:
             seen.add(t)
             out.append(t)
+        if len(out) >= n:
+            return out[:n]
     for t in _dedupe_norm(keep):
         if t not in seen:
             seen.add(t)
             out.append(t)
+        if len(out) >= n:
+            return out[:n]
     for t in lock_from_pile(names, recs, n):
         if t not in seen:
             seen.add(t)
             out.append(t)
-    return out
+        if len(out) >= n:
+            return out[:n]
+    return out[:n]
 
 
 def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
@@ -556,10 +564,30 @@ def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
     write_json_atomic(source_tag_locks_path(cfg), table)
 
 
-def hydrate_locks_from_known(cfg, led) -> int:
-    """Stamp/merge locks from tags this source already used.
+def _hydrate_stamp(cfg, table, sid, pile, lock, measurements=None, *, prior=None) -> None:
+    """Write lock from used tags. Never sets researched_at (caption gate stays closed)."""
+    prior = prior if isinstance(prior, dict) else {}
+    row = {
+        "pile": list(pile),
+        "lock": list(lock),
+        "hydrated_at": iso_z(datetime.now(timezone.utc)),
+    }
+    at = prior.get("researched_at")
+    if isinstance(at, str) and at.strip():
+        row["researched_at"] = at
+    if isinstance(measurements, dict):
+        snap = _snapshot_meters(measurements, list(lock) or list(pile))
+        if snap:
+            row["measurements"] = snap
+    table[sid] = row
+    write_json_atomic(source_tag_locks_path(cfg), table)
 
-    Zero network. Never the persona 80-pile. Does not recaption. Returns rows written.
+
+def hydrate_locks_from_known(cfg, led) -> int:
+    """Merge locks from tags this source already used. Zero network. Never researched_at.
+
+    Does not open the caption gate. Does not recaption. Returns rows written.
+    Not called from lock_ready_sources — optional / repair only.
     """
     if cfg is None or led is None:
         return 0
@@ -584,9 +612,11 @@ def hydrate_locks_from_known(cfg, led) -> int:
         lock = known_lock(names, measurements, used, _LOCK_N, keep=keep)
         if not lock:
             continue
-        if _researched(table, sid) and list(prior.get("lock") or []) == lock:
+        if list(prior.get("lock") or []) == lock and (
+            _researched(table, sid) or isinstance(prior.get("hydrated_at"), str)
+        ):
             continue
-        _stamp_source(cfg, table, sid, pile, lock, measurements)
+        _hydrate_stamp(cfg, table, sid, pile, lock, measurements, prior=prior)
         n += 1
     return n
 
@@ -789,13 +819,12 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
     After the first no_scrape, later sources get a closed opener (no Safari) so
     leftover-complete rows can still cache-stamp. Re-opening Safari per unfinished
     source is what logged the accounts out.
-    Used∩measured hydrate is zero-network and may stamp many sources in one tick.
+    Does not hydrate from used tags — that path must not mass-stamp researched_at.
     """
     log = get_logger(cfg)
     try:
         from fanops.ledger import Ledger
         led = Ledger.load(cfg)
-        hydrate_locks_from_known(cfg, led)
         table = load_source_tag_locks(cfg)
         opener = open_client_fn
 
