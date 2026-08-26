@@ -35,13 +35,16 @@ EN_LIVE_SENTENCES = frozenset(
 
 
 def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
-    result = write(_load_fixture("clip_twenty_hooks.json"))
+    fixture = _load_fixture("clip_twenty_hooks.json")
+    result = write(fixture)
 
     assert result["mode"] == "write"
     assert result["unique_texts"] == TARGET_VARIANTS
     assert len(result["cards"]) == TARGET_VARIANTS
     assert len(result["claims"]) == TARGET_VARIANTS
     assert len(set(_card_texts(result))) == TARGET_VARIANTS
+    fixture_lines = {line["text"] for line in fixture["lines"]}
+    assert set(_card_texts(result)) == fixture_lines
     validation = validate_desk_result(result)
     assert validation["ok"], validation["issues"]
     plans = plan_variants(result, clip_id="clip_twenty_hooks", source_duration_s=120.0)
@@ -68,7 +71,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 13
+    assert result["claims_found"] == 4
     assert result["claims_found"] < TARGET_VARIANTS
     assert result["cards"] == []
     assert "need 20" in result["reason"]
@@ -79,16 +82,16 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     texts = {item["text"] for item in result.get("treatments") or []}
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert len(texts) == 13
+    assert texts == EN_LIVE_SENTENCES
 
 
-def test_english_live_transcript_still_finds_clause_hooks_before_blocking() -> None:
+def test_english_live_transcript_still_finds_full_sentences_before_blocking() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 13
+    assert result["claims_found"] == 4
     assert "So the next" not in {item["text"] for item in result.get("treatments") or []}
 
 

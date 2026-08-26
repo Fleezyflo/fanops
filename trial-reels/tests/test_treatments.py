@@ -41,16 +41,15 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_whisper_line_clause_hooks() -> None:
+def test_english_fixture_yields_full_stitched_sentences() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) == 13
+    assert len(texts) == 4
     assert len(texts) < MAX_TREATMENTS
     assert len(set(texts)) == len(texts)
     assert "So the next" not in texts
-    assert "Which brings us to the missing reality layer," in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])

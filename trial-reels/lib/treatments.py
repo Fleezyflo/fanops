@@ -1,8 +1,8 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: clause-boundary spans inside stitched sentences plus attested whisper lines.
-Arabic: one treatment per Whisper line. No sliding windows, permutations, cross-sentence
-joins, or nested substring farms.
+English: one treatment per stitched grammatical sentence (contiguous transcript unit).
+Arabic: one treatment per Whisper line. No clause crumbs, sliding windows, permutations,
+cross-sentence joins, or nested substring farms.
 """
 
 from __future__ import annotations
@@ -561,27 +561,7 @@ def _marker_split_indices(line_text: str, words: list[str]) -> list[int]:
 def _candidate_spans(sentence_tokens: list[_Token], language: str) -> list[tuple[int, int, bool]]:
     if not sentence_tokens:
         return []
-    if language == "ar":
-        return [(0, len(sentence_tokens), True)]
-
-    words = [token.word for token in sentence_tokens]
-    line_text = sentence_tokens[0].line_text
-    boundaries = _marker_split_indices(line_text, words)
-    boundary_set = set(boundaries)
-    spans: list[tuple[int, int, bool]] = []
-    seen: set[tuple[int, int]] = set()
-
-    def add(start: int, end: int) -> None:
-        if end <= start or (start, end) in seen:
-            return
-        seen.add((start, end))
-        spans.append((start, end, start in boundary_set))
-
-    for left in range(len(boundaries) - 1):
-        for right in range(left + 1, len(boundaries)):
-            add(boundaries[left], boundaries[right])
-
-    return spans
+    return [(0, len(sentence_tokens), True)]
 
 
 def _ends_cleanly(
@@ -672,8 +652,9 @@ def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list
 
 
 def _enumeration_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
-    """Hook sources: raw Whisper lines for both languages (no stitched mega-lines)."""
-    return _whisper_line_groups(transcript, language)
+    """Hook sources: stitched sentences (English) or Whisper lines (Arabic)."""
+    tokens, resolved = collect_tokens(transcript)
+    return _sentence_groups(tokens, resolved)
 
 
 def _drop_strict_substring_hooks(treatments: list[HookTreatment]) -> list[HookTreatment]:
