@@ -142,11 +142,11 @@ from "passed silently" would rebuild the blind spot it exists to close.
   question — from 2026-07-14 it was not, and nothing here could tell.
 
 ## Scheduled lane — cron/dispatch only; nothing of it runs on a PR
-- ci.yml `e2e` job — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`
-  turns integration skips into failures) + the `@slow` cross-face proofs. Runs on
-  `workflow_dispatch` or the 04:00 UTC nightly ONLY (job-level `if`, since 2026-07-24). A render or
-  publish regression can merge green and be caught by the nightly — the accepted, disclosed cost of
-  not holding PR iteration for ~7 minutes.
+- `ci-e2e.yml` — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`
+  turns integration skips into failures) + the `@slow` cross-face proofs. Runs on the 04:00 UTC
+  cron schedule ONLY. `ci.yml` has no E2E job and no `workflow_dispatch`. A render or publish
+  regression can merge green and be caught by the nightly — the accepted, disclosed cost of not
+  holding PR iteration for ~7 minutes.
 
 ## Tooling entrypoints — machinery, not gates
 - `python -m tools.arch [selftest|ci|impact|regen]` and `python -m tools.ci

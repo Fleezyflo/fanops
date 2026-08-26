@@ -13,9 +13,9 @@ operator-only override from a human terminal. What CI runs (reference, not for r
 
 - CI `unit` job — **the only required status check, and the only job a PR runs**:
   `python -m pytest -q -m "not integration and not slow"` (hermetic, no ffmpeg/whisper/network).
-- CI `e2e` job — **`workflow_dispatch` + nightly `schedule` ONLY, never on a push or a PR**
-  (`.github/workflows/ci.yml` job `if:`). So a green PR has NOT run it, and a `@pytest.mark.slow` or
-  `integration` test you add is unproven until the nightly. It runs
+- CI `e2e` job — **`ci-e2e.yml` schedule only** (04:00 UTC cron; not `workflow_dispatch` on
+  `ci.yml`). PR runs the `unit` job only via `ci.yml`. So a green PR has NOT run it, and a
+  `@pytest.mark.slow` or `integration` test you add is unproven until the nightly. It runs
   `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1` turns a skip into a
   FAILURE) plus the `-m slow` cross-face UNIT proofs: `test_account_first_e2e.py`,
   `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`, `test_per_persona_e2e.py`.
