@@ -1,24 +1,16 @@
 # src/fanops/hashtags.py
-"""Hashtag SELECTION — the gate that turns a persona's derived corpus + the platform measurement cache
-into the <=4-tag line a post ships.
+"""Hashtag helpers — caption ship + Layer B / legacy composition.
 
-Visibility is settled OUTSIDE this module by PLATFORM fields Layer A wrote (ig_hashtag_scrape). RANK is
-banded (`size_rank_key`, MOL-977): mid (10k–2M) first, then small, then mega/untrusted, then unknown.
-INT32-saturated `media_count` is untrusted mega, not infinite gold. Within a band: Instagram's own
-`media_count` DESC, then `current_top_reel_play_max_7d` as a tie-break. The Top-grid MEDIANS
-(`play_count`/`like_count`) remain stored evidence and still admit a legacy row, but they are not the
-cross-tag order. Nothing here blends the two axes into one invented score.
-The frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED.
+**Ship path (posted tags):** `ship_from_lock(picks, lock, n=4)` — picks ∩ source
+lock, pick order, hard cap. No AR floor, no mega slot, no store ∪ corpus, no
+backfill. Caption ingest/compose call this only.
 
-What survives here is COMPOSITION, which is format rather than a reach claim: at most 4 tags, at most
-one mega/untrusted slot (`MEGA_SLOT_MAX`), mid-band order that splits IG (size-then-trend) from TikTok
-(trend-then-size), the persona's curated corpus leads but may not monopolise the line
-(`_CORPUS_LEAD_MAX`), graded-LRU rotation, and a region tag on Arabic-language clips (`_ARABIC`).
-`cfg is None` / no measurements skips mega cap and the platform split (byte-identical).
+**Layer B / legacy (not posted tags):** `vet_hashtags` still composes from
+persona store ∪ corpus with banded `size_rank_key` rank, `MEGA_SLOT_MAX`, and
+`_ARABIC`. Observatory / Studio / discover may use it; caption does not ship it.
 
-Membership is store ∪ corpus (content may LABEL a measured tag for provenance): invented tags die;
-unmeasured non-corpus tags die; unmeasured corpus tags survive; empty store AND empty corpus
-(and non-AR) → empty line."""
+Visibility numbers come from PLATFORM fields Layer A / remesure wrote. The
+frozen `_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED` pools were DELETED."""
 from __future__ import annotations
 import json, re
 from fanops.models import Platform
