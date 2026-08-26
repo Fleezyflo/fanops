@@ -2283,11 +2283,15 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
     from fanops.controlio import write_json_atomic
     from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due,
                                        scrape_user_blocked)
+    from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.source_tags import _iter_lock_clients
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
     write_json_atomic(_cooldown_path(cfg), {
         "accounts": {"u": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
     assert scrape_user_blocked(cfg, "u", t0) is True
