@@ -24,6 +24,7 @@ class ClipScore:
     cover_message: str = ""
     tess_langs: str = ""
     output_path: str = ""
+    cover_path: str = ""
 
     @property
     def shippable(self) -> bool:
@@ -83,6 +84,7 @@ def score_clip(
     clip_id: str,
     desk_result: dict[str, Any],
     output_path: str | Path | None = None,
+    cover_path: str | Path | None = None,
     attested_words: tuple[str, ...] | list[str] | None = None,
     run_cover_qa: bool = True,
 ) -> ClipScore:
@@ -97,13 +99,15 @@ def score_clip(
         desk_issues=list(validation.get("issues") or []),
         tess_langs=tess_langs,
         output_path=str(output_path) if output_path else "",
+        cover_path=str(cover_path) if cover_path else "",
     )
 
-    if not run_cover_qa or not output_path:
+    qa_target = cover_path or output_path
+    if not run_cover_qa or not qa_target:
         score.cover_ok = None
         return score
 
-    path = Path(output_path)
+    path = Path(qa_target)
     if not path.exists():
         score.cover_ok = False
         score.cover_message = f"output missing: {path}"
@@ -138,8 +142,9 @@ def score_run(
                 clip_id=str(payload.get("clip_id") or payload.get("id") or "unknown"),
                 desk_result=payload.get("desk") or payload,
                 output_path=payload.get("output_path"),
+                cover_path=payload.get("cover_path"),
                 attested_words=payload.get("attested_words"),
-                run_cover_qa=require_cover and bool(payload.get("output_path")),
+                run_cover_qa=require_cover and bool(payload.get("cover_path") or payload.get("output_path")),
             )
         )
 
@@ -159,10 +164,18 @@ def score_run(
 
     distinct_verified = len(verified_texts)
 
+    attested_texts: set[str] = set()
+    for payload in clip_payloads:
+        words = payload.get("attested_words")
+        if words:
+            attested_texts.add(str(words[0]).strip())
+
     if clip_scores:
         success = shippable == len(clip_scores) and shippable > 0
+        success = success and len(attested_texts) >= TARGET_VARIANTS
         if require_cover and cover_checked:
             success = success and cover_pass == cover_checked
+            success = success and distinct_verified >= TARGET_VARIANTS
     else:
         success = False
 

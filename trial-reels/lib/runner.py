@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from lib.captions import DEFAULT_FONT, write_ass, write_ass_file
-from lib.desk import write as desk_write
+from lib.cover_qa import cover_extract_s_for_hook, extract_cover_frame, qa_cover
+from lib.desk import TARGET_VARIANTS, contract_met, write as desk_write
 from lib.desk_swarm import validate_desk_result
 from lib.hooks import HOOK_POLICIES, LyricEvent, cut_spec, hook_window
 from lib.ingest import collect_sources
@@ -132,6 +133,64 @@ def _lyric_events(transcript: dict[str, Any]) -> list[LyricEvent]:
         end = float(raw.get("end") or start + 2.0)
         events.append(LyricEvent(start, end, text))
     return events
+
+
+def _write_cover_jpg(
+    video: Path,
+    dest: Path,
+    *,
+    policy: str,
+    cite_start_s: float,
+    total_duration_s: float,
+) -> Path:
+    """Extract the hook-visible cover still for a rendered variant."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    extract_s = cover_extract_s_for_hook(
+        policy,
+        cite_start_s=cite_start_s,
+        total_duration_s=total_duration_s,
+    )
+    extract_cover_frame(video, dest, at=extract_s)
+    return dest
+
+
+def _enrich_desk(
+    desk: dict[str, Any],
+    *,
+    plans: list[VariantPlan],
+    outputs: list[Path],
+    cover_paths: list[Path | None],
+    cover_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach render manifest + cover verification to desk.json payload."""
+    if desk.get("mode") != "write":
+        return desk
+
+    variants: list[dict[str, Any]] = []
+    verified_texts: set[str] = set()
+    for plan, out, cover, cover_meta in zip(
+        plans, outputs, cover_paths, cover_results, strict=False
+    ):
+        entry = {
+            "hook": plan.hook,
+            "stack": plan.stack,
+            "text": plan.card.get("text") or "",
+            "cite": plan.card.get("cite") or {},
+            "mp4": str(out) if out else "",
+            "cover_jpg": str(cover) if cover else "",
+            "cover_ok": cover_meta.get("cover_ok"),
+            "cover_message": cover_meta.get("cover_message", ""),
+        }
+        variants.append(entry)
+        if cover_meta.get("cover_ok") and entry["text"]:
+            verified_texts.add(entry["text"])
+
+    enriched = dict(desk)
+    enriched["variants"] = variants
+    enriched["verified_distinct_texts"] = len(verified_texts)
+    enriched["contract_met"] = contract_met(desk)
+    enriched["verified_contract_met"] = len(verified_texts) >= TARGET_VARIANTS
+    return enriched
 
 
 def build_ass_events(
@@ -343,6 +402,8 @@ def run_clip(
     plans = plan_variants(desk, clip_id=clip_id, recipes=recipes, source_duration_s=duration_s)
 
     outputs: list[Path] = []
+    cover_paths: list[Path | None] = []
+    cover_results: list[dict[str, Any]] = []
     skipped: list[str] = []
     clip_payloads: list[dict[str, Any]] = []
 
@@ -359,23 +420,59 @@ def run_clip(
             message=f"desk blocked: {desk.get('reason')}",
         )
 
+    rendered_plans: list[VariantPlan] = []
     for plan in plans:
         try:
             out = render_variant(source, plan, workdir=workdir, has_audio=audio, dry_run=dry_run)
             if out is None:
                 skipped.append(f"{plan.hook}/{plan.stack}: empty ass")
                 continue
+            cover_ok: bool | None = None
+            cover_message = ""
+            cover_path: Path | None = None
+            if not dry_run and out.exists():
+                cover_path = workdir / "covers" / f"{plan.hook}_{plan.stack}.jpg"
+                try:
+                    _write_cover_jpg(
+                        out,
+                        cover_path,
+                        policy=plan.hook,
+                        cite_start_s=plan.cite_start_s,
+                        total_duration_s=plan.cite_start_s + plan.cut_length_s,
+                    )
+                    cover = qa_cover(
+                        cover_path,
+                        (plan.card.get("text") or "",),
+                        language=desk.get("language"),
+                    )
+                    cover_ok = cover.ok
+                    cover_message = cover.message
+                except RuntimeError as exc:
+                    cover_ok = False
+                    cover_message = str(exc)
             outputs.append(out)
+            cover_paths.append(cover_path)
+            cover_results.append({"cover_ok": cover_ok, "cover_message": cover_message})
+            rendered_plans.append(plan)
             clip_payloads.append(
                 {
                     "clip_id": f"{clip_id}_{plan.hook}_{plan.stack}",
                     "desk": desk,
                     "output_path": str(out),
+                    "cover_path": str(cover_path) if cover_path else "",
                     "attested_words": (plan.card.get("text"),),
                 }
             )
         except RuntimeError as exc:
             skipped.append(f"{plan.hook}/{plan.stack}: {exc}")
+
+    desk = _enrich_desk(
+        desk,
+        plans=rendered_plans,
+        outputs=outputs,
+        cover_paths=cover_paths,
+        cover_results=cover_results,
+    )
 
     score = score_run(
         clip_payloads=clip_payloads,
@@ -385,6 +482,9 @@ def run_clip(
     )
     report_path = workdir / "score.json"
     write_score_report(score, report_path)
+
+    contract_ok = desk.get("contract_met", False)
+    verified_ok = desk.get("verified_contract_met", False) if require_cover else contract_ok
 
     return RunResult(
         clip_id=clip_id,
@@ -396,7 +496,7 @@ def run_clip(
         clip_payloads=clip_payloads,
         skipped=skipped,
         score=score.to_dict(),
-        success=score.success and validation["ok"],
+        success=score.success and validation["ok"] and contract_ok and verified_ok,
         message=score.message,
     )
 

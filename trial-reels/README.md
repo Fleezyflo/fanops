@@ -2,6 +2,20 @@
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
 
+## Pipeline door
+
+One clip in `in/` → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
+
+```bash
+PYTHONPATH=trial-reels python trial-reels/pipeline.py \
+  --in-dir in/ \
+  --out out/ \
+  --transcript /path/to/transcript.json \
+  --require-cover
+```
+
+Success requires `desk.json` with 20 distinct attested card texts plus cover JPG OCR proof per variant. Sparse transcripts fail closed with `mode=blocked` and **zero** mp4/jpg output.
+
 ## Runner
 
 One clip in → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
@@ -17,7 +31,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
+Desk enumerates **attested hook treatments** — one full stitched sentence (English) or one Whisper line (Arabic) per treatment (`lib/treatments.py`). Clause crumbs, nested windows, and permutations are rejected. A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
 
 ## Why this exists
 

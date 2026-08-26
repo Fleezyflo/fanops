@@ -1,7 +1,7 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
-Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
-words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
+Treatments are enumerated in lib.treatments (full sentences / Whisper lines only).
+Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
 """
 
 from __future__ import annotations
@@ -42,6 +42,14 @@ def _collect_tokens(transcript: dict[str, Any]):
     return collect_tokens(transcript)
 
 
+def contract_met(desk: dict[str, Any]) -> bool:
+    """True when desk ships TARGET_VARIANTS distinct attested hook texts."""
+    if desk.get("mode") != "write":
+        return False
+    texts = [str(item.get("text") or "").strip() for item in desk.get("cards") or []]
+    return len(texts) == TARGET_VARIANTS and len(set(texts)) == TARGET_VARIANTS
+
+
 def _build_variant_cards(treatments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Assign the first TARGET_VARIANTS treatments 1:1 onto hook×stack slots."""
     if len(treatments) < TARGET_VARIANTS:
@@ -75,9 +83,11 @@ def write(transcript: dict[str, Any]) -> dict[str, Any]:
         "target_variants": TARGET_VARIANTS,
         "treatment_kinds": list(TREATMENT_KINDS),
         "max_treatments": MAX_TREATMENTS,
+        "contract_met": False,
     }
     if payload.get("mode") == "write" and treatments:
         unique = len({item["text"] for item in treatments[:TARGET_VARIANTS]})
         result["unique_texts"] = unique
         result["ceiling"] = unique
+        result["contract_met"] = contract_met(result)
     return result

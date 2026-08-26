@@ -13,6 +13,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from lib.hooks import hook_window
+
 # Frame 0 is often black or pre-roll; 0.4s lands on the burned hook for clip_5a92132dc6de-style covers.
 COVER_EXTRACT_S = 0.4
 HOOK_BAND_FRACTION = 0.28
@@ -27,6 +29,25 @@ DEFAULT_ATTESTED_WORDS: tuple[str, ...] = (
 
 _FFMPEG_TIMEOUT = 60.0
 _TESS_TIMEOUT = 30.0
+
+
+def cover_extract_s_for_hook(
+    policy: str,
+    *,
+    cite_start_s: float,
+    total_duration_s: float,
+    fallback: float = COVER_EXTRACT_S,
+) -> float:
+    """Seconds into a rendered cut to sample the visible ASS hook stamp."""
+    try:
+        window = hook_window(policy, cite_start_s=cite_start_s, total_duration_s=total_duration_s)
+    except ValueError:
+        return fallback
+    rel_in = max(0.0, window.hook_in_s - window.cut_start_s)
+    rel_out = max(rel_in + 0.12, window.hook_out_s - window.cut_start_s)
+    sample = rel_in + (rel_out - rel_in) * 0.35
+    sample = max(0.15, min(rel_out - 0.08, sample))
+    return round(sample, 3)
 
 
 def ocr_langs_for_language(language: str | None) -> str:

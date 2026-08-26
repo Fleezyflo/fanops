@@ -76,8 +76,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 8
-    assert result["claims_found"] < TARGET_VARIANTS
+    assert result["claims_found"] == 4
     assert result["cards"] == []
     assert "So the next" not in _treatment_texts(result)
     validation = validate_desk_result(result)
@@ -101,13 +100,15 @@ def test_english_rejects_pr1073_mid_sentence_crumbs() -> None:
     assert not forbidden.intersection(treatments)
 
 
-def test_english_one_line_blob_still_yields_clause_treatments() -> None:
+def test_english_one_line_blob_yields_full_sentences_only() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 8
+    assert result["claims_found"] == 4
+    treatments = _treatment_texts(result)
+    assert all("." in text or text.endswith(",") for text in treatments)
 
 
 def test_arabic_whisper_lines_stay_separate() -> None:
