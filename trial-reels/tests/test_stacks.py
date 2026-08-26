@@ -99,6 +99,10 @@ class TestFakeOut:
         assert "color=c=black" in g.filter_complex
         assert graph_has_no_geq(g.filter_complex)
 
+    def test_setsar_normalised_before_concat(self):
+        g = build_stack_graph("fake_out", duration_s=10.0, width=1080, height=1920)
+        assert "setsar=1" in g.filter_complex
+
     def test_flash_duration(self):
         g = build_stack_graph("fake_out", duration_s=10.0)
         assert "d=0.150" in g.filter_complex or "d=0.15" in g.filter_complex

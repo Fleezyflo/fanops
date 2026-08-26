@@ -124,14 +124,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     write_score_report(score, out_root / "score.json")
 
+    full_render = summary["shipped"] == TARGET_VARIANTS and all(
+        r.variants_rendered == TARGET_VARIANTS for r in summary["results"] if r.desk.get("mode") == "write"
+    )
+
     payload = {
         "clips": summary["clips"],
         "shipped": summary["shipped"],
         "unique_hook_texts": summary["unique_hook_texts"],
         "distinct_verified_texts": score.distinct_verified_texts,
         "target_variants": TARGET_VARIANTS,
-        "success": score.success and summary["desk_ok"],
-        "message": score.message,
+        "success": score.success and summary["desk_ok"] and full_render,
+        "message": score.message if full_render else (
+            f"desk ok but only {summary['shipped']}/{TARGET_VARIANTS} variants rendered"
+        ),
         "results": [
             {
                 "clip_id": r.clip_id,

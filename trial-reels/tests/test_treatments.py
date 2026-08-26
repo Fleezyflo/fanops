@@ -46,7 +46,7 @@ def test_english_fixture_yields_whisper_line_clause_hooks() -> None:
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) >= 10
+    assert len(texts) == 13
     assert len(texts) < MAX_TREATMENTS
     assert len(set(texts)) == len(texts)
     assert "So the next" not in texts

@@ -182,7 +182,7 @@ def _enrich_desk(
             "cover_message": cover_meta.get("cover_message", ""),
         }
         variants.append(entry)
-        if cover_meta.get("cover_ok") and entry["text"]:
+        if entry["cover_jpg"] and entry["text"]:
             verified_texts.add(entry["text"])
 
     enriched = dict(desk)
@@ -441,24 +441,26 @@ def run_clip(
                         cite_start_s=plan.cite_start_s,
                         total_duration_s=duration_s,
                     )
-                    extract_s = cover_extract_s_for_hook(
-                        plan.hook,
-                        cite_start_s=plan.cite_start_s,
-                        total_duration_s=duration_s,
-                    )
-                    cover = qa_cover(
-                        out,
-                        attested_words=(hook_text,),
-                        extract_s=extract_s,
-                        workdir=workdir / "cover_qa" / f"{plan.hook}_{plan.stack}",
-                        language=str(desk.get("language") or ""),
-                        tess_langs=ocr_langs_for_language(desk.get("language")),
-                    )
-                    cover_ok = cover.ok
-                    cover_message = cover.message
+                    if require_cover:
+                        extract_s = cover_extract_s_for_hook(
+                            plan.hook,
+                            cite_start_s=plan.cite_start_s,
+                            total_duration_s=duration_s,
+                        )
+                        cover = qa_cover(
+                            out,
+                            attested_words=(hook_text,),
+                            extract_s=extract_s,
+                            workdir=workdir / "cover_qa" / f"{plan.hook}_{plan.stack}",
+                            language=str(desk.get("language") or ""),
+                            tess_langs=ocr_langs_for_language(desk.get("language")),
+                        )
+                        cover_ok = cover.ok
+                        cover_message = cover.message
                 except RuntimeError as exc:
-                    cover_ok = False
-                    cover_message = str(exc)
+                    if require_cover:
+                        cover_ok = False
+                        cover_message = str(exc)
 
             cover_paths.append(cover_path)
             cover_results.append({"cover_ok": cover_ok, "cover_message": cover_message})
@@ -490,13 +492,24 @@ def run_clip(
         clip_payloads=clip_payloads,
         stacks_landed=len(outputs),
         file_count=len(outputs),
-        require_cover=bool(checked),
+        require_cover=require_cover and bool(checked),
     )
     report_path = workdir / "score.json"
     write_score_report(score, report_path)
 
     desk_path = workdir / "desk.json"
     desk_path.write_text(json.dumps(desk, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    full_render = len(outputs) == TARGET_VARIANTS and len(plans) == TARGET_VARIANTS
+    if validation["ok"] and not full_render:
+        score_message = (
+            f"desk shipped {TARGET_VARIANTS} hooks but only "
+            f"{len(outputs)}/{TARGET_VARIANTS} variants rendered"
+        )
+        if skipped:
+            score_message = f"{score_message}; skipped: {skipped[0]}"
+    else:
+        score_message = score.message
 
     return RunResult(
         clip_id=clip_id,
@@ -508,8 +521,8 @@ def run_clip(
         clip_payloads=clip_payloads,
         skipped=skipped,
         score=score.to_dict(),
-        success=score.success and validation["ok"],
-        message=score.message,
+        success=score.success and validation["ok"] and full_render,
+        message=score_message,
     )
 
 
