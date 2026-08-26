@@ -385,11 +385,11 @@
     "fanops.fanops_hashtags": [
       {
         "call": "fcntl.flock",
-        "line": 674
+        "line": 675
       },
       {
         "call": "fcntl.flock",
-        "line": 680
+        "line": 681
       }
     ],
     "fanops.ledger": [
@@ -699,11 +699,11 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.check_output",
-        "line": 271
+        "line": 169
       },
       {
         "call": "subprocess.check_output",
-        "line": 313
+        "line": 211
       }
     ],
     "fanops.ingest": [

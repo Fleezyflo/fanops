@@ -1,4 +1,5 @@
 # Unit: ig_hashtag_scrape resolve / measure / harvest / configured (no network).
+from pathlib import Path
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable,
                                        measure_and_harvest_scrape, resolve_hashtag_scrape,
@@ -41,17 +42,12 @@ def test_scrape_configured_any_of_comma_users(tmp_path, monkeypatch):
     assert scrape_session_path(cfg, "perca.late") == legacy
 
 
-def _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1"):
-    import fanops.ig_hashtag_scrape as igs
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: (sid, ds))
-
 
 def test_open_client_picks_first_usable_user(tmp_path, monkeypatch):
     """MOL-857: preference order in FANOPS_IG_SCRAPE_USER; first with session|password wins."""
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "dead,live,other")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "live")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +70,6 @@ def test_open_client_unattended_prefers_session_over_earlier_password(tmp_path, 
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "pwonly,sessuser")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD_PWONLY", "x")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
-    _stub_profile_auth(monkeypatch)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "sessuser")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -273,15 +268,12 @@ def test_search_hashtags_scrape_fail_open_on_client_error():
     assert search_hashtags_scrape(_Boom(), "music") == []
 
 
-def test_open_client_unattended_profile_sid_probes_without_dump(tmp_path, monkeypatch):
-    """Unattended success: load envelope + profile sid → probe ok → no dump_settings."""
+def test_open_client_unattended_envelope_probes_without_dump(tmp_path, monkeypatch):
+    """Unattended success: load envelope → probe ok → no dump_settings."""
     from pathlib import Path
-    from types import SimpleNamespace
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1")
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -290,40 +282,23 @@ def test_open_client_unattended_profile_sid_probes_without_dump(tmp_path, monkey
     sess.parent.mkdir(parents=True, exist_ok=True)
     original = '{"keep": "envelope"}'
     sess.write_text(original)
-    seen = {"search": 0, "login": 0, "account_info": 0, "dump": 0}
-
-    class _Jar:
-        def set(self, *a, **k):
-            seen.setdefault("cookies", []).append(a[0] if a else None)
+    seen = {"search": 0, "login": 0, "dump": 0}
 
     class _Live:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={})
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
             seen["search"] += 1
             return []
-        def account_info(self):
-            seen["account_info"] += 1
-            raise AssertionError("unattended must not probe account_info")
         def login(self, *_a, **_k):
             seen["login"] += 1
-            raise AssertionError("unattended must not login")
         def dump_settings(self, p):
             seen["dump"] += 1
             Path(p).write_text('{"overwritten": true}')
-        def inject_sessionid_to_public(self):
-            seen["injected"] = True
     c = open_client(cfg, client_factory=_Live)
     assert c is not None
-    assert seen["search"] == 1
-    assert seen["login"] == 0
-    assert seen["account_info"] == 0
-    assert seen["dump"] == 0
-    assert seen.get("injected") is True
-    assert c.authorization_data.get("sessionid") == "profile-sid"
+    assert seen == {"search": 1, "login": 0, "dump": 0}
     assert sess.read_text() == original
+
 
 
 def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_path, monkeypatch):
@@ -333,7 +308,6 @@ def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_pat
     from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    monkeypatch.setattr(igs, "_profile_auth_for", lambda *_a, **_k: None)
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -359,73 +333,19 @@ def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_pat
         open_client(cfg, client_factory=_Stale)
         raise AssertionError("expected ScrapeUnavailable")
     except ScrapeUnavailable as e:
-        assert "profile" in str(e)
-    assert seen == {"login": 0, "account_info": 0, "dump": 0, "search": 0}
+        assert "scrape session" in str(e)
+    assert seen == {"login": 0, "account_info": 0, "dump": 0, "search": 1}
     assert sess.read_text() == original
 
 
-def test_open_client_never_reads_system_chrome(tmp_path, monkeypatch):
-    """Unattended never walks system Chrome; _browser_sessionid_for must not exist."""
-    import sys
-    from pathlib import Path
+def test_ht4_runtime_has_no_cookie_inject_symbols():
+    """HT4: cookie inject helpers must not exist — only envelope-based open_client remains."""
     import fanops.ig_hashtag_scrape as igs
-    from fanops.ig_hashtag_scrape import open_client, scrape_chrome_profile_dir, scrape_session_path
-    assert not hasattr(igs, "_browser_sessionid_for")
-    assert not hasattr(igs, "_try_browser_session_restore")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    cfg = Config(root=tmp_path)
-    sess = scrape_session_path(cfg, "u")
-    sess.parent.mkdir(parents=True, exist_ok=True)
-    sess.write_text("{}")
-    cookie = scrape_chrome_profile_dir(cfg, "u") / "Default" / "Network" / "Cookies"
-    cookie.parent.mkdir(parents=True, exist_ok=True)
-    cookie.write_bytes(b"x")
-    seen_files: list[str] = []
+    src = Path(igs.__file__).read_text()
+    for needle in ("import browser_cookie3", "def _inject_sessionid", "def _profile_auth_for",
+                   "def profile_instagram_cookies"):
+        assert needle not in src, f"{needle} must be deleted from ig_hashtag_scrape"
 
-    class _Cookie:
-        def __init__(self, name, value, domain):
-            self.name, self.value, self.domain = name, value, domain
-
-    class _Chrome:
-        def __init__(self, **kw):
-            path = str(kw.get("cookie_file") or "")
-            seen_files.append(path)
-            home_chrome = str(Path.home() / "Library/Application Support/Google/Chrome")
-            if home_chrome in path or "9222" in path or "9223" in path:
-                raise AssertionError(f"must not read system Chrome: {path}")
-            self._hits = [
-                _Cookie("sessionid", "profile-sid", ".instagram.com"),
-                _Cookie("ds_user_id", "1", ".instagram.com"),
-            ]
-        def __iter__(self):
-            return iter(self._hits)
-
-    fake = type(sys)("browser_cookie3")
-    fake.chrome = _Chrome
-    fake.BrowserCookieError = OSError
-    monkeypatch.setitem(sys.modules, "browser_cookie3", fake)
-    real_glob = Path.glob
-
-    def guarded_glob(self, pattern):
-        s = str(self)
-        if "Application Support/Google/Chrome" in s:
-            raise AssertionError(f"must not glob system Chrome: {self}/{pattern}")
-        return real_glob(self, pattern)
-
-    monkeypatch.setattr(Path, "glob", guarded_glob)
-
-    class _Live:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1"}
-        def load_settings(self, _p): pass
-        def search_hashtags(self, _q): return []
-        def account_info(self): raise AssertionError("unattended must not probe account_info")
-        def login(self, *_a, **_k): raise AssertionError("unattended must not login")
-        def dump_settings(self, _p): raise AssertionError("unattended must not dump")
-    open_client(cfg, client_factory=_Live)
-    assert seen_files
-    root = str(scrape_chrome_profile_dir(cfg, "u"))
-    assert all(root in p for p in seen_files)
 
 
 def test_open_client_unattended_dead_profile_sid_leaves_envelope(tmp_path, monkeypatch):
@@ -436,7 +356,6 @@ def test_open_client_unattended_dead_profile_sid_leaves_envelope(tmp_path, monke
     from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="dead-sid", ds="1")
     def _boom(_u):
         raise AssertionError("unattended must not read scrape password")
     monkeypatch.setattr(igs, "scrape_password_for", _boom)
@@ -468,67 +387,19 @@ def test_open_client_unattended_dead_profile_sid_leaves_envelope(tmp_path, monke
     assert sess.read_text() == original
 
 
-def test_open_client_unattended_ds_mismatch_refuses_no_write(tmp_path, monkeypatch):
-    """Profile sid with wrong ds_user_id → refuse, no write."""
+
+def test_scrape_login_promote_writes_envelope_from_session_file(tmp_path, monkeypatch):
+    """scrape-login promote writes envelope from on-disk session probe (no cookie inject)."""
     from pathlib import Path
-    import fanops.ig_hashtag_scrape as igs
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="profile-sid", ds="999")
-    def _boom(_u):
-        raise AssertionError("unattended must not read scrape password")
-    monkeypatch.setattr(igs, "scrape_password_for", _boom)
-    cfg = Config(root=tmp_path)
-    sess = scrape_session_path(cfg, "u")
-    sess.parent.mkdir(parents=True, exist_ok=True)
-    original = '{"keep": "envelope"}'
-    sess.write_text(original)
-    seen = {"search": 0, "dump": 0, "login": 0}
-
-    class _Env:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1", "sessionid": "old"}
-        def load_settings(self, _p): pass
-        def search_hashtags(self, _q):
-            seen["search"] += 1
-            raise AssertionError("ds mismatch must refuse before probe")
-        def account_info(self): raise AssertionError("unattended must not probe account_info")
-        def login(self, *_a, **_k):
-            seen["login"] += 1
-        def dump_settings(self, p):
-            seen["dump"] += 1
-            Path(p).write_text('{"overwritten": true}')
-    try:
-        open_client(cfg, client_factory=_Env)
-        raise AssertionError("expected ScrapeUnavailable")
-    except ScrapeUnavailable as e:
-        assert "ds_user_id" in str(e)
-    assert seen == {"search": 0, "dump": 0, "login": 0}
-    assert sess.read_text() == original
-
-
-def test_scrape_login_promote_writes_envelope_from_profile_sid(tmp_path, monkeypatch):
-    """scrape-login promote writes envelope (fake client + fake profile sid)."""
-    from pathlib import Path
-    from types import SimpleNamespace
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    _stub_profile_auth(monkeypatch, sid="profile-sid", ds="1")
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
     seen = {"search": 0, "login": 0, "dump": 0}
 
-    class _Jar:
-        def set(self, *a, **k): pass
-
     class _Live:
-        def __init__(self):
-            self.authorization_data = {"ds_user_id": "1"}
-            self.private = SimpleNamespace(cookies=_Jar(), headers={})
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
             seen["search"] += 1
@@ -538,15 +409,13 @@ def test_scrape_login_promote_writes_envelope_from_profile_sid(tmp_path, monkeyp
         def dump_settings(self, p):
             seen["dump"] += 1
             Path(p).write_text('{"promoted": true}')
-        def inject_sessionid_to_public(self):
-            seen["injected"] = True
     c = open_client(cfg, client_factory=_Live, allow_reauth=True, user="u")
     assert c is not None
     assert seen["search"] == 1
     assert seen["login"] == 0
     assert seen["dump"] == 1
-    assert seen.get("injected") is True
     assert '"promoted": true' in sess.read_text()
+
 
 
 def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch):

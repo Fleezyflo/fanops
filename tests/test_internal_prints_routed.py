@@ -70,11 +70,8 @@ def test_learn_doctor_emits_structured_report(tmp_path, monkeypatch):
 
 def test_hashtags_refresh_aborted_logs_structured(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_refresh
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
-    monkeypatch.setenv("META_IG_USER_ID", "ig")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
-    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.personas_path.write_text('{"personas": [oops]}')
     assert cmd_hashtags_refresh(cfg) == 2
     recs = _log_records(cfg)
     assert any(r["stage"] == "hashtags" and r["outcome"] == "refresh_aborted" and r["level"] == "error" for r in recs)
