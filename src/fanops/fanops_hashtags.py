@@ -20,7 +20,7 @@ A tag with neither plays nor likes in the Top grid is UNMEASURED and absent — 
 
 Missing scrape (no [igscrape] / no user / no session file) aborts LOUDLY (`written:False`,
 `aborted:no_scrape`) — there is no silent Graph fallback. Platform exceptions flow through untouched
-and arm cooldown via `_freeze_for` (ChallengeError → checkpoint; else class-name reason on the ladder)."""
+and arm cooldown via `_freeze_for` (auth death → indefinite hold; else class-name reason on the ladder)."""
 from __future__ import annotations
 import os
 from contextlib import contextmanager
@@ -38,7 +38,20 @@ _MEASURE_MAX_AGE_DAYS = 30    # remesure (medias_top) only when measured_at is o
 _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h tick (NOT file mtime)
 _COOLDOWN_NAME = ".hashtag_scrape_cooldown.json"  # Instagram platform-stop backoff (MOL-695); never sleep
 _COOLDOWN_DELAYS_S = (30 * 60, 60 * 60, 2 * 60 * 60, 6 * 60 * 60)  # streak 1..N → 30m, 1h, 2h, 6h cap
-_CHECKPOINT_DELAY_S = 12 * 60 * 60  # a LOCK is not a rate limit: one long freeze, never the ladder (MOL-699)
+_CHECKPOINT_DELAY_S = 12 * 60 * 60  # legacy flat delay; auth death no longer uses this (HT3)
+# Auth death (login / challenge cousins): indefinite hold until scrape-login — never the 30m→6h ladder.
+_AUTH_DEATH_REASON = "auth_death"
+_AUTH_DEATH_DELAY_S = 100 * 365 * 24 * 3600  # far future until; scrape-login is the only clear
+_AUTH_DEATH_NAMES = frozenset({
+    "LoginRequired", "ClientLoginRequired", "ClientUnauthorizedError",
+    "ChallengeError", "ChallengeRequired", "CaptchaChallengeRequired",
+})
+_AUTH_HOLD_REASONS = frozenset({
+    _AUTH_DEATH_REASON, "operator_hold", "checkpoint",
+    "LoginRequired", "ClientLoginRequired", "ClientUnauthorizedError",
+    "ChallengeRequired", "ChallengeError", "CaptchaChallengeRequired",
+    "login_required",
+})
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
 _EXACT_NAME_QUOTA = 30              # remesure at most this many unique sidecar names / window (HV1-PR4)
 _EXACT_NAME_WINDOW_DAYS = 7
@@ -222,10 +235,24 @@ def _utc_day(now: datetime) -> str:
     return now.astimezone(timezone.utc).date().isoformat()
 
 
+def _is_auth_hold(rec: dict) -> bool:
+    """True when reason is auth death / operator hold — scrape-login clears; clock never does."""
+    return isinstance(rec, dict) and rec.get("reason") in _AUTH_HOLD_REASONS
+
+
+def _day_used(rec: dict, now: datetime) -> int:
+    today = _utc_day(now)
+    if rec.get("day") == today and isinstance(rec.get("used"), (int, float)):
+        return max(int(rec["used"]), 0)
+    return 0
+
+
 def _block_view_for_rec(rec: dict, now: datetime) -> dict | None:
-    """Return a freeze view for one account record, or None when that account is healthy."""
+    """Block view for auth hold, live freeze, or day-budget exhaustion; else None (healthy)."""
     if not isinstance(rec, dict):
         return None
+    if _is_auth_hold(rec):
+        return dict(rec)
     until = rec.get("until")
     try:
         ts = datetime.fromisoformat(until) if isinstance(until, str) else None
@@ -236,6 +263,12 @@ def _block_view_for_rec(rec: dict, now: datetime) -> dict | None:
             ts = ts.replace(tzinfo=timezone.utc)
         if now < ts:
             return dict(rec)
+    used = _day_used(rec, now)
+    if used >= _SCRAPE_DAY_BUDGET:
+        view = {"reason": "budget", "day": _utc_day(now), "used": used}
+        if isinstance(rec.get("streak"), (int, float)):
+            view["streak"] = int(rec["streak"])
+        return view
     return None
 
 
@@ -255,13 +288,15 @@ def _account_rec(blob: dict, user: str) -> dict:
 
 
 def _scrub_expired_accounts(blob: dict, now: datetime) -> bool:
-    """Drop until/reason/streak once the clock has passed. Dead labels are a lie."""
+    """Drop until/reason once the clock has passed. Auth holds never auto-clear (HT3)."""
     accounts = blob.get("accounts") if isinstance(blob, dict) else None
     if not isinstance(accounts, dict):
         return False
     changed = False
     for rec in accounts.values():
         if not isinstance(rec, dict) or rec.get("until") is None:
+            continue
+        if _is_auth_hold(rec):
             continue
         if _is_frozen(rec, now):
             continue
@@ -273,9 +308,11 @@ def _scrub_expired_accounts(blob: dict, now: datetime) -> bool:
 
 
 def _is_frozen(rec: dict, now: datetime) -> bool:
-    """True when accounts[user].until is in the future. Budget is not a freeze."""
+    """True on auth hold or future until. Budget is not a freeze."""
     if not isinstance(rec, dict):
         return False
+    if _is_auth_hold(rec):
+        return True
     until = rec.get("until")
     try:
         ts = datetime.fromisoformat(until) if isinstance(until, str) else None
@@ -289,7 +326,7 @@ def _is_frozen(rec: dict, now: datetime) -> bool:
 
 
 def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> bool:
-    """True when this scrape user is frozen or day-budget-exhausted (MOL-858). Fail-open."""
+    """True when frozen, auth-held, or day-budget-exhausted (`_day_room` ≤ 0). Fail-open."""
     now = now or datetime.now(timezone.utc)
     return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
 
@@ -301,7 +338,7 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
 
     Lock picker: `require_budget_room=True, require_session=False` (Safari; no envelope json).
     Harvest remesure keeps `require_session=True`. `require_budget_room=False` skips only a live
-    freeze — not the lock producer's default.
+    freeze / auth hold — not day budget (open_client / lock inject path).
     """
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
     users = scrape_users(cfg)
@@ -315,9 +352,10 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
     eligible: list[str] = []
     for user in users:
         rec = _account_rec(blob, user)
-        if _is_frozen(rec, now):
-            continue
-        if require_budget_room and scrape_user_blocked(cfg, user, now):
+        if require_budget_room:
+            if scrape_user_blocked(cfg, user, now):
+                continue
+        elif _is_frozen(rec, now):
             continue
         if require_session:
             if allow_reauth:
@@ -424,7 +462,7 @@ def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
                       user: str | None = None) -> dict:
     """Arm the read-and-skip freeze that refresh_store_if_due checks BEFORE opening scrape: bump the
     consecutive streak and write `until` from the ladder (30m→1h→2h→6h cap), or from `delay_s` when the
-    failure is not a rate limit and the ladder would be wrong (a checkpoint LOCK — MOL-699).
+    failure is auth death / not a rate limit (HT3 indefinite hold; MOL-699).
 
     When `user` is set (MOL-858), nest under accounts[user]={until,streak,reason,day,used} so a peer
     can keep scraping. Without `user`, keep the legacy top-level shape (day/used/accounts) for
@@ -535,6 +573,8 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
 
 
 _OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy blob aliases
+    "auth_death": "run fanops hashtags scrape-login after fixing login/challenge in the app",
+    "operator_hold": "operator hold — run fanops hashtags scrape-login when ready to resume",
     "LoginRequired": "run fanops hashtags scrape-login (FanOps Chrome profile, not system Chrome)",
     "login_required": "run fanops hashtags scrape-login (FanOps Chrome profile, not system Chrome)",
     "checkpoint": "verify in the Instagram app, then run fanops hashtags scrape-login",
@@ -548,17 +588,15 @@ _OUTAGE_REMEDY = {  # class-name keys post-909; login_required/throttle = legacy
 
 
 def _freeze_for(exc: BaseException) -> tuple[str, int | None]:
-    """Map a platform stop onto (cooldown reason, optional flat delay_s). Challenge* → checkpoint + 12h;
-    everything else labels with its class name and rides the ladder (`delay_s=None`)."""
+    """Map a platform stop onto (cooldown reason, optional flat delay_s).
+
+    Auth death (LoginRequired / Challenge* cousins) → indefinite `auth_death` until scrape-login —
+    never the 30m→6h ladder. Everything else labels with its class name and rides the ladder.
+    """
     name = type(exc).__name__
-    if "Challenge" in name:
-        return ("checkpoint", _CHECKPOINT_DELAY_S)
-    try:
-        from instagrapi.exceptions import ChallengeError
-    except ImportError:
-        ChallengeError = ()  # fail closed: never checkpoint-classify without the lib
-    if ChallengeError and isinstance(exc, ChallengeError):
-        return ("checkpoint", _CHECKPOINT_DELAY_S)
+    mro = {c.__name__ for c in type(exc).__mro__}
+    if mro & _AUTH_DEATH_NAMES or "Challenge" in name:
+        return (_AUTH_DEATH_REASON, _AUTH_DEATH_DELAY_S)
     return (name, None)
 
 
@@ -754,7 +792,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     `last_complete_pass` advances ONLY when the due queue was finished (throttled is False).
 
     Every platform failure that means "stop touching this account" arms that account's cooldown via
-    `_freeze_for` + `_persist_cooldown` (MOL-699/858): ChallengeError → checkpoint + 12h; else the
+    `_freeze_for` + `_persist_cooldown` (HT3/MOL-858): auth death → indefinite hold; else the
     exception class name on the ladder. OUR-state `ScrapeUnavailable` stays `no_scrape` (no freeze).
 
     PROGRESS and the STOP SIGNAL are INDEPENDENT (MOL-727): measuring a tag resets the streak, but a
@@ -988,14 +1026,13 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
             throttled = True
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i, cap=try_cap)
     else:
-        blob = _load_cooldown_blob(cfg)
         walk: list[tuple[str, int]] = []
         # Harvest needs an envelope on disk. Tick remesure walks FANOPS_IG_SCRAPE_USER
         # (Safari profile map, #1029) and does not require ig_scrape_session_*.json.
         if harvest:
             peers = _healthy_scrape_users(cfg, now, allow_reauth=False)
         else:
-            peers = [u for u in listed if not _is_frozen(_account_rec(blob, u), now)]
+            peers = [u for u in listed if not scrape_user_blocked(cfg, u, now)]
         for u in peers:
             cap = _user_attempt_room(cfg, u, now=now)
             if not harvest:
@@ -1044,8 +1081,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
                 cd = _charge_user(u, user_tried, stop_exc)
                 if cd is not None:
                     cooldown = cd
-                # refresh room view for later peers after charges
-                blob = _load_cooldown_blob(cfg)
             if not opened_any:
                 if last_open_abort:
                     kind, detail = last_open_abort

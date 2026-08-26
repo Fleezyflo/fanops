@@ -219,6 +219,7 @@ def test_igweb_json_charges_each_live_xhr(tmp_path, monkeypatch):
 
 
 def test_safari_fetch_skips_network_when_frozen(tmp_path, monkeypatch):
+    """Pinned now — not Aug-19+7d wall clock (expires mid-CI on 2026-08-26)."""
     import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import _persist_cooldown
     from fanops.ig_hashtag_scrape import ScrapeUnavailable
@@ -335,7 +336,7 @@ def test_safari_fetch_200_login_required_body_freezes(tmp_path, monkeypatch):
         pass
     rec = _account_rec(_load_cooldown_blob(cfg), "u")
     assert _is_frozen(rec, datetime.now(timezone.utc))
-    assert rec.get("reason") == "LoginRequired"
+    assert rec.get("reason") == "auth_death"
 
 
 def test_safari_fetch_200_missing_tag_does_not_freeze(tmp_path, monkeypatch):
@@ -395,7 +396,7 @@ def test_safari_fetch_200_logged_out_title_freezes(tmp_path, monkeypatch):
     import fanops.ig_web_scrape as iws
     _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(200, {
         "status": "fail", "error_title": "You've Been Logged Out", "logout_reason": 8,
-    }), iws.LoginRequired, "LoginRequired")
+    }), iws.LoginRequired, "auth_death")
 
 
 def test_safari_fetch_200_html_login_freezes(tmp_path, monkeypatch):
@@ -407,7 +408,7 @@ def test_safari_fetch_200_html_login_freezes(tmp_path, monkeypatch):
         "status": 200,
         "url": "https://www.instagram.com/api/v1/tags/music/info/",
         "text": html,
-    }), iws.LoginRequired, "LoginRequired")
+    }), iws.LoginRequired, "auth_death")
 
 
 def test_safari_fetch_200_non_json_freezes(tmp_path, monkeypatch):
@@ -426,3 +427,27 @@ def test_safari_fetch_400_unclassified_freezes(tmp_path, monkeypatch):
     _assert_fetch_freezes(tmp_path, monkeypatch, _xhr_json(400, {
         "status": "fail", "message": "counter get error",
     }), iws.WebThrottled, "WebThrottled")
+
+
+def test_safari_fetch_skips_when_day_budget_exhausted(tmp_path, monkeypatch):
+    """HT3: scrape_user_blocked must gate day budget — no XHR when used >= day budget."""
+    import fanops.ig_web_scrape as iws
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _utc_day,
+                                       scrape_user_blocked)
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable
+    from fanops.controlio import write_json_atomic
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path)
+    now = datetime.now(timezone.utc)
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {"u": {"day": _utc_day(now), "used": _SCRAPE_DAY_BUDGET}}})
+    assert scrape_user_blocked(cfg, "u", now) is True
+    hit = []
+    monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: hit.append(1) or _ok_xhr())
+    try:
+        iws._safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                          user="u", cfg=cfg)
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable as e:
+        assert "budget" in str(e).lower() or "frozen" in str(e).lower()
+    assert hit == []

@@ -2,8 +2,8 @@
 
 Composes existing guards (Accounts.validate, cutover-safety preflight, toolchain presence) into ONE
 operator view: PASS/FAIL per item with the exact next action, plus informational notes. Does not
-create platform accounts or obtain poster API keys. Scrape probe (`_hashtag_scrape_check`) reports
-only — it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
+create platform accounts or obtain poster API keys. Scrape check (`_hashtag_scrape_check`) is session presence only (HT3) — no live
+Instagram probe; it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
 writes live in `learn_doctor` (`assay.dangerous`), not in this module.
 """
 from __future__ import annotations
@@ -100,48 +100,19 @@ _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days 
 
 
 def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) -> dict | None:
-    """Hashtag Layer A needs a LIVE instagrapi scrape session that can RESOLVE a tag.
+    """Hashtag Layer A: session/envelope presence only — no live Instagram tag or API probe (HT3).
 
     Soft setup incompleteness (not configured / no session yet) is N/A — omit the check
-    (MOL-965: never ok=True pretend PASS). A session that fails login OR whose hashtag_info
-    returns login_required fails LOUD (MOL-687 / MOL-696). Never echoes password or session contents.
-    Multi-account (MOL-857): omit when no listed user has a session yet; probe via open_client
-    when any session exists. `open_client` / `probe_resolve` injectable so tests never hit Instagram."""
-    from fanops.ig_hashtag_scrape import (ScrapeUnavailable, any_scrape_session, scrape_configured)
-    lbl = "hashtag Layer A scrape session live (instagrapi)"
+    (MOL-965: never ok=True pretend PASS). `open_client` / `probe_resolve` are accepted for
+    call-site compat but ignored; doctor must not hit Instagram."""
+    del open_client, probe_resolve
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_configured
+    lbl = "hashtag Layer A scrape session present"
     if not scrape_configured(cfg):
         return None  # N/A — setup incomplete, not a green PASS
-    # Password alone is setup-in-progress; the expiry bug is a SESSION that LOOKS fine but is dead.
     if not any_scrape_session(cfg):
         return None  # N/A — credentials without session is setup incompleteness
-    opener = open_client
-    if opener is None:
-        from fanops.ig_hashtag_scrape import open_client as opener
-    probe = probe_resolve
-    if probe is None:
-        from fanops.ig_hashtag_scrape import resolve_hashtag_scrape as probe
-    try:
-        try:
-            client = opener(cfg)
-        except ScrapeUnavailable:
-            raise
-        except Exception as e:                          # noqa: BLE001 — open raised platform error
-            if decide("observability", 0) is EscalationPosture.degrade:
-                return _check(lbl, False, str(e))
-            raise
-        user = getattr(client, "_fanops_scrape_user", "") or ""
-        try:
-            probe(client, "#hiphop")
-            return _check(lbl, True, "")
-        except ScrapeUnavailable:
-            raise
-        except Exception as e:                          # noqa: BLE001 — probe platform error
-            if decide("observability", 0) is EscalationPosture.degrade:
-                return _check(lbl, False,
-                              f"@{user}: {e}" if user else str(e))
-            raise
-    except ScrapeUnavailable as e:
-        return _check(lbl, False, f"{e} — run `fanops hashtags scrape-login`")
+    return _check(lbl, True, "")
 
 def _meta_token_expiry_check(cfg: Config, *, get=None):
     """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
