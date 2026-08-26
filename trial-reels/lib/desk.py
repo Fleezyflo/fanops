@@ -1,7 +1,7 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
-Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
-words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
+Treatments are enumerated in lib.treatments (whisper-line + clause-boundary spans,
+no invented words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
 """
 
 from __future__ import annotations
