@@ -68,7 +68,7 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 5
+    assert result["claims_found"] == 4
     assert result["cards"] == []
     assert "need 20" in result["reason"]
     validation = validate_desk_result(result)
@@ -76,9 +76,9 @@ def test_live_english_clip_fails_closed_below_twenty() -> None:
     plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
     assert plans == []
     texts = {item["text"] for item in result.get("treatments") or []}
+    assert texts == EN_LIVE_SENTENCES
     assert "So the next" not in texts
     assert "fails." not in texts
-    assert "Which brings us to the missing reality layer," in texts
 
 
 def test_english_live_transcript_still_finds_whisper_lines_before_blocking() -> None:

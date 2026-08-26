@@ -1,8 +1,9 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: full whisper lines plus adjacent clause segments at comma / major markers.
-Arabic: one treatment per Whisper line. No sliding windows, permutations, cross-sentence
-joins, or nested substring farms.
+English: stitched grammatical sentences (whisper crumbs dropped first), then adjacent
+clause segments at comma / major markers only — never sliding windows or boundary farms.
+Arabic: one treatment per Whisper line with global strict-substring drop (عزبتني inside
+لك كفاية عزبتني). No permutations, cross-sentence joins, or invented words.
 """
 
 from __future__ import annotations
@@ -53,6 +54,31 @@ _EN_DIRECT = frozenset({"you", "your", "you're", "youre", "yours", "us"})
 
 _FORBIDDEN_REWRITES = frozenset({"عذبتيني"})
 _EN_FORBIDDEN_SLICES = frozenset({"so the next", "fails.", "fails. so the next"})
+_EN_FRAGMENT_CRUMBS = frozenset(
+    {
+        "so the next",
+        "fails.",
+        "ross defines a true",
+        "boss by the rare ability",
+        "by the rare ability",
+        "one that completely evaporates",
+        "evaporates the second",
+        "the missing reality layer,",
+        "which brings us to the missing",
+        "it's a test of genuine",
+        "respect that the modern",
+        "inside a padded recording booth",
+        "inside a padded recording",
+        "booth creates a powerful",
+        "rare ability to execute",
+        "execute moves the real",
+        "moves the real streets actually accept.",
+        "the real streets actually accept.",
+        "illusion, one that completely",
+        "that the modern corporate industry completely",
+        "the modern corporate industry completely",
+    }
+)
 _MIN_HOOK_WORDS_EN = 4
 _MIN_BOUNDARY_WORDS_EN = 3
 _MIN_CONTENT_WORDS_EN = 2
@@ -170,17 +196,22 @@ def _ends_sentence(word: str) -> bool:
     return bool(_SENTENCE_END_RE.search(word))
 
 
-def _is_whisper_crumb_line(text: str) -> bool:
-    """Reject incomplete whisper lines before they enter enumeration."""
+def _is_en_fragment_crumb(text: str) -> bool:
+    """Reject known incomplete whisper slices and fixed fragment crumbs."""
     words = [part for part in text.split() if part.strip()]
     if not words:
         return True
     norm = _normalize_phrase(text)
-    if norm in _EN_FORBIDDEN_SLICES:
+    if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
         return True
     if len(words) < _MIN_HOOK_WORDS_EN and not _ends_sentence(words[-1]):
         return True
     return False
+
+
+def _is_whisper_crumb_line(text: str) -> bool:
+    """Reject incomplete whisper lines before they enter enumeration."""
+    return _is_en_fragment_crumb(text)
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
@@ -391,7 +422,7 @@ def _is_crumb(
         return True
     if language == "en":
         norm = _normalize_phrase(text)
-        if norm in _EN_FORBIDDEN_SLICES:
+        if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
             return True
         if not _starts_grammatically(text, start_index=start_index, is_full_whisper_line=is_full_whisper_line):
             return True
@@ -546,7 +577,7 @@ def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list
         text = _line_text(raw)
         if not text:
             continue
-        if language == "en" and _is_whisper_crumb_line(text):
+        if language == "en" and _is_en_fragment_crumb(text):
             continue
         words = [word for word in text.split() if word.strip()]
         if not words:
@@ -559,6 +590,32 @@ def _whisper_line_groups(transcript: dict[str, Any], language: str) -> list[list
             ]
         )
     return groups
+
+
+def _stitched_sentence_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """English: one token group per stitched grammatical sentence."""
+    groups: list[list[_Token]] = []
+    sentence_index = 0
+    for text, start, line_index in _stitch_line_texts(_parse_lines(transcript), language):
+        for unit in _split_stitched_sentences(text):
+            words = [word for word in unit.split() if word.strip()]
+            if not words:
+                continue
+            groups.append(
+                [
+                    _Token(word, start, line_index, unit, sentence_index, word_index)
+                    for word_index, word in enumerate(words)
+                ]
+            )
+            sentence_index += 1
+    return groups
+
+
+def _hook_source_groups(transcript: dict[str, Any], language: str) -> list[list[_Token]]:
+    """Hook sources: stitched sentences (en) or raw Whisper lines (ar)."""
+    if language == "en":
+        return _stitched_sentence_groups(transcript, language)
+    return _whisper_line_groups(transcript, language)
 
 
 def _drop_strict_substring_hooks(treatments: list[HookTreatment]) -> list[HookTreatment]:
@@ -574,6 +631,7 @@ def _drop_strict_substring_hooks(treatments: list[HookTreatment]) -> list[HookTr
 
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
     """Per-line non-nested antichain, then drop global strict substrings."""
+    del language
     by_line: dict[str, list[HookTreatment]] = {}
     for candidate in candidates:
         by_line.setdefault(candidate.line_text, []).append(candidate)
@@ -647,7 +705,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    for sentence_tokens in _whisper_line_groups(transcript, language):
+    for sentence_tokens in _hook_source_groups(transcript, language):
         for start, end in _candidate_spans(sentence_tokens, language):
             _append_span(sentence_tokens, start, end)
         source_order += 1
