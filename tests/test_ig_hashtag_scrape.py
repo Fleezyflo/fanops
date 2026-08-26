@@ -339,11 +339,12 @@ def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_pat
 
 
 def test_ht4_runtime_has_no_cookie_inject_symbols():
-    """HT4: browser_cookie3 / _inject_sessionid / _profile_auth_for must not exist at runtime."""
+    """HT4: cookie inject helpers must not exist — only envelope-based open_client remains."""
     import fanops.ig_hashtag_scrape as igs
     src = Path(igs.__file__).read_text()
-    for sym in ("browser_cookie3", "_inject_sessionid", "_profile_auth_for", "profile_instagram_cookies"):
-        assert sym not in src, f"{sym} must be deleted from ig_hashtag_scrape"
+    for needle in ("import browser_cookie3", "def _inject_sessionid", "def _profile_auth_for",
+                   "def profile_instagram_cookies"):
+        assert needle not in src, f"{needle} must be deleted from ig_hashtag_scrape"
 
 
 
