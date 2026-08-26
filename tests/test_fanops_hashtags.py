@@ -174,7 +174,7 @@ def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
 
 
 def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
-    """Injected harvest pass: ChallengeError → checkpoint abort (via Safari opener in production)."""
+    """HT3 auth_death on Challenge* — injected harvest pass, Safari runtime in production."""
     from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -185,7 +185,7 @@ def test_refresh_store_checkpoint_is_its_own_abort(tmp_path, monkeypatch):
             raise ChallengeRequired("challenge_required")
 
     out = refresh_store(cfg, scrape_client=_Dead())
-    assert out["written"] is False and out["aborted"] == "checkpoint"
+    assert out["written"] is False and out["aborted"] == "auth_death"
     assert out["reason"] == "challenge_required"
     assert not cfg.hashtags_path.exists()
 
@@ -345,13 +345,12 @@ def test_scrape_throttle_cooldown_backoff_and_success_reset(tmp_path, monkeypatc
 
 
 def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeypatch):
-    """MOL-699: a lock had NO backoff — the checkpoint abort returned before writing anything, so the
-    next due tick logged in again against a locked account, which is what deepens a lock. It must arm a
-    LONG freeze (not the rate-limit ladder) and the next tick must not open a client at all."""
+    """HT3: Challenge* arms indefinite auth_death — never the 30m→6h ladder; ticks skip forever
+    until scrape-login clears (not a 12h auto-resume)."""
     from datetime import datetime, timezone, timedelta
     import fanops.ig_hashtag_scrape as igs
     import fanops.ig_web_scrape as iws
-    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _CHECKPOINT_DELAY_S)
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _AUTH_DEATH_DELAY_S)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
     _write_sidecar(cfg, ["#hiphop"])
@@ -366,47 +365,51 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     monkeypatch.setattr(iws, "open_web_session", locked)
     monkeypatch.setattr(igs, "open_client", boom_client)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert out["refreshed"] is False and out["aborted"] == "checkpoint"
+    assert out["refreshed"] is False and out["aborted"] == "auth_death"
     assert opens["n"] == 1
     cd = json.loads(_cooldown_path(cfg).read_text())
-    # MOL-858: freeze nests under accounts[user]; legacy top-level only when no user.
     rec = (cd.get("accounts") or {}).get("u") or cd
-    assert rec["reason"] == "checkpoint"
-    assert rec["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
-    # Every tick inside the freeze must skip WITHOUT touching Instagram — the whole point.
-    for mins in (1, 60, 600):
-        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins))
+    assert rec["reason"] == "auth_death"
+    assert rec["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
+    # Far past the old ladder / 12h checkpoint — still held; scrape-login is the only clear.
+    for delta in (timedelta(minutes=1), timedelta(hours=13), timedelta(days=8)):
+        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + delta)
         assert skip["refreshed"] is False and skip["reason"] == "cooldown"
-        assert skip["cooldown_reason"] == "checkpoint"      # run.log says WHY it is frozen
+        assert skip["cooldown_reason"] == "auth_death"
     assert opens["n"] == 1, f"re-opened a locked account {opens['n']} times"
-    assert not cfg.hashtags_path.exists()                   # cache untouched on every abort path
+    assert not cfg.hashtags_path.exists()
 
 
 def test_login_required_arms_the_laddered_cooldown(tmp_path, monkeypatch):
-    """MOL-699: a dead session was re-probed every tick forever. It gets the normal 30m→1h→2h→6h
-    ladder (an expiry IS transient, unlike a lock), tagged with its class-name reason."""
+    """HT3: LoginRequired is auth death — indefinite hold, never the 30m→6h ladder."""
     from datetime import datetime, timezone, timedelta
     from instagrapi.exceptions import LoginRequired
-    from fanops.fanops_hashtags import _cooldown_path, _COOLDOWN_DELAYS_S
+    from fanops.fanops_hashtags import (_cooldown_path, _AUTH_DEATH_DELAY_S, _AUTH_DEATH_REASON,
+                                       refresh_store_if_due)
     cfg = Config(root=tmp_path); _persona(cfg)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse=LoginRequired("login_required")), now=t0)
-    assert out["aborted"] == "LoginRequired" and out["written"] is False
+    assert out["aborted"] == _AUTH_DEATH_REASON and out["written"] is False
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "LoginRequired" and cd["streak"] == 1
-    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
-    t1 = t0 + timedelta(hours=2)
-    refresh_store(cfg, scrape_client=_FakeClient({}, refuse=LoginRequired("login_required")), now=t1)
+    assert cd["reason"] == _AUTH_DEATH_REASON and cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
+    # Past every ladder rung — still held; must NOT re-hit and deepen like the old ladder.
+    t1 = t0 + timedelta(hours=7)
+    skip = refresh_store_if_due(cfg, max_age_s=1,
+                                scrape_client=_FakeClient({}, refuse=LoginRequired("login_required")),
+                                now=t1)
+    assert skip["refreshed"] is False and skip["reason"] == "cooldown"
+    assert skip["cooldown_reason"] == _AUTH_DEATH_REASON
     cd2 = json.loads(_cooldown_path(cfg).read_text())
-    assert cd2["streak"] == 2                               # decaying retry, not every-tick hammering
-    assert cd2["until"] == (t1 + timedelta(seconds=_COOLDOWN_DELAYS_S[1])).isoformat()
+    assert cd2["streak"] == 1  # no auto-retry / ladder deepen
     assert not cfg.hashtags_path.exists()
 
 
 def test_expired_loginrequired_is_stripped_from_cooldown(tmp_path, monkeypatch):
+    """HT3: auth-hold reasons never auto-scrub when until passes — scrape-login only."""
     from datetime import datetime, timezone
     from fanops.controlio import write_json_atomic
-    from fanops.fanops_hashtags import _cooldown_path, _healthy_scrape_users
+    from fanops.fanops_hashtags import (_cooldown_path, _healthy_scrape_users, scrape_user_blocked)
 
     cfg = Config(root=tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
@@ -416,17 +419,17 @@ def test_expired_loginrequired_is_stripped_from_cooldown(tmp_path, monkeypatch):
                        "streak": 2, "day": "2026-08-18", "used": 0},
     }})
     peers = _healthy_scrape_users(cfg, now, require_budget_room=False, require_session=False)
-    assert peers == ["perca.late"]
+    assert peers == []
+    assert scrape_user_blocked(cfg, "perca.late", now) is True
     rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["perca.late"]
-    assert "reason" not in rec and "until" not in rec
-    assert rec.get("streak") == 2
+    assert rec.get("reason") == "LoginRequired" and rec.get("until") == "2026-08-18T22:45:10+00:00"
 
 
 def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch):
-    """MOL-727/MOL-910: dead session discovered at first hashtag_info (not open probe) still arms
-    LoginRequired cooldown so due ticks do not re-hit a dead session forever."""
+    """HT3: dead session at first hashtag_info arms auth_death; ticks never re-hit / ladder."""
     from datetime import datetime, timezone, timedelta
-    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path, _COOLDOWN_DELAYS_S
+    from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path,
+                                       _AUTH_DEATH_DELAY_S, _AUTH_DEATH_REASON)
     from instagrapi.exceptions import LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -439,26 +442,23 @@ def test_expired_session_at_fetch_arms_the_login_cooldown(tmp_path, monkeypatch)
         clients.append(c)
         return c
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0, scrape_client=make_client())
-    assert out["refreshed"] is False and out["aborted"] == "LoginRequired"   # not `no_scrape`
+    assert out["refreshed"] is False and out["aborted"] == _AUTH_DEATH_REASON
     cd = json.loads(_cooldown_path(cfg).read_text())
     rec = (cd.get("accounts") or {}).get("u") or cd
-    assert rec["reason"] == "LoginRequired" and rec["streak"] == 1
-    assert rec["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert rec["reason"] == _AUTH_DEATH_REASON and rec["streak"] == 1
+    assert rec["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
     assert out["cooldown_until"] == rec["until"] and out["cooldown_streak"] == 1
     assert len(clients[0].info_calls) == 1
-    for mins in (1, 20, 29):                               # inside the floor: no further work
-        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=mins),
+    for delta in (timedelta(minutes=29), timedelta(hours=7), timedelta(days=8)):
+        skip = refresh_store_if_due(cfg, max_age_s=1, now=t0 + delta,
                                     scrape_client=make_client())
         assert skip["refreshed"] is False and skip["reason"] == "cooldown"
-        assert skip["cooldown_reason"] == "LoginRequired"  # run.log says WHY
-    assert sum(len(c.info_calls) for c in clients) == 1, "re-hit a dead session inside the floor"
-    assert not cfg.hashtags_path.exists()                  # cache untouched on the abort path
-    # The ladder still decays: the next pass after the floor deepens the streak (never a flat retry).
-    refresh_store_if_due(cfg, max_age_s=1, now=t0 + timedelta(minutes=31), scrape_client=make_client())
+        assert skip["cooldown_reason"] == _AUTH_DEATH_REASON
+    assert sum(len(c.info_calls) for c in clients) == 1, "must not re-hit after auth_death"
+    assert not cfg.hashtags_path.exists()
     cd2 = json.loads(_cooldown_path(cfg).read_text())
     rec2 = (cd2.get("accounts") or {}).get("u") or cd2
-    assert rec2["streak"] == 2
-    assert sum(len(c.info_calls) for c in clients) == 2
+    assert rec2["streak"] == 1
 
 
 def _log_recs(cfg, outcome=None):
@@ -585,15 +585,13 @@ def test_partial_progress_then_throttle_still_arms_a_cooldown(tmp_path, monkeypa
 
 
 def test_partial_progress_then_login_required_still_arms_a_cooldown(tmp_path, monkeypatch):
-    """MOL-727 sibling: the same chain swallowed a dead session after partial progress. It must arm the
-    login ladder AND leave the pass marked incomplete — a queue cut short mid-way has not completed."""
+    """HT3: partial progress then LoginRequired arms auth_death (not the ladder) and leaves incomplete."""
     from datetime import datetime, timezone, timedelta
     from instagrapi.exceptions import LoginRequired
-    from fanops.fanops_hashtags import _cooldown_path, _COOLDOWN_DELAYS_S
+    from fanops.fanops_hashtags import _cooldown_path, _AUTH_DEATH_DELAY_S, _AUTH_DEATH_REASON
 
     class _DeadAfterFirst(_FakeClient):
-        """First tag lands; the session dies on the next medias_top (the MOL-696 shape: the client
-        opens fine and hashtag_info still answers, but the read comes back login_required)."""
+        """First tag lands; the session dies on the next medias_top."""
         def hashtag_medias_top(self, name, amount=9):
             if self.media_calls:
                 raise LoginRequired("login_required")
@@ -604,12 +602,12 @@ def test_partial_progress_then_login_required_still_arms_a_cooldown(tmp_path, mo
     out = refresh_store(cfg, scrape_client=_DeadAfterFirst({"#hiphop": 50, "#alpha": 100},
                                                            cooccur="#alpha"), now=t0)
     assert out["measured"] == 1 and out["written"] is True
-    assert out["throttled"] is True                        # incomplete queue == incomplete pass
+    assert out["throttled"] is True
     raw = json.loads(cfg.hashtags_path.read_text())
     assert "#hiphop" in raw and "last_complete_pass" not in raw
     cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["reason"] == "LoginRequired" and cd["streak"] == 1
-    assert cd["until"] == (t0 + timedelta(seconds=_COOLDOWN_DELAYS_S[0])).isoformat()
+    assert cd["reason"] == _AUTH_DEATH_REASON and cd["streak"] == 1
+    assert cd["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
     assert cd["day"] == "2026-07-01" and cd["used"] >= 1
 
 
@@ -1018,13 +1016,18 @@ def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypat
 
 
 def test_open_client_callers_keep_reauth_default(tmp_path):
-    """Safari-only runtime: _refresh_pass never calls open_client; scrape-login alone uses allow_reauth."""
+    """HT3 doctor offline + HT4 Safari-only runtime; scrape-login alone uses allow_reauth."""
     import inspect
+    import fanops.doctor as doctor
     import fanops.fanops_hashtags as fh
+    src_doc = inspect.getsource(doctor._hashtag_scrape_check)
     src_ref = inspect.getsource(fh._refresh_pass)
     src_login = inspect.getsource(fh.cmd_hashtags_scrape_login)
+    assert "resolve_hashtag_scrape" not in src_doc
+    assert "from fanops.ig_hashtag_scrape import open_client" not in src_doc
     assert "open_client" not in src_ref
     assert "open_web_session" in src_ref
+    assert "allow_reauth=True" not in src_ref
     assert "allow_reauth=True" in src_login
 
 
@@ -1442,7 +1445,7 @@ def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
 
 
 def test_used_counter_does_not_skip_refresh(tmp_path, monkeypatch):
-    """used is an XHR counter. instagrapi has no daily quota — do not skip on used."""
+    """HT3: day-budget exhausted → refresh skips as cooldown/budget (honest block, not telemetry)."""
     from datetime import datetime, timezone, timedelta
     import fanops.fanops_hashtags as fh
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
@@ -1460,8 +1463,9 @@ def test_used_counter_does_not_skip_refresh(tmp_path, monkeypatch):
                       {"day": "2026-07-01", "used": fh._SCRAPE_DAY_BUDGET, "accounts": {}})
     nxt = _FakeClient({"#hiphop": 50})
     out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
-    assert out.get("reason") != "cooldown"
-    assert out.get("cooldown_reason") != "budget"
+    assert out.get("reason") == "cooldown"
+    assert out.get("cooldown_reason") == "budget"
+    assert nxt.info_calls == [] and nxt.media_calls == []
 
 
 
@@ -1641,8 +1645,8 @@ def test_refresh_store_early_aborts_on_login_required(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _persona(cfg)
     client = _FakeClient({}, refuse=LoginRequired("login_required"))
     out = refresh_store(cfg, scrape_client=client)
-    assert out.get("aborted") == "LoginRequired"
-    assert out.get("reason") == "LoginRequired"
+    assert out.get("aborted") == "auth_death"
+    assert out.get("reason") == "auth_death"
     assert out["written"] is False and out["measured"] == 0
     assert out["tried"] == 1, f"must abort after first refusal, tried={out['tried']}"
     assert not cfg.hashtags_path.exists()
@@ -1706,7 +1710,7 @@ def test_open_client_uses_budget_exhausted_unfrozen_session(tmp_path, monkeypatc
 
 
 def test_read_active_cooldown_used_peer_is_healthy(tmp_path, monkeypatch):
-    """Frozen LoginRequired + unfrozen peer with a high used counter → tick stays open."""
+    """HT3: frozen peer + day-budget-exhausted peer → global cooldown (budget), not open."""
     from datetime import datetime, timezone
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _read_active_cooldown)
@@ -1725,12 +1729,13 @@ def test_read_active_cooldown_used_peer_is_healthy(tmp_path, monkeypatch):
             "spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET,
                       "updated_at": "2026-07-01T03:49:33+00:00"},
         }})
-    assert _read_active_cooldown(cfg, t0) is None
+    cool = _read_active_cooldown(cfg, t0)
+    assert cool is not None and cool.get("reason") == "budget"
 
 
 def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
-    """used is not a skip. Harvest still opens instagrapi."""
-    import fanops.ig_hashtag_scrape as igs
+    """HT3: day budget exhausted → injected harvest skips (cooldown/budget), no network open."""
+    import fanops.ig_web_scrape as iws
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import _SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store
     from fanops.controlio import write_json_atomic
@@ -1745,11 +1750,12 @@ def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
     seen = []
     def fake(*_a, **_k):
         seen.append(1)
-        raise igs.ScrapeUnavailable("no scrape session")
-    monkeypatch.setattr(igs, "open_client", fake)
-    out = refresh_store(cfg, now=t0)
-    assert seen == [1]
-    assert out.get("aborted") == "no_scrape"
+        raise AssertionError("budget exhausted must not open Safari")
+    monkeypatch.setattr(iws, "open_web_session", fake)
+    out = refresh_store(cfg, scrape_client=_FakeClient({"#hiphop": 50}), now=t0)
+    assert seen == []
+    assert out.get("aborted") == "cooldown"
+    assert out.get("reason") == "budget"
 
 
 def test_all_peers_frozen_skips_refresh(tmp_path, monkeypatch):
@@ -1965,7 +1971,7 @@ def test_platform_error_from_open_client_in_multi_account_walk_arms_cooldown(tmp
     from datetime import datetime, timezone, timedelta
     import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from fanops.fanops_hashtags import refresh_store, _cooldown_path, _CHECKPOINT_DELAY_S
+    from fanops.fanops_hashtags import refresh_store, _cooldown_path, _AUTH_DEATH_DELAY_S
     from instagrapi.exceptions import ChallengeRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1990,8 +1996,8 @@ def test_platform_error_from_open_client_in_multi_account_walk_arms_cooldown(tmp
     assert out.get("written") is True and out.get("measured", 0) >= 1
     cd = json.loads(_cooldown_path(cfg).read_text())
     rec = cd["accounts"]["u1"]
-    assert rec["reason"] == "checkpoint"
-    assert rec["until"] == (t0 + timedelta(seconds=_CHECKPOINT_DELAY_S)).isoformat()
+    assert rec["reason"] == "auth_death"
+    assert rec["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
 
 
 def test_run_once_does_not_expand_vocab():
@@ -2244,19 +2250,25 @@ def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, mo
 
 
 def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
-    """used is telemetry. A high counter does not skip remesure or the lock picker."""
+    """HT3: used≥day budget blocks remesure cooldown and the Safari lock picker."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
     import fanops.ig_web_scrape as iws
     from fanops.controlio import write_json_atomic
-    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due)
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due,
+                                       scrape_user_blocked)
+    from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.source_tags import _iter_lock_clients
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("{}")
     write_json_atomic(_cooldown_path(cfg), {
         "accounts": {"u": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
+    assert scrape_user_blocked(cfg, "u", t0) is True
     opens = []
 
     def fake_open(_cfg, user=None, **_k):
@@ -2266,8 +2278,9 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
     monkeypatch.setattr(iws, "open_web_session", fake_open)
     _boom_chrome_tick(monkeypatch)
     skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert skip.get("reason") != "budget"
-    assert skip.get("aborted") != "budget"
+    assert skip.get("reason") == "cooldown"
+    assert skip.get("cooldown_reason") == "budget"
+    assert opens == []
     lock_seen = []
 
     def lock_opener(_cfg, user=None, **_k):
@@ -2275,8 +2288,8 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
         return SimpleNamespace(_fanops_scrape_user=user)
 
     opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener, now=t0))
-    assert lock_seen == ["u"]
-    assert len(opened) == 1
+    assert lock_seen == []
+    assert opened == []
 
 
 def test_lock_then_remesure_still_runs(tmp_path, monkeypatch):
@@ -2370,3 +2383,41 @@ def test_tick_remesure_opens_web_session_per_listed_user(tmp_path, monkeypatch):
     assert out["refreshed"] is True
     assert seen == ["markmakmouly"]
 
+
+
+def test_ht3_auth_death_never_ladder(tmp_path, monkeypatch):
+    """HT3 acceptance: LoginRequired / ChallengeRequired → auth_death, not 30m ladder."""
+    from datetime import datetime, timezone, timedelta
+    from instagrapi.exceptions import ChallengeRequired, LoginRequired
+    from fanops.fanops_hashtags import (_AUTH_DEATH_DELAY_S, _AUTH_DEATH_REASON, _COOLDOWN_DELAYS_S,
+                                       _freeze_for, _is_frozen, _persist_cooldown, scrape_user_blocked)
+    reason, delay = _freeze_for(LoginRequired("login_required"))
+    assert reason == _AUTH_DEATH_REASON and delay == _AUTH_DEATH_DELAY_S
+    assert delay > _COOLDOWN_DELAYS_S[-1]
+    reason2, delay2 = _freeze_for(ChallengeRequired("challenge_required"))
+    assert reason2 == _AUTH_DEATH_REASON and delay2 == _AUTH_DEATH_DELAY_S
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    rec = _persist_cooldown(cfg, t0, reason=reason, delay_s=delay, user="u")
+    assert rec["reason"] == _AUTH_DEATH_REASON
+    # Past every ladder rung — still blocked; clock does not clear auth death.
+    later = t0 + timedelta(hours=7)
+    assert _is_frozen(rec, later) is True
+    assert scrape_user_blocked(cfg, "u", later) is True
+
+
+def test_ht3_scrape_user_blocked_day_budget(tmp_path, monkeypatch):
+    """HT3 acceptance: day-budget exhausted accounts are blocked (not freeze-only)."""
+    from datetime import datetime, timezone
+    from fanops.controlio import write_json_atomic
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _day_room,
+                                       _healthy_scrape_users, scrape_user_blocked)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "spent")
+    cfg = Config(root=tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    write_json_atomic(_cooldown_path(cfg), {
+        "accounts": {"spent": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
+    assert _day_room(cfg, "spent", t0) == 0
+    assert scrape_user_blocked(cfg, "spent", t0) is True
+    assert _healthy_scrape_users(cfg, t0, require_budget_room=True, require_session=False) == []
+    assert _healthy_scrape_users(cfg, t0, require_budget_room=False, require_session=False) == ["spent"]

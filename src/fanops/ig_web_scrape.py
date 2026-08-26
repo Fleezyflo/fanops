@@ -370,6 +370,7 @@ def _safari_fetch(method: str, url: str, body: str | None = None, user: str | No
     )
     now = datetime.now(timezone.utc)
     if cfg is not None and user:
+        # scrape_user_blocked includes day-budget exhaustion (HT3); _day_room is belt-and-suspenders.
         if scrape_user_blocked(cfg, user, now):
             raise ScrapeUnavailable("scrape account frozen or day budget exhausted")
         if _day_room(cfg, user, now) <= 0:

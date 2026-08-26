@@ -552,27 +552,34 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
 
 
 def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, monkeypatch):
-    """MOL-857: any listed user session is enough to leave soft-ok and probe via open_client."""
+    """HT3: any listed user session is enough — presence only, no open_client / tag probe."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.ig_hashtag_scrape import scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
-    # credentials incomplete until a session or password exists — write b's session
     sess = scrape_session_path(cfg, "b")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(),
-                                       probe_resolve=lambda _c, _t: ("1", 1.0))
+    opens = {"n": 0}
+    def boom_open(_c):
+        opens["n"] += 1
+        raise AssertionError("doctor must not open_client")
+    def boom_probe(*_a, **_k):
+        raise AssertionError("doctor must not probe tags")
+    row = doctor._hashtag_scrape_check(cfg, open_client=boom_open, probe_resolve=boom_probe)
     assert row["ok"] is True and row["hint"] == ""
+    assert opens["n"] == 0
+    assert "present" in row["label"]
 
 
-def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
-    """MOL-687: a session file that fails login must fail doctor — not report green on a dead cache."""
+def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monkeypatch):
+    """HT3: session file present → PASS; open_client / tag probe never called (even if they would fail)."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.ig_hashtag_scrape import ScrapeUnavailable
+    from instagrapi.exceptions import ChallengeRequired, LoginRequired
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
@@ -580,117 +587,35 @@ def test_doctor_hashtag_scrape_session_dead_fails_loud(tmp_path, monkeypatch):
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
     _sess.write_text("{}")
+    calls = {"open": 0, "probe": 0}
     def boom(_cfg):
+        calls["open"] += 1
         raise ScrapeUnavailable("scrape login failed: login_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom)
-    assert row["ok"] is False
-    assert "scrape-login" in row["hint"] and "login_required" in row["hint"]
-    assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
-    # open_client alone is not enough — probe must succeed too (MOL-696)
-    row_ok = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(),
-                                          probe_resolve=lambda _c, _t: ("1", 100.0))
-    assert row_ok["ok"] is True and row_ok["hint"] == ""
-
-
-def test_doctor_hashtag_scrape_checkpoint_names_the_only_real_remedy(tmp_path, monkeypatch):
-    """A native challenge (`lock: true`) is NOT an expiry: scrape-login cannot clear it, so doctor
-    fails loud with the live/honest platform text, not a canned app remedy."""
-    from fanops import doctor
-    from fanops.config import Config
-    from instagrapi.exceptions import ChallengeRequired
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
-    cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    def locked(_cfg):
-        raise ChallengeRequired("challenge_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=locked)
-    assert row["ok"] is False
-    hint = row["hint"]
-    assert hint == "challenge_required"  # byte-identical to str() of what platform raised
-    assert "Instagram app" not in hint
-    assert "secret-password" not in hint
-
-
-def test_doctor_hashtag_scrape_probe_login_required_fails_loud(tmp_path, monkeypatch):
-    """MOL-696 / MOL-879: open_client can succeed while hashtag_info returns login_required — doctor
-    must fail loud with live platform text only (no scrape-login prescription)."""
-    from fanops import doctor
-    from fanops.config import Config
-    from instagrapi.exceptions import LoginRequired
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
-    cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    def probe(_client, _tag):
+    def boom_probe(*_a, **_k):
+        calls["probe"] += 1
         raise LoginRequired("login_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=lambda _c: object(), probe_resolve=probe)
-    assert row["ok"] is False
-    assert row["hint"] == "login_required" and "scrape-login" not in row["hint"]
-    assert "secret-password" not in row["hint"]
-
-
-def test_doctor_hashtag_scrape_probe_reports_without_freeze(tmp_path, monkeypatch):
-    """MOL-879: probe Challenge on preferred → FAIL; one open; no cooldown write."""
-    from fanops import doctor
-    from fanops.config import Config
-    from fanops.fanops_hashtags import _load_cooldown_blob
-    from instagrapi.exceptions import ChallengeRequired
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,peer")
-    cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    for u in ("mark", "peer"):
-        p = scrape_session_path(cfg, u)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("{}")
-    opens = {"n": 0}
-    def opener(_cfg):
-        opens["n"] += 1
-        c = type("C", (), {})()
-        if opens["n"] == 1:
-            c._fanops_scrape_user = "mark"
-            return c
-        c._fanops_scrape_user = "peer"
-        return c
-    def probe(client, _tag):
-        if getattr(client, "_fanops_scrape_user", None) == "mark":
-            raise ChallengeRequired("challenge_required")
-        return ("1", 1.0)
-    row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
-    assert row["ok"] is False
-    assert row["hint"] == "@mark: challenge_required"
-    assert opens["n"] == 1
-    assert not (cfg.control / ".hashtag_scrape_cooldown.json").exists()
-    assert not (_load_cooldown_blob(cfg).get("accounts", {}).get("mark") or {}).get("reason")
-
-
-def test_doctor_hashtag_scrape_probe_names_user_when_peers_exhausted(tmp_path, monkeypatch):
-    """All peers fail probe → FAIL hint names @user; no scrape-login prescription."""
-    from fanops import doctor
-    from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    from instagrapi.exceptions import ChallengeRequired
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "only")
-    cfg = Config(root=tmp_path)
-    p = scrape_session_path(cfg, "only")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("{}")
-    def opener(_cfg):
-        c = type("C", (), {})()
-        c._fanops_scrape_user = "only"
-        return c
-    def probe(_c, _t):
+    row = doctor._hashtag_scrape_check(cfg, open_client=boom, probe_resolve=boom_probe)
+    assert row["ok"] is True and row["hint"] == ""
+    assert calls == {"open": 0, "probe": 0}
+    assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
+    # Challenge inject also ignored — offline presence only.
+    def locked(_cfg):
+        calls["open"] += 1
         raise ChallengeRequired("challenge_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=opener, probe_resolve=probe)
-    assert row["ok"] is False
-    assert row["hint"] == "@only: challenge_required"
-    assert "scrape-login" not in row["hint"]
+    row2 = doctor._hashtag_scrape_check(cfg, open_client=locked)
+    assert row2["ok"] is True and calls["open"] == 0
+
+
+def test_doctor_hashtag_scrape_check_source_has_no_live_probe():
+    """HT3 acceptance: doctor hashtag check must not call tag API / open_client."""
+    import inspect
+    from fanops import doctor
+    src = inspect.getsource(doctor._hashtag_scrape_check)
+    assert "resolve_hashtag_scrape" not in src
+    assert "open_client as" not in src
+    assert "opener(" not in src
+    assert "probe(" not in src
+    assert "any_scrape_session" in src
 
 
 def test_doctor_ast_never_references_persist_or_freeze():
