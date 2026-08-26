@@ -71,7 +71,7 @@ def test_siblings_not_on_pile(tmp_path):
     assert not cfg.hashtags_path.exists()
 
 
-def test_lock_is_dual_qualify_llm_order_capped_fifteen(tmp_path):
+def test_lock_is_play_ranked_capped_twelve(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     search = {n: [_Hit(n)] for n in names}
@@ -92,13 +92,13 @@ def test_lock_is_dual_qualify_llm_order_capped_fifteen(tmp_path):
     lock = rec["lock"]
     assert rec["pile"][:16] == [f"#t{i}" for i in range(16)]
     assert "#bigfolder" in rec["pile"] and "#highplay" in rec["pile"]
-    assert len(lock) == 15
-    assert lock == [f"#t{i}" for i in range(15)]
+    assert len(lock) == 12
+    assert lock == [f"#t{i}" for i in range(11, -1, -1)]
     assert "#t15" not in lock
     assert "#highplay" not in lock
 
 
-def test_high_media_low_play_keeps_llm_order_when_dual(tmp_path):
+def test_high_media_low_play_loses_to_high_play(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
         {"bigfolder": [_Hit("bigfolder")], "highplay": [_Hit("highplay")]},
@@ -111,10 +111,10 @@ def test_high_media_low_play_keeps_llm_order_when_dual(tmp_path):
     ensure_source_lock(cfg, _src(), client=client,
                        research_fn=lambda _s, _e: ["bigfolder", "highplay"],
                        **_ok_graph())
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#bigfolder", "#highplay"]
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#highplay", "#bigfolder"]
 
 
-def test_dual_qualify_drops_scrape_only_and_graph_only(tmp_path):
+def test_like_only_and_graph_only_out_of_lock(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
         {"plays": [_Hit("plays")], "likes": [_Hit("likes")], "graphonly": [_Hit("graphonly")],
@@ -131,7 +131,7 @@ def test_dual_qualify_drops_scrape_only_and_graph_only(tmp_path):
                        **_ok_graph(missing=("graphonly",)))
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == ["#plays", "#likes", "#graphonly", "#both"]
-    assert rec["lock"] == ["#plays", "#likes", "#both"]
+    assert rec["lock"] == ["#plays", "#both"]
 
 
 def test_second_call_is_noop_when_researched_at_present(tmp_path):
@@ -628,7 +628,7 @@ def test_three_verified_names_six_graph_http(tmp_path):
     assert rec["researched_at"]
 
 
-def test_stop_graph_at_fifteen_dual_qualify(tmp_path):
+def test_stop_graph_at_twelve_play_rank(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     client = _SearchClient(
@@ -637,9 +637,9 @@ def test_stop_graph_at_fifteen_dual_qualify(tmp_path):
     )
     resolves, measures, graph = _count_graph()
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
-    assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(15)]
-    assert len(measures) == 15
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(15)]
+    assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(12)]
+    assert len(measures) == 12
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(11, -1, -1)]
 
 
 def _norm_tag(tag):
@@ -948,7 +948,8 @@ def test_graph_refused_does_not_wipe_scrape_admits(tmp_path):
                        resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
-    assert rec["lock"] == ["#plays", "#likes"]
+    assert rec["lock"] == ["#plays"]
+    assert "#likes" not in rec["lock"]
 
 
 def test_request_captions_noops_without_researched_at(tmp_path):
@@ -1094,8 +1095,8 @@ def _seed_source_with_tags(cfg, sid, tags, *, title="a session"):
     return Ledger.load(cfg)
 
 
-def test_hydrate_used_measured_stamps_without_safari(tmp_path):
-    from fanops.caption import posted_text_for
+def test_hydrate_used_measured_writes_hydrated_at_not_researched_at(tmp_path):
+    from fanops.caption import posted_text_for, _source_lock_completed
     from fanops.ledger import Ledger
     from fanops.source_tags import hydrate_locks_from_known
     cfg = _cfg(tmp_path)
@@ -1110,13 +1111,16 @@ def test_hydrate_used_measured_stamps_without_safari(tmp_path):
     n = hydrate_locks_from_known(cfg, led)
     rec = load_source_tag_locks(cfg)["src_1"]
     assert n == 1
-    assert rec["researched_at"]
+    assert not rec.get("researched_at")
+    assert rec["hydrated_at"]
     assert rec["lock"][0] == "#hiphop"
     assert "#lyrics" in rec["lock"]
     assert "#storeonly" in rec["lock"]
     assert "#rap" not in rec["lock"]
+    assert not _source_lock_completed(cfg, _src("src_1"))
     lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
     assert seen == []
+    assert not load_source_tag_locks(cfg)["src_1"].get("researched_at")
     post = Ledger.load(cfg).posts["post_src_1"]
     text = posted_text_for(cfg, Ledger.load(cfg), post)
     assert "#hiphop" in text and "#lyrics" in text and "#storeonly" in text
@@ -1129,6 +1133,7 @@ def test_hydrate_store_tag_not_on_source_stays_out(tmp_path):
     led = _seed_source_with_tags(cfg, "src_1", ["#hiphop"])
     hydrate_locks_from_known(cfg, led)
     assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#hiphop"]
+    assert not load_source_tag_locks(cfg)["src_1"].get("researched_at")
 
 
 def test_hydrate_merges_used_into_completed_lock(tmp_path):
@@ -1143,9 +1148,23 @@ def test_hydrate_merges_used_into_completed_lock(tmp_path):
                   "researched_at": "2026-08-19T00:00:00Z"},
     }))
     hydrate_locks_from_known(cfg, led)
-    lock = load_source_tag_locks(cfg)["src_1"]["lock"]
+    rec = load_source_tag_locks(cfg)["src_1"]
+    lock = rec["lock"]
     assert lock[0] == "#hiphop"
     assert "#jussiesmollett" in lock
+    assert rec["researched_at"] == "2026-08-19T00:00:00Z"
+    assert rec["hydrated_at"]
+    assert len(lock) <= 12
+
+
+def test_known_lock_caps_at_twelve(tmp_path):
+    from fanops.source_tags import known_lock
+    used = [f"#u{i}" for i in range(20)]
+    measurements = {t: {"play_count": float(i + 1)} for i, t in enumerate(used)}
+    lock = known_lock([], measurements, used, n=12)
+    assert len(lock) == 12
+    assert lock[0] == "#u19"
+    assert "#u0" not in lock
 
 
 def test_pile_cache_hit_stamps_without_safari(tmp_path):
@@ -1169,7 +1188,7 @@ def test_pile_cache_hit_stamps_without_safari(tmp_path):
     assert seen == []
 
 
-def test_lock_ready_hydrates_every_used_source_in_one_tick(tmp_path):
+def test_lock_ready_does_not_mass_stamp_via_hydrate(tmp_path):
     from fanops.source_tags import hydrate_locks_from_known
     cfg = _cfg(tmp_path)
     _write_meas(cfg, {"#hiphop": 90.0, "#lyrics": 50.0})
@@ -1179,12 +1198,16 @@ def test_lock_ready_hydrates_every_used_source_in_one_tick(tmp_path):
 
     def opener(_cfg, user=None):
         seen.append(user)
-        raise AssertionError("hydrate must stamp both without Safari")
+        raise AssertionError("lock_ready must not open Safari for hydrate")
 
     lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
     table = load_source_tag_locks(cfg)
+    assert "src_a" not in table and "src_b" not in table
+    assert seen == []
+    n = hydrate_locks_from_known(cfg, __import__("fanops.ledger", fromlist=["Ledger"]).Ledger.load(cfg))
+    assert n == 2
+    table = load_source_tag_locks(cfg)
     assert table["src_a"]["lock"] == ["#hiphop"]
     assert table["src_b"]["lock"] == ["#lyrics"]
-    assert table["src_a"]["researched_at"] and table["src_b"]["researched_at"]
-    assert seen == []
-    assert hydrate_locks_from_known(cfg, __import__("fanops.ledger", fromlist=["Ledger"]).Ledger.load(cfg)) == 0
+    assert not table["src_a"].get("researched_at") and not table["src_b"].get("researched_at")
+    assert table["src_a"]["hydrated_at"] and table["src_b"]["hydrated_at"]
