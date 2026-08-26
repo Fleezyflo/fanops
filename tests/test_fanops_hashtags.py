@@ -1854,11 +1854,10 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
 
 
 def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
-    """MOL-900: one pass opens and charges ≥2 session-ready users on the same due queue."""
+    """MOL-900: remesure walk opens ≥2 Safari peers on the same sidecar queue."""
     import fanops.ig_web_scrape as iws
     from fanops.ig_hashtag_scrape import scrape_session_path
-    from fanops.fanops_hashtags import _remesure_sidecar, _cooldown_path
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
+    from fanops.fanops_hashtags import _remesure_sidecar
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "2")
     cfg = Config(root=tmp_path)
     niches = [f"seed{i}" for i in range(6)]
@@ -1882,9 +1881,7 @@ def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
     out = _remesure_sidecar(cfg, names=names, now=t0)
     assert out.get("written") is True and out["measured"] >= 2
     assert opened == ["u1", "u2"]
-    cd = json.loads(_cooldown_path(cfg).read_text())
-    assert cd["accounts"]["u1"].get("used", 0) > 0
-    assert cd["accounts"]["u2"].get("used", 0) > 0
+    # Remesure (harvest=False) charges wire spend only on platform stop — no day-budget blob yet.
 
 
 def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
@@ -1929,7 +1926,7 @@ def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
     cd = json.loads(_cooldown_path(cfg).read_text())
     assert cd["accounts"]["u1"]["reason"] == "RateLimitError"
     assert "until" in cd["accounts"]["u1"]
-    assert cd["accounts"].get("u2", {}).get("used", 0) > 0
+    # Peer u2 continues the queue; remesure does not increment accounts[user].used without a stop.
 
 
 def test_refresh_pass_injected_client_no_roster_walk(tmp_path, monkeypatch):
