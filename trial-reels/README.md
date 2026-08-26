@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python -m lib.runner \
 PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). File count and stack cycling are not success — see `lib/pipeline.py` scoring.
+Desk must return `mode=write` with **20 distinct** attested on-screen texts — one per hook×stack card in `desk.json`. If the transcript cannot honestly support 20 grammatical attested hooks, desk fails closed (`mode=blocked`). English live clips enumerate whisper-line and stitched-sentence clause hooks (comma / `that` / `by` / `to` / `moves` boundaries only); sparse payloads top out below 20. Arabic keeps one maximal line per clip (`عزبتني` stays with ز). File count and stack cycling are not success — see `lib/pipeline.py` scoring.
 
 ## Why this exists
 
