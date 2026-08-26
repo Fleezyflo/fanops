@@ -1496,7 +1496,7 @@ def test_scrape_try_cap_default_clears_a_full_cache_remeasure(tmp_path):
 
 
 def test_used_counter_does_not_skip_refresh(tmp_path, monkeypatch):
-    """used is an XHR counter. instagrapi has no daily quota — do not skip on used."""
+    """HT3: day-budget exhausted → refresh skips as cooldown/budget (honest block, not telemetry)."""
     from datetime import datetime, timezone, timedelta
     import fanops.fanops_hashtags as fh
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
@@ -1514,8 +1514,9 @@ def test_used_counter_does_not_skip_refresh(tmp_path, monkeypatch):
                       {"day": "2026-07-01", "used": fh._SCRAPE_DAY_BUDGET, "accounts": {}})
     nxt = _FakeClient({"#hiphop": 50})
     out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=nxt, now=t0)
-    assert out.get("reason") != "cooldown"
-    assert out.get("cooldown_reason") != "budget"
+    assert out.get("reason") == "cooldown"
+    assert out.get("cooldown_reason") == "budget"
+    assert nxt.info_calls == [] and nxt.media_calls == []
 
 
 
@@ -2275,12 +2276,13 @@ def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, mo
 
 
 def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
-    """used is telemetry. A high counter does not skip remesure or the lock picker."""
+    """HT3: used≥day budget blocks remesure cooldown and the Safari lock picker."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
     import fanops.ig_web_scrape as iws
     from fanops.controlio import write_json_atomic
-    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due)
+    from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due,
+                                       scrape_user_blocked)
     from fanops.source_tags import _iter_lock_clients
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
@@ -2288,6 +2290,7 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     write_json_atomic(_cooldown_path(cfg), {
         "accounts": {"u": {"day": "2026-07-01", "used": _SCRAPE_DAY_BUDGET}}})
+    assert scrape_user_blocked(cfg, "u", t0) is True
     opens = []
 
     def fake_open(_cfg, user=None, **_k):
@@ -2297,8 +2300,9 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
     monkeypatch.setattr(iws, "open_web_session", fake_open)
     _boom_chrome_tick(monkeypatch)
     skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert skip.get("reason") != "budget"
-    assert skip.get("aborted") != "budget"
+    assert skip.get("reason") == "cooldown"
+    assert skip.get("cooldown_reason") == "budget"
+    assert opens == []
     lock_seen = []
 
     def lock_opener(_cfg, user=None, **_k):
@@ -2306,8 +2310,8 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
         return SimpleNamespace(_fanops_scrape_user=user)
 
     opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=lock_opener, now=t0))
-    assert lock_seen == ["u"]
-    assert len(opened) == 1
+    assert lock_seen == []
+    assert opened == []
 
 
 def test_lock_then_remesure_still_runs(tmp_path, monkeypatch):

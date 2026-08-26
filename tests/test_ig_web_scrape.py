@@ -219,13 +219,14 @@ def test_igweb_json_charges_each_live_xhr(tmp_path, monkeypatch):
 
 
 def test_safari_fetch_skips_network_when_frozen(tmp_path, monkeypatch):
+    """Pinned now — not Aug-19+7d wall clock (expires mid-CI on 2026-08-26)."""
     import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import _persist_cooldown
     from fanops.ig_hashtag_scrape import ScrapeUnavailable
     from datetime import datetime, timezone
     cfg = Config(root=tmp_path)
-    _persist_cooldown(cfg, datetime(2026, 8, 19, tzinfo=timezone.utc),
-                      reason="operator_hold", delay_s=7 * 24 * 3600, user="u")
+    now = datetime.now(timezone.utc)
+    _persist_cooldown(cfg, now, reason="operator_hold", delay_s=7 * 24 * 3600, user="u")
     hit = []
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: hit.append(1) or _ok_xhr())
     try:
