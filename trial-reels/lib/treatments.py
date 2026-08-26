@@ -1,10 +1,10 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-A treatment is a contiguous, grammatical slice of one sung/spoken line. Kinds label
-how the slice reads (clause, result, question, direct address, …) but never add text.
-English: full stitched sentences first; clause-boundary spans only when the transcript
-needs more distinct hooks. Ships 20 distinct attested texts or fails closed.
+A treatment is one contiguous grammatical unit attested in the transcript. Kinds label
+how the unit reads (source order, result, question, …) but never add text.
+English: one treatment per stitched full sentence (whisper crumbs merged, never split).
 Arabic: one treatment per Whisper line (maximal only — no nested sub-lines).
+Ships 20 distinct attested texts or fails closed.
 """
 
 from __future__ import annotations
@@ -65,10 +65,6 @@ _WEAK_HOOK_ENDINGS_EN = frozenset(
 )
 _EN_RELATIVE_STARTERS = frozenset({"that", "which", "who", "what", "it's", "its", "moves"})
 _EN_FRAGMENT_CRUMBS = frozenset({"fails.", "so the next"})
-
-# Clause splits inside one English sentence — never cross a sentence boundary.
-# Only major clause markers; avoid " the "/" of "/" in " sliding crumbs.
-_EN_SPLIT_MARKERS = (" that ", " by ", " to ", " moves ")
 
 
 @dataclass(frozen=True)
@@ -477,79 +473,12 @@ def _sentence_groups(tokens: list[_Token], language: str) -> list[list[_Token]]:
     return [by_sentence[idx] for idx in sorted(by_sentence)]
 
 
-def _comma_split_indices(words: list[str]) -> list[int]:
-    """Word indices AFTER commas — clause boundaries inside one sentence."""
-    indices = [0]
-    for index, word in enumerate(words):
-        if word.rstrip().endswith(","):
-            indices.append(index + 1)
-    indices.append(len(words))
-    return sorted(set(indices))
-
-
-def _marker_split_indices(line_text: str, words: list[str]) -> list[int]:
-    indices = set(_comma_split_indices(words))
-    lowered = line_text.lower()
-    for marker in _EN_SPLIT_MARKERS:
-        search_from = 0
-        while True:
-            pos = lowered.find(marker, search_from)
-            if pos < 0:
-                break
-            prefix = line_text[:pos]
-            prefix_words = len(prefix.split())
-            if 0 < prefix_words < len(words):
-                left_len = prefix_words
-                right_len = len(words) - prefix_words
-                if left_len >= _MIN_HOOK_WORDS_EN and right_len >= _MIN_HOOK_WORDS_EN:
-                    indices.add(prefix_words)
-            search_from = pos + len(marker)
-    return sorted(indices)
-
-
 def _candidate_spans(sentence_tokens: list[_Token], language: str) -> list[tuple[int, int, bool]]:
+    """One maximal attested unit per group — no nested windows or clause crumbs."""
+    del language
     if not sentence_tokens:
         return []
-    if language == "ar":
-        return [(0, len(sentence_tokens), True)]
-
-    words = [token.word for token in sentence_tokens]
-    line_text = sentence_tokens[0].line_text
-    boundaries = _marker_split_indices(line_text, words)
-    boundary_set = set(boundaries)
-    spans: list[tuple[int, int, bool]] = []
-    seen: set[tuple[int, int]] = set()
-
-    def add(start: int, end: int) -> None:
-        if end <= start or (start, end) in seen:
-            return
-        seen.add((start, end))
-        spans.append((start, end, start in boundary_set))
-
-    # Boundary-to-boundary only — no sliding n-gram windows.
-    for left in range(len(boundaries) - 1):
-        for right in range(left + 1, len(boundaries)):
-            add(boundaries[left], boundaries[right])
-
-    return spans
-
-
-def _ends_cleanly(
-    text: str,
-    end: int,
-    total_words: int,
-    boundaries: set[int] | None = None,
-) -> bool:
-    if end >= total_words:
-        return True
-    if boundaries and end in boundaries:
-        return True
-    last = text.split()[-1] if text.split() else ""
-    return last.rstrip().endswith(",") or _ends_sentence(last)
-
-
-def _starts_cleanly(start: int, boundaries: set[int]) -> bool:
-    return start in boundaries
+    return [(0, len(sentence_tokens), True)]
 
 
 def _validate_span(
@@ -560,7 +489,6 @@ def _validate_span(
     vocabulary: set[str],
     *,
     at_clause_boundary: bool = False,
-    boundaries: set[int] | None = None,
 ) -> bool:
     chunk = sentence_tokens[start:end]
     if not chunk:
@@ -572,11 +500,6 @@ def _validate_span(
         return False
     if not _line_has_hookable_content(chunk, language):
         return False
-    if language == "en" and boundaries is not None:
-        if not _starts_cleanly(start, boundaries):
-            return False
-        if not _ends_cleanly(text, end, len(sentence_tokens), boundaries):
-            return False
     if _is_crumb(
         text,
         language,
@@ -632,39 +555,12 @@ def _drop_nested_globally(items: list[HookTreatment]) -> list[HookTreatment]:
     return kept
 
 
-def _max_antichain_on_line(candidates: list[HookTreatment]) -> list[HookTreatment]:
-    """Largest set of non-nested spans on one line — short-first so siblings beat supersets."""
-    ordered = sorted(
-        candidates,
-        key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
-    )
-    packed: list[HookTreatment] = []
-    for candidate in ordered:
-        if any(_nested_on_line(candidate, picked) for picked in packed):
-            continue
-        packed.append(candidate)
-    return packed
-
-
 def _select_treatments(candidates: list[HookTreatment], language: str) -> list[HookTreatment]:
-    """Prefer full attested lines when they fill the grid; else maximize clause-boundary spans."""
+    """Keep distinct full attested units in source order."""
     del language
-    full_units = _drop_nested_globally([item for item in candidates if item.is_full_line])
-    full_units.sort(key=lambda item: (item.source_order, item.word_start, item.text))
-    if len(full_units) >= MAX_TREATMENTS:
-        return full_units[:MAX_TREATMENTS]
-
-    by_line: dict[str, list[HookTreatment]] = {}
-    for candidate in candidates:
-        by_line.setdefault(candidate.line_text, []).append(candidate)
-
-    packed: list[HookTreatment] = []
-    for line_text in sorted(by_line, key=lambda line: by_line[line][0].source_order):
-        packed.extend(_max_antichain_on_line(by_line[line_text]))
-
-    packed = _drop_nested_globally(packed)
-    packed.sort(key=lambda item: (item.source_order, item.word_start, item.text))
-    return packed[:MAX_TREATMENTS]
+    units = _drop_nested_globally([item for item in candidates if item.is_full_line])
+    units.sort(key=lambda item: (item.source_order, item.word_start, item.text))
+    return units[:MAX_TREATMENTS]
 
 
 def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
@@ -699,8 +595,6 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             return
         line_index = sentence_tokens[0].line_index
         line_text = sentence_tokens[0].line_text
-        words = [token.word for token in sentence_tokens]
-        boundary_set = set(_marker_split_indices(line_text, words))
         if not _validate_span(
             sentence_tokens,
             start,
@@ -708,7 +602,6 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             language,
             vocabulary,
             at_clause_boundary=at_boundary,
-            boundaries=boundary_set,
         ):
             return
         is_full = start == 0 and end == len(sentence_tokens)

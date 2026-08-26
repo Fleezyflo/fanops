@@ -35,7 +35,7 @@ def test_live_english_fixture_blocks_below_twenty() -> None:
     filled = _desk_hook_texts(desk)
 
     assert desk["mode"] == "blocked"
-    assert len(filled) >= 8
+    assert len(filled) == 4
     assert len(filled) < TARGET_VARIANTS
     assert desk["cards"] == []
 

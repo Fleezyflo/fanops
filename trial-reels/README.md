@@ -17,7 +17,7 @@ PYTHONPATH=trial-reels python3 trial-reels/pipeline.py \
 PYTHONPATH=trial-reels python3 trial-reels/pipeline.py --out out/ --require-cover
 ```
 
-Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
+Desk enumerates **attested hook treatments** — full grammatical units grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
 
 ## Why this exists
 
@@ -30,7 +30,7 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
-| `lib/treatments.py` | Attested hook treatment enumeration (clause spans, honest ceiling) |
+| `lib/treatments.py` | Attested hook treatment enumeration (full grammatical units, honest ceiling) |
 | `lib/desk.py` | Maps treatments onto hook×stack render cards |
 | `lib/runner.py` | End-to-end pipeline: ingest → desk → ASS → ffmpeg stacks → score |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |

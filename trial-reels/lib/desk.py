@@ -1,6 +1,6 @@
 """Desk — maps attested hook treatments onto the hook×stack render grid.
 
-Treatments are enumerated in lib.treatments (clause-boundary spans, no invented
+Treatments are enumerated in lib.treatments (full attested grammatical units, no invented
 words). Ships exactly TARGET_VARIANTS distinct on-screen texts or fails closed.
 """
 

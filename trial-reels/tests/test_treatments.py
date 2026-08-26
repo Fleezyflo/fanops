@@ -40,15 +40,16 @@ def test_twenty_hook_fixture_yields_twenty_treatments() -> None:
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
-def test_english_fixture_yields_many_non_nested_treatments() -> None:
+def test_english_fixture_yields_four_full_sentences() -> None:
     result = enumerate_treatments(_load_fixture("clip_004ae6d9098a.json"))
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
-    assert 8 <= len(treatments) < MAX_TREATMENTS
+    assert len(treatments) == 4
     texts = [item["text"] for item in treatments]
-    assert len(set(texts)) == len(texts)
+    assert len(set(texts)) == 4
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
+        assert item["is_full_line"]
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
 
 
