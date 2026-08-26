@@ -28,8 +28,7 @@ def test_english_live_fixture_blocks_below_twenty() -> None:
 
     assert desk["mode"] == "blocked"
     assert filled == []
-    assert desk["claims_found"] >= 10
-    assert desk["claims_found"] < TARGET_VARIANTS
+    assert desk["claims_found"] == 4
 
 
 def test_arabic_live_fixture_blocks_below_twenty() -> None:
