@@ -50,11 +50,11 @@ def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
     assert len(expand_variant_slots(result["cards"])) == TARGET_VARIANTS
 
 
-def test_live_arabic_clip_fails_closed_with_two_hooks() -> None:
+def test_live_arabic_clip_fails_closed_with_one_maximal_hook() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 2
+    assert result["claims_found"] == 1
     assert result["target_variants"] == TARGET_VARIANTS
     assert "need 20" in result["reason"]
     assert result["cards"] == []

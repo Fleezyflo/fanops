@@ -17,6 +17,7 @@ from lib.treatments import (
     enumerate_treatments,
     is_contiguous_attested_span,
     is_credit_only,
+    is_nested_hook_text,
 )
 
 HOOKS = ["result_first", "mid_action", "direct_you", "bold_claim", "cold_proof"]
