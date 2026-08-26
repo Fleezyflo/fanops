@@ -1,9 +1,10 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: one treatment per raw Whisper line plus clause-boundary siblings on the same
-line (comma / major markers only — never sliding windows). Arabic: one treatment per
-Whisper line with global strict-substring drop (عزبتني inside لك كفاية عزبتني).
-Ships exactly MAX_TREATMENTS distinct on-screen texts or fails closed.
+English: stitch whisper lines into complete sentences, then enumerate full-sentence
+hooks (clause-boundary siblings only when they are non-nested grammatical units).
+Arabic: one treatment per Whisper line with global strict-substring drop (عزبتني
+inside لك كفاية عزبتني). Ships exactly MAX_TREATMENTS distinct on-screen texts or
+fails closed.
 """
 
 from __future__ import annotations
@@ -68,6 +69,13 @@ _EN_FRAGMENT_CRUMBS = frozenset({"fails.", "so the next"})
 # Clause splits inside one English sentence — never cross a sentence boundary.
 # Only major clause markers; avoid " the "/" of "/" in " sliding crumbs.
 _EN_SPLIT_MARKERS = (" that ", " by ", " to ", " moves ")
+
+_EN_CONTINUATION_STARTERS = frozenset(
+    {
+        "by", "that", "which", "one", "and", "or", "but", "to", "who", "what",
+        "when", "where", "how", "because", "while", "as", "if", "so",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -192,6 +200,22 @@ def _fragment_continues(text: str) -> bool:
     return last.endswith(",") or last.endswith(";")
 
 
+def _line_continues_previous(previous: str, nxt: str) -> bool:
+    """True when *nxt* continues the same English sentence as *previous*."""
+    if _fragment_continues(previous):
+        return True
+    previous_words = previous.split()
+    next_words = nxt.split()
+    if not previous_words or not next_words:
+        return False
+    if _ends_sentence(previous_words[-1]):
+        return False
+    first = _normalize_word(next_words[0])
+    if first in _EN_CONTINUATION_STARTERS:
+        return True
+    return next_words[0][:1].islower()
+
+
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
     if language != "en":
         return [
@@ -219,7 +243,7 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
         if _is_en_fragment_crumb(text):
             flush()
             continue
-        if buffer and not _fragment_continues(buffer[-1]):
+        if buffer and not _line_continues_previous(buffer[-1], text):
             flush()
         if not buffer:
             buffer_start = start
@@ -399,6 +423,8 @@ def _is_crumb(
     if not words:
         return True
     if language == "en":
+        if not is_full_line and len(words) < _MIN_HOOK_WORDS_EN:
+            return True
         if is_full_line and _ends_sentence(words[-1]) and _content_word_count(text, language) >= _MIN_CONTENT_WORDS_EN:
             return False
         norm = _normalize_phrase(text)
@@ -650,10 +676,14 @@ def _drop_nested_globally(items: list[HookTreatment]) -> list[HookTreatment]:
 
 
 def _max_antichain_on_line(candidates: list[HookTreatment]) -> list[HookTreatment]:
-    """Largest set of non-nested spans on one line — short-first so siblings beat supersets."""
+    """Largest set of non-nested spans on one line — long-first so full sentences beat crumbs."""
     ordered = sorted(
         candidates,
-        key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
+        key=lambda item: (
+            item.word_start,
+            -(item.word_end - item.word_start),
+            item.text,
+        ),
     )
     packed: list[HookTreatment] = []
     for candidate in ordered:
@@ -742,7 +772,10 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    token_groups = _whisper_line_groups(transcript, language)
+    if language == "ar":
+        token_groups = _whisper_line_groups(transcript, language)
+    else:
+        token_groups = _sentence_groups(tokens, language)
 
     for sentence_tokens in token_groups:
         spans = _candidate_spans(sentence_tokens, language)

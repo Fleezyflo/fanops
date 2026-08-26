@@ -45,11 +45,23 @@ def test_english_fixture_yields_stitched_sentence_hooks() -> None:
     assert result["mode"] == "blocked"
     treatments = result["treatments"]
     texts = [item["text"] for item in treatments]
-    assert len(texts) == 8
-    assert len(set(texts)) == 8
+    assert len(texts) == 4
+    assert len(set(texts)) == 4
     assert "So the next" not in texts
-    assert "Ross defines a true boss" in texts
-    assert "by the rare ability to execute moves the real streets actually accept." in texts
+    assert "Ross defines a true boss" not in texts
+    assert "behind-the-scenes power." not in texts
+    assert "by the rare ability to execute moves the real streets actually accept." not in texts
+    assert (
+        "inside a padded recording booth creates a powerful illusion, "
+        "one that completely evaporates the second real-world leverage is required."
+    ) in texts
+    assert "Which brings us to the missing reality layer, behind-the-scenes power." in texts
+    assert (
+        "Ross defines a true boss by the rare ability to execute moves the real streets actually accept."
+    ) in texts
+    assert (
+        "It's a test of genuine respect that the modern corporate industry completely fails."
+    ) in texts
     for item in treatments:
         assert item["kind"] in TREATMENT_KINDS
         assert is_contiguous_attested_span(item["text"], item["cite"]["line"])
