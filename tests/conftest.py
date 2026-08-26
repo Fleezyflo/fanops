@@ -116,6 +116,16 @@ def _no_real_publish_sleep(monkeypatch):
     monkeypatch.setattr("fanops.post.run._sleep", lambda *_a, **_k: None)
 
 
+
+@pytest.fixture(autouse=True)
+def _hermetic_safari_tick_slot():
+    """HT5: module-global tick slot must not leak across parallel tests."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()
+    yield
+    reset_safari_tick_slot()
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_publish_env():
     # `saved` covers the two force-set vars below too: both are registered bool flags, so BOOL_ENV_FIELDS
