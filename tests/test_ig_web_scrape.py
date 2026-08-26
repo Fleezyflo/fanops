@@ -224,7 +224,8 @@ def test_safari_fetch_skips_network_when_frozen(tmp_path, monkeypatch):
     from fanops.ig_hashtag_scrape import ScrapeUnavailable
     from datetime import datetime, timezone
     cfg = Config(root=tmp_path)
-    _persist_cooldown(cfg, datetime(2026, 8, 19, tzinfo=timezone.utc),
+    # Pin far ahead of wall clock so CI cannot outlive the hold (Aug-19+7d expired 2026-08-26).
+    _persist_cooldown(cfg, datetime(2099, 1, 1, tzinfo=timezone.utc),
                       reason="operator_hold", delay_s=7 * 24 * 3600, user="u")
     hit = []
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: hit.append(1) or _ok_xhr())
