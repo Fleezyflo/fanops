@@ -1,8 +1,9 @@
 """Attested hook treatments — grounded spans from transcript, no invented words.
 
-English: one treatment per raw Whisper line plus clause-boundary siblings on the same
-line (comma / major markers only — never sliding windows). Arabic: one treatment per
-Whisper line with global strict-substring drop (عزبتني inside لك كفاية عزبتني).
+English: stitched grammatical sentences (mid-sentence whisper lines join before
+enumeration) with optional clause-boundary siblings on the same sentence (comma /
+major markers only — never sliding windows). Arabic: one treatment per Whisper line
+with global strict-substring drop (عزبتني inside لك كفاية عزبتني).
 Ships exactly MAX_TREATMENTS distinct on-screen texts or fails closed.
 """
 
@@ -184,12 +185,15 @@ def _is_en_fragment_crumb(text: str) -> bool:
     return False
 
 
-def _fragment_continues(text: str) -> bool:
+def _line_needs_continuation(text: str) -> bool:
+    """True when a whisper line is not a grammatical sentence end (next line continues it)."""
     words = text.split()
     if not words:
         return False
     last = words[-1].rstrip("\"')]}")
-    return last.endswith(",") or last.endswith(";")
+    if _ends_sentence(last):
+        return False
+    return True
 
 
 def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple[str, float, int]]:
@@ -219,7 +223,7 @@ def _stitch_line_texts(lines: list[dict[str, Any]], language: str) -> list[tuple
         if _is_en_fragment_crumb(text):
             flush()
             continue
-        if buffer and not _fragment_continues(buffer[-1]):
+        if buffer and not _line_needs_continuation(buffer[-1]):
             flush()
         if not buffer:
             buffer_start = start
@@ -637,7 +641,7 @@ def _drop_nested_globally(items: list[HookTreatment]) -> list[HookTreatment]:
         key=lambda item: (
             item.source_order,
             item.word_start,
-            item.word_end - item.word_start,
+            -(item.word_end - item.word_start),
             item.text,
         ),
     )
@@ -650,10 +654,10 @@ def _drop_nested_globally(items: list[HookTreatment]) -> list[HookTreatment]:
 
 
 def _max_antichain_on_line(candidates: list[HookTreatment]) -> list[HookTreatment]:
-    """Largest set of non-nested spans on one line — short-first so siblings beat supersets."""
+    """Largest set of non-nested spans on one line — long-first so crumbs lose to full sentences."""
     ordered = sorted(
         candidates,
-        key=lambda item: (item.word_start, item.word_end - item.word_start, item.text),
+        key=lambda item: (item.word_start, -(item.word_end - item.word_start), item.text),
     )
     packed: list[HookTreatment] = []
     for candidate in ordered:
@@ -742,7 +746,10 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    token_groups = _whisper_line_groups(transcript, language)
+    if language == "en":
+        token_groups = _sentence_groups(tokens, language)
+    else:
+        token_groups = _whisper_line_groups(transcript, language)
 
     for sentence_tokens in token_groups:
         spans = _candidate_spans(sentence_tokens, language)
