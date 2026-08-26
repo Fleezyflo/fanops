@@ -7,8 +7,7 @@
 parallel suites crash it. Write tests with your change, push, open the PR — GitHub CI executes them
 and its run is your evidence. In Claude Code the refusal is mechanical — `.claude/settings.json`
 `permissions.deny` blocks `pytest`/`check-full.sh`; **in Cursor nothing blocks it, so the rule is yours
-to keep** (the orchestration hook gate that once enforced this is DORMANT — `.orchestration/SPEC.md`).
-`./scripts/check.sh` is scoped lint + test-mapping only. `FANOPS_LOCAL_TESTS=1` is the
+to keep**. `./scripts/check.sh` is scoped lint + test-mapping only. `FANOPS_LOCAL_TESTS=1` is the
 operator-only override from a human terminal. What CI runs (reference, not for running):
 
 - CI `unit` job — **the only required status check, and the only job a PR runs**:
