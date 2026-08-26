@@ -2,25 +2,22 @@
 
 Experimental lane for **Reels/TikTok hook burn-in** and **cover-frame OCR QA**. Lives outside `src/fanops/` so the main app is untouched. Uses **ffmpeg + ASS + tesseract only** (no Pillow, no PNG text overlays, no vendored bidi).
 
-## Pipeline door
+## Runner
 
-One clip in `in/` → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
+One clip in → up to **20 vertical cuts** out (5 hook policies × 4 ffmpeg stacks):
 
 ```bash
-# Drain in/, write desk.json per clip, render hook×stack variants, score
-PYTHONPATH=trial-reels python trial-reels/pipeline.py \
-  --in-dir in/ \
-  --out out/ \
-  --transcript /path/to/transcript.json
-
-# Same render path via runner module (single file)
+# With a pre-baked transcript (no whisper)
 PYTHONPATH=trial-reels python -m lib.runner \
   --file /path/to/clip.mp4 \
   --transcript /path/to/transcript.json \
   --out out/
+
+# Drain in/ folder, transcribe via dual-ear whisper
+PYTHONPATH=trial-reels python -m lib.runner --out out/
 ```
 
-Desk returns `mode=write` with every honest attested sentence (English) or Whisper line (Arabic) — no padding to five hooks, no nested windows, no permutations. Claims repeat across hook×stack slots when the transcript cannot fill 20 distinct texts; sparse clips ship without aborting. Pass bar: **20 actually different attested on-screen hooks** when the source supports them. Fail only on empty, credit-only, or invented content. File count alone is not success — see `lib/pipeline.py` scoring.
+Desk enumerates **attested hook treatments** — clause-boundary spans grounded in the transcript (`lib/treatments.py`). A clip ships only when the transcript honestly supports **20 distinct on-screen texts** (one per hook×stack card). Thin transcripts fail closed instead of cycling repeated text or farming nested windows.
 
 ## Why this exists
 
@@ -33,6 +30,8 @@ Production ASS stamps (Noto Naskh, 72pt, Alignment 8, MarginV 320) are correct, 
 
 | Path | Role |
 |------|------|
+| `lib/treatments.py` | Attested hook treatment enumeration (clause spans, honest ceiling) |
+| `lib/desk.py` | Maps treatments onto hook×stack render cards |
 | `lib/runner.py` | End-to-end pipeline: ingest → desk → ASS → ffmpeg stacks → score |
 | `lib/captions.py` | `write_ass(events, font)` — ASS builder for RTL hooks (top safe zone) |
 | `lib/cover_qa.py` | Crop top ~28% hook band → preprocess → tesseract `ara+eng` → match attested card words |

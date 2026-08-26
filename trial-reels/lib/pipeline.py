@@ -85,8 +85,6 @@ def score_clip(
     output_path: str | Path | None = None,
     attested_words: tuple[str, ...] | list[str] | None = None,
     run_cover_qa: bool = True,
-    cover_ok: bool | None = None,
-    cover_message: str = "",
 ) -> ClipScore:
     """Score one clip on desk + optional cover OCR."""
     validation = validate_desk_result(desk_result)
@@ -101,11 +99,6 @@ def score_clip(
         output_path=str(output_path) if output_path else "",
     )
 
-    if cover_ok is not None:
-        score.cover_ok = cover_ok
-        score.cover_message = cover_message
-        return score
-
     if not run_cover_qa or not output_path:
         score.cover_ok = None
         return score
@@ -118,7 +111,11 @@ def score_clip(
 
     words = attested_words
     if words is None and desk_result.get("mode") == "write":
-        words = tuple(card["text"] for card in desk_result.get("cards") or [])
+        treatments = desk_result.get("treatments") or []
+        if treatments:
+            words = tuple(item["text"] for item in treatments)
+        else:
+            words = tuple(card["text"] for card in desk_result.get("cards") or [])
 
     cover = qa_cover(path, words, tess_langs=tess_langs, language=language)
     score.cover_ok = cover.ok
@@ -156,10 +153,7 @@ def score_run(
     stacks_landed: int = 0,
     file_count: int | None = None,
     require_cover: bool = True,
-    cover_checked: int | None = None,
-    cover_pass: int | None = None,
 ) -> PipelineScore:
-    """Score a full trial-reels run. Success requires shippable clips, not file count."""
     clip_scores: list[ClipScore] = []
     for payload in clip_payloads:
         clip_scores.append(
@@ -169,22 +163,16 @@ def score_run(
                 output_path=payload.get("output_path"),
                 attested_words=payload.get("attested_words"),
                 run_cover_qa=require_cover and bool(payload.get("output_path")),
-                cover_ok=payload.get("cover_ok"),
-                cover_message=str(payload.get("cover_message") or ""),
             )
         )
 
     desk_pass = sum(1 for c in clip_scores if c.desk_ok)
-    cover_checked_count = cover_checked
-    if cover_checked_count is None:
-        cover_checked_count = sum(1 for c in clip_scores if c.cover_ok is not None)
-    cover_pass_count = cover_pass
-    if cover_pass_count is None:
-        cover_pass_count = sum(1 for c in clip_scores if c.cover_ok is True)
+    cover_checked_count = sum(1 for c in clip_scores if c.cover_ok is not None)
+    cover_pass_count = sum(1 for c in clip_scores if c.cover_ok is True)
     shippable = sum(1 for c in clip_scores if c.shippable)
     files = file_count if file_count is not None else stacks_landed
 
-    verified_on_cover = require_cover and cover_checked_count > 0
+    verified_on_cover = cover_checked_count > 0
     distinct_verified = len(
         _distinct_hook_texts(
             clip_payloads,
@@ -194,7 +182,8 @@ def score_run(
     )
 
     if clip_scores:
-        success = shippable > 0
+        success = shippable == len(clip_scores) and shippable > 0
+        success = success and distinct_verified >= TARGET_VARIANTS
         if require_cover and cover_checked_count:
             success = success and cover_pass_count == cover_checked_count
     else:
@@ -206,25 +195,21 @@ def score_run(
             f"{shippable}/{len(clip_scores)} clips shippable; "
             f"{distinct_verified}/{TARGET_VARIANTS} distinct hooks {qualifier}"
         )
-    elif success:
-        if verified_on_cover:
-            detail = (
-                f"{distinct_verified} distinct hook text{'s' if distinct_verified != 1 else ''} "
-                f"verified on covers (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        else:
-            detail = (
-                f"{distinct_verified} distinct attested hook text{'s' if distinct_verified != 1 else ''} "
-                f"across {shippable} cuts (honest subset — transcript cannot fill {TARGET_VARIANTS})"
-            )
-        message = f"{shippable}/{len(clip_scores)} clips shippable; {detail}"
+    elif shippable and distinct_verified < TARGET_VARIANTS:
+        message = (
+            f"{shippable}/{len(clip_scores)} clips shippable; "
+            f"only {distinct_verified}/{TARGET_VARIANTS} distinct hook texts — contract not met"
+        )
     elif stacks_landed and not shippable:
         message = (
             f"stacks landed ({stacks_landed} files) but only {shippable}/{len(clip_scores)} "
             f"clips shippable — file count is not success"
         )
     else:
-        message = f"desk {desk_pass}/{len(clip_scores)}, cover {cover_pass_count}/{cover_checked_count}, shippable {shippable}"
+        message = (
+            f"desk {desk_pass}/{len(clip_scores)}, cover {cover_pass_count}/{cover_checked_count}, "
+            f"shippable {shippable}"
+        )
 
     return PipelineScore(
         clips_scored=len(clip_scores),
