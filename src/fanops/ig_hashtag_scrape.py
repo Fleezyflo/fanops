@@ -361,7 +361,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     never this client on default paths.
 
     Loads `ig_scrape_session_<user>.json`, search_hashtags-probes (account_info only when
-    allow_reauth). Dead envelope → ScrapeUnavailable. No password login. No browser_cookie3.
+    allow_reauth). Dead envelope → ScrapeUnavailable. No password login.
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`.
     scrape-login passes an explicit `user` per account.
