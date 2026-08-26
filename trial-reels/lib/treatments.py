@@ -204,7 +204,10 @@ def _is_en_fragment_crumb(text: str) -> bool:
     norm = _normalize_phrase(text)
     if norm in _EN_FORBIDDEN_SLICES or norm in _EN_FRAGMENT_CRUMBS:
         return True
-    if len(words) < _MIN_HOOK_WORDS_EN and not _ends_sentence(words[-1]):
+    last = words[-1].rstrip("\"')]}")
+    if words[0][:1].islower() and not _ends_sentence(last) and not last.endswith(","):
+        return True
+    if len(words) < _MIN_HOOK_WORDS_EN and not _ends_sentence(last):
         return True
     return False
 
@@ -531,12 +534,28 @@ def _candidate_spans(sentence_tokens: list[_Token], language: str) -> list[tuple
     return spans
 
 
+def _raw_whisper_line_texts(transcript: dict[str, Any]) -> set[str]:
+    return {text for raw in _parse_lines(transcript) if (text := _line_text(raw))}
+
+
+def _is_single_line_continuation_crumb(text: str, raw_lines: set[str]) -> bool:
+    """English continuation tails that match one raw Whisper line are never hooks."""
+    words = [part for part in text.split() if part.strip()]
+    if not words or not words[0][:1].islower():
+        return False
+    stripped = {line.strip() for line in raw_lines}
+    bare = {line.rstrip(".!?…") for line in stripped}
+    return text in stripped or text.rstrip(".!?…") in bare
+
+
 def _validate_span(
     sentence_tokens: list[_Token],
     start: int,
     end: int,
     language: str,
     vocabulary: set[str],
+    *,
+    raw_lines: set[str] | None = None,
 ) -> bool:
     chunk = sentence_tokens[start:end]
     if not chunk:
@@ -544,6 +563,8 @@ def _validate_span(
     text = " ".join(token.word for token in chunk)
     is_full = start == 0 and end == len(sentence_tokens)
     if _contains_forbidden_rewrite(text):
+        return False
+    if language == "en" and raw_lines and _is_single_line_continuation_crumb(text, raw_lines):
         return False
     if not _words_attested(text, vocabulary):
         return False
@@ -675,6 +696,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
     if not tokens:
         return {**blocked, "reason": "empty transcript"}
 
+    raw_lines = _raw_whisper_line_texts(transcript)
     candidates: list[HookTreatment] = []
     seen_texts: set[str] = set()
     source_order = 0
@@ -685,7 +707,7 @@ def enumerate_treatments(transcript: dict[str, Any]) -> dict[str, Any]:
         norm = _normalize_phrase(text)
         if norm in seen_texts:
             return
-        if not _validate_span(sentence_tokens, start, end, language, vocabulary):
+        if not _validate_span(sentence_tokens, start, end, language, vocabulary, raw_lines=raw_lines):
             return
         is_full = start == 0 and end == len(sentence_tokens)
         kind = _classify_kind(text, language, is_full_line=is_full)
