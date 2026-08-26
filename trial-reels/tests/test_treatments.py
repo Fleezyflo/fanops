@@ -66,3 +66,39 @@ def test_arabic_fixture_honest_ceiling_one_maximal_line() -> None:
 def test_nested_hook_text_detects_subspan() -> None:
     assert is_nested_hook_text("عزبتني", "لك كفاية عزبتني")
     assert not is_nested_hook_text("لك كفاية عزبتني", "عزبتني")
+
+
+def test_single_arabic_line_never_emits_nested_window_farm() -> None:
+    """One sung line must not fan into nested sub-window treatments (5 hooks × 4 stacks)."""
+    result = enumerate_treatments(
+        {
+            "language": "ar",
+            "lines": [{"start": 12.2, "text": "لك كفاية عزبتني عزبتني"}],
+        }
+    )
+    texts = [item["text"] for item in result["treatments"]]
+    assert len(texts) == 1
+    assert texts[0] == "لك كفاية عزبتني عزبتني"
+    assert result["mode"] == "blocked"
+    for left, right in zip(texts, texts, strict=True):
+        for other in texts:
+            if left != other:
+                assert not is_nested_hook_text(left, other)
+
+
+def test_english_enumeration_rejects_whisper_crumbs() -> None:
+    result = enumerate_treatments(
+        {
+            "language": "en",
+            "lines": [
+                {"start": 0.0, "text": "fails."},
+                {"start": 0.5, "text": "So the next"},
+                {"start": 1.0, "text": "the respect that the modern corporate in"},
+            ],
+        }
+    )
+    texts = [item["text"] for item in result.get("treatments") or []]
+    assert result["mode"] == "blocked"
+    assert texts == []
+    assert "fails." not in texts
+    assert "So the next" not in texts
