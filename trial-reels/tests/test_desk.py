@@ -44,11 +44,11 @@ def test_twenty_hook_fixture_ships_twenty_distinct_cards() -> None:
     assert len({p.card["text"] for p in plans}) == TARGET_VARIANTS
 
 
-def test_live_arabic_clip_fails_closed_with_two_whisper_lines() -> None:
+def test_live_arabic_clip_fails_closed_with_one_maximal_line() -> None:
     result = write(_load_fixture("clip_5a92132dc6de.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] == 2
+    assert result["claims_found"] == 1
     assert result["target_variants"] == TARGET_VARIANTS
     assert "need 20" in result["reason"]
     assert result["cards"] == []
@@ -72,14 +72,16 @@ def test_arabic_merged_line_does_not_ship_nested_windows() -> None:
     assert "عذبتيني" not in " ".join(treatments)
 
 
-def test_live_english_clip_fails_closed_below_twenty() -> None:
+def test_live_english_clip_fails_closed_with_four_full_sentences() -> None:
     result = write(_load_fixture("clip_004ae6d9098a.json"))
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 8
+    assert result["claims_found"] == 4
     assert result["claims_found"] < TARGET_VARIANTS
     assert result["cards"] == []
     assert "So the next" not in _treatment_texts(result)
+    for text in _treatment_texts(result):
+        assert text.rstrip()[-1] in ".!?"
     validation = validate_desk_result(result)
     assert not validation["ok"]
     plans = plan_variants(result, clip_id="clip_004ae6d9098a", source_duration_s=60.0)
@@ -101,16 +103,16 @@ def test_english_rejects_pr1073_mid_sentence_crumbs() -> None:
     assert not forbidden.intersection(treatments)
 
 
-def test_english_one_line_blob_still_yields_clause_treatments() -> None:
+def test_english_one_line_blob_yields_full_sentences_only() -> None:
     fixture = _load_fixture("clip_004ae6d9098a.json")
     blob = " ".join(line["text"] for line in fixture["lines"])
     result = write({"language": "en", "lines": [{"start": 0.0, "text": blob}]})
 
     assert result["mode"] == "blocked"
-    assert result["claims_found"] >= 8
+    assert result["claims_found"] == 4
 
 
-def test_arabic_whisper_lines_stay_separate() -> None:
+def test_arabic_whisper_substring_line_dropped() -> None:
     from lib.desk import _collect_tokens, _tokens_by_line
     from lib.treatments import enumerate_treatments
 
@@ -119,7 +121,7 @@ def test_arabic_whisper_lines_stay_separate() -> None:
     lines = _tokens_by_line(tokens)
     assert len(lines) == len(fixture["lines"])
     units = enumerate_treatments(fixture)["treatments"]
-    assert {item["text"] for item in units} == {"لك كفاية عزبتني", "عزبتني"}
+    assert {item["text"] for item in units} == {"لك كفاية عزبتني"}
 
 
 def test_english_whisper_slices_do_not_ship() -> None:
