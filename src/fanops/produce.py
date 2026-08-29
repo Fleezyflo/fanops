@@ -118,7 +118,18 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
                 if not js.exists():
                     err = "whisper produced no transcript JSON"
                     get_logger(cfg)("produce", source_id, "error", err=err)
-        if _warm_signals(led.sources[source_id], resume_at):
+            sig_src = led.sources[source_id]
+        else:
+            from fanops.moments import source_needs_asr_retry
+            from fanops.transcribe import asr_retry_marker
+            if source_needs_asr_retry(led, cfg, source_id):
+                log("produce", source_id, "asr_retry_for_hooks")
+                led = transcribe_source(led, cfg, source_id, force=True)
+                marker = asr_retry_marker(cfg, s.source_path)
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("1")
+            sig_src = s
+        if _warm_signals(sig_src, resume_at):
             led = detect_signals(led, cfg, source_id)
     except Exception as e:
         get_logger(cfg)("produce", source_id, "warn", err=str(e)[:120])

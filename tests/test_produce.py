@@ -3,8 +3,9 @@ import json
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Source, SourceState
+from fanops.models import Source, SourceState, Moment, MomentState
 from fanops.produce import _produce_one
+from tests.fixtures.speech_segments import LOW_LOGPROB
 
 
 def test_produce_warms_errored_source_with_warm_transcript(tmp_path, mocker):
@@ -63,3 +64,26 @@ def test_produce_one_returns_error_when_json_missing(tmp_path, mocker):
     mocker.patch("fanops.produce.transcribe_source", side_effect=lambda led, cfg, source_id, **kw: led)
     res = _produce_one(cfg, "s1", set(), log=lambda *a, **k: None)
     assert res.error_reason == "whisper produced no transcript JSON"
+
+
+def test_produce_retries_asr_when_hook_windows_lack_speech(tmp_path, mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
+    cfg = Config(root=tmp_path)
+    src_path = cfg.sources / "src_1.mp4"
+    src_path.parent.mkdir(parents=True, exist_ok=True)
+    src_path.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path=str(src_path),
+                              state=SourceState.picks_decided, duration=60.0, language="en",
+                              transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
+                              meta={"transcribed": True}))
+        led.moments["m1"] = Moment(id="m1", parent_id="src_1", state=MomentState.picked,
+                                   content_token="14.00-22.00", start=14.0, end=22.0, reason="r")
+    calls = []
+    def fake(led, cfg, source_id, **kw):
+        calls.append(kw)
+        return led
+    mocker.patch("fanops.produce.transcribe_source", side_effect=fake)
+    _produce_one(cfg, "src_1", set(), log=lambda *a, **k: None)
+    assert calls and calls[0].get("force") is True
+    assert (cfg.agent_io / "transcripts" / "src_1.asr_retry").exists()
