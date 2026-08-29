@@ -4,7 +4,8 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
-from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source, _adopt_cached_transcript, _finalize_segments, _segment
+from fanops.transcribe import (whisper_cmd, fw_cmd, transcribe_source, _adopt_cached_transcript,
+                               _finalize_segments, _segment, adopt_transcript_keep_state)
 from tests.fixtures.speech_segments import LEGACY_EN, talk_seg
 
 def test_segment_passes_through_quality_metadata():
@@ -388,3 +389,44 @@ def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
     assert "whisper JSON malformed" in (s.error_reason or "")
     assert s.meta.get("transcribed") is not True   # a re-run actually retries
     assert s.meta.get("preserve_vocals_on_retry") is False  # MOL-814: deliberate asymmetry vs timeout/no-JSON
+
+
+def test_adopt_keep_state_does_not_rewind_picks_decided(tmp_path):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    js_dir = cfg.agent_io / "transcripts"
+    js_dir.mkdir(parents=True)
+    (js_dir / "vid.json").write_text(json.dumps({
+        "language": "en",
+        "segments": [talk_seg("new lyric line", start=0.0, end=2.0)],
+    }))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=path, state=SourceState.picks_decided,
+                          duration=10.0, language="en",
+                          transcript=[talk_seg("old", start=0.0, end=2.0)],
+                          meta={"transcribed": True}))
+    assert adopt_transcript_keep_state(led, cfg, "s1") is True
+    assert led.sources["s1"].state is SourceState.picks_decided
+    assert "new lyric" in led.sources["s1"].transcript[0]["text"]
+
+
+def test_transcribe_source_force_bypasses_idempotent_cache(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    (cfg.agent_io / "transcripts").mkdir(parents=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps({
+        "language": "en", "segments": [talk_seg("cached", start=0.0, end=1.0)],
+    }))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=path, state=SourceState.picks_decided,
+                          duration=10.0, meta={"transcribed": True}))
+    called = []
+    def fake(led, cfg, source_id, src, out_dir, model):
+        called.append(source_id)
+        return led
+    mocker.patch("fanops.transcribe._produce_transcript", side_effect=fake)
+    transcribe_source(led, cfg, "s1")
+    assert called == []                                    # transcribed=True, no force
+    transcribe_source(led, cfg, "s1", force=True)
+    assert called == ["s1"]                                # force re-runs isolate+ASR

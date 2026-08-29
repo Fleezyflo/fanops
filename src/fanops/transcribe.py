@@ -321,7 +321,8 @@ def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
             (cfg.clips / f"{cid}.render.json").unlink()
 
 
-def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None) -> bool:
+def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None,
+                             keep_state: bool = False) -> bool:
     """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption
     succeeded (the cache existed AND parsed AND had the expected shape). A corrupt/truncated cache
     or incomplete quality metadata returns False so the caller can fall through to a real run that
@@ -329,7 +330,9 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: 
 
     Pulled out as a free function (instead of a closure inside transcribe_source) because the
     stage-lock re-check needs to call exactly the same adoption logic — DRY across the
-    'before-lock fast path' and 'after-lock idempotent re-check'."""
+    'before-lock fast path' and 'after-lock idempotent re-check'.
+    keep_state=True refreshes transcript text without rewinding SourceState (a later-stage
+    re-transcribe must not demote picks_decided back to transcribed)."""
     try:
         data = json.loads(cached.read_text())
     except (OSError, json.JSONDecodeError):
@@ -342,11 +345,28 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: 
         src.transcript = _finalize_segments(data.get("segments", []), lang)
         src.language = lang
         src.meta["transcribed"] = True
-        led.set_source_state(source_id, SourceState.transcribed)
+        if not keep_state:
+            led.set_source_state(source_id, SourceState.transcribed)
         _log_transcript_tiers(cfg, source_id, src.transcript or [])
         return True
     except (KeyError, TypeError, AttributeError):
         return False
+
+
+def asr_retry_marker(cfg: Config, source_path: str) -> Path:
+    """One-shot marker: isolate+ASR already retried for a later-stage hook pass."""
+    return cfg.agent_io / "transcripts" / f"{Path(source_path).stem}.asr_retry"
+
+
+def adopt_transcript_keep_state(led: Ledger, cfg: Config, source_id: str) -> bool:
+    """Refresh Source.transcript from the sidecar JSON without changing SourceState."""
+    src = led.sources.get(source_id)
+    if src is None or not src.source_path:
+        return False
+    cached = cfg.agent_io / "transcripts" / f"{Path(src.source_path).stem}.json"
+    if not cached.exists():
+        return False
+    return _adopt_cached_transcript(led, source_id, cached, cfg=cfg, keep_state=True)
 
 
 def _transcribe_toolchain_present() -> bool:
@@ -355,9 +375,9 @@ def _transcribe_toolchain_present() -> bool:
 
 
 def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
-                      in_lock: bool = False) -> Ledger:
+                      in_lock: bool = False, force: bool = False) -> Ledger:
     src = led.sources[source_id]
-    if src.meta.get("transcribed") is True:           # idempotent only when it actually ran
+    if not force and src.meta.get("transcribed") is True:           # idempotent only when it actually ran
         return led
     out_dir = cfg.agent_io / "transcripts"
     # M1 fast path: the whisper JSON is named by the source stem and is DETERMINISTIC per source.
@@ -366,7 +386,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     # produce path which will overwrite it. The stem is the SOURCE stem in both engines (isolation
     # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
-    if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
+    if not force and cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
         try:
             from fanops.artifacts import stamp_stage
             rel = str(cached.relative_to(cfg.agent_io))
@@ -394,7 +414,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # Re-check INSIDE the lock — this is the short-circuit that closes the race. The first
         # producer wrote the JSON; the second producer reaches this line and adopts. Crucially the
         # subprocess.run below NEVER executes in the second producer.
-        if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
+        if not force and cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
             return led
         return _produce_transcript(led, cfg, source_id, src, out_dir, model)
 
