@@ -109,7 +109,10 @@ def register_run_routes(app, cfg):
         # Auto-prepare: answer the gates (via the responder) + advance until stable, so the operator
         # never hand-writes a caption. Same live-publish confirm checkbox as advance.
         return _run_panel(actions.run_prepare(cfg, request.form.get("base_time") or None,
-                                              confirmed=bool(request.form.get("confirm"))))
+                                              confirmed=bool(request.form.get("confirm")),
+                                              source_ids=request.form.getlist("source_ids"),
+                                              batch_name=request.form.get("batch_name", ""),
+                                              target_accounts=request.form.getlist("target_accounts")))
 
     @app.post("/run/bind-queue")
     def do_bind_queue():

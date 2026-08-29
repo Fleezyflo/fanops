@@ -100,3 +100,8 @@ def test_purge_covers_manifest_framing_keyframes(tmp_path):
     assert not (cfg.agent_io / "framing" / f"{sid}.detect.json").exists()
     assert not (cfg.agent_io / "keyframes" / sid).exists()
     assert not (cfg.clips / "clip_x.render.json").exists()
+
+
+def test_whisper_no_json_is_not_transient():
+    assert artifacts.is_transient_error("whisper produced no JSON (rc=1): boom") is False
+    assert artifacts.is_transient_error("whisper produced no transcript JSON") is False

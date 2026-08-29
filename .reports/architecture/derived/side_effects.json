@@ -119,11 +119,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 492
+        "line": 509
       },
       {
         "call": "Ledger.transaction",
-        "line": 518
+        "line": 536
       }
     ],
     "fanops.post.compress": [
@@ -333,7 +333,7 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 85
+        "line": 83
       },
       {
         "call": "Ledger.transaction",
@@ -361,7 +361,7 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 604
+        "line": 614
       }
     ],
     "fanops.studio.actions_segments": [
