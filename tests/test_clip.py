@@ -7,7 +7,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt, Batch
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
 from fanops import overlay
-from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
+from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LOW_LOGPROB
 
 
 @pytest.fixture(autouse=True)
@@ -682,10 +682,10 @@ def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monk
     assert round(ss + to, 1) == 28.4                       # end snapped to the phrase end
 
 def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatch):
-    junk = {**MUSIC_HALLUC, "start": 9.4, "end": 9.8, "text": "junk start"}
+    junk = {**LOW_LOGPROB, "start": 9.4, "end": 9.8, "text": "junk start"}
     good = talk_seg("real speech", start=9.3, end=12.0)
     good_end = talk_seg("phrase end", start=15.0, end=17.2)
-    junk_end = {**MUSIC_HALLUC, "start": 16.0, "end": 16.6, "text": "junk end"}
+    junk_end = {**LOW_LOGPROB, "start": 16.0, "end": 16.6, "text": "junk end"}
     tr = [junk, good, good_end, junk_end]
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
                                   duration=120.0, transcript=tr)

@@ -8,7 +8,9 @@ Speech-trust (L1–L3, always-on — no env toggle): each segment gets a stamped
 degraded / rejected). Production gates (subs burn, moment pick, hook excerpt, framing classify)
 consume only full-tier segments via trusted_segments / window_has_trusted_speech /
 excerpt_for_window. degraded = legacy cache missing ASR quality keys → _adopt_cached_transcript
-refuses adoption and the next pass re-transcribes. rejected = junk/script flap or failed L1 thresholds.
+refuses adoption and the next pass re-transcribes. rejected = empty text, script flap, or failed
+decoder-quality L1 (avg_logprob / compression_ratio). no_speech_prob is stored but never a veto —
+it is a window-level speech-vs-music prior and false-rejects sung/rapped lyrics.
 
 real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on real audio
 (whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
@@ -142,17 +144,19 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
-# Whisper-default quality thresholds for speech-trust filtering.
-_NO_SPEECH_MAX = 0.6
+# Decoder-quality floors. no_speech_prob is stored (schema v2 / cache completeness) but is NOT a
+# pass/fail input: faster-whisper copies a window-level speech-vs-music prior onto every segment in
+# the decode chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are
+# confident. VAD already dropped silence; L1 here is "did the decoder commit to this text".
 _AVG_LOGPROB_MIN = -1.0
 _COMPRESSION_RATIO_MAX = 2.4
 
 def _segment_metadata_pass(seg: dict) -> bool:
-    """L1a–L1c: all three quality keys present and within thresholds; partial keys -> False."""
+    """L1: quality keys present, avg_logprob + compression_ratio in range. Partial keys -> False.
+    no_speech_prob is required to be present (cache completeness) and is not thresholded."""
     if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
         return False
     try:
-        if float(seg["no_speech_prob"]) > _NO_SPEECH_MAX: return False
         if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
         if float(seg["compression_ratio"]) > _COMPRESSION_RATIO_MAX: return False
     except (TypeError, ValueError):
@@ -254,14 +258,13 @@ def _segment_script_coherent(text: str, *, src_lang: str | None) -> bool:
     return True
 
 def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
-    """True only for full-trust segments (L1 metadata pass + L2 script coherence)."""
-    tier = seg.get("trust_tier")
-    if tier is None:
-        tier = _trust_tier(seg, src_lang=src_lang)
-    return tier == "full"
+    """True only for full-trust segments (L1 metadata pass + L2 script coherence).
+    Always recomputes from quality keys — a stored trust_tier is a snapshot, not authority
+    (a stale rejected stamp from a previous formula must not freeze live lyrics as junk)."""
+    return _trust_tier(seg, src_lang=src_lang) == "full"
 
 def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
-    """Filter to full-trust segments only; None/[] -> []. Prefers stamped trust_tier when present."""
+    """Filter to full-trust segments only; None/[] -> []. Recomputes; ignores stored trust_tier."""
     return [s for s in (transcript or []) if segment_trusted(s, src_lang=src_lang)]
 
 def window_has_trusted_speech(src, start: float, end: float) -> bool:
