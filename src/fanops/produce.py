@@ -20,6 +20,7 @@ unchanged.
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -108,6 +109,15 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     try:
         if _warm_transcribe(s, resume_at):
             led = transcribe_source(led, cfg, source_id)
+            after = led.sources[source_id]
+            if after.state is SourceState.error and after.error_reason:
+                err = after.error_reason
+                get_logger(cfg)("produce", source_id, "error", err=str(err)[:160])
+            elif after.state is SourceState.catalogued:
+                js = cfg.agent_io / "transcripts" / f"{Path(s.source_path).stem}.json"
+                if not js.exists():
+                    err = "whisper produced no transcript JSON"
+                    get_logger(cfg)("produce", source_id, "error", err=err)
         if _warm_signals(led.sources[source_id], resume_at):
             led = detect_signals(led, cfg, source_id)
     except Exception as e:
@@ -128,7 +138,7 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     return SourceResult(source_id, err)
 
 
-def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
+def run_all(cfg: Config, aspects: set[Fmt], log) -> list[SourceResult]:
     """The single lock-free producer entry point pipeline.advance() calls between the short
     ingest transaction and the main reduce transaction. Warms every catalogued / transcribed /
     decided unit's on-disk artifacts so the reducer's in-lock transcribe / signals / render
@@ -138,12 +148,15 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
     Concurrency: cfg.concurrent_sources gates a ThreadPoolExecutor (max_workers =
     cfg.concurrent_workers). Default OFF -> sequential per source, byte-identical to the prior
     `_prewarm_sequential` ordering. Either path leaves the SAME on-disk artifacts warm.
-    NEVER raises (each producer fail-opens; any thread-level crash is logged and continues)."""
+    NEVER raises (each producer fail-opens; any thread-level crash is logged and continues).
+    Returns per-source results so the reducer can stamp a missing-transcript error onto the
+    real ledger — producers themselves still save nothing."""
+    results: list[SourceResult] = []
     try:
         led = Ledger.load(cfg)
     except Exception as e:
         log("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
-        return
+        return []
     ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]
     if ids:
         if cfg.concurrent_sources:
@@ -151,13 +164,13 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
                 futs = [ex.submit(_produce_one, cfg, sid, aspects, log=log) for sid in ids]
                 for fut in as_completed(futs):
                     try:
-                        fut.result()                     # each producer already fail-opens
+                        results.append(fut.result())     # each producer already fail-opens
                     except Exception as e:
                         get_logger(cfg)("produce", "-", "warn",
                             err=f"worker crash: {type(e).__name__}: {str(e)[:120]}")
         else:
             for sid in ids:
-                _produce_one(cfg, sid, aspects, log=log)
+                results.append(_produce_one(cfg, sid, aspects, log=log))
     # M4/M6 structural-hooks stitch prewarm: warms operator-approved stitch renders lock-free,
     # serial (independent of the per-source map). Both formats OFF -> the call is a no-op.
     strategies = _enabled_strategies(cfg)
@@ -166,3 +179,4 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> None:
             prewarm_approved_stitches(led, cfg, log, strategies=strategies)
         except Exception as e:
             get_logger(cfg)("produce", "-", "warn", err=str(e)[:120])
+    return results

@@ -35,3 +35,31 @@ def test_produce_warms_errored_source_with_warm_transcript(tmp_path, mocker):
     assert any("warm_resume" in str(x) for x in logs)
     assert (cfg.agent_io / "signals" / "s1.json").exists()
     assert sig_calls, "signals ffmpeg should run to warm sidecar"
+
+
+def test_produce_one_returns_error_when_whisper_sets_error(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path=path, state=SourceState.catalogued))
+
+    def fake(led, cfg, source_id, **kw):
+        led.set_source_state(source_id, SourceState.error,
+                             error_reason="whisper produced no JSON (rc=1): boom")
+        return led
+    mocker.patch("fanops.produce.transcribe_source", side_effect=fake)
+    res = _produce_one(cfg, "s1", set(), log=lambda *a, **k: None)
+    assert res.error_reason and "no JSON" in res.error_reason
+    assert Ledger.load(cfg).sources["s1"].state is SourceState.catalogued
+
+
+def test_produce_one_returns_error_when_json_missing(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path=path, state=SourceState.catalogued))
+    mocker.patch("fanops.produce.transcribe_source", side_effect=lambda led, cfg, source_id, **kw: led)
+    res = _produce_one(cfg, "s1", set(), log=lambda *a, **k: None)
+    assert res.error_reason == "whisper produced no transcript JSON"

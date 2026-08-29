@@ -317,7 +317,7 @@ def run_next_step(status: dict) -> dict:
     awaiting = _n("awaiting")
     if footage == 0:
         return {"key": "add", "label": "Add a video to begin",
-                "hint": "Choose a file above, or paste a link under More — then it lands as pending."}
+                "hint": "Choose a file above, or paste a link under More — then tick accounts and Make clips."}
     recoverable = _n("sources_recoverable")
     if recoverable:
         label = f"{recoverable} source{'s' if recoverable != 1 else ''} need attention"
@@ -325,11 +325,11 @@ def run_next_step(status: dict) -> dict:
                 "hint": "Open the source in Library to read the failure and resume or reset from there."}
     if s.get("queue_gate"):
         if _n("pending_unbound_count"):
-            return {"key": "queue", "label": f"Queue {_n('pending_unbound_count')} pending file(s)",
-                    "hint": "Tick the accounts you want, then click Add to queue."}
+            return {"key": "queue", "label": f"Make clips for {_n('pending_unbound_count')} pending file(s)",
+                    "hint": "Tick the accounts you want, then Make clips."}
         if _n("held_pending"):
             return {"key": "make", "label": f"Make clips for {_n('held_pending')} queued file(s)",
-                    "hint": "Release a queue line (or all) to start cutting clips."}
+                    "hint": "Make clips releases the queued file(s) and cuts until Review."}
         if _n("sources"):
             return {"key": "prepare", "label": "Run a pass",
                     "hint": "Cut clips and write captions for every released source — they'll land in Review."}

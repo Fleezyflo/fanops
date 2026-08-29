@@ -14,12 +14,12 @@ real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on
 (whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
 for segment_trusted / window_has_trusted_speech in production paths.
 
-ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
+ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
 (default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
-(int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
-faster-whisper is absent (CI / air-gapped), so transcription always runs."""
+(int8 makes even large-v3 practical on CPU). Absent [asr] is SourceState.error / ToolchainMissingError.
+There is no whisper-CLI fallback."""
 from __future__ import annotations
-import contextlib, json, logging, shutil, subprocess, sys, time
+import contextlib, json, logging, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -130,10 +130,9 @@ def whisper_cmd(src: str, out_dir: str, model: str = "turbo", language: str = ""
     return cmd + [src]
 
 def _fw_available() -> bool:
-    """True iff the faster-whisper engine (the [asr] extra) is importable. When False,
-    transcribe_source degrades to the legacy `whisper` CLI — fail-open, today's behavior."""
+    """True iff the faster-whisper engine (the [asr] extra) is importable."""
     try: import faster_whisper; return True       # noqa: F401  (probe only)
-    except ImportError: return False              # the [asr] extra isn't installed -> legacy whisper CLI path
+    except ImportError: return False
 
 def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     # faster-whisper runner invocation (`python -m fanops._fwrun`). Same --model/--output_dir flags
@@ -348,8 +347,8 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: 
 
 
 def _transcribe_toolchain_present() -> bool:
-    """Cheap PATH probe: faster-whisper ([asr] extra) OR legacy whisper CLI."""
-    return _fw_available() or shutil.which("whisper") is not None
+    """Cheap probe: faster-whisper ([asr] extra). No whisper-CLI fallback."""
+    return _fw_available()
 
 
 def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
@@ -379,7 +378,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     if in_lock:
         if not _transcribe_toolchain_present():
             raise ToolchainMissingError(
-                "whisper/faster-whisper not found — install [asr] or whisper CLI to transcribe (in-lock probe)")
+                "faster-whisper not found — pip install -e '.[asr]' (in-lock probe)")
         get_logger(cfg)("transcribe", source_id, "defer", reason="cold cache in-lock; deferring whisper to producer")
         return led
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -434,18 +433,17 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
                 # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
                 try: Path(voc).replace(target); audio = str(target)
                 except OSError: audio = src.source_path
-    # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for with timeout_attempts
-    # for retry downgrade after prior kills). Fail open to the legacy `whisper` CLI when the [asr] extra is
-    # absent — and that fallback is ALSO duration-aware (cfg.whisper_model_for, audit c0-f2).
+    # Engine: faster-whisper only. A missing [asr] extra used to fail open to Homebrew `whisper`,
+    # which left no per-source JSON and stalled the source at catalogued. Refuse instead.
+    if not _fw_available():
+        src.meta["preserve_vocals_on_retry"] = False
+        led.set_source_state(source_id, SourceState.error,
+                             error_reason="faster-whisper not installed — pip install -e '.[asr]'")
+        return led
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
-    if _fw_available():
-        engine = "faster-whisper"
-        used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
-        cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
-    else:
-        engine = "whisper-cli"
-        used_model = _resolve_model(model or cfg.whisper_model_for(src.duration, timeout_attempts=attempts))
-        cmd = whisper_cmd(audio, str(out_dir), used_model, cfg.asr_language)
+    engine = "faster-whisper"
+    used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
+    cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()
     try:
