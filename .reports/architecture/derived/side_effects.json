@@ -119,11 +119,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 510
+        "line": 511
       },
       {
         "call": "Ledger.transaction",
-        "line": 537
+        "line": 538
       }
     ],
     "fanops.post.compress": [
@@ -177,11 +177,11 @@
     "fanops.responder": [
       {
         "call": "Ledger.transaction",
-        "line": 186
+        "line": 191
       },
       {
         "call": "Ledger.transaction",
-        "line": 203
+        "line": 208
       }
     ],
     "fanops.studio.actions": [
@@ -733,11 +733,11 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 271
+        "line": 274
       },
       {
         "call": "subprocess.run",
-        "line": 407
+        "line": 412
       }
     ],
     "fanops.overlay": [
@@ -793,7 +793,7 @@
     "fanops.transcribe": [
       {
         "call": "subprocess.run",
-        "line": 453
+        "line": 473
       }
     ],
     "fanops.vocals": [
