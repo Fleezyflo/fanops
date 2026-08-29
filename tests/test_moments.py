@@ -718,8 +718,8 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") == rid1
 
 def test_request_moment_hooks_opens_gate_when_no_trusted_speech(tmp_path):
-    # Speech-trust does not auto-answer hook=None. No-speech windows still owe the author (frames +
-    # reason). ingest stays pending until a real response lands — never a silent hookless clip.
+    # Speech-trust does not auto-answer hook=None. No media file → ASR cannot retry, so the
+    # author still opens (never a silent hookless clip). ingest stays pending until a response.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
@@ -736,6 +736,62 @@ def test_request_moment_hooks_opens_gate_when_no_trusted_speech(tmp_path):
     assert led.moments_of("src_1")[0].state is MomentState.picked
     assert led.moments_of("src_1")[0].hook is None
     assert led.sources["src_1"].state is SourceState.picks_decided
+
+
+def test_request_moment_hooks_uses_live_excerpt_not_stale(tmp_path):
+    # Ingest-time excerpt can be empty (old nsp veto). PASS 2 must send live trusted text, not
+    # frames+reason with a stale blank excerpt.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="bar lands")])
+    m = led.moments_of("src_1")[0]
+    led.moments[m.id] = m.model_copy(update={"transcript_excerpt": ""})
+    led = request_moment_hooks(led, cfg, "src_1")
+    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-22.00").read_text())
+    assert "slept on me" in payload["transcript_excerpt"]
+    assert led.moments_of("src_1")[0].transcript_excerpt  # ledger excerpt refreshed too
+
+
+def test_request_moment_hooks_defers_when_asr_retry_needed(tmp_path, monkeypatch):
+    # Real file, isolation never ran, window has no trusted speech → do NOT open the author
+    # on frames+reason. Produce force-retried ASR first.
+    monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    mp4 = cfg.sources / "src_1.mp4"
+    mp4.parent.mkdir(parents=True, exist_ok=True)
+    mp4.write_bytes(b"\x00")
+    led.add_source(Source(id="src_1", source_path=str(mp4),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    from fanops.agentstep import latest_request_id
+    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") is None
+
+
+def test_request_moment_hooks_reopens_unread_frame_hook(tmp_path):
+    # A decided hook stamped hook_frames_unread was authored from reason, not frames. Re-run.
+    from fanops.agentstep import write_request, write_response, latest_request_id, read_response
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    key = _hook_gate_key("src_1", m)
+    rid = write_request(cfg, kind="moment_hooks", key=key, payload={"source_id": "src_1"})
+    write_response(cfg, "moment_hooks", key,
+                   MomentHookDecision(hook="wait for it", request_id=rid).model_dump_json())
+    led.moments[m.id] = m.model_copy(update={"hook": "wait for it", "hook_frames_unread": True})
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook_frames_unread is False
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert latest_request_id(cfg, "moment_hooks", key) is not None
+    assert read_response(cfg, "moment_hooks", key, MomentHookDecision) is None
 
 
 def test_request_moment_hooks_reopens_hookless_decided(tmp_path):

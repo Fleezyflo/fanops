@@ -100,6 +100,10 @@ class LlmSchemaError(RuntimeError):
     instead of letting it fall through as a generic RuntimeError. Subclass of RuntimeError so
     every existing `raises(RuntimeError)` assertion (e.g. test_llm.py) stays green."""
 
+class LlmFramesUnreadError(RuntimeError):
+    """Attached frames were never opened (`num_turns<=1` after re-asks). A reason-only hook is
+    not a completion — the responder leaves the gate pending so the next tick re-runs."""
+
 class LlmToolchainError(RuntimeError):
     """`claude -p` exited nonzero with a CLI/toolchain usage error (unknown option, usage banner, etc.).
     Typed so the responder treats a broken/outdated claude install as deterministic — enrichment gates
@@ -229,9 +233,8 @@ def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      images: list[str] | None = None, model: str | None = None,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered,
-    frames_unread). frames_unread is True ONLY when frames were ATTACHED but the model answered
-    without ever opening them (num_turns<=1 after a re-ask) — a degraded, text-grounded hook the
-    responder breadcrumbs + RunSummary counts (AGENT-9); False on every non-vision / frames-read call.
+    frames_unread). frames_unread stays False on success: attached frames that stay unread raise
+    LlmFramesUnreadError so the caller re-runs instead of accepting a reason-only hook.
     Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
     Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
     unparseable output. The CALLER (the responder) validates against the pydantic model and
@@ -314,23 +317,25 @@ def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
 
     # HOOK-TRANSPORT: hand the frames + a read-them-first instruction, then VERIFY the model actually
     # OPENED them (num_turns proves a Read turn fired — Read is the only tool granted). If it answered
-    # text-only, re-ask ONCE forcing the Read; if STILL unread, proceed but log a degraded breadcrumb
-    # (the hook is then text-grounded, not frame-grounded — degraded but HONEST, surfaced by the breadcrumb).
-    frames_unread = False                                    # AGENT-9: True iff frames were ATTACHED but never opened
+    # text-only, re-ask. Frames + pick-reason without a Read are not a hook — raise so the gate retries.
+    frames_unread = False                                    # True only on the success-path tuple; unread raises
+    _FRAME_READ_TRIES = 3                                    # first call + re-asks; still unread -> raise
     if images:
-        env = _run("Read each image frame below with the Read tool FIRST, then return ONLY the JSON "
-                   "object matching the provided schema — no prose, no preamble, no explanation:\n"
-                   + "\n".join(images) + "\n\n" + prompt)
+        first = ("Read each image frame below with the Read tool FIRST, then return ONLY the JSON "
+                 "object matching the provided schema — no prose, no preamble, no explanation:\n"
+                 + "\n".join(images) + "\n\n" + prompt)
+        reask = ("You did NOT open the frames. You MUST call the Read tool on EACH path below "
+                 "BEFORE answering. Ground your answer in what you SEE in the frames, then return "
+                 "ONLY the JSON object matching the provided schema — no prose:\n"
+                 + "\n".join(images) + "\n\n" + prompt)
+        env = _run(first)
+        tries = 1
+        while _frames_unread(env) and tries < _FRAME_READ_TRIES:
+            env = _run(reask)
+            tries += 1
         if _frames_unread(env):
-            env2 = _run("You did NOT open the frames. You MUST call the Read tool on EACH path below "
-                        "BEFORE answering. Ground your answer in what you SEE in the frames, then return "
-                        "ONLY the JSON object matching the provided schema — no prose:\n"
-                        + "\n".join(images) + "\n\n" + prompt)
-            if not _frames_unread(env2):
-                env = env2
-            else:
-                frames_unread = True                         # AGENT-9: surfaced to the responder, not just logged
-                logger.warning("hook frames appear unread (num_turns<=1) after re-ask — hook is text-grounded")
+            raise LlmFramesUnreadError(
+                f"attached frames unread after {tries} tries — not accepting a text-grounded hook")
     else:
         env = _run(prompt)
 

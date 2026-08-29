@@ -11,7 +11,7 @@ from fanops.ledger import Ledger
 from fanops.models import (SourceState, MomentState, ClipState, PostState, Fmt, PLATFORM_ASPECT)
 from fanops.accounts import Accounts
 from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
-from fanops.transcribe import transcribe_source
+from fanops.transcribe import transcribe_source, adopt_transcript_keep_state
 from fanops.signals import detect_signals
 from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks, source_needs_hook_pass
 from fanops.hookscore import log_hook_quality
@@ -213,6 +213,7 @@ def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledge
     for s in list(led.sources.values()):
         if source_needs_hook_pass(led, cfg, s.id):
             try:
+                adopt_transcript_keep_state(led, cfg, s.id)   # pick up a produce-forced isolate+ASR retry
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
             except Exception as e:

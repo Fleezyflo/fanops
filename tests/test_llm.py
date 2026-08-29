@@ -303,13 +303,25 @@ def test_claude_json_meta_no_reask_without_images(mocker):
 
 # ---- AGENT-9: claude_json_meta surfaces the frames-unread signal; claude_json bare-dict unaffected ----
 def test_claude_json_meta_reports_frames_unread_after_reask(mocker):
-    env = {"structured_output": {"hook": "x"}, "num_turns": 1, "model": "opus"}   # num_turns<=1 twice -> unread
+    env = {"structured_output": {"hook": "x"}, "num_turns": 1, "model": "opus"}   # num_turns<=1 every try
     class R: returncode = 0; stdout = json.dumps(env); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json_meta, LlmFramesUnreadError
+    with pytest.raises(LlmFramesUnreadError, match="unread"):
+        claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
+    assert run.call_count == 3                             # first + re-asks; never a reason-only hook
+
+
+def test_claude_json_meta_keeps_reasking_until_frames_read(mocker):
+    seq = iter([json.dumps({"structured_output": {"hook": "a"}, "num_turns": 1}),
+                json.dumps({"structured_output": {"hook": "b"}, "num_turns": 1}),
+                json.dumps({"structured_output": {"hook": "c"}, "num_turns": 3})])
+    def fake(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
     from fanops.llm import claude_json_meta
-    out, model, unread = claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
-    assert unread is True                                  # the degraded, text-grounded signal is RETURNED
-    assert out == {"hook": "x"}
+    out, _, unread = claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
+    assert out == {"hook": "c"} and unread is False and run.call_count == 3
 
 def test_claude_json_meta_frames_read_not_unread(mocker):
     env = {"structured_output": {"hook": "x"}, "num_turns": 2, "model": "opus"}   # a Read turn fired -> read
