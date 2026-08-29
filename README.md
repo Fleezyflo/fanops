@@ -26,7 +26,7 @@ Prototype acceptance path — full checklist in **[docs/design/v0.1-ship-route.m
 4. **Upload (S02)** — Run tab: Upload video → Ingest inbox (chunked resumable upload)
 5. **Prepare + Review focus (S07)** — Run tab: Prepare everything; Review tab: bare `/review` account-first picker/auto-focus, approve selected
 6. **Schedule → publish** — Go live if not already (confirm checkbox); Schedule tab or Run tab publish with live confirm; post ships to real account
-7. **Metrics + S06 rotation** — Posted tab shows live URL; metrics arrive (timestamp); two consecutive posts for same account show differing hashtag tag lines
+7. **Metrics** — Posted tab shows live URL; metrics arrive (timestamp). Posted tags are lock ∩ model picks, cap 4 — same picks and same lock produce the same line.
 
 Learning ships frozen-as-built (gated P4 dims + timing; hashtag judge = live Graph reach).
 

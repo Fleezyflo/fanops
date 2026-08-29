@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from fanops.config import Config, _SCRAPE_COTAG_ENQUEUE_DEFAULT, _SCRAPE_TRY_CAP_DEFAULT
 from fanops.log import get_logger
-from fanops.hashtags import (METRIC_FIELD, RECORD_NUM_FIELDS, _norm, _metric, _num,
+from fanops.hashtags import (RECORD_NUM_FIELDS, _norm, _metric, _num,
                              load_measurements, ranked_tags)
 from fanops.controlio import write_json_atomic
 
@@ -1318,22 +1318,36 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
 
 
 def cmd_hashtags_discover(cfg: Config) -> int:
-    """`fanops hashtags discover` — the periodic "what does each persona's niche look like right now"
-    report. READ-ONLY and ZERO NETWORK: it projects the cache that refresh already bought, so it can be
-    scheduled freely (launchd/cron) without spending a single scrape call. Always exits 0."""
-    from fanops.persona_research import derived_report
+    """`fanops hashtags discover` — each native source's lock. READ-ONLY, ZERO NETWORK."""
+    from fanops.ledger import Ledger
+    from fanops.source_tags import load_source_tag_locks
     log = get_logger(cfg)
     try:
-        personas = _posting_personas(cfg)
+        led = Ledger.load(cfg)
     except Exception as exc:                                  # noqa: BLE001 — a report must never break a schedule
         get_logger(cfg)("hashtags", "-", "discover_skipped", level="warning", err=str(exc)[:160]); return 0
-    if not personas:
-        log("hashtags", "-", "no_personas", level="warning",
-            hint="add one in the Studio Personas tab first"); return 0
-    for per in personas:
-        r = derived_report(cfg, per.id)
-        log("hashtags", per.id, "niche", terms=", ".join(r["terms"][:8]), measured=r["measured"],
-            top=", ".join(f"{t}({int(v)})" for t, v in r["top"]))
-    log("hashtags", "-", "discover_done", field=METRIC_FIELD,
-        hint="numbers are Top-grid median play_count (else like_count); media_count stored when served")
+    table = load_source_tag_locks(cfg)
+    n = 0
+    for src in led.sources.values():
+        if getattr(src, "origin_kind", "native") == "third_party":
+            continue
+        sid = str(getattr(src, "id", "") or "")
+        if not sid:
+            continue
+        rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
+        lock = [t for t in (rec.get("lock") or []) if isinstance(t, str)]
+        at = rec.get("researched_at")
+        if isinstance(at, str) and at.strip():
+            state = "empty" if not lock else "ready"
+        elif rec:
+            state = "in_progress"
+        else:
+            state = "missing"
+        log("hashtags", sid, "lock", state=state, n=len(lock), tags=", ".join(lock[:12]))
+        n += 1
+    if not n:
+        log("hashtags", "-", "no_sources", level="warning",
+            hint="ingest a native source first"); return 0
+    log("hashtags", "-", "discover_done", sources=n,
+        hint="posted tags = lock intersect model picks, cap 4")
     return 0
