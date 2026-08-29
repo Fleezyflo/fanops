@@ -1324,7 +1324,8 @@
       ],
       "lazy": [
         "fanops.moments",
-        "fanops.pipeline_run"
+        "fanops.pipeline_run",
+        "fanops.transcribe"
       ],
       "optional": [],
       "typing": []
@@ -2541,7 +2542,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 258,
+  "lazy_downward_count": 259,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3875,7 +3876,7 @@
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 611,
-    "lazy_edges": 383,
+    "lazy_edges": 384,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 79,
     "lazy_edges_to_equal_or_higher_level": 125,
