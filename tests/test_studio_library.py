@@ -95,13 +95,14 @@ def test_run_panel_shows_third_party_count(tmp_path):
 
 
 def test_library_transcript_stamps_trust_tier(tmp_path):
-    from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC
+    from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, MUSIC_HALLUC
     from fanops.studio.views_library import source_pipeline_map
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path="/talk.mp4", state=SourceState.transcribed, language="en",
                               transcript=[talk_seg("good line", start=0.0, end=2.0),
-                                          {**MUSIC_HALLUC, "start": 2.0, "end": 4.0}]))
+                                          {**LOW_LOGPROB, "start": 2.0, "end": 4.0},
+                                          {**MUSIC_HALLUC, "start": 4.0, "end": 6.0, "trust_tier": "rejected"}]))
     detail = source_pipeline_map(cfg, "src_1")
     tiers = [s["trust_tier"] for s in detail["transcript"].segments]
-    assert tiers == ["full", "rejected"]
+    assert tiers == ["full", "rejected", "full"]   # stale rejected stamp on decoder-confident sung line recomputes

@@ -13,7 +13,7 @@ from fanops.accounts import Accounts
 from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
 from fanops.transcribe import transcribe_source
 from fanops.signals import detect_signals
-from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
+from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks, source_needs_hook_pass
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.casting import affinity_admits
@@ -204,13 +204,14 @@ def _stage_ingest_moments(led: Ledger, cfg: Config, log) -> Ledger:
 
 
 def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
-    """M1b PASS 2 (frame-seeing hook): for each source whose picks reconciled (picks_decided), open a
-    per-pick moment_hooks gate (request, write-once) seeing THAT window's frames, then ingest any landed
-    hooks (promote picked->decided; source->moments_decided once every pick's hook lands). Per-source
-    quarantine, mirroring the pick gate. The responder answers between passes — the SAME multi-gate
+    """M1b PASS 2 (frame-seeing hook): for each source that still owes a hook (picks_decided, or
+    decided moments left hookless by the old no-speech skip), open a per-pick moment_hooks gate
+    (request, write-once) seeing THAT window's frames, then ingest any landed hooks (promote
+    picked->decided; source->moments_decided once every pick's hook lands). Per-source quarantine,
+    mirroring the pick gate. The responder answers between passes — the SAME multi-gate
     convergence as moments->captions (one extra cycle)."""
     for s in list(led.sources.values()):
-        if s.state is SourceState.picks_decided:
+        if source_needs_hook_pass(led, cfg, s.id):
             try:
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts

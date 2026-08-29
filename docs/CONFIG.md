@@ -73,7 +73,7 @@ Every transcript segment is stamped `trust_tier` at finalize time (`transcribe._
 
 | Tier | Meaning | Production effect |
 |---|---|---|
-| **full** | L1 ASR quality metadata within thresholds (`avg_logprob`, `no_speech_prob`, `compression_ratio`) AND L2 script coherence for the source language | Consumed by `trusted_segments`, `window_has_trusted_speech`, `excerpt_for_window`, and `segment_trusted` |
+| **full** | L1 decoder quality (`avg_logprob`, `compression_ratio`) AND L2 script coherence for the source language. `no_speech_prob` is stored on the sidecar, not a veto (window-level speech-vs-music prior; false-rejects sung/rapped lyrics) | Consumed by `trusted_segments`, `window_has_trusted_speech`, `excerpt_for_window`, and `segment_trusted` |
 | **degraded** | Text present and script-coherent but missing one or more L1 quality keys (typical of legacy whisper-CLI cache) | **Re-transcribe signal**: `_adopt_cached_transcript` refuses incomplete caches (`_cache_is_quality_complete` → `False`), so the next pass re-runs ASR and overwrites with quality-complete segments |
 | **rejected** | Empty text, script junk (e.g. Latin flap on an Arabic source), or L1 metadata out of threshold | Never admitted to subs burn, moment pick, hook excerpt, or framing speech classification |
 

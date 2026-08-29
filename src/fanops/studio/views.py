@@ -1505,8 +1505,7 @@ def gate_rows(cfg: Config) -> list[dict]:
                 for seg in payload["transcript"]:
                     if isinstance(seg, dict):
                         s = dict(seg)
-                        if "trust_tier" not in s:
-                            s["trust_tier"] = _trust_tier(s, src_lang=lang)
+                        s["trust_tier"] = _trust_tier(s, src_lang=lang)
                         tr.append(s)
                     else:
                         tr.append(seg)

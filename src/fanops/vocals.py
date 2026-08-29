@@ -14,7 +14,7 @@ never breaks. Two environment gotchas (both solved here so production doesn't hi
 """
 from __future__ import annotations
 import logging
-import os, subprocess
+import os, subprocess, sys
 from pathlib import Path
 
 from fanops.config import certifi_ssl_env
@@ -35,16 +35,18 @@ def _demucs_env() -> dict:
 
 
 def demucs_cmd(audio_path: str, out_dir: str, *, model: str = _DEFAULT_MODEL) -> list[str]:
-    """`demucs --two-stems=vocals --mp3 -n <model> -o <out> <audio>`. --two-stems=vocals splits only
-    vocals vs the rest (faster than the 4-stem default); --mp3 writes via lameenc (avoids the
-    torchcodec save path). Output lands at <out>/<model>/<audio-stem>/vocals.mp3."""
-    return ["demucs", "--two-stems=vocals", "--mp3", "-n", model, "-o", out_dir, audio_path]
+    """`python -m demucs --two-stems=vocals --mp3 -n <model> -o <out> <audio>`. Same interpreter as
+    fanops (the [asr] extra), never a PATH `demucs` binary — launchd/Studio PATH does not include
+    the venv and that FileNotFoundError fail-opened every live source onto the raw mix.
+    --two-stems=vocals splits only vocals vs the rest (faster than the 4-stem default); --mp3 writes
+    via lameenc (avoids the torchcodec save path). Output lands at <out>/<model>/<audio-stem>/vocals.mp3."""
+    return [sys.executable, "-m", "demucs", "--two-stems=vocals", "--mp3", "-n", model, "-o", out_dir, audio_path]
 
 
 def isolate_vocals(audio_path: str, out_dir: str, *, model: str = _DEFAULT_MODEL) -> str:
     """Return a path to the isolated-vocals MP3 for `audio_path`, or the ORIGINAL `audio_path` if
     isolation is unavailable or fails (FAIL-OPEN — never raises, never blocks transcription). Shells
-    demucs bounded by _DEMUCS_TIMEOUT with the cert-fixed env."""
+    `python -m demucs` bounded by _DEMUCS_TIMEOUT with the cert-fixed env."""
     try:
         r = subprocess.run(demucs_cmd(audio_path, out_dir, model=model), check=False,
                            capture_output=True, text=True, timeout=_DEMUCS_TIMEOUT, env=_demucs_env())
