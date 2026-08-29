@@ -549,10 +549,11 @@ def _hook_personas_for_moment(m, accounts) -> list:
     return []
 
 def _unhooked_decided(led: Ledger, source_id: str) -> list:
-    """Decided moments that never got a hook and were not ingest-stripped (hook_removed empty)."""
+    """Decided or clipped moments that never got a hook and were not ingest-stripped.
+    Skip leftovers render to clipped (hook=None) — PASS 2 still never authored; reopen them too."""
     return [m for m in led.moments.values()
             if m.parent_id == source_id
-            and m.state is MomentState.decided
+            and m.state in (MomentState.decided, MomentState.clipped)
             and not (m.hook or "").strip()
             and not (m.hook_removed or "").strip()]
 
@@ -585,7 +586,7 @@ def source_needs_asr_retry(led: Ledger, cfg: Config, source_id: str) -> bool:
             continue
         if m.state is MomentState.picked:
             pass
-        elif m.state is MomentState.decided and (
+        elif m.state in (MomentState.decided, MomentState.clipped) and (
                 getattr(m, "hook_frames_unread", False)
                 or (not (m.hook or "").strip() and not (m.hook_removed or "").strip())):
             pass
