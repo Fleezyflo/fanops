@@ -591,9 +591,9 @@ def test_classify_stats_none_is_no_people():
     assert framing.classify_window(None, src, start=10.0, end=14.0, stats=None) == framing.CT_NOPEOPLE
 
 def test_classify_junk_asr_with_face_not_talk():
-    # Plan E L4b: high no_speech_prob junk ASR + face must NOT route to talk (music or silent only).
-    from tests.fixtures.speech_segments import MUSIC_HALLUC
-    src = _talk_src(transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 13.5}])
+    # Plan E L4b: low-logprob junk ASR + face must NOT route to talk (music or silent only).
+    from tests.fixtures.speech_segments import LOW_LOGPROB
+    src = _talk_src(transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 13.5}])
     st = _stats([[[0.5, 0.5, 0.22, 0.45]]] * 4)
     ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
     assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"junk ASR must not classify as talk, got {ct!r}"

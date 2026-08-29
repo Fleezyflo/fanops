@@ -11,7 +11,7 @@ from fanops.moments import (request_moments, ingest_moments, request_moment_hook
 from fanops.agentstep import gate_keys_for
 from fanops.adjust import amplify
 from fanops.ids import child_id
-from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LEGACY_EN
+from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, LEGACY_EN
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
 # the WINDOWS -> moments are born `picked` (NOT renderable) and the source lands `picks_decided`. PASS 2
@@ -545,7 +545,7 @@ def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                  state=SourceState.signalled, duration=60.0, language="en",
-                 transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                 transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}],
                  meta={"transcribed": True})
     pick = MomentPick(start=14.0, end=22.0, reason="visual beat",
                       transcript_excerpt="invented LLM line")
@@ -557,7 +557,7 @@ def test_request_moments_logs_speech_untrusted_dropped(tmp_path):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
                           transcript=[talk_seg("good line", start=0.0, end=3.0),
-                                      {**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                                      {**LOW_LOGPROB, "start": 14.0, "end": 18.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
@@ -569,7 +569,7 @@ def test_ingest_logs_excerpt_overwritten(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 28.0}],
+                          transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
@@ -721,7 +721,7 @@ def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 28.0}],
+                          transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
