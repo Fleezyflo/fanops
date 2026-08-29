@@ -689,9 +689,9 @@ claude -p 'say ok' --output-format json   # smoke: confirms the logged-in sessio
 
 **6. Run `fanops doctor` and a dryrun pipeline pass** — confirm toolchain + accounts readiness
    before going live in Studio (Go-Live → readiness checks). Postiz connectivity is tested when
-   you Save & test in the Go-Live tab. The doctor screen also probes the preferred ASR engine
-   (`faster-whisper`, the `[asr]` extra) — a bare `pip install -e .` passes the legacy `whisper`
-   CLI check but **fails** the faster-whisper probe until you install the extra:
+   you Save & test in the Go-Live tab. The doctor screen requires the ASR engine
+   (`faster-whisper`, the `[asr]` extra). Transcribe refuses without it; there is no whisper CLI
+   fallback. Install the extra:
 
 ```bash
 python3.12 -m venv .venv && .venv/bin/pip install -e '.[asr]'

@@ -395,7 +395,7 @@ def _fw_check(rep):
 
 
 def test_doctor_fails_when_faster_whisper_unavailable(tmp_path, monkeypatch):
-    # Bare install (no [asr] extra) -> doctor surfaces the missing preferred ASR engine with the venv recipe.
+    # Bare install (no [asr] extra) -> doctor fails closed with the venv recipe.
     monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
     c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
     assert c is not None and c["ok"] is False and "[asr]" in c["hint"]

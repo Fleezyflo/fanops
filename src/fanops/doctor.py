@@ -466,14 +466,13 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     checks: list[dict] = []
     checks.append(_env_settings_check(cfg))
     # 1. media toolchain (host-dependent — informational pass/fail, the operator installs what's red)
-    for tool in ("ffmpeg", "ffprobe", "whisper"):
+    for tool in ("ffmpeg", "ffprobe"):
         checks.append(_check(f"{tool} on PATH", shutil.which(tool) is not None,
-                             f"install {tool} (brew install ffmpeg / pip install -e '.[transcribe]')"))
+                             f"install {tool} (brew install ffmpeg)"))
     from fanops import transcribe
     checks.append(_check("faster-whisper importable ([asr] extra)", transcribe._fw_available(),
                          "python3.12 -m venv .venv && .venv/bin/pip install -e '.[asr]' — "
-                         "the preferred ASR engine (Demucs + CTranslate2); without it transcribe "
-                         "falls back to the legacy whisper CLI"))
+                         "required. Transcribe refuses without it; there is no whisper CLI fallback"))
     checks.append(_check("yt-dlp on PATH (only for `fanops pull <url>`)", shutil.which("yt-dlp") is not None,
                          "pip install yt-dlp"))
     # 2. gates are answered ONLY by the LLM, so the LLM CLI is ALWAYS required on PATH (mirrors preflight —

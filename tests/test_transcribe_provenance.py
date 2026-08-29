@@ -14,10 +14,8 @@ from fanops.transcribe import transcribe_source
 
 
 def test_produce_transcript_stamps_engine_model_and_wall_time(tmp_path, mocker, monkeypatch):
-    monkeypatch.delenv("FANOPS_WHISPER_MODEL", raising=False)
+    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
-    mocker.patch("fanops.transcribe._fw_available", return_value=False)   # legacy CLI path
-    mocker.patch("fanops.transcribe._resolve_model", side_effect=lambda m: m)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path=str(cfg.sources / "vid.mp4"),
                           state=SourceState.catalogued, duration=60.0, sha256="abc"))
@@ -30,9 +28,9 @@ def test_produce_transcript_stamps_engine_model_and_wall_time(tmp_path, mocker, 
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "s1")
     rec = json.loads(manifest_path(cfg, "s1").read_text())["stages"]["transcribe"]
-    assert rec["engine"] == "whisper-cli" and rec["model"] == "large-v3"   # 60s source -> accuracy pick
+    assert rec["engine"] == "faster-whisper" and rec["model"] == "large-v3"   # 60s source -> accuracy pick
     assert isinstance(rec["wall_s"], (int, float)) and rec["wall_s"] >= 0
     lines = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
     line = next(r for r in lines if r.get("outcome") == "transcribed")
-    assert line["engine"] == "whisper-cli" and line["model"] == "large-v3"
+    assert line["engine"] == "faster-whisper" and line["model"] == "large-v3"
     assert line["unit_id"] == "s1" and line["duration"] == "60.0" and "wall_s" in line
