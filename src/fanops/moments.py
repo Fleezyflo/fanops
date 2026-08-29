@@ -549,9 +549,7 @@ def _hook_personas_for_moment(m, accounts) -> list:
     return []
 
 def _unhooked_decided(led: Ledger, source_id: str) -> list:
-    """Decided moments that never got a hook and were not ingest-stripped (hook_removed empty).
-    Those are skip/author-null completions — PASS 2 is still owed. Stripped dups/off-brand stay put
-    (Review restore)."""
+    """Decided moments that never got a hook and were not ingest-stripped (hook_removed empty)."""
     return [m for m in led.moments.values()
             if m.parent_id == source_id
             and m.state is MomentState.decided
@@ -559,14 +557,21 @@ def _unhooked_decided(led: Ledger, source_id: str) -> list:
             and not (m.hook_removed or "").strip()]
 
 
-def source_needs_hook_pass(led: Ledger, source_id: str) -> bool:
-    """True when PASS 2 still owes a hook: picks waiting, or decided-with-no-hook (not stripped)."""
+def _fake_null_hook_answer(cfg: Config, source_id: str, m) -> bool:
+    """True when PASS 2 wrote hook=None onto disk (the old no-speech skip / author-null). A decided
+    hookless moment with NO gate file is a test/render fixture, not a skip leftover."""
+    dec = read_response(cfg, "moment_hooks", _hook_gate_key(source_id, m), MomentHookDecision)
+    return dec is not None and not (dec.hook or "").strip()
+
+
+def source_needs_hook_pass(led: Ledger, cfg: Config, source_id: str) -> bool:
+    """True when PASS 2 still owes a hook: picks waiting, or a skip/null answer still on disk."""
     src = led.sources.get(source_id)
     if src is None:
         return False
     if src.state is SourceState.picks_decided:
         return True
-    return bool(_unhooked_decided(led, source_id))
+    return any(_fake_null_hook_answer(cfg, source_id, m) for m in _unhooked_decided(led, source_id))
 
 
 def _reopen_unhooked(led: Ledger, cfg: Config, source_id: str) -> int:
@@ -574,6 +579,8 @@ def _reopen_unhooked(led: Ledger, cfg: Config, source_id: str) -> int:
     so request_moment_hooks can open a real author gate. Not a backfill job — PASS 2 was never done."""
     n = 0
     for m in _unhooked_decided(led, source_id):
+        if not _fake_null_hook_answer(cfg, source_id, m):
+            continue
         discard_gate(cfg, "moment_hooks", _hook_gate_key(source_id, m))
         led.set_moment_state(m.id, MomentState.picked)
         n += 1

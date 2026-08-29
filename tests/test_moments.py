@@ -760,6 +760,21 @@ def test_request_moment_hooks_reopens_hookless_decided(tmp_path):
     assert read_response(cfg, "moment_hooks", key, MomentHookDecision) is None
 
 
+def test_request_moment_hooks_does_not_reopen_decided_without_gate(tmp_path):
+    # Pipeline render fixtures plant decided+hook=None with no moment_hooks answer. That is not a
+    # skip leftover — do not demote them or clips never render.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.decided and m.hook is None
+    assert led.sources["src_1"].state is SourceState.moments_decided
+
+
 def test_request_moment_hooks_does_not_reopen_stripped_hook(tmp_path):
     # ingest-stripped (hook_removed set) stays decided — Review restore, not a skip leftover.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)

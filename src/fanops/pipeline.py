@@ -211,7 +211,7 @@ def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledge
     mirroring the pick gate. The responder answers between passes — the SAME multi-gate
     convergence as moments->captions (one extra cycle)."""
     for s in list(led.sources.values()):
-        if source_needs_hook_pass(led, s.id):
+        if source_needs_hook_pass(led, cfg, s.id):
             try:
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
