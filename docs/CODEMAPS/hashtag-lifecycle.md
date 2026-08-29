@@ -64,12 +64,10 @@ tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4)
 - Cap = 4
 - No floors, no backfill, no mega / AR composition
 
-## Layer B — still compiles, not on the post
+## Layer B — deleted
 
-`persona_research.derive_corpus` + `hashtags.vet_hashtags` still exist in tree
-(deletion is a follow-up). They do not write the posted tag array, are not on
-the run loop, and are not shown as a caption menu. `refresh_corpora_if_due` is
-not called from `_cmd_run_pass`.
+`vet_hashtags`, `derive_corpus`, `hashtag_vocab.py`, and `tag_outcomes.py` are
+gone. Tombstone: `tests/test_hashtag_layer_b_tombstone.py`.
 
 ## Attribution severance
 

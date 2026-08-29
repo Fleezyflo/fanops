@@ -3,7 +3,10 @@
   "confidence": "CERTAIN",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
-  "ghost_modules": [],
+  "ghost_modules": [
+    "fanops.hashtag_vocab",
+    "fanops.tag_outcomes"
+  ],
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "modules": [
     "fanops",
@@ -43,7 +46,6 @@
     "fanops.framing_outcomes",
     "fanops.gate_keys",
     "fanops.hashtag_hygiene",
-    "fanops.hashtag_vocab",
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
@@ -136,7 +138,6 @@
     "fanops.studio.views_results",
     "fanops.studio.views_review",
     "fanops.studio_desktop",
-    "fanops.tag_outcomes",
     "fanops.tagging",
     "fanops.text",
     "fanops.timeutil",
@@ -150,7 +151,7 @@
     "fanops.vocals"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -194,7 +195,6 @@
     "fanops.framing_outcomes": "S06_media_analysis",
     "fanops.gate_keys": "S01_foundation",
     "fanops.hashtag_hygiene": "S10_caption_hashtag",
-    "fanops.hashtag_vocab": "S10_caption_hashtag",
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
@@ -287,7 +287,6 @@
     "fanops.studio.views_results": "S16_studio",
     "fanops.studio.views_review": "S16_studio",
     "fanops.studio_desktop": "S16_studio",
-    "fanops.tag_outcomes": "S10_caption_hashtag",
     "fanops.tagging": "S10_caption_hashtag",
     "fanops.text": "S01_foundation",
     "fanops.timeutil": "S01_foundation",
@@ -301,9 +300,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 142,
-    "ghosts": 0,
-    "modules": 142,
+    "assigned": 140,
+    "ghosts": 2,
+    "modules": 140,
     "unassigned": 0
   },
   "unassigned_modules": []

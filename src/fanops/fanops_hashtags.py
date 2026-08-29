@@ -99,27 +99,6 @@ def _scrape_cotag_enqueue_cap() -> int:
     return Config().hashtag_scrape_cotag_enqueue
 
 
-def _rederive_posting_corpora(cfg: Config, *, now=None) -> None:
-    """Layer B at the END of a Layer A pass — ONCE, and only when the pass measured something (MOL-694).
-
-    A derive is a whole-store recompute per persona, so riding every mid-pass flush ran it ~measures/5
-    times for one usable result (a 235-measure pass: 47 rounds). The flush keeps its job — durable
-    measurement — and this runs once at the pass end, complete or early-stopped.
-
-    Fail-open: a derive miss must never abort measurement. Uses posting personas only (same gate as
-    discovery)."""
-    from fanops.errors import fail_open
-    from fanops.persona_research import derive_corpus
-    try:
-        personas = _posting_personas(cfg)
-    except Exception as e:                                 # noqa: BLE001 — corrupt/absent: skip derive
-        get_logger(cfg)("hashtags", "-", "rederive_skip", err=str(e)[:120])
-        return
-    for per in personas:
-        with fail_open(f"fanops_hashtags.rederive.{getattr(per, 'id', '?')}"):
-            derive_corpus(cfg, per.id, now=now)
-
-
 def _read_complete_pass(cfg: Config) -> str | None:
     """The ISO stamp of the last NON-throttled pass, or None. Fail-open on any read/parse miss."""
     p = cfg.hashtags_path
@@ -1146,8 +1125,6 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         fresh[_COMPLETE_KEY] = prev_complete
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(cfg.hashtags_path, fresh)
-    if measured > 0 and harvest:
-        _rederive_posting_corpora(cfg, now=now)
     out = {"written": True, "measured": measured, "discovered": discovered,
            "total": len([t for t in fresh if t != _COMPLETE_KEY]), "throttled": throttled,
            "tried": tried, "unresolved": unresolved, "backend": "scrape"}

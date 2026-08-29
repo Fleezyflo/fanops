@@ -12,7 +12,6 @@ from fanops.models import (Clip, Moment, Source, MomentState, ClipState, Platfor
                            CaptionSet, CaptionItem)
 from fanops.accounts import Accounts, Account
 from fanops import personas as core
-from fanops.hashtags import vet_hashtags
 from fanops.prompts import caption_prompt
 from fanops.agentstep import response_path, request_path, latest_request_id
 from fanops.caption import request_captions, ingest_captions
@@ -23,32 +22,6 @@ STORE = ["#hiphop", "#rap"]        # the measurement cache as an ordered menu
 
 # --- vet_hashtags(corpus=...) — the deterministic gate -----------------------------------------
 
-def test_corpus_tag_outside_the_cache_survives_and_leads():
-    # A corpus tag the measurement cache no longer carries must survive AND lead: the corpus JOINS the
-    # membership, so a cache entry expiring between derivation and selection cannot silently drop it.
-    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", store=STORE, corpus=["#detroitrap"])
-    assert out[0] == "#detroitrap"
-    assert "#hiphop" in out
-
-
-def test_empty_corpus_is_byte_identical():
-    base = vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE)
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE, corpus=[]) == base
-    assert vet_hashtags(["#hiphop", "#rap"], Platform.tiktok, "en", store=STORE, corpus=None) == base
-
-
-def test_corpus_with_non_str_entry_is_dropped_not_crashed():
-    # Investigation-2 D6 (audit feared a crash, proven fail-open BY CONSTRUCTION): a hand-edited
-    # personas.json could in principle carry a non-str in hashtag_corpus. vet_hashtags isinstance-guards
-    # every corpus entry (n = _norm(t) if isinstance(t, str) else "") so a non-str is DROPPED, never raised.
-    # Pinned so a future refactor that removes the guard can't reintroduce a Personas-page crash. (NB the
-    # Persona model also validates hashtag_corpus: list[str], so this is the second line of defense.)
-    out = vet_hashtags(["#hiphop"], Platform.instagram, "en", store=STORE,
-                       corpus=["#detroitrap", 123, None, "#rap"])
-    assert "#detroitrap" in out and "#hiphop" in out      # valid tags kept
-    assert all(isinstance(t, str) for t in out)            # no non-str leaked into the result; no exception
-
-
 def test_persona_facts_failopen_on_weird_corpus(tmp_path):
     # D6 end-to-end: persona_facts is the Personas-page transparency read. Even a duck-typed object whose
     # corpus holds a non-str must NOT crash the read (vet_hashtags drops it). Pins the page's fail-open.
@@ -57,24 +30,6 @@ def test_persona_facts_failopen_on_weird_corpus(tmp_path):
     p = SimpleNamespace(clip_profile=None, framing="top", hashtag_corpus=["#detroitrap", 7])
     facts = core.persona_facts(cfg, p)                      # must return cleanly, not raise
     assert facts["framing"] == "top" and facts["lead_tags"] == []
-
-
-def test_corpus_hard_capped_at_4():
-    out = vet_hashtags([], Platform.instagram, "en", corpus=["#a", "#b", "#c", "#d", "#e", "#f"])
-    assert len(out) == 4 and out == ["#a", "#b", "#c", "#d"]
-
-
-def test_corpus_does_not_starve_arabic_floor():
-    # A 4-tag non-Arabic corpus on an AR clip must not displace the AR region floor: the
-    # floor still injects an AR tag (one corpus tag yields), so curated tags never strip AR reach.
-    out = vet_hashtags([], Platform.instagram, "ar", corpus=["#x", "#y", "#z", "#w"])
-    assert len(out) == 4 and any(t in {"#arabicmusic", "#arabtiktok", "#arabicmusiclovers"} for t in out)
-
-
-def test_corpus_normalizes_and_dedupes_model_picks():
-    # a model tag equal (after norm) to a corpus tag must not double-count; corpus order wins.
-    out = vet_hashtags(["DetroitRap"], Platform.instagram, "en", corpus=["#detroitrap", "#flintbars"])
-    assert out[0] == "#detroitrap" and out.count("#detroitrap") == 1 and "#flintbars" in out
 
 
 # --- Account hydrates its corpus from the linked persona ---------------------------------------

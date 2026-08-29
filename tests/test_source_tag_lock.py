@@ -1,6 +1,6 @@
 # tests/test_source_tag_lock.py
 """lock_from_pile is positive play_count, play_rank_key order, cap 12. ship_from_lock is picks ∩ lock."""
-from fanops.hashtags import lock_from_pile, play_rank_key, ship_from_lock, size_rank_key, _ARABIC
+from fanops.hashtags import lock_from_pile, play_rank_key, ship_from_lock, size_rank_key
 
 # Same mid band (10k–2M) so size_rank_key is media_count DESC, not a band flip.
 BIG_FOLDER = {"media_count": 1_500_000, "play_count": 10, "current_top_reel_play_max_7d": 1,
@@ -110,6 +110,6 @@ def test_ship_from_lock_empty_lock_is_empty():
 
 def test_ship_from_lock_no_arabic_floor():
     lock = ["#keep"]
-    picks = ["#keep"] + list(_ARABIC)
-    assert ship_from_lock(picks, lock) == ["#keep"]
-    assert "#arabicmusic" not in ship_from_lock(list(_ARABIC) + ["#keep"], lock)
+    ar = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]
+    assert ship_from_lock(["#keep"] + ar, lock) == ["#keep"]
+    assert "#arabicmusic" not in ship_from_lock(ar + ["#keep"], lock)

@@ -653,16 +653,9 @@ def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage
             acct_prov = []
         lev_detail = _lever_detail_rows(cfg, p, mf, _cat, _fx)
         corpus_rows, corpus_refreshed = _corpus_tag_rows(cfg, p)   # U9: the derived-zone corpus projection (S12 meta), fail-open ([], "")
-        discovery = []
-        with fail_open("studio.views.personas_page.discovery"):
-            from fanops.hashtag_vocab import vocab_terms_for
-            from fanops.persona_research import relatedness_terms, niche_terms
-            _rel = set(relatedness_terms(p, cfg)); _niche = set(niche_terms(p))
-            discovery = [{"term": t, "role": ("unique" if t in _rel and t not in _niche else "search-only")}
-                         for t in vocab_terms_for(cfg, p.id)]
         cards.append(PersonaCard(id=p.id, name=p.name, voice=p.voice,
                          corpus=_ranked(p.hashtag_corpus), niche=list(p.niche),
-                         discovery_roots=discovery,
+                         discovery_roots=[],
                          linked_handles=by_pid.get(p.id, []),
                          reach_tags=[_norm(t) for t in p.hashtag_corpus if _norm(t) in means],
                          reach_means={_norm(t): means[_norm(t)] for t in p.hashtag_corpus if _norm(t) in means},

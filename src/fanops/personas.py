@@ -136,5 +136,5 @@ from fanops.persona_store import (   # noqa: E402,F401
     add_persona, update_persona, apply_auto_corpus,
     delete_persona, migrate_from_accounts, link_personas_by_voice,
     baked_personas, ensure_baked_personas)
-from fanops.persona_research import persona_terms, derive_corpus, derived_report   # noqa: E402,F401
+from fanops.persona_research import persona_terms   # noqa: E402,F401
 from fanops.persona_levers import LEVER_REGISTRY, build_catalog as _registry_build_catalog   # noqa: E402,F401  (facade re-export of the M1 registry)
