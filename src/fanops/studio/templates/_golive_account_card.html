@@ -12,7 +12,7 @@
     <strong>{{ a.handle }}</strong>
     {% if demoted %}<span class="chip ro">demoted</span>{% endif %}
     {# S8: the account -> persona LINK state (chip classes preserved: persona-linked / no-persona) #}
-    {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice / corpus hydrate this account">✦ persona: {{ a.persona_id }}</span>
+    {% if a.persona_id %}<span class="chip ok persona-linked" title="Linked to the '{{ a.persona_id }}' persona — its voice hydrates this account">✦ persona: {{ a.persona_id }}</span>
     {% elif not demoted %}<span class="chip ro no-persona" title="No first-class persona linked — uses inline text only">○ no persona</span>{% endif %}
     {% for ch in card.channels %}<span class="chip ro backend-summary">{{ ch.platform }} → {{ ch.backend or 'default' }}</span>{% endfor %}
     {% if not demoted %}

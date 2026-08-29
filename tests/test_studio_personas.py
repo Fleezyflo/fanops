@@ -200,7 +200,9 @@ def test_personas_page_star_is_gated_on_a_real_measurement(tmp_path):
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert card.reach_tags == []                            # no platform field -> unmeasured -> no ★
     html = _client(cfg).get("/personas").get_data(as_text=True)
-    assert "#detroitrap" in html and "★" not in html
+    # Posted tags are the source lock. Personas HTML must not render corpus chips as a caption menu.
+    assert "★" not in html
+    assert 'class="persona-corpus"' not in html
 
 
 def test_personas_page_star_only_on_measured_tags(tmp_path):
