@@ -1,18 +1,12 @@
 # src/fanops/personas.py
-"""A1 — Personas as a FIRST-CLASS entity. Until now a "persona" was only a free-text Account.persona
-string + tag_lean, seeded by hand from a brief doc — not editable, not reusable, not a thing you could
-add. This makes a Persona a named record in 00_control/personas.json: a `voice` (the
-string the pipeline reads), a `hashtag_corpus` (the per-persona reach-vetted pool, B1),
-and a declared `niche` (subject terms for hashtag discovery). Accounts LINK
-to a persona via Account.persona_id; the linked persona's voice HYDRATES the account in memory
-at load (accounts._hydrate_from_personas), so every existing consumer (caption/moments/casting/
-variant_transfer) stays byte-identical while an operator edit takes effect on the next load.
+"""A1 — Personas as a FIRST-CLASS entity. A Persona is a named record in 00_control/personas.json:
+a `voice` (the string the pipeline reads) and a declared `niche` (identity territory). Posted
+hashtags are the source lock (`ship_from_lock`), not `hashtag_corpus`. Accounts LINK via
+Account.persona_id; the linked persona's voice HYDRATES the account in memory at load.
 
 This module is the FOUNDATION — the Persona record + the Personas read-store + the lever vocabularies +
-the id slug. The directive/compose engine, the writers, and the corpus research live in cohesive sibling
-modules (persona_directives / persona_store / persona_research, audit #6); every name they own is
-RE-EXPORTED below, so every existing `from fanops.personas import X` keeps resolving unchanged — and
-`fanops.personas.discover_corpus` stays patchable at that exact attribute (tests monkeypatch it there)."""
+the id slug. The directive/compose engine and the writers live in sibling modules
+(persona_directives / persona_store / persona_research); every name they own is RE-EXPORTED below."""
 from __future__ import annotations
 import json
 import logging
@@ -43,7 +37,7 @@ class Persona(BaseModel):
     id: str                                       # stable slug (the link key on Account.persona_id)
     name: str = ""                                # operator-facing display name
     voice: str = ""                               # the persona string the pipeline reads (caption/hook/casting voice)
-    hashtag_corpus: list[str] = Field(default_factory=list)   # DERIVED by persona_research.derive_corpus from platform measurements — never hand-curated, recomputed every tick
+    hashtag_corpus: list[str] = Field(default_factory=list)   # leftover unused field (default []). Caption tags are the source lock.
     niche: list[str] = Field(default_factory=list)   # the persona's DECLARED subject terms; required at writers (add/update_persona refuse empty); per-entry validated at the write boundary, like `name`
     # Lever engine: explicit per-characteristic DIRECTION that compose_persona_instruction renders into the
     # one instruction the casting/hook/caption prompts read. ADDITIVE — all empty on a legacy persona, so
@@ -125,9 +119,7 @@ def _slug(s: str) -> str:
 # Re-export the sibling modules' public surface so `from fanops.personas import X` keeps resolving for every
 # existing consumer (the facade contract). These imports sit AFTER the foundation above — the siblings import
 # the foundation back from this partially-initialized module, which already holds those names, so there is no
-# cycle. The corpus mutators (add_corpus_tag/remove_corpus_tag) and the proposal flows (research_corpus/
-# discover_corpus) are GONE: the corpus is derived from platform measurements, so there is nothing to curate
-# by hand and nothing to propose for approval.
+# cycle. Caption hashtags are the source lock; `hashtag_corpus` is leftover unused state.
 from fanops.persona_directives import (   # noqa: E402,F401  (facade re-export; after foundation by design)
     derive_cut_spec, resolved_cut_spec, casting_directive, hook_directive, hook_author_slot, caption_directive,
     compose_persona_instruction, lever_catalog, compose_breakdown, produces_summary, persona_facts, manifest,

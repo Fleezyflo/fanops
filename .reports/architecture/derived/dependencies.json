@@ -1864,7 +1864,6 @@
         "fanops.log",
         "fanops.meta_graph",
         "fanops.models",
-        "fanops.persona_research",
         "fanops.personas",
         "fanops.pipeline",
         "fanops.pipeline_run",
@@ -2496,7 +2495,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 252,
+  "lazy_downward_count": 251,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3794,7 +3793,7 @@
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 601,
-    "lazy_edges": 373,
+    "lazy_edges": 372,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,
     "lazy_edges_to_equal_or_higher_level": 121,

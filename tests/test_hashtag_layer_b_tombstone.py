@@ -23,3 +23,8 @@ def test_hashtag_vocab_module_stays_deleted():
 
 def test_tag_outcomes_module_stays_deleted():
     assert not (ROOT / "src/fanops/tag_outcomes.py").exists()
+
+
+def test_corpus_rederive_stays_deleted():
+    import fanops.fanops_hashtags as fh
+    assert not hasattr(fh, "_rederive_posting_corpora")

@@ -1,27 +1,14 @@
 # src/fanops/fanops_hashtags.py
-"""Layer A — the ONLY writer of the hashtag measurement cache (00_control/hashtags.json).
+"""Hashtag measurement cache writer (00_control/hashtags.json).
 
-Runtime network source is Safari web (`ig_web_scrape.open_web_session`); instagrapi
-(`ig_hashtag_scrape.open_client`) is scrape-login envelope promote only. The Meta Graph
-hashtag path is deferred (helpers remain in meta_graph for later — refresh never falls back to Graph).
+Live tick: `_remesure_sidecar` measures sidecar pile ∪ lock via Safari
+(`ig_web_scrape.open_web_session`). Caption membership is `hashtags.ship_from_lock`,
+not this cache. `refresh_store()` without an injected client aborts `safari_only`.
+instagrapi `open_client` is scrape-login envelope promote only.
 
-One pass, per persona that actually posts:
-
-  description -> terms -> anchor tags -> ONE medias_top fetch per tag -> {metric, co-occurring tags}
-
-`persona_terms` returns the operator's declared `niche` and nothing else (MOL-637/MOL-719) — voice/levers
-stay on captions+hooks, and durable LLM vocab no longer seeds search (46 of 72 generated terms did not
-exist on Instagram; 106 of 107 admissions attributed to a niche root). Territory still expands, from the
-platform: measuring a root enqueues its novel co-tags below, and inbound-only membership gates admission
-(MOL-643).
-
-Visibility numbers are Instagram's own fields only (see ig_hashtag_scrape): Top-grid median
-`play_count` (preferred) / `like_count`, plus `media_count` from hashtag_info when served.
-A tag with neither plays nor likes in the Top grid is UNMEASURED and absent — measured tags only.
-
-Missing scrape (no [igscrape] / no user / no session file) aborts LOUDLY (`written:False`,
-`aborted:no_scrape`) — there is no silent Graph fallback. Platform exceptions flow through untouched
-and arm cooldown via `_freeze_for` (auth death → indefinite hold; else class-name reason on the ladder)."""
+Meters are Instagram's own fields (play_count preferred / like_count, plus media_count).
+A tag with neither plays nor likes is UNMEASURED. Platform-stop arms `_freeze_for`
+(auth death → indefinite hold)."""
 from __future__ import annotations
 import os
 from contextlib import contextmanager

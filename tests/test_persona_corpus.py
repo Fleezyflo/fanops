@@ -1,9 +1,6 @@
 # tests/test_persona_corpus.py
-# The per-persona hashtag CORPUS drives selection. A persona's DERIVED corpus reaches the caption path:
-# it JOINS the membership (so a corpus tag whose cache entry has since expired still survives) and LEADS
-# the metric order for that persona's accounts. vet_hashtags(corpus=...) is the deterministic gate;
-# request_captions carries each surface's corpus to ingest + the prompt; the account hydrates its corpus
-# from the linked persona. corpus=None/empty -> byte-identical.
+# Caption hashtags are the source lock (`ship_from_lock`). Persona.hashtag_corpus is leftover
+# unused state (hydrated onto Account at load). request_captions carries the lock, not corpus.
 import json
 from datetime import datetime, timezone
 from fanops.config import Config

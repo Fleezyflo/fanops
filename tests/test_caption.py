@@ -174,9 +174,8 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
     assert set(c.meta_captions) == {"a/instagram", "a/tiktok"}
 
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
-    # The operator rule: <=4 hashtags, HARD, and only PLATFORM-MEASURED tags (never random AI words).
-    # ingest must filter whatever the model returns through vet_hashtags before storing. With a cold
-    # measurement cache and no corpus, EVERY model pick dies and the line is honest-empty (no discovery pad).
+    # The operator rule: <=4 hashtags, HARD, and only source-lock members (never random AI words).
+    # ingest filters through ship_from_lock. Empty completed lock -> honest-empty (no discovery pad).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
