@@ -505,7 +505,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 385
+        "line": 393
       }
     ],
     "fanops.post.metrics": [
@@ -693,7 +693,7 @@
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 345
+        "line": 353
       }
     ],
     "fanops.ig_hashtag_scrape": [

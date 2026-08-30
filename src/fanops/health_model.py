@@ -286,12 +286,20 @@ def project_daemon_strip(
     pending_gates=None,
     run_line: str | None = None,
 ) -> dict:
-    """Pure: Home daemon partial from snapshot + heartbeat overlay (no re-probe of launchd)."""
+    """Pure: Home daemon partial from snapshot + heartbeat overlay (no re-probe of launchd).
+
+    Loop heartbeat lands only after a pass completes, so a long transcribe looks 'stale' on
+    age alone. A live run_line (or a snapshot that already judged `alive` via mid-pass log
+    activity) must stay `alive` — the Home banner treats any other loaded verdict as
+    'installed but not running'."""
     out = dict(snap)
     out["pending_gates"] = pending_gates
     out["heartbeat_age_s"] = age
+    live_mid = bool(run_line and run_line != "run=idle") or snap.get("verdict") == "alive"
     if out.get("loaded"):
-        if age is None:
+        if live_mid:
+            out["verdict"] = "alive"
+        elif age is None:
             out["verdict"] = "loaded but no heartbeat yet"
         elif stale:
             out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"

@@ -81,9 +81,13 @@ def test_project_daemon_strip_overlays_heartbeat():
     assert out["pending_gates"] == 2
     assert "run_line" not in out
 
-    stale = project_daemon_strip(snap, age=9999.0, stale=True, pending_gates=None, run_line="run=stage")
-    assert "stale" in stale["verdict"]
-    assert stale["run_line"] == "run=stage"
+    mid = project_daemon_strip(snap, age=9999.0, stale=True, pending_gates=None, run_line="run=1600 stage=transcribe")
+    assert mid["verdict"] == "alive"
+    assert mid["run_line"] == "run=1600 stage=transcribe"
+    assert mid["heartbeat_age_s"] == 9999.0
+
+    dead = project_daemon_strip(snap, age=9999.0, stale=True, pending_gates=None, run_line=None)
+    assert "stale" in dead["verdict"]
 
 
 def test_project_daemon_slice_from_report():
