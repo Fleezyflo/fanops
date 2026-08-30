@@ -25,6 +25,7 @@ _FFMPEG_TIMEOUT = 600.0
 
 # Cut length is the picked moment. No talk/song/short floor or ceiling at render — fit_window
 # defaults are EOF-clamp only. Callers pass hi=source duration (or inf if unprobed).
+# Length is pick-owned (moment start/end). This module does not apply bands.TALK/SONG/SHORT.
 
 def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
     """Playable duration for platform-cap checks: rendered cut_seconds when set, else moment envelope."""
