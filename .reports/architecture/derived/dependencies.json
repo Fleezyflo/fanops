@@ -21,8 +21,6 @@
       "fanops.escalation",
       "fanops.fanops_hashtags",
       "fanops.framing",
-      "fanops.hashtag_hygiene",
-      "fanops.hashtags",
       "fanops.health",
       "fanops.health_model",
       "fanops.hookscore",
@@ -42,7 +40,6 @@
       "fanops.moments",
       "fanops.p4_dim_bias",
       "fanops.persona_directives",
-      "fanops.persona_research",
       "fanops.persona_store",
       "fanops.personas",
       "fanops.pipeline",
@@ -330,7 +327,6 @@
     "fanops.clip": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.config",
         "fanops.errors",
         "fanops.frames",
@@ -568,6 +564,7 @@
         "fanops.errors",
         "fanops.ig_hashtag_scrape",
         "fanops.ig_web_scrape",
+        "fanops.ledger",
         "fanops.persona_research",
         "fanops.personas",
         "fanops.source_tags"
@@ -616,29 +613,9 @@
       "optional": [],
       "typing": []
     },
-    "fanops.hashtag_vocab": {
-      "compile": [
-        "fanops.config",
-        "fanops.controlio",
-        "fanops.hashtag_hygiene",
-        "fanops.log"
-      ],
-      "lazy": [
-        "fanops.fanops_hashtags",
-        "fanops.llm",
-        "fanops.personas"
-      ],
-      "optional": [],
-      "typing": []
-    },
     "fanops.hashtags": {
-      "compile": [
-        "fanops.models"
-      ],
-      "lazy": [
-        "fanops.caption",
-        "fanops.tag_outcomes"
-      ],
+      "compile": [],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -1031,9 +1008,6 @@
       ],
       "lazy": [
         "fanops",
-        "fanops.hashtags",
-        "fanops.log",
-        "fanops.models",
         "fanops.persona_levers",
         "fanops.persona_research"
       ],
@@ -1050,17 +1024,9 @@
     },
     "fanops.persona_research": {
       "compile": [
-        "fanops.config",
-        "fanops.hashtag_hygiene",
-        "fanops.hashtags"
+        "fanops.hashtag_hygiene"
       ],
-      "lazy": [
-        "fanops.controlio",
-        "fanops.errors",
-        "fanops.log",
-        "fanops.persona_store",
-        "fanops.personas"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -1326,7 +1292,8 @@
       ],
       "lazy": [
         "fanops.moments",
-        "fanops.pipeline_run"
+        "fanops.pipeline_run",
+        "fanops.transcribe"
       ],
       "optional": [],
       "typing": []
@@ -1381,7 +1348,6 @@
     "fanops.reframe": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.clip",
         "fanops.config",
         "fanops.framing",
@@ -1397,7 +1363,6 @@
     "fanops.reframe_apply": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.clip",
         "fanops.config",
         "fanops.controlio",
@@ -1889,7 +1854,6 @@
         "fanops.config",
         "fanops.daemon",
         "fanops.doctor",
-        "fanops.hashtag_vocab",
         "fanops.hashtags",
         "fanops.health",
         "fanops.health_model",
@@ -1897,7 +1861,6 @@
         "fanops.log",
         "fanops.meta_graph",
         "fanops.models",
-        "fanops.persona_research",
         "fanops.personas",
         "fanops.pipeline",
         "fanops.pipeline_run",
@@ -1935,11 +1898,9 @@
         "fanops.hashtags",
         "fanops.ledger",
         "fanops.log",
-        "fanops.personas",
         "fanops.studio.views_results"
       ],
       "lazy": [
-        "fanops.fanops_hashtags",
         "fanops.source_tags"
       ],
       "optional": [],
@@ -2022,16 +1983,6 @@
     },
     "fanops.studio_desktop": {
       "compile": [],
-      "lazy": [],
-      "optional": [],
-      "typing": []
-    },
-    "fanops.tag_outcomes": {
-      "compile": [
-        "fanops.controlio",
-        "fanops.errors",
-        "fanops.models"
-      ],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2264,7 +2215,7 @@
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
     "fanops.autopilot": 2,
-    "fanops.bands": 7,
+    "fanops.bands": 4,
     "fanops.batches": 0,
     "fanops.canary": 0,
     "fanops.caption": 2,
@@ -2272,10 +2223,10 @@
     "fanops.cli": 0,
     "fanops.clip": 7,
     "fanops.compose": 1,
-    "fanops.config": 92,
+    "fanops.config": 90,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 14,
+    "fanops.controlio": 12,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -2283,7 +2234,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 41,
+    "fanops.errors": 40,
     "fanops.escalation": 4,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
@@ -2291,9 +2242,8 @@
     "fanops.framing": 4,
     "fanops.framing_outcomes": 3,
     "fanops.gate_keys": 2,
-    "fanops.hashtag_hygiene": 2,
-    "fanops.hashtag_vocab": 0,
-    "fanops.hashtags": 9,
+    "fanops.hashtag_hygiene": 1,
+    "fanops.hashtags": 8,
     "fanops.health": 0,
     "fanops.health_model": 1,
     "fanops.hookcheck": 1,
@@ -2313,10 +2263,10 @@
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 44,
+    "fanops.log": 43,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 52,
+    "fanops.models": 50,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -2327,7 +2277,7 @@
     "fanops.persona_levers": 4,
     "fanops.persona_research": 1,
     "fanops.persona_store": 1,
-    "fanops.personas": 8,
+    "fanops.personas": 7,
     "fanops.pipeline": 2,
     "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 0,
@@ -2385,7 +2335,6 @@
     "fanops.studio.views_results": 2,
     "fanops.studio.views_review": 1,
     "fanops.studio_desktop": 0,
-    "fanops.tag_outcomes": 0,
     "fanops.tagging": 1,
     "fanops.text": 4,
     "fanops.timeutil": 19,
@@ -2414,7 +2363,7 @@
     "fanops.caption": 9,
     "fanops.casting": 0,
     "fanops.cli": 21,
-    "fanops.clip": 11,
+    "fanops.clip": 10,
     "fanops.compose": 0,
     "fanops.config": 0,
     "fanops.config_introspect": 3,
@@ -2436,8 +2385,7 @@
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
-    "fanops.hashtag_vocab": 4,
-    "fanops.hashtags": 1,
+    "fanops.hashtags": 0,
     "fanops.health": 2,
     "fanops.health_model": 1,
     "fanops.hookcheck": 0,
@@ -2469,7 +2417,7 @@
     "fanops.paths_rebase": 3,
     "fanops.persona_directives": 3,
     "fanops.persona_levers": 0,
-    "fanops.persona_research": 3,
+    "fanops.persona_research": 1,
     "fanops.persona_store": 4,
     "fanops.personas": 6,
     "fanops.pipeline": 28,
@@ -2490,8 +2438,8 @@
     "fanops.prompts": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
-    "fanops.reframe": 9,
-    "fanops.reframe_apply": 10,
+    "fanops.reframe": 8,
+    "fanops.reframe_apply": 9,
     "fanops.responder": 10,
     "fanops.router": 1,
     "fanops.secret_provider": 0,
@@ -2523,13 +2471,12 @@
     "fanops.studio.thumb_media": 3,
     "fanops.studio.views": 12,
     "fanops.studio.views_common": 4,
-    "fanops.studio.views_hashtags": 6,
+    "fanops.studio.views_hashtags": 5,
     "fanops.studio.views_library": 4,
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 7,
     "fanops.studio.views_review": 9,
     "fanops.studio_desktop": 0,
-    "fanops.tag_outcomes": 3,
     "fanops.tagging": 2,
     "fanops.text": 0,
     "fanops.timeutil": 0,
@@ -2545,7 +2492,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 258,
+  "lazy_downward_count": 251,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2580,12 +2527,20 @@
       "to_level": 3
     },
     {
+      "from": "fanops.canary",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
       "from": "fanops.caption",
-      "from_level": 5,
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.source_tags",
-      "to_level": 5
+      "to_level": 4
     },
     {
       "from": "fanops.cli",
@@ -2653,35 +2608,43 @@
     },
     {
       "from": "fanops.doctor",
-      "from_level": 5,
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.source_tags",
-      "to_level": 5
+      "to_level": 4
     },
     {
       "from": "fanops.fanops_hashtags",
-      "from_level": 3,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.ig_hashtag_scrape",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 3,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.persona_research",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.hashtags",
       "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.tag_outcomes",
+      "to": "fanops.accounts",
       "to_level": 2
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ig_hashtag_scrape",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.hashtag_hygiene",
+      "from_level": 0,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.hashtags",
+      "to_level": 0
     },
     {
       "from": "fanops.health",
@@ -2709,11 +2672,11 @@
     },
     {
       "from": "fanops.ig_hashtag_scrape",
-      "from_level": 3,
+      "from_level": 2,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.fanops_hashtags",
-      "to_level": 3
+      "to_level": 2
     },
     {
       "from": "fanops.keyframes",
@@ -2740,6 +2703,14 @@
       "to_level": 2
     },
     {
+      "from": "fanops.meta_graph",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.accounts",
+      "to_level": 2
+    },
+    {
       "from": "fanops.metrics_schedule",
       "from_level": 0,
       "jump": 0,
@@ -2752,15 +2723,7 @@
       "from_level": 1,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.log",
-      "to_level": 1
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.models",
+      "to": "fanops.persona_research",
       "to_level": 1
     },
     {
@@ -2772,12 +2735,20 @@
       "to_level": 0
     },
     {
-      "from": "fanops.persona_research",
-      "from_level": 3,
+      "from": "fanops.persona_store",
+      "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.persona_store",
-      "to_level": 3
+      "to": "fanops.accounts",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.persona_store",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
     },
     {
       "from": "fanops.post",
@@ -2821,19 +2792,11 @@
     },
     {
       "from": "fanops.recaption",
-      "from_level": 6,
+      "from_level": 5,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.studio.views",
-      "to_level": 6
-    },
-    {
-      "from": "fanops.reconcile",
-      "from_level": 3,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 3
+      "to_level": 5
     },
     {
       "from": "fanops.studio.actions_run",
@@ -2876,12 +2839,12 @@
       "to_level": 9
     },
     {
-      "from": "fanops.studio.views_hashtags",
-      "from_level": 5,
+      "from": "fanops.studio.views_library",
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 5
+      "to": "fanops.studio.views_review",
+      "to_level": 4
     },
     {
       "from": "fanops.studio.views_results",
@@ -2901,27 +2864,27 @@
     },
     {
       "from": "fanops.studio.views_review",
-      "from_level": 5,
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.caption",
-      "to_level": 5
+      "to_level": 4
     },
     {
       "from": "fanops.studio.views_review",
-      "from_level": 5,
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.source_tags",
-      "to_level": 5
+      "to_level": 4
     },
     {
-      "from": "fanops.track",
-      "from_level": 3,
+      "from": "fanops.studio.views_review",
+      "from_level": 4,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 3
+      "to": "fanops.studio.views_results",
+      "to_level": 4
     },
     {
       "from": "fanops.transcribe",
@@ -2950,14 +2913,6 @@
       "to_level": 5
     },
     {
-      "from": "fanops.autopilot",
-      "from_level": 1,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.doctor",
-      "to_level": 5
-    },
-    {
       "from": "fanops.digest",
       "from_level": 4,
       "jump": 4,
@@ -2974,20 +2929,20 @@
       "to_level": 8
     },
     {
-      "from": "fanops.health_model",
-      "from_level": 1,
+      "from": "fanops.doctor",
+      "from_level": 4,
       "jump": 4,
       "same_scc": false,
-      "to": "fanops.doctor",
-      "to_level": 5
+      "to": "fanops.pipeline_status",
+      "to_level": 8
     },
     {
-      "from": "fanops.health_model",
-      "from_level": 1,
+      "from": "fanops.init_flow",
+      "from_level": 5,
       "jump": 4,
       "same_scc": false,
-      "to": "fanops.studio.views_review",
-      "to_level": 5
+      "to": "fanops.studio.golive",
+      "to_level": 9
     },
     {
       "from": "fanops.studio.views_library",
@@ -3006,28 +2961,20 @@
       "to_level": 8
     },
     {
-      "from": "fanops.config",
-      "from_level": 0,
+      "from": "fanops.autopilot",
+      "from_level": 1,
       "jump": 3,
       "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 3
+      "to": "fanops.doctor",
+      "to_level": 4
     },
     {
-      "from": "fanops.doctor",
-      "from_level": 5,
+      "from": "fanops.health_model",
+      "from_level": 1,
       "jump": 3,
       "same_scc": false,
-      "to": "fanops.pipeline_status",
-      "to_level": 8
-    },
-    {
-      "from": "fanops.hashtags",
-      "from_level": 2,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.caption",
-      "to_level": 5
+      "to": "fanops.doctor",
+      "to_level": 4
     },
     {
       "from": "fanops.health_model",
@@ -3038,12 +2985,12 @@
       "to_level": 4
     },
     {
-      "from": "fanops.init_flow",
-      "from_level": 6,
+      "from": "fanops.health_model",
+      "from_level": 1,
       "jump": 3,
       "same_scc": false,
-      "to": "fanops.studio.golive",
-      "to_level": 9
+      "to": "fanops.studio.views_review",
+      "to_level": 4
     },
     {
       "from": "fanops.studio.actions_run",
@@ -3052,6 +2999,14 @@
       "same_scc": false,
       "to": "fanops.pipeline",
       "to_level": 7
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 8
     },
     {
       "from": "fanops.studio.views_common",
@@ -3067,14 +3022,6 @@
       "jump": 3,
       "same_scc": false,
       "to": "fanops.digest",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.accounts",
-      "from_level": 2,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.personas",
       "to_level": 4
     },
     {
@@ -3110,27 +3057,19 @@
       "to_level": 2
     },
     {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 3,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 5
-    },
-    {
-      "from": "fanops.hashtag_hygiene",
+      "from": "fanops.config",
       "from_level": 0,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.hashtags",
+      "to": "fanops.meta_graph",
       "to_level": 2
     },
     {
-      "from": "fanops.hashtag_vocab",
+      "from": "fanops.fanops_hashtags",
       "from_level": 2,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.personas",
+      "to": "fanops.source_tags",
       "to_level": 4
     },
     {
@@ -3139,14 +3078,6 @@
       "jump": 2,
       "same_scc": false,
       "to": "fanops.escalation",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.meta_graph",
       "to_level": 3
     },
     {
@@ -3166,28 +3097,12 @@
       "to_level": 3
     },
     {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
+      "from": "fanops.meta_graph",
+      "from_level": 2,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.persona_research",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.post.dryrun",
-      "from_level": 3,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.caption",
-      "to_level": 5
-    },
-    {
-      "from": "fanops.post.postiz",
-      "from_level": 3,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.caption",
-      "to_level": 5
+      "to": "fanops.post.metrics",
+      "to_level": 4
     },
     {
       "from": "fanops.post.providers",
@@ -3222,20 +3137,20 @@
       "to_level": 3
     },
     {
-      "from": "fanops.post.zernio",
-      "from_level": 3,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.caption",
-      "to_level": 5
-    },
-    {
       "from": "fanops.postiz_lifecycle",
       "from_level": 0,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.accounts",
       "to_level": 2
+    },
+    {
+      "from": "fanops.recaption",
+      "from_level": 5,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.pipeline",
+      "to_level": 7
     },
     {
       "from": "fanops.responder",
@@ -3254,6 +3169,14 @@
       "to_level": 5
     },
     {
+      "from": "fanops.studio.actions_approve",
+      "from_level": 6,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 8
+    },
+    {
       "from": "fanops.studio.actions_run",
       "from_level": 4,
       "jump": 2,
@@ -3263,19 +3186,19 @@
     },
     {
       "from": "fanops.studio.views",
-      "from_level": 6,
+      "from_level": 5,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.pipeline_status",
-      "to_level": 8
+      "to": "fanops.lever_docs",
+      "to_level": 7
     },
     {
-      "from": "fanops.studio.views_library",
-      "from_level": 4,
+      "from": "fanops.studio.views",
+      "from_level": 5,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.studio.views",
-      "to_level": 6
+      "to": "fanops.pipeline",
+      "to_level": 7
     },
     {
       "from": "fanops.studio.views_results",
@@ -3286,19 +3209,19 @@
       "to_level": 6
     },
     {
+      "from": "fanops.accounts",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
       "from": "fanops.artifacts",
       "from_level": 3,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.signals",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.canary",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.personas",
       "to_level": 4
     },
     {
@@ -3327,26 +3250,18 @@
     },
     {
       "from": "fanops.fanops_hashtags",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.ig_web_scrape",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.personas",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.hashtag_vocab",
       "from_level": 2,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.fanops_hashtags",
+      "to": "fanops.ig_web_scrape",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
       "to_level": 3
     },
     {
@@ -3378,16 +3293,24 @@
       "from_level": 1,
       "jump": 1,
       "same_scc": false,
+      "to": "fanops.meta_graph",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
       "to": "fanops.pipeline_run",
       "to_level": 2
     },
     {
       "from": "fanops.ig_hashtag_scrape",
-      "from_level": 3,
+      "from_level": 2,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.ig_web_scrape",
-      "to_level": 4
+      "to_level": 3
     },
     {
       "from": "fanops.ledger",
@@ -3406,36 +3329,12 @@
       "to_level": 3
     },
     {
-      "from": "fanops.meta_graph",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.post.metrics",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.hashtags",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.persona_research",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.personas",
-      "to_level": 4
-    },
-    {
       "from": "fanops.persona_store",
-      "from_level": 3,
+      "from_level": 2,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.personas",
-      "to_level": 4
+      "to_level": 3
     },
     {
       "from": "fanops.pipeline",
@@ -3454,20 +3353,36 @@
       "to_level": 3
     },
     {
+      "from": "fanops.post.dryrun",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.post.postiz",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.post.zernio",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.caption",
+      "to_level": 4
+    },
+    {
       "from": "fanops.post.zernio",
       "from_level": 3,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.post.metrics",
       "to_level": 4
-    },
-    {
-      "from": "fanops.recaption",
-      "from_level": 6,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.pipeline",
-      "to_level": 7
     },
     {
       "from": "fanops.reconcile",
@@ -3484,14 +3399,6 @@
       "same_scc": false,
       "to": "fanops.post.run",
       "to_level": 4
-    },
-    {
-      "from": "fanops.studio.actions_approve",
-      "from_level": 7,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.studio.actions",
-      "to_level": 8
     },
     {
       "from": "fanops.studio.app",
@@ -3526,22 +3433,6 @@
       "to_level": 10
     },
     {
-      "from": "fanops.studio.views",
-      "from_level": 6,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.lever_docs",
-      "to_level": 7
-    },
-    {
-      "from": "fanops.studio.views",
-      "from_level": 6,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.pipeline",
-      "to_level": 7
-    },
-    {
       "from": "fanops.studio.views_common",
       "from_level": 3,
       "jump": 1,
@@ -3554,7 +3445,7 @@
       "from_level": 4,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.studio.views_review",
+      "to": "fanops.studio.views",
       "to_level": 5
     },
     {
@@ -3587,7 +3478,7 @@
     "fanops.bands": 0,
     "fanops.batches": 2,
     "fanops.canary": 3,
-    "fanops.caption": 5,
+    "fanops.caption": 4,
     "fanops.casting": 0,
     "fanops.cli": 9,
     "fanops.clip": 5,
@@ -3602,28 +3493,27 @@
     "fanops.daemon": 1,
     "fanops.digest": 4,
     "fanops.discover": 4,
-    "fanops.doctor": 5,
+    "fanops.doctor": 4,
     "fanops.errors": 0,
     "fanops.escalation": 3,
-    "fanops.fanops_account_stats": 4,
-    "fanops.fanops_hashtags": 3,
+    "fanops.fanops_account_stats": 3,
+    "fanops.fanops_hashtags": 2,
     "fanops.frames": 0,
     "fanops.framing": 4,
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
-    "fanops.hashtag_vocab": 2,
-    "fanops.hashtags": 2,
+    "fanops.hashtags": 0,
     "fanops.health": 2,
     "fanops.health_model": 1,
     "fanops.hookcheck": 0,
     "fanops.hookscore": 2,
     "fanops.ids": 0,
-    "fanops.ig_hashtag_scrape": 3,
-    "fanops.ig_web_scrape": 4,
+    "fanops.ig_hashtag_scrape": 2,
+    "fanops.ig_web_scrape": 3,
     "fanops.impact_cut": 2,
     "fanops.ingest": 3,
-    "fanops.init_flow": 6,
+    "fanops.init_flow": 5,
     "fanops.intro_match": 3,
     "fanops.keyframes": 1,
     "fanops.learn_doctor": 4,
@@ -3634,7 +3524,7 @@
     "fanops.lever_docs": 7,
     "fanops.llm": 1,
     "fanops.log": 1,
-    "fanops.meta_graph": 3,
+    "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 0,
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
@@ -3645,9 +3535,9 @@
     "fanops.paths_rebase": 4,
     "fanops.persona_directives": 1,
     "fanops.persona_levers": 0,
-    "fanops.persona_research": 3,
-    "fanops.persona_store": 3,
-    "fanops.personas": 4,
+    "fanops.persona_research": 1,
+    "fanops.persona_store": 2,
+    "fanops.personas": 3,
     "fanops.pipeline": 7,
     "fanops.pipeline_run": 2,
     "fanops.pipeline_status": 8,
@@ -3664,7 +3554,7 @@
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 6,
     "fanops.prompts": 0,
-    "fanops.recaption": 6,
+    "fanops.recaption": 5,
     "fanops.reconcile": 3,
     "fanops.reframe": 6,
     "fanops.reframe_apply": 7,
@@ -3673,13 +3563,13 @@
     "fanops.secret_provider": 0,
     "fanops.settings": 1,
     "fanops.signals": 4,
-    "fanops.source_tags": 5,
+    "fanops.source_tags": 4,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 3,
     "fanops.stranded_posts": 3,
     "fanops.studio": 0,
     "fanops.studio.actions": 8,
-    "fanops.studio.actions_approve": 7,
+    "fanops.studio.actions_approve": 6,
     "fanops.studio.actions_casting": 3,
     "fanops.studio.actions_common": 0,
     "fanops.studio.actions_run": 4,
@@ -3688,7 +3578,7 @@
     "fanops.studio.app": 9,
     "fanops.studio.app_routes_golive": 10,
     "fanops.studio.app_routes_hashtags": 6,
-    "fanops.studio.app_routes_live": 7,
+    "fanops.studio.app_routes_live": 6,
     "fanops.studio.app_routes_personas": 10,
     "fanops.studio.app_routes_review": 10,
     "fanops.studio.app_routes_run": 9,
@@ -3697,15 +3587,14 @@
     "fanops.studio.personas": 9,
     "fanops.studio.preview_media": 4,
     "fanops.studio.thumb_media": 5,
-    "fanops.studio.views": 6,
+    "fanops.studio.views": 5,
     "fanops.studio.views_common": 3,
     "fanops.studio.views_hashtags": 5,
     "fanops.studio.views_library": 4,
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 4,
-    "fanops.studio.views_review": 5,
+    "fanops.studio.views_review": 4,
     "fanops.studio_desktop": 0,
-    "fanops.tag_outcomes": 2,
     "fanops.tagging": 3,
     "fanops.text": 0,
     "fanops.timeutil": 0,
@@ -3731,6 +3620,7 @@
       "fanops.framing_outcomes",
       "fanops.gate_keys",
       "fanops.hashtag_hygiene",
+      "fanops.hashtags",
       "fanops.hookcheck",
       "fanops.ids",
       "fanops.metrics_schedule",
@@ -3760,6 +3650,7 @@
       "fanops.log",
       "fanops.models",
       "fanops.persona_directives",
+      "fanops.persona_research",
       "fanops.post.providers",
       "fanops.settings",
       "fanops.stage_lock",
@@ -3777,32 +3668,31 @@
       "fanops.agentstep",
       "fanops.batches",
       "fanops.config_introspect",
-      "fanops.hashtag_vocab",
-      "fanops.hashtags",
+      "fanops.fanops_hashtags",
       "fanops.health",
       "fanops.hookscore",
+      "fanops.ig_hashtag_scrape",
       "fanops.impact_cut",
       "fanops.ledger",
+      "fanops.meta_graph",
+      "fanops.persona_store",
       "fanops.pipeline_run",
       "fanops.post.compress",
       "fanops.router",
-      "fanops.tag_outcomes",
       "fanops.variant_learning"
     ],
     "3": [
       "fanops.artifacts",
       "fanops.canary",
       "fanops.escalation",
-      "fanops.fanops_hashtags",
-      "fanops.ig_hashtag_scrape",
+      "fanops.fanops_account_stats",
+      "fanops.ig_web_scrape",
       "fanops.ingest",
       "fanops.intro_match",
       "fanops.ledger_bridge",
       "fanops.ledger_wipe",
-      "fanops.meta_graph",
       "fanops.moment_hook_learning",
-      "fanops.persona_research",
-      "fanops.persona_store",
+      "fanops.personas",
       "fanops.post",
       "fanops.post.dryrun",
       "fanops.post.media",
@@ -3820,54 +3710,51 @@
       "fanops.variant_transfer"
     ],
     "4": [
+      "fanops.caption",
       "fanops.cutover",
       "fanops.cutover_postiz",
       "fanops.digest",
       "fanops.discover",
-      "fanops.fanops_account_stats",
+      "fanops.doctor",
       "fanops.framing",
-      "fanops.ig_web_scrape",
       "fanops.learn_doctor",
       "fanops.paths_rebase",
-      "fanops.personas",
       "fanops.post.metrics",
       "fanops.post.run",
       "fanops.responder",
       "fanops.signals",
+      "fanops.source_tags",
       "fanops.studio.actions_run",
       "fanops.studio.actions_wipe",
       "fanops.studio.preview_media",
       "fanops.studio.views_library",
-      "fanops.studio.views_results"
+      "fanops.studio.views_results",
+      "fanops.studio.views_review"
     ],
     "5": [
-      "fanops.caption",
       "fanops.clip",
-      "fanops.doctor",
-      "fanops.source_tags",
+      "fanops.init_flow",
+      "fanops.recaption",
       "fanops.studio.thumb_media",
+      "fanops.studio.views",
       "fanops.studio.views_hashtags",
-      "fanops.studio.views_review",
       "fanops.timing_bias"
     ],
     "6": [
       "fanops.crosspost",
-      "fanops.init_flow",
       "fanops.moments",
       "fanops.produce",
-      "fanops.recaption",
       "fanops.reframe",
+      "fanops.studio.actions_approve",
       "fanops.studio.app_routes_hashtags",
-      "fanops.studio.views"
+      "fanops.studio.app_routes_live"
     ],
     "7": [
       "fanops.adjust",
       "fanops.lever_docs",
       "fanops.pipeline",
       "fanops.reframe_apply",
-      "fanops.studio.actions_approve",
-      "fanops.studio.actions_segments",
-      "fanops.studio.app_routes_live"
+      "fanops.studio.actions_segments"
     ],
     "8": [
       "fanops.overlay_reburn",
@@ -3897,17 +3784,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 142,
+    "G1_sccs_total": 140,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 75,
-    "G2_module_sccs_total": 60,
+    "G2_largest_scc_size": 72,
+    "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 612,
-    "lazy_edges": 386,
-    "lazy_edges_lateral": 48,
-    "lazy_edges_strictly_upward": 80,
-    "lazy_edges_to_equal_or_higher_level": 128,
-    "modules": 142,
+    "compile_edges_G1": 598,
+    "lazy_edges": 372,
+    "lazy_edges_lateral": 50,
+    "lazy_edges_strictly_upward": 71,
+    "lazy_edges_to_equal_or_higher_level": 121,
+    "modules": 140,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

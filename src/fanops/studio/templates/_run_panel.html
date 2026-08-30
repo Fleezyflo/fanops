@@ -45,7 +45,7 @@
     <header class="stage-card-head">
       <span class="stage-card-num">01</span>
       <h3>Add footage</h3>
-      <span class="stage-card-hint">{% if status.queue_gate %}Pick video files or paste a link — they land as <em>pending</em> until you queue them.{% else %}Pick video files (or paste a link). They land in the queue.{% endif %}</span>
+      <span class="stage-card-hint">{% if status.queue_gate %}Pick video files or paste a link. Then tick accounts and Make clips.{% else %}Pick video files (or paste a link). They land in the queue.{% endif %}</span>
     </header>
 
     <form hx-post="{{ url_for('do_run_upload') }}" hx-target="#run-panel" hx-swap="outerHTML"
@@ -128,14 +128,14 @@
   {% endif %}
 
   {% if status.queue_gate and status.pending_unbound %}
-  <section class="stage-card" aria-label="Pending sources">
+  <section class="stage-card stage-card-primary" aria-label="Make clips">
     <header class="stage-card-head">
-      <span class="stage-card-num">⏳</span>
-      <h3>Pending — {{ status.pending_unbound_count }} file{{ 's' if status.pending_unbound_count != 1 else '' }}</h3>
-      <span class="stage-card-hint">Tick accounts — ticking queues clipping for these accounts — then Add to queue.</span>
+      <span class="stage-card-num">02</span>
+      <h3>Make clips — {{ status.pending_unbound_count }} file{{ 's' if status.pending_unbound_count != 1 else '' }}</h3>
+      <span class="stage-card-hint">Tick the accounts you want, then Make clips. Clips land in Review.{% if status.accounts %} Unticked = every active account.{% endif %}</span>
     </header>
-    <form hx-post="{{ url_for('do_bind_queue') }}" hx-target="#run-panel" hx-swap="outerHTML"
-          hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form stage-busy">
+    <form class="run-primary stage-form stage-busy" hx-post="{{ url_for('do_run_prepare') }}" hx-target="#run-panel"
+          hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-indicator="this">
       <ul class="pending-list">
         {% for p in status.pending_unbound %}
         <li class="pending-row">
@@ -143,58 +143,20 @@
         </li>
         {% endfor %}
       </ul>
-      <label class="field">
-        <span class="field-label">Queue line name</span>
-        <input type="text" name="batch_name" placeholder="e.g. June launch" required aria-label="Queue line name">
-      </label>
       {% if status.accounts %}
         <fieldset class="batch-target field">
           <legend class="field-label">Accounts</legend>
-          <span class="muted">Ticking queues clipping for these accounts.</span>
           {% for h in status.accounts %}
             <label class="check-row"><input type="checkbox" name="target_accounts" value="{{ h }}"> {{ h }}</label>
           {% endfor %}
         </fieldset>
       {% endif %}
-      <button type="submit" data-busy-label="Queuing…">Add to queue</button>
-    </form>
-  </section>
-  {% endif %}
-
-  {% if status.queue_gate and status.queue_lines %}
-  <section class="stage-card">
-    <header class="stage-card-head">
-      <span class="stage-card-num">02</span>
-      <h3>Queue — {{ status.held_pending }} held</h3>
-      <span class="stage-card-hint">Each line is a batch of sources × accounts. Make clips releases it into production.</span>
-    </header>
-    <ul class="queue-lines">
-      {% for line in status.queue_lines %}
-      <li class="queue-line">
-        <div class="queue-line-meta">
-          <strong>{{ line.name }}</strong>
-          <span class="muted">· {{ line.sources|length }} source{{ 's' if line.sources|length != 1 else '' }}{% if line.target_accounts %} · {{ line.target_accounts|join(', ') }}{% else %} · all accounts{% endif %}</span>
-        </div>
-        <form hx-post="{{ url_for('do_release_batch') }}" hx-target="#run-panel" hx-swap="outerHTML"
-              hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-form-inline stage-busy">
-          <input type="hidden" name="batch_id" value="{{ line.batch_id }}">
-          {% if status.backend != 'dryrun' %}
-            <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> confirm</label>
-          {% endif %}
-          <button type="submit" data-busy-label="Releasing…">Make clips</button>
-        </form>
-      </li>
-      {% endfor %}
-    </ul>
-    {% if status.queue_lines|length > 1 %}
-    <form hx-post="{{ url_for('do_release_all') }}" hx-target="#run-panel" hx-swap="outerHTML"
-          hx-disabled-elt="find button[type=submit]" hx-indicator="this" class="stage-busy">
       {% if status.backend != 'dryrun' %}
-        <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1"> confirm all lines</label>
+        <label class="confirm danger">⚠ <input type="checkbox" name="confirm" value="1">
+          publish to REAL accounts (mode: {{ status.backend }})</label>
       {% endif %}
-      <button type="submit" data-busy-label="Releasing all…">Make clips (all queue lines)</button>
+      <button type="submit" class="primary" data-busy-label="Cutting clips…">Make clips</button>
     </form>
-    {% endif %}
   </section>
   {% endif %}
 
@@ -231,6 +193,7 @@
   {% endif %}
 
   {# ── ③ MAKE ─────────────────────────────────────────────────────────────────────────────────────── #}
+  {% if not (status.queue_gate and status.pending_unbound) %}
   <section class="stage-card stage-card-primary">
     <header class="stage-card-head">
       <span class="stage-card-num">03</span>
@@ -258,6 +221,7 @@
       <span class="muted">Cuts, captions, and routes every released source end-to-end. Around a minute per source.</span>
     </form>
   </section>
+  {% endif %}
 
   <details class="run-advanced">
     <summary>More controls</summary>

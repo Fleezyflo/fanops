@@ -77,6 +77,15 @@ _NON_FLAG_LEAKY = ("FANOPS_ROOT", "FANOPS_POSTER", "BLOTATO_API_KEY", "POSTIZ_AP
 _LEAKY_ENV = tuple(dict.fromkeys(BOOL_ENV_FIELDS + _NON_FLAG_LEAKY))
 
 
+@pytest.fixture(autouse=True)
+def _unit_requires_faster_whisper(request, mocker):
+    """Unit tests assume the [asr] extra is present. Production refuses without it; tests that
+    prove the refuse patch `_fw_available` False. Integration tests use the real import."""
+    if request.node.get_closest_marker("integration"):
+        return
+    mocker.patch("fanops.transcribe._fw_available", return_value=True)
+
+
 def pytest_configure(config):
     # #13: studio tests use pytest.importorskip("flask"), so a flask-less interpreter SKIPS them — fine
     # LOCALLY, but it silently false-greens the whole studio surface for anyone running bare `pytest`

@@ -200,7 +200,9 @@ def test_personas_page_star_is_gated_on_a_real_measurement(tmp_path):
     card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
     assert card.reach_tags == []                            # no platform field -> unmeasured -> no ★
     html = _client(cfg).get("/personas").get_data(as_text=True)
-    assert "#detroitrap" in html and "★" not in html
+    # Posted tags are the source lock. Personas HTML must not render corpus chips as a caption menu.
+    assert "★" not in html
+    assert 'class="persona-corpus"' not in html
 
 
 def test_personas_page_star_only_on_measured_tags(tmp_path):
@@ -296,10 +298,9 @@ def test_post_add_persona_route(tmp_path):
     assert any(p.name == "New One" for p in core.Personas.load(cfg).all())
 
 
-def test_corpus_tag_with_quote_is_escaped_when_rendered(tmp_path):
-    # _norm keeps a double-quote (a hand-edit could land one) and the corpus is now rendered as chip TEXT,
-    # so Jinja autoescape is the defense. The threat this test names is a HAND-EDIT of personas.json,
-    # which bypasses every write boundary — seed the file directly, i.e. via the vector that remains.
+def test_corpus_tag_with_quote_is_not_rendered_as_caption_menu(tmp_path):
+    # Personas HTML does not render hashtag_corpus. A hand-edited quote in the leftover field
+    # must not appear as a caption-menu chip (raw or escaped).
     import json as _json
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", niche=["hiphop"])
@@ -309,8 +310,10 @@ def test_corpus_tag_with_quote_is_escaped_when_rendered(tmp_path):
     cfg.personas_path.write_text(_json.dumps(_raw))
     r = _client(cfg).get("/personas")
     assert r.status_code == 200
-    assert b"#a&#34;b" in r.data                 # autoescape neutralized the inner quote
-    assert b'#a"b' not in r.data                 # the raw, un-escaped (breakout) form must NOT appear
+    html = r.get_data(as_text=True)
+    assert 'class="persona-corpus"' not in html
+    assert '#a"b' not in html
+    assert "#a&#34;b" not in html
 
 
 def test_post_connect_route_links(tmp_path):

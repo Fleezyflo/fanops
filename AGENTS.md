@@ -6,7 +6,7 @@ Operator docs live in [README.md](README.md) — install, quickstart, the `fanop
 
 ## Guardrails
 
-**Guardrail #1 — never push to `main`, never force-push to `main`.** Enforced by `.githooks/pre-push`, mirrored by `.cursor/hooks/orchestration_gate.py`. Work lands through a PR.
+**Guardrail #1 — never push to `main`, never force-push to `main`.** Enforced by `.githooks/pre-push`. Work lands through a PR.
 
 **Disjoint hot files.** Lanes own files; a change that edits a hot file owned by another lane is refused. Ownership is declared in [.agents/lanes.json](.agents/lanes.json) and enforced by `scripts/lane_guard.py` (pre-push + the `lane-guard` CI job) and `scripts/pr_collision_guard.py` (refuses a PR whose hot file is open in another PR). Need a file another lane owns → stop and report; do not edit `lanes.json` to take it.
 
@@ -43,12 +43,11 @@ Any line shift in scanned source requires an architecture regen before the drift
 | `tools/` | `arch/` and `ci/` gate engines |
 | `scripts/` | Local gates, operator utilities, hooks setup |
 | `docs/` | Operator and reference docs; `ENFORCEMENT.md` is the enforcement index |
-| `.agents/` | Lane briefs, worker protocol, lane/hot-file ownership |
-| `.claude/`, `.cursor/` | Per-platform harness: skills, commands, hooks, settings |
+| `.agents/` | Lane/hot-file ownership (`lanes.json`) |
+| `.claude/`, `.cursor/` | Per-platform harness: skills, hooks, settings |
 | `.githooks/` | Policy hooks (wired by `core.hooksPath`) |
 | `.github/` | CI workflows |
 | `.reports/` | Generated architecture knowledge base and contract |
-| `.orchestration/` | Orchestration spec |
 | `requirements/` | Pinned dependency locks |
 
 ## Entry points
@@ -68,9 +67,6 @@ Any line shift in scanned source requires an architecture regen before the drift
 | Context | When to load |
 |---------|--------------|
 | [.claude/skills/fanops-hook-hashtag/SKILL.md](.claude/skills/fanops-hook-hashtag/SKILL.md) | Writing or reviewing on-screen hooks and hashtags |
-| [.claude/commands/fanops-orchestrator.md](.claude/commands/fanops-orchestrator.md) | Running a delegation-only orchestration wave |
-| [.agents/_worker-protocol.md](.agents/_worker-protocol.md) | Executing one unit as a wave worker |
-| [.agents/_shared-guardrails.md](.agents/_shared-guardrails.md) | How a lane agent works (read before a lane brief) |
 | [.agents/lanes.json](.agents/lanes.json) | Lane → hot-file ownership, lane → Linear mapping |
 | `src/fanops/CLAUDE.md`, `post/`, `studio/`, `tests/` | Edit-time rulebooks, scoped to that directory |
 
@@ -84,6 +80,6 @@ A rule ships as a mechanism or it does not ship. The governance-prose layer was 
 |---------|--------|
 | A guardrail's enforcing mechanism changes | Update the guardrail and name the new mechanism |
 | A new top-level directory appears | Add a repository-map row |
-| A skill or lane brief is added or removed | Update the skills table |
+| A skill is added or removed | Update the skills table |
 | An agent repeatedly gets something wrong despite this file | Move the detail into a scoped skill and link it |
 | This file grows past a quick read | Split detail out; root context stays small |
