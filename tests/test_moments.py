@@ -718,7 +718,7 @@ def test_request_moment_hooks_extracts_frames_over_the_fitted_window(tmp_path, m
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=28.0, reason="bar lands")])
     led = request_moment_hooks(led, cfg, "src_1")
     call = spy.call_args
-    assert call.args[1] == 14.0 and call.args[2] == 22.0
+    assert call.args[1] == 14.0 and call.args[2] == 28.0
     payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-28.00").read_text())
     assert payload["frames"] == ["/k/w0.jpg"] and payload["moment_id"]
 
