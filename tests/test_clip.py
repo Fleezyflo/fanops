@@ -564,7 +564,8 @@ def test_fit_window_default_keeps_long_pick():
     assert fit_window(10.0, 40.0, 120.0) == (10.0, 40.0)
 
 def test_fit_window_eof_clamps_when_hi_is_duration():
-    assert fit_window(10.0, 40.0, 30.0, lo=0.0, hi=30.0) == (0.0, 30.0)
+    # Pick longer than hi: trim to hi from start, then EOF-butt against duration.
+    assert fit_window(10.0, 50.0, 30.0, lo=0.0, hi=30.0) == (0.0, 30.0)
 
 def test_fit_window_optional_floor_still_grows_when_asked():
     assert fit_window(10.0, 13.0, 120.0, lo=12.0, hi=22.0) == (10.0, 22.0)
