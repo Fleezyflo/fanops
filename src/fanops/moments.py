@@ -163,7 +163,7 @@ def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
             peers.append(p); out.append(p)
     return out
 
-def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> str | None:
+def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None, band=None) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
         return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
@@ -173,8 +173,14 @@ def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> s
         return f"start<0 ({pick.start})"
     if duration and pick.end > duration + _EOF_TOLERANCE_S:   # duration==0 means unprobed: skip EOF check
         return f"end>{duration} ({pick.end})"
-    if (pick.end - pick.start) <= _MIN_MOMENT_S:
-        return f"too short ({pick.end - pick.start:.2f}s)"
+    length = pick.end - pick.start
+    if band is not None and duration and duration < band.lo:
+        if pick.start > 0 or pick.end < duration - _EOF_TOLERANCE_S:
+            return f"too short ({length:.2f}s)"
+    elif band is not None and length < band.lo:
+        return f"too short ({length:.2f}s)"
+    elif band is None and length <= _MIN_MOMENT_S:
+        return f"too short ({length:.2f}s)"
     if not (pick.reason or "").strip():
         return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
     if src is not None and cfg is not None and (pick.transcript_excerpt or "").strip():
@@ -237,27 +243,48 @@ def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=
     kept = [s for i, s in enumerate(segs) if i in keep_idx]         # restore chronological order
     return kept, len(segs) - len(kept)
 
+def _owner_profile(cfg: Config, a) -> str:
+    """Pin > cut_policy-derived > global FANOPS_CLIP_PROFILE. ONE resolver for prompt, ingest, stamp."""
+    from fanops.persona_directives import resolved_cut_spec
+    prof, _ = resolved_cut_spec(a)
+    return prof or cfg.resolve_clip_profile(a)
+
+def _band_for_pick(cfg: Config, pick, by_handle: dict):
+    from fanops.bands import band_for
+    owner = _pick_owner(pick)
+    acct = by_handle.get(owner) if owner else None
+    if acct is not None:
+        return band_for(_owner_profile(cfg, acct))
+    return band_for(cfg.clip_profile)
+
 def _persona_entry(cfg: Config, a) -> dict:
-    """Per-account pick spec — handle + gate filters only (no clip-order poem in the pick prompt)."""
+    """Per-account pick spec — handle + compiled lens (directive/band/scope) for the pick prompt."""
+    from fanops.persona_directives import casting_directive, resolved_cut_spec
+    from fanops.bands import band_for
+    d = casting_directive(a)
+    prof = _owner_profile(cfg, a)
+    band = band_for(prof)
     pin_fr = (getattr(a, "framing", None) or "").strip().lower()
-    framing = pin_fr if pin_fr in ("top", "center") else ("top" if cfg.resolve_top_bias(a) else "center")
+    _, derived_fr = resolved_cut_spec(a)
+    framing = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(a) else "center"))
     intensity = (getattr(a, "intensity", None) or "")
     if isinstance(intensity, str): intensity = intensity.strip().lower() or None
     else: intensity = None
+    cf = getattr(a, "content_focus", None)
+    cf_s = cf if isinstance(cf, str) else ""
     return {"handle": a.handle,
-            "directive": "",
-            "selection_scope": "",
-            "band": "",
+            "directive": (d.select_rule or d.register) if d else "",
+            "selection_scope": (d.scope_lens if d else "") or (getattr(a, "selection_scope", None) or ""),
+            "band": f"{band.lo:g}-{band.hi:g}s",
             "framing": framing,
-            "content_focus": [],
+            "content_focus": cf_s,
             "intensity": intensity or "",
-            "hook_angle": "",
+            "hook_angle": (getattr(a, "hook_angle", None) or ""),
             "corpus": list(getattr(a, "hashtag_corpus", None) or [])}
 
 def _pick_personas(cfg: Config, accounts) -> list[dict]:
     """P4a: ONE assembly point for the per-active-persona FULL spec the pick + downstream gates read.
-    Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF or no
-    truthy casting directive (byte-identical persona-blind pick). Fail-open: a bad account row is skipped."""
+    Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF. Every active account is included (directive-less still get a gate). Fail-open: a bad account row is skipped."""
     if accounts is None or not cfg.account_casting:
         return []
     out: list[dict] = []
@@ -371,7 +398,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
                                 signal_peaks=persona_peaks,
                                 language=src.language,
                                 guidance=g,
-                                clip_profile=cfg.clip_profile,
+                                clip_profile=_owner_profile(cfg, a),
                                 personas=[pe],
                                 frames=frames).model_dump()
         payload.pop("request_id", None)
@@ -386,12 +413,11 @@ def _stamp_owner_spec(cfg: Config, owner: str | None, by_handle: dict) -> tuple[
     acct = by_handle.get(owner)
     if acct is None:
         return None, None
-    prof = cfg.resolve_clip_profile(acct)
+    from fanops.persona_directives import resolved_cut_spec
+    prof = _owner_profile(cfg, acct)
     pin_fr = (getattr(acct, "framing", None) or "").strip().lower()
-    if pin_fr in ("top", "center"):
-        fr = pin_fr
-    else:
-        fr = "top" if cfg.resolve_top_bias(acct) else "center"
+    _, derived_fr = resolved_cut_spec(acct)
+    fr = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(acct) else "center"))
     return prof, fr
 
 def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: list[MomentPick]) -> Ledger:
@@ -453,6 +479,12 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
     any_invalid = False
     all_empty = True
     log = get_logger(cfg)
+    try:
+        from fanops.accounts import Accounts
+        by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
+    except Exception as exc:
+        get_logger(cfg)("source", source_id, "accounts_load_failed", err=str(exc)[:120])
+        by_handle = {}
     prefix = f"{source_id}."
     for key in sorted(keys):
         dec = read_response(cfg, "moments", key, MomentDecision)
@@ -466,7 +498,8 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
             if echoed and echoed != owner:
                 log("moments", f"{source_id}.{owner}", "owner_mismatch", warn=True, echoed=echoed)
             stamped = pick.model_copy(update={"personas": [owner]})
-            bad = validate_pick(stamped, duration=src.duration or 0.0, src=src, cfg=cfg)
+            bad = validate_pick(stamped, duration=src.duration or 0.0, src=src, cfg=cfg,
+                                band=_band_for_pick(cfg, stamped, by_handle))
             if bad:
                 continue
             gate_valid.append(stamped)
@@ -505,11 +538,18 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         return led
     _maybe_stamp_source_title(led, source_id, dec)
     src = led.sources[source_id]
+    try:
+        from fanops.accounts import Accounts
+        by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
+    except Exception as exc:
+        get_logger(cfg)("source", source_id, "accounts_load_failed", err=str(exc)[:120])
+        by_handle = {}
     rejected = 0
     reasons: list[str] = []
     valid: list[MomentPick] = []
     for pick in dec.picks:
-        bad = validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg)
+        bad = validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg,
+                            band=_band_for_pick(cfg, pick, by_handle))
         if bad:
             rejected += 1; reasons.append(bad)
             continue

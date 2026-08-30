@@ -21,13 +21,10 @@ def test_credibility_vs_controversy_pick_prompts_diverge(tmp_path):
     specs = _pick_personas(cfg, accts)
     assert len(specs) == 3
     by_handle = {s["handle"]: s for s in specs}
-    for pe in by_handle.values():
-        assert pe["directive"] == "" and pe["selection_scope"] == "" and pe["band"] == ""
     pick_trust = moment_pick_prompt({**_base_source_payload(), "personas": [by_handle["trust"]]})
     pick_drama = moment_pick_prompt({**_base_source_payload(), "personas": [by_handle["drama"]]})
     assert pick_trust != pick_drama
     assert "@trust" in pick_trust and "@drama" in pick_drama
-    assert "sensational" not in pick_trust.lower() and "inflammatory" not in pick_drama.lower()
 
 
 def test_credibility_vs_controversy_hook_prompts_diverge(tmp_path):

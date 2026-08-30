@@ -1,16 +1,15 @@
 # src/fanops/bands.py
-"""Clip-length BANDS by content type. A song's hook/verse is a longer watchable unit than a spoken
-beat, so songs get a wider band cut on a fuller section; talk keeps the tight default. ONE home so
-the render enforcement (clip.fit_window) and the moment prompt (prompts) agree on the same band —
-they used to share bare module constants and could drift. band_for resolves an operator profile
-name (Config.clip_profile / FANOPS_CLIP_PROFILE) to a Band, falling back to TALK for anything
+"""Clip-length BANDS by content type. ONE home so the pick gate (prompts._band_from_payload /
+moments.validate_pick) and operator labels agree. Render does not pad or trim to the band —
+clip.fit_window is EOF-clamp only (lo=0). band_for resolves an operator profile name
+(Config.clip_profile / FANOPS_CLIP_PROFILE) to a Band, falling back to TALK for anything
 unknown (the validate-or-default posture — never crash an autonomous run over a bad profile)."""
 from __future__ import annotations
 from typing import NamedTuple
 
 class Band(NamedTuple):
-    lo: float       # render floor + prompt short-source threshold: a source below `lo` -> one whole clip
-    hi: float       # render ceiling (seconds)
+    lo: float       # pick-gate floor (validate_pick) + prompt short-source threshold: a source below lo -> one whole clip
+    hi: float       # pick-gate TARGET ceiling (seconds); render does not apply this
     @property
     def span(self) -> float: return (self.lo + self.hi) / 2.0   # midpoint: aim ~one clip per `span` s
 

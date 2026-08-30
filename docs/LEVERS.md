@@ -61,17 +61,17 @@ Then run `fanops lever docs` to regenerate this file.
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
 
-## clip_profile (stage: cut)
+## clip_profile (stage: pick)
 
-**Does:** the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)
+**Does:** the GLOBAL pick-time clip-length band (Go-Live default; per-persona it is derived from cut_policy)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-| `short` | n/a (global band name) | band_for → 8-15s render window | 8-15s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
-| `medium` | n/a (global band name) | band_for → 16-26s render window | 16-26s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
-| `long` | n/a (global band name) | band_for → 28-45s render window | 28-45s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
-| `talk` | n/a (global band name) | band_for → 12-22s render window | 12-22s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
-| `song` | n/a (global band name) | band_for → 18-35s render window | 18-35s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |
+| `short` | n/a (global band name) | band_for → 8-15s pick-time length band | 8-15s picks | pick gate (render EOF-clamp only) |
+| `medium` | n/a (global band name) | band_for → 16-26s pick-time length band | 16-26s picks | pick gate (render EOF-clamp only) |
+| `long` | n/a (global band name) | band_for → 28-45s pick-time length band | 28-45s picks | pick gate (render EOF-clamp only) |
+| `talk` | n/a (global band name) | band_for → 12-22s pick-time length band | 12-22s picks | pick gate (render EOF-clamp only) |
+| `song` | n/a (global band name) | band_for → 18-35s pick-time length band | 18-35s picks | pick gate (render EOF-clamp only) |
 
 ## niche (stage: caption)
 

@@ -74,8 +74,8 @@ def _hook_angle_row(opt: dict) -> str:
 
 def _clip_profile_row(opt: dict) -> str:
     b = bands.band_for(opt["value"])
-    return (f"| `{opt['value']}` | n/a (global band name) | band_for → {b.lo:g}-{b.hi:g}s render window | "
-            f"{b.lo:g}-{b.hi:g}s cuts | cut/render (Go-Live default; per-persona derived from content_focus) |")
+    return (f"| `{opt['value']}` | n/a (global band name) | band_for → {b.lo:g}-{b.hi:g}s pick-time length band | "
+            f"{b.lo:g}-{b.hi:g}s picks | pick gate (render EOF-clamp only) |")
 
 
 def archetype_crosswalk_rows() -> list[dict]:
@@ -158,7 +158,7 @@ def render_thresholds(cfg: Config) -> str:
     rows: list[str] = []
     for name in ("short", "medium", "long", "talk", "song"):
         b = bands.band_for(name)
-        rows.append(f"| `bands.{name}` | {b.lo:g}-{b.hi:g}s | render floor/ceiling + moment-pick window for `{name}` profile | "
+        rows.append(f"| `bands.{name}` | {b.lo:g}-{b.hi:g}s | pick-time length band for `{name}` profile (render does not pad) | "
                     f"wider `{name}` clips everywhere this band applies | tighter `{name}` clips | "
                     f"`{_mod_const_line(bands, name.upper())}` |")
     rows.append(f"| `_MAX_OVERLAP_FRAC` | {moments._MAX_OVERLAP_FRAC} | two picks overlapping more than this fraction "
