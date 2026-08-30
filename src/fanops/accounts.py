@@ -354,8 +354,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.hook_angle = per.hook_angle
         acc.intensity = per.intensity
         if resolved_cut_spec is not None:
-            _prof, _fr = resolved_cut_spec(per)
-            if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True
+            _, _fr = resolved_cut_spec(per)
             if _fr: acc.framing = _fr
         # M3e: the per-dimension directive OVERRIDES were retired — nothing to hydrate; the structured levers
         # (content_focus/selection_scope/hook_angle) above always compile the directives, the voice carries the register.

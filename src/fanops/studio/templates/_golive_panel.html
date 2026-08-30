@@ -171,12 +171,12 @@
     {% endif %}
 
     {% if status.accounts %}
-      {# fleet content tuning (casting / clip length) — NOT per-account onboarding, so it stays global here #}
+      {# fleet content tuning (casting) — NOT per-account onboarding, so it stays global here #}
       <details class="golive-sub content-diff">
-        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— casting · clip length (fleet-wide)</span></summary>
+        <summary class="sub-summary"><strong>Content &amp; differentiation</strong> <span class="muted">— casting (fleet-wide)</span></summary>
       <div class="account-hooks routing-casting">
-        <p class="muted"><strong>Routing / casting</strong> — how moments are distributed across accounts, plus clip length.
-          Default: casting ON (each account gets its own selected moments).</p>
+        <p class="muted"><strong>Routing / casting</strong> — how moments are distributed across accounts.
+          Default: casting ON (each account gets its own selected moments). Clip length is the picked window.</p>
         <form hx-post="{{ url_for('do_golive_casting') }}" hx-target="#golive-panel" hx-swap="outerHTML">
           {% if status.account_casting %}
             <span class="ok">● Casting ON — each account gets its OWN LLM-selected moments</span>
@@ -185,20 +185,6 @@
             <span class="muted">○ Casting off — every account gets every moment</span>
             <button type="submit" name="on" value="1">Turn on (per-account casting)</button>
           {% endif %}
-        </form>
-        <form hx-post="{{ url_for('do_golive_clip_profile') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-          <label>Clip length
-            {# S8: the band copy comes from effects.clip_profile (the engine's lever_catalog), never a hardcoded
-               literal — a band edit in bands.py reaches this label with no template change. #}
-            <select name="profile" aria-label="Clip-length profile">
-              <option value="short"{{ ' selected' if status.clip_profile == 'short' else '' }}>Short — quick punch · {{ effects.clip_profile['short'] }}</option>
-              <option value="medium"{{ ' selected' if status.clip_profile == 'medium' else '' }}>Medium — watchable · {{ effects.clip_profile['medium'] }}</option>
-              <option value="long"{{ ' selected' if status.clip_profile == 'long' else '' }}>Long — full section · {{ effects.clip_profile['long'] }}</option>
-              <option value="talk"{{ ' selected' if status.clip_profile == 'talk' else '' }}>Talk — tight cuts · {{ effects.clip_profile['talk'] }}</option>
-              <option value="song"{{ ' selected' if status.clip_profile == 'song' else '' }}>Song — wider, fewer/longer · {{ effects.clip_profile['song'] }}</option>
-            </select>
-          </label>
-          <button type="submit">Set profile</button>
         </form>
       </div>
       </details>

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fanops.config import Config
 from fanops import persona_levers as pl
-from fanops import bands, moments, prompts
+from fanops import moments, prompts
 from fanops.personas import baked_personas
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -34,8 +34,8 @@ def test_lever_docs_names_deterministic_op():
     from fanops.lever_docs import render_levers
     md = render_levers(_cfg())
     assert "filter_peaks_by_intensity" in md or "peak-filter" in md.lower() or "tercile" in md
-    assert "28-45" in md or "28–45" in md
     assert "top" in md and "center" in md
+    assert "8-15s pick-time" not in md
 
 
 def test_archetype_crosswalk_matches_personas():
@@ -62,11 +62,8 @@ def test_threshold_docs_matches_committed():
 def test_threshold_docs_lists_live_values():
     from fanops.lever_docs import render_thresholds
     md = render_thresholds(_cfg())
-    for name in ("short", "medium", "long", "talk", "song"):
-        b = bands.band_for(name)
-        assert f"{b.lo:g}-{b.hi:g}" in md
     assert str(moments._MAX_OVERLAP_FRAC) in md
     assert str(prompts._MAX_TARGET_PICKS) in md
     assert "tercile" in md.lower() or "filter_peaks_by_intensity" in md
-    assert str(moments._MIN_MOMENT_S) in md
     assert str(moments._EOF_TOLERANCE_S) in md
+    assert "_MIN_MOMENT_S" not in md

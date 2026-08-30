@@ -1,24 +1,19 @@
-"""Pick-owned duration + clipping-persona lens — inverted leftover kill-contract tests."""
+"""Duration is the picked window — no owner band, no ingest floor."""
 from __future__ import annotations
+import inspect
 import json
 
 import pytest
 
-from fanops.accounts import Accounts, Account
-from fanops.bands import TALK, SHORT
+from fanops.accounts import Accounts, Account, _hydrate_from_personas
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import MomentPick
 from fanops.moments import validate_pick, _persona_entry, _pick_personas, request_moment_hooks
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
-from fanops.prompts import moment_pick_prompt
+from fanops.prompts import moment_pick_prompt, _target_pick_count
 from fanops.clip import render_moment, fit_window
 from tests.test_moments import _src
-
-
-def _write_personas(cfg, personas):
-    cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.personas_path.write_text(json.dumps({"personas": personas}))
 
 
 def _write_accounts(cfg, accounts):
@@ -26,27 +21,30 @@ def _write_accounts(cfg, accounts):
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
 
-# 1. Hydrate stamps derived cut_spec from cut_policy (emotional → medium / top).
-def test_hydrate_stamps_derived_cut_spec(tmp_path):
+def test_hydrate_does_not_stamp_length_from_cut_policy(tmp_path):
     cfg = Config(root=tmp_path)
     pid = add_persona(cfg, name="Emo", voice="v", cut_policy=["emotional"], niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
-                           "status": "active", "persona_id": pid}])
+                           "status": "active", "persona_id": pid, "clip_profile": "talk"}])
+    src = inspect.getsource(_hydrate_from_personas)
+    assert "acc.clip_profile" not in src
     accts = Accounts.load(cfg)
     a = accts.accounts[0]
-    assert a.clip_profile == "medium"
-    assert a.persona_owns_profile is True
-    assert a.framing == "top"
     assert a.cut_policy == ["emotional"]
+    assert a.clip_profile == "talk"
+    assert a.persona_owns_profile is False
+    assert a.framing == "top"
 
 
 def test_fit_window_default_has_no_talk_floor():
-    # The primitive itself must not grow a short pick to 12s when callers omit lo/hi.
     assert fit_window(10.0, 13.0, 120.0) == (10.0, 13.0)
     assert fit_window(10.0, 40.0, 120.0) == (10.0, 40.0)
 
 
-# 2. Three fit_window sites pass explicit non-band EOF clamp (lo=0, hi=duration|inf).
+def test_fit_window_never_pads_to_lo():
+    assert fit_window(10.0, 13.0, 120.0, lo=12.0, hi=22.0) == (10.0, 13.0)
+
+
 @pytest.mark.parametrize("site", ["render_moment", "render_account_cut", "request_moment_hooks"])
 def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
     cfg = Config(root=tmp_path)
@@ -90,7 +88,18 @@ def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
         assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
 
 
-def test_moment_pick_prompt_includes_persona_lens(tmp_path):
+def test_moment_pick_prompt_has_no_seconds_target():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
+                            "language": "en", "guidance": "", "clip_profile": "song"})
+    low = p.lower()
+    for forbidden in ("12-22", "18-35", "8-15", "16-26", "28-45", "target ", "band=",
+                      "short source", "whole source", "6 seconds"):
+        assert forbidden not in low
+    assert "no fixed duration" in low
+    assert "complete moment" in low
+
+
+def test_moment_pick_prompt_keeps_lens_omits_band(tmp_path):
     cfg = Config(root=tmp_path)
     accts = Accounts.load(cfg)
     accts.accounts = [Account(handle="trust", account_id="1", platforms=["instagram"], status="active",
@@ -98,14 +107,13 @@ def test_moment_pick_prompt_includes_persona_lens(tmp_path):
                               cut_policy=["emotional"], selection_scope="credibility_first",
                               hook_angle="curiosity")]
     entry = _persona_entry(cfg, accts.accounts[0])
+    assert "band" not in entry
     assert entry["directive"]
-    assert "16-26" in entry["band"]
-    assert entry["selection_scope"]
     p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
                             "guidance": "", "personas": [entry]})
     assert "select_rule=" in p
-    assert "band=" in p
-    assert "16-26" in p
+    assert "band=" not in p
+    assert "16-26" not in p
     assert "owning persona" in p.lower()
 
 
@@ -117,45 +125,43 @@ def test_pick_personas_opens_gates_without_directive(tmp_path):
     assert len(_pick_personas(cfg, accts)) == 1
 
 
-# 5. validate_pick is band-aware; scrap floor only when band is None.
-def test_validate_pick_talk_band_rejects_eight_seconds():
-    assert validate_pick(MomentPick(start=10.0, end=18.0, reason="r"), duration=60.0, band=TALK) is not None
-    assert validate_pick(MomentPick(start=10.0, end=24.0, reason="r"), duration=60.0, band=TALK) is None
-
-def test_validate_pick_short_band_allows_eight():
-    assert validate_pick(MomentPick(start=10.0, end=18.0, reason="r"), duration=60.0, band=SHORT) is None
-    assert validate_pick(MomentPick(start=10.0, end=17.0, reason="r"), duration=60.0, band=SHORT) is not None
-
-def test_validate_pick_without_band_keeps_six_second_scrap_floor():
-    assert validate_pick(MomentPick(start=10.0, end=16.0, reason="r"), duration=20.0) is not None
-    assert validate_pick(MomentPick(start=10.0, end=16.1, reason="r"), duration=20.0) is None
-
-def test_validate_pick_whole_source_shorter_than_band_is_ok():
-    assert validate_pick(MomentPick(start=0.0, end=9.0, reason="r"), duration=9.0, band=TALK) is None
+def test_target_pick_count_is_ceiling_only():
+    src = inspect.getsource(_target_pick_count)
+    assert "band" not in src and "span" not in src
+    assert _target_pick_count(0.0) == 0
+    assert _target_pick_count(10.0) == 30
+    assert _target_pick_count(60.0) == 30
+    assert _target_pick_count(700.0) == 30
 
 
-# 6. produces_summary / compose include length-band tokens from cut_policy.
-def test_compose_and_produces_summary_include_length_tokens(tmp_path):
+def test_validate_pick_admits_short_complete_window():
+    assert validate_pick(MomentPick(start=10.0, end=13.0, reason="r"), duration=20.0) is None
+    assert validate_pick(MomentPick(start=10.0, end=16.0, reason="r"), duration=20.0) is None
+    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is None
+    assert validate_pick(MomentPick(start=10.0, end=10.0, reason="r"), duration=20.0) is not None
+
+
+def test_compose_and_produces_summary_no_length_tokens(tmp_path):
     cfg = Config(root=tmp_path)
     p = Persona(id="p", voice="v", cut_policy=["emotional", "storytelling"], hook_angle="curiosity",
                 hashtag_corpus=["#tag"])
     d = compose_breakdown(cfg, p)
     blob = json.dumps(d) + " ".join(produces_summary(d))
-    assert "28-45" in blob or "16-26" in blob
-    assert any("~" in s and "clips" in s for s in produces_summary(d))
+    for token in ("8-15", "16-26", "12-22", "28-45"):
+        assert token not in blob
+    assert d["cut"]["band"] == ""
 
 
-# 7. No new keys on Persona, Account, or Moment.
 def test_no_new_model_fields():
     from fanops.models import Moment
     from fanops.accounts import Account
+    from fanops.personas import Persona
     for forbidden in ("pick_lens", "recipe", "open", "shape", "hook_burn"):
         assert forbidden not in Persona.model_fields
         assert forbidden not in Account.model_fields
         assert forbidden not in Moment.model_fields
 
 
-# 8. FANOPS_VISUAL_START still global; pick still offers segments.
 def test_visual_start_global_and_segments_rule_remain(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
     cfg = Config(root=tmp_path)

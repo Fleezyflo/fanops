@@ -22,17 +22,17 @@ INTENSITY_TIERS = ["high", "medium", "low"]
 # Each content_focus option: value + casting CLAUSE + cut LENGTH tier + FRAMING.
 # Intensity is a FIRST-CLASS persona field (MOL-520 / E-1) — no longer fused onto these tokens.
 _CONTENT_FOCUS_OPTIONS = [
-    {"value": "punchlines", "profile": "short", "framing": "center",
+    {"value": "punchlines", "framing": "center",
      "clause": "moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line"},
-    {"value": "emotional", "profile": "medium", "framing": "top",
+    {"value": "emotional", "framing": "top",
      "clause": "moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels"},
-    {"value": "hype", "profile": "short", "framing": "center",
+    {"value": "hype", "framing": "center",
      "clause": "the highest-energy hype moments — the hardest delivery, the beat drop, the room going up"},
-    {"value": "storytelling", "profile": "long", "framing": "top",
+    {"value": "storytelling", "framing": "top",
      "clause": "moments that tell a story or reveal something — an origin, a turn, a payoff"},
-    {"value": "visual", "profile": "medium", "framing": "center",
+    {"value": "visual", "framing": "center",
      "clause": "visually arresting moments — a strong scene, motion, or setting, not audio alone"},
-    {"value": "bold-statement", "profile": "short", "framing": "center",
+    {"value": "bold-statement", "framing": "center",
      "clause": "a bold or contrarian statement that stops the scroll"},
 ]
 # Closed ordered scale for filter_peaks_by_intensity (P4b) — not a taste taxonomy.
@@ -43,15 +43,12 @@ _INTENSITY_OPTIONS = [
 ]
 # MOL-170 highest-intensity-first framing order (was option.intensity); kept until E-3 removes framing_map.
 _FRAMING_PRIORITY = ("punchlines", "hype", "bold-statement", "visual", "emotional", "storytelling")
-# clip_profile: the GLOBAL pick-time length band (Go-Live default) — catalog-only (no per-persona vocab/clause; per persona the length is DERIVED from cut_policy).
-_CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
-
 LEVER_REGISTRY = [
     {"key": "content_focus", "label": "Editorial focus", "kind": "text", "stage": "casting",
      "does": "free-text editorial focus for moment selection (formerly the multi-select tokens)",
      "options": []},
     {"key": "cut_policy", "label": "Cut policy", "kind": "multi", "stage": "cut",
-     "does": "deterministic cut LENGTH + FRAMING derived from moment kinds (MOL-523)",
+     "does": "deterministic cut FRAMING derived from moment kinds (length is the picked window)",
      "options": _CONTENT_FOCUS_OPTIONS},
     {"key": "intensity", "label": "Peak intensity", "kind": "select", "stage": "pick",
      "does": "which tercile of signal peaks survive the P4b filter (high/medium/low); unset = no filter",
@@ -62,9 +59,6 @@ LEVER_REGISTRY = [
     {"key": "hook_angle", "label": "Hook angle", "kind": "text", "stage": "hook",
      "does": "the strategy of the burned on-screen hook (free text; formerly curiosity vs challenge vs emotional vs result-first vs fomo)",
      "options": []},
-    {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "pick",
-     "does": "the GLOBAL pick-time clip-length band (Go-Live default; per-persona it is derived from cut_policy)",
-     "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
     {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
      "does": "declared subject territory — not the caption menu; posted tags are the source lock; voice/levers "
              "stay on captions+hooks, not discovery", "options": []},
@@ -82,12 +76,12 @@ LEVER_REGISTRY = [
 PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per
-# channel". content_focus owns casting-selection; cut_policy owns cut-length + cut-framing; selection_scope owns
+# channel". content_focus owns casting-selection; cut_policy owns cut-framing; selection_scope owns
 # casting-selection-scope. `voice` owns the freeform register (the base of all three directives).
 PERSONA_EDITABLE_CHANNELS = {
     "voice": ("voice",),
     "content_focus": ("casting-selection",),
-    "cut_policy": ("cut-length", "cut-framing"),
+    "cut_policy": ("cut-framing",),
     "intensity": ("peak-filter",),
     "selection_scope": ("casting-selection-scope",),
     "hook_angle": ("hook-angle",),
@@ -175,19 +169,13 @@ def framing_map() -> "OrderedDict[str, str]":
 
 def build_catalog() -> list[dict]:
     """lever_catalog()'s body, DERIVED from the registry. A `text` lever (content_focus/selection_scope/
-    hook_angle) renders NO options — it is free text, so there is no vocabulary to enumerate; clip_profile
-    renders the band ranges from bands.band_for (lazy, as the legacy catalog did); niche is free text too;
-    every other lever renders value+effect from its clause (cut_policy/intensity).
+    hook_angle) renders NO options — it is free text, so there is no vocabulary to enumerate; niche is
+    free text too; every other lever renders value+effect from its clause (cut_policy/intensity).
     Each lever: {key, label, kind, stage, does, options:[{value, effect}]}."""
-    from fanops.bands import band_for
     out: list[dict] = []
     for lv in LEVER_REGISTRY:
-        if lv["kind"] == "text":
-            opts = []          # free text, no enumerated options
-        elif lv["key"] == "clip_profile":
-            opts = [{"value": o["value"], "effect": f"{band_for(o['value']).lo:g}-{band_for(o['value']).hi:g}s cuts"} for o in lv["options"]]
-        elif lv["key"] == "niche":
-            opts = []          # free text, not an enum
+        if lv["kind"] == "text" or lv["key"] == "niche":
+            opts = []
         else:
             opts = [{"value": o["value"], "effect": o["clause"]} for o in lv["options"]]
         out.append({"key": lv["key"], "label": lv["label"], "kind": lv["kind"], "stage": lv["stage"],

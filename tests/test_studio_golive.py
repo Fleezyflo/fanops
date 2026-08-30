@@ -612,38 +612,19 @@ def test_golive_status_reflects_account_casting(tmp_path, monkeypatch):
     assert views.golive_status(cfg).account_casting is False                  # mirrors the flag after a toggle
 
 
-# ---- Phase 2: casting / volume levers (clip profile) ----
-
-def test_set_clip_profile_validates_talk_song(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    assert golive.set_clip_profile(cfg, "song").ok is True and cfg.clip_profile == "song"
-    assert "FANOPS_CLIP_PROFILE=song" in (tmp_path / ".env").read_text()
-    assert golive.set_clip_profile(cfg, "talk").ok is True and cfg.clip_profile == "talk"
-    assert golive.set_clip_profile(cfg, "bogus").ok is False                  # unknown profile rejected
-
-def test_set_clip_profile_accepts_short_medium_long(tmp_path, monkeypatch):
-    # M2: the three new length tiers are accepted and persisted VERBATIM (no normalize -> no learning-
-    # cohort split, no silent re-band). talk/song stay valid (additive).
-    cfg = _clean(monkeypatch, tmp_path)
-    for p in ("short", "medium", "long"):
-        assert golive.set_clip_profile(cfg, p).ok is True and cfg.clip_profile == p
-        assert f"FANOPS_CLIP_PROFILE={p}" in (tmp_path / ".env").read_text()   # persisted verbatim, not normalized
-    assert golive.set_clip_profile(cfg, "talk").ok is True and cfg.clip_profile == "talk"   # legacy still valid
+# ---- Phase 2: casting (clip length is the picked window; no Go-Live band control) ----
 
 def test_golive_status_carries_casting_levers(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
     s = views.golive_status(cfg)
-    assert s.clip_profile == "talk"   # default
-    golive.set_clip_profile(cfg, "song")
-    s = views.golive_status(cfg)
-    assert s.clip_profile == "song"
+    assert s.account_casting is True
 
-def test_post_golive_casting_lever_routes_swap_panel(tmp_path, monkeypatch):
+def test_post_golive_clip_profile_route_gone(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     c = _client(cfg)
-    assert c.post("/golive/clip-profile", data={"profile": "song"}).status_code == 200 and cfg.clip_profile == "song"
+    assert c.post("/golive/clip-profile", data={"profile": "song"}).status_code == 404
 
 def test_golive_panel_renders_routing_casting_controls(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -651,7 +632,8 @@ def test_golive_panel_renders_routing_casting_controls(tmp_path, monkeypatch):
     golive.set_account_casting(cfg, True)                    # casting ON
     h = _client(cfg).get("/golive").data.decode()
     assert "Routing / casting" in h
-    assert "its OWN LLM-selected moments" in h and "/golive/clip-profile" in h   # no per-account budget knob
+    assert "its OWN LLM-selected moments" in h
+    assert "/golive/clip-profile" not in h
 
 def test_run_and_review_show_readonly_cast_state(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -710,15 +692,12 @@ def test_post_golive_hooks_route_returns_404(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 # ---- S8: make toggle EFFECTS legible (engine-sourced, not hardcoded) + account→persona link badge ----
-def test_golive_clip_length_bands_come_from_the_engine_not_literals(tmp_path, monkeypatch):
-    # the clip-length options must render the REAL bands from _LEVER_EFFECTS['clip_profile'] (the same
-    # lever_catalog the engine uses), so a band edit can never leave a stale hardcoded literal behind.
+def test_golive_has_no_clip_length_band_control(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     html = _client(cfg).get("/golive").get_data(as_text=True)
     for band in ("8-15s cuts", "16-26s cuts", "28-45s cuts", "12-22s cuts", "18-35s cuts"):
-        assert band in html                              # every profile's engine-true band is rendered
-    assert "(8–15s)" not in html                    # the old hardcoded en-dash literal is GONE
+        assert band not in html
 
 def test_golive_casting_effect_line_is_honest_no_false_cap(tmp_path, monkeypatch):
     # casting ON: the effect line states each account gets its OWN LLM-selected moments — it must NOT advertise

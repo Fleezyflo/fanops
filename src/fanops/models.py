@@ -9,7 +9,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from fanops.ids import content_id
 
-# Same threshold as moments._MIN_MOMENT_S — a segment shorter than this is noise.
+# Supercut per-span noise floor — a segment shorter than this is noise. Not a clip-length band.
 _MIN_MOMENT_S = 0.5
 
 def _validate_segments(segments: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -588,11 +588,11 @@ class Render(BaseModel):
     # the rendered bytes (`path`), the burned on-screen hook (`hook_text` — THE single home; Post.variant_hook
     # is a read-only mirror), the upload cache (`media_url`, FIX-F44 parity), its lifecycle (`state`), and its
     # lineage (`batch_id`/`source_id`, for batch-scoped filing + the durable archive). CONTENT-ADDRESSED by
-    # (clip, hook, band, framing): two surfaces with the SAME spec compute the same id -> ONE render, ONE file
+    # (clip, hook, framing): two surfaces with the SAME spec compute the same id -> ONE render, ONE file
     # (the anti-explosion dedup). A hookless surface has Post.render_id None
     # and serves the shared Clip.path. Captions are NOT here — they stay surface-keyed on the shared Clip
     # (the caption pipeline is intentionally untouched).
-    id: str                                     # child_id("render", clip_id, hook[\x1fband:lo-hi][\x1fframe:x]) — see crosspost.account_render_spec
+    id: str                                     # child_id("render", clip_id, hook[\x1fframe:x]) — see crosspost.render_spec
     clip_id: str                                # parent shared Clip (the substrate this render burned onto)
     account: str                                # the handle this render belongs to (UI attribution)
     surface_key: str                            # surface_key(account, platform) — UI attribution / grouping
@@ -724,13 +724,13 @@ class MomentRequest(BaseModel):
     signal_peaks: list[dict] = Field(default_factory=list)
     language: Optional[str] = None
     guidance: str = ""
-    clip_profile: str = "talk"      # content-type band selector (bands.band_for); "talk" -> today's behavior
+    clip_profile: str = "talk"      # leftover payload field; pick length is start/end, not this
     frames: list[str] = Field(default_factory=list)   # Phase 1: source stills the vision author SEES while picking + hooking (fail-open [] when no source)
-    personas: list[dict] = Field(default_factory=list)   # P1: per-active-persona FULL spec dicts (handle+directive+band+
+    personas: list[dict] = Field(default_factory=list)   # P1: per-active-persona spec (handle+directive+
                                                          # framing+selection_scope+hook_angle+corpus). [] -> persona-blind.
 
 # P1 (MOL-142): the keys each MomentRequest.personas[] entry carries once _pick_personas resolves (P4a).
-PERSONA_PICK_SPEC_KEYS = frozenset({"handle", "directive", "band", "framing", "selection_scope",
+PERSONA_PICK_SPEC_KEYS = frozenset({"handle", "directive", "framing", "selection_scope",
                                     "content_focus", "intensity", "hook_angle", "corpus"})
 
 class MomentPick(BaseModel):

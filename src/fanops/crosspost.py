@@ -11,7 +11,6 @@ from fanops import overlay
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
-from fanops.bands import band_for
 from fanops.models import (Post, PostState, ClipState, MomentState, Fmt, HookSource, Platform,
                            PLATFORM_ASPECT, PLATFORM_MAX_SECONDS)
 from fanops.ids import child_id, surface_key, _hash
@@ -88,14 +87,12 @@ def _top_bias_from_framing(framing: str | None, cfg: Config) -> bool:
     return cfg.aware_reframe
 
 def render_spec(cfg: Config, *, clip, hook: str, moment):
-    """Owner-moment render IDENTITY + cut decision. wants_cut = bool(hook)."""
+    """Owner-moment render IDENTITY + cut decision. wants_cut = bool(hook). Length is the pick — no band tag."""
     profile = ((moment.clip_profile if moment is not None else None) or cfg.clip_profile)
-    band = band_for(profile)
     top_bias = _top_bias_from_framing(moment.framing if moment is not None else None, cfg)
     wants_cut = bool(hook)
     tag = [hook] if hook else []
     if wants_cut:
-        tag.append(f"band:{band.lo:g}-{band.hi:g}")
         tag.append(f"frame:{'top' if top_bias else 'center'}")
     return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
 

@@ -18,8 +18,7 @@ _GOLD_FOCUS_CLAUSE = {
     "bold-statement": "a bold or contrarian statement that stops the scroll",
 }
 _GOLD_FOCUS_ORDER = ["punchlines", "emotional", "hype", "storytelling", "visual", "bold-statement"]
-_GOLD_FOCUS_PROFILE = {"storytelling": "long", "emotional": "medium", "visual": "medium",
-                       "punchlines": "short", "hype": "short", "bold-statement": "short"}
+_GOLD_FOCUS_PROFILE = {}
 _GOLD_FRAMING_MAP = {"punchlines": "center", "hype": "center", "bold-statement": "center", "visual": "center", "emotional": "top", "storytelling": "top"}
 
 def test_vocabularies_byte_identical():
@@ -47,7 +46,7 @@ def test_derive_cut_spec_identical_over_all_focus_subsets():
         for combo in itertools.combinations(foci, r):
             # MOL-523: cut_policy derives the cut.
             got_prof, got_fr = derive_cut_spec(Persona(id="x", cut_policy=list(combo)))
-            assert got_prof == _ref_profile(set(combo)), f"derive drift for cut_policy={combo}"
+            assert got_prof is None, f"length must not derive for cut_policy={combo}"
             if not combo:
                 assert got_fr is None
 
@@ -59,7 +58,7 @@ def test_derive_cut_spec_framing_from_cut_policy():
 def test_lever_catalog_shape_byte_identical():
     cat = {lev["key"]: lev for lev in lever_catalog()}
     # MOL-523: content_focus (editorial) and cut_policy (deterministic) are separate.
-    assert list(cat) == ["content_focus", "cut_policy", "intensity", "selection_scope", "hook_angle", "clip_profile", "niche"]
+    assert list(cat) == ["content_focus", "cut_policy", "intensity", "selection_scope", "hook_angle", "niche"]
     assert cat["content_focus"]["kind"] == "text"
     assert cat["cut_policy"]["kind"] == "multi"
     assert [(o["value"], o["effect"]) for o in cat["cut_policy"]["options"]] == list(_GOLD_FOCUS_CLAUSE.items())

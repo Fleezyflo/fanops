@@ -161,4 +161,4 @@ def test_render_spec_band_and_framing_compose(tmp_path):
     clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     rid_long = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="m1", parent_id="s", start=0, end=7, reason="r", clip_profile="long", framing="top"))[0]
     rid_talk = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="m2", parent_id="s", start=0, end=7, reason="r", clip_profile="talk", framing="top"))[0]
-    assert rid_long != rid_talk
+    assert rid_long == rid_talk

@@ -379,7 +379,7 @@
     "fanops.accounts": [
       {
         "call": "_file_lock",
-        "line": 413
+        "line": 412
       }
     ],
     "fanops.fanops_hashtags": [
@@ -617,27 +617,27 @@
     "fanops.clip": [
       {
         "call": "subprocess.run",
-        "line": 128
+        "line": 118
       },
       {
         "call": "subprocess.run",
-        "line": 139
+        "line": 129
       },
       {
         "call": "subprocess.run",
-        "line": 539
+        "line": 529
       },
       {
         "call": "subprocess.run",
-        "line": 646
+        "line": 636
       },
       {
         "call": "subprocess.run",
-        "line": 654
+        "line": 644
       },
       {
         "call": "subprocess.run",
-        "line": 662
+        "line": 652
       }
     ],
     "fanops.daemon": [

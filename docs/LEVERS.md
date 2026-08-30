@@ -7,12 +7,11 @@
 
 | lever / effect | edit |
 |----------------|------|
-| cut_policy options, clauses, band/framing | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
+| cut_policy options, clauses, framing | `src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |
 | content_focus / selection_scope / hook_angle | FREE TEXT — no vocabulary to edit; the operator's own words compile straight into the directive |
 | intensity options (peak filter) | `src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |
-| clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |
 | peak intensity filter (P4b) | `src/fanops/signals.py` → `filter_peaks_by_intensity` |
-| derived cut from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |
+| derived framing from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |
 
 Then run `fanops lever docs` to regenerate this file.
 
@@ -26,16 +25,16 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## cut_policy (stage: cut)
 
-**Does:** deterministic cut LENGTH + FRAMING derived from moment kinds (MOL-523)
+**Does:** deterministic cut FRAMING derived from moment kinds (length is the picked window)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-| `punchlines` | 'moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `emotional` | 'moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels' | derived band=medium (16-26s), framing=top | medium clips (16-26s), top crop | moments gate (pick) → steers frame-seeing hook author |
-| `hype` | 'the highest-energy hype moments — the hardest delivery, the beat drop, the room going up' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `storytelling` | 'moments that tell a story or reveal something — an origin, a turn, a payoff' | derived band=long (28-45s), framing=top | long clips (28-45s), top crop | moments gate (pick) → steers frame-seeing hook author |
-| `visual` | 'visually arresting moments — a strong scene, motion, or setting, not audio alone' | derived band=medium (16-26s), framing=center | medium clips (16-26s), center crop | moments gate (pick) → steers frame-seeing hook author |
-| `bold-statement` | 'a bold or contrarian statement that stops the scroll' | derived band=short (8-15s), framing=center | short clips (8-15s), center crop | moments gate (pick) → steers frame-seeing hook author |
+| `punchlines` | 'moments that land a verbal punchline — a bar with a clear setup and payoff, a quotable, rewatchable line' | framing=center (length is the picked window) | center crop | moments gate (pick) → steers frame-seeing hook author |
+| `emotional` | 'moments carrying real emotion — vulnerability, longing, devotion, a confession the viewer feels' | framing=top (length is the picked window) | top crop | moments gate (pick) → steers frame-seeing hook author |
+| `hype` | 'the highest-energy hype moments — the hardest delivery, the beat drop, the room going up' | framing=center (length is the picked window) | center crop | moments gate (pick) → steers frame-seeing hook author |
+| `storytelling` | 'moments that tell a story or reveal something — an origin, a turn, a payoff' | framing=top (length is the picked window) | top crop | moments gate (pick) → steers frame-seeing hook author |
+| `visual` | 'visually arresting moments — a strong scene, motion, or setting, not audio alone' | framing=center (length is the picked window) | center crop | moments gate (pick) → steers frame-seeing hook author |
+| `bold-statement` | 'a bold or contrarian statement that stops the scroll' | framing=center (length is the picked window) | center crop | moments gate (pick) → steers frame-seeing hook author |
 
 ## intensity (stage: pick)
 
@@ -60,18 +59,6 @@ Then run `fanops lever docs` to regenerate this file.
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
-
-## clip_profile (stage: pick)
-
-**Does:** the GLOBAL pick-time clip-length band (Go-Live default; per-persona it is derived from cut_policy)
-
-| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
-|-------|----------------------|-------------------------|-----------------|------------|
-| `short` | n/a (global band name) | band_for → 8-15s pick-time length band | 8-15s picks | pick gate (render EOF-clamp only) |
-| `medium` | n/a (global band name) | band_for → 16-26s pick-time length band | 16-26s picks | pick gate (render EOF-clamp only) |
-| `long` | n/a (global band name) | band_for → 28-45s pick-time length band | 28-45s picks | pick gate (render EOF-clamp only) |
-| `talk` | n/a (global band name) | band_for → 12-22s pick-time length band | 12-22s picks | pick gate (render EOF-clamp only) |
-| `song` | n/a (global band name) | band_for → 18-35s pick-time length band | 18-35s picks | pick gate (render EOF-clamp only) |
 
 ## niche (stage: caption)
 
