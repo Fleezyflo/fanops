@@ -463,11 +463,11 @@
     "fanops.reframe_apply": [
       {
         "call": "fcntl.flock",
-        "line": 170
+        "line": 169
       },
       {
         "call": "fcntl.flock",
-        "line": 183
+        "line": 182
       }
     ],
     "fanops.stage_lock": [
@@ -617,27 +617,27 @@
     "fanops.clip": [
       {
         "call": "subprocess.run",
-        "line": 132
+        "line": 127
       },
       {
         "call": "subprocess.run",
-        "line": 143
+        "line": 138
       },
       {
         "call": "subprocess.run",
-        "line": 543
+        "line": 538
       },
       {
         "call": "subprocess.run",
-        "line": 650
+        "line": 645
       },
       {
         "call": "subprocess.run",
-        "line": 658
+        "line": 653
       },
       {
         "call": "subprocess.run",
-        "line": 666
+        "line": 661
       }
     ],
     "fanops.daemon": [
@@ -765,17 +765,17 @@
     "fanops.reframe": [
       {
         "call": "subprocess.run",
-        "line": 551
+        "line": 553
       }
     ],
     "fanops.reframe_apply": [
       {
         "call": "subprocess.run",
-        "line": 221
+        "line": 220
       },
       {
         "call": "subprocess.run",
-        "line": 314
+        "line": 313
       }
     ],
     "fanops.signals": [
