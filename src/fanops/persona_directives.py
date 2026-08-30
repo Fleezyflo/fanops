@@ -282,18 +282,13 @@ def manifest(cfg: Config, p) -> list[dict]:
 def produces_summary(breakdown: dict) -> list[str]:
     """S7 — the operator-facing "what this persona PRODUCES" lead: an ordered clause list distilled from the
     SAME compose_breakdown detail (parity-guaranteed — no second resolver, so it can't drift from what the
-    pipeline runs), e.g. ['~8-15s clips', 'top-framed', 'curiosity hooks', '≤4 hashtags']. Each clause is shown
-    ONLY for a deliberately-configured dimension: a global cut, an unset framing/angle, and a floor-only
-    hashtag posture (no lean/corpus) are all SILENT — so an unconfigured persona yields []. Pure; reads only
-    the passed dict, never the disk."""
+    pipeline runs), e.g. ['curiosity hooks']. Each clause is shown ONLY for a deliberately-configured
+    dimension: a global cut, an unset framing/angle, and hashtags (the source lock, not a persona compile)
+    are all SILENT — so an unconfigured persona yields []. Pure; reads only the passed dict, never the disk."""
     out: list[str] = []
     angle = (breakdown.get("hook") or {}).get("angle")
     if angle:
         out.append(f"{angle} hooks")
-    tags = breakdown.get("tags") or {}
-    lead = tags.get("lead") or []
-    if lead and tags.get("corpus"):                         # a deliberate hashtag posture (curated corpus), not the cold-start floor
-        out.append(f"≤{len(lead)} hashtags")
     return out
 
 
