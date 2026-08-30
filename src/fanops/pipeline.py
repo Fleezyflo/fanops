@@ -11,9 +11,9 @@ from fanops.ledger import Ledger
 from fanops.models import (SourceState, MomentState, ClipState, PostState, Fmt, PLATFORM_ASPECT)
 from fanops.accounts import Accounts
 from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
-from fanops.transcribe import transcribe_source
+from fanops.transcribe import transcribe_source, adopt_transcript_keep_state
 from fanops.signals import detect_signals
-from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks
+from fanops.moments import request_moments, ingest_moments, request_moment_hooks, ingest_moment_hooks, source_needs_hook_pass
 from fanops.hookscore import log_hook_quality
 from fanops.router import route_moments
 from fanops.casting import affinity_admits
@@ -158,6 +158,23 @@ def _quarantine(led: Ledger, eid, error_state, stage, exc, log) -> None:
     log(stage, eid, "error", err=str(exc)[:120])
 
 
+def _adopt_produce_errors(led: Ledger, results) -> None:
+    """Stamp producer-reported failures onto catalogued sources. Producers mutate a throwaway
+    ledger; without this, a whisper miss stays catalogued forever. Mock-safe: ignore a non-sequence
+    (patched `run_all` returning MagicMock)."""
+    if not isinstance(results, (list, tuple)):
+        return
+    for row in results:
+        sid = getattr(row, "source_id", None)
+        reason = getattr(row, "error_reason", None)
+        if not sid or not reason:
+            continue
+        s = led.sources.get(sid)
+        if s is None or s.state is not SourceState.catalogued:
+            continue
+        led.set_source_state(sid, SourceState.error, error_reason=str(reason)[:300])
+
+
 def _stage_source_to_moments(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
     """transcribe -> signals -> request moments, per source, each quarantined. A third-party asset is
     INERT to clip-production (M1)."""
@@ -187,14 +204,16 @@ def _stage_ingest_moments(led: Ledger, cfg: Config, log) -> Ledger:
 
 
 def _stage_moment_hooks(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
-    """M1b PASS 2 (frame-seeing hook): for each source whose picks reconciled (picks_decided), open a
-    per-pick moment_hooks gate (request, write-once) seeing THAT window's frames, then ingest any landed
-    hooks (promote picked->decided; source->moments_decided once every pick's hook lands). Per-source
-    quarantine, mirroring the pick gate. The responder answers between passes — the SAME multi-gate
+    """M1b PASS 2 (frame-seeing hook): for each source that still owes a hook (picks_decided, or
+    decided moments left hookless by the old no-speech skip), open a per-pick moment_hooks gate
+    (request, write-once) seeing THAT window's frames, then ingest any landed hooks (promote
+    picked->decided; source->moments_decided once every pick's hook lands). Per-source quarantine,
+    mirroring the pick gate. The responder answers between passes — the SAME multi-gate
     convergence as moments->captions (one extra cycle)."""
     for s in list(led.sources.values()):
-        if s.state is SourceState.picks_decided:
+        if source_needs_hook_pass(led, cfg, s.id):
             try:
+                adopt_transcript_keep_state(led, cfg, s.id)   # pick up a produce-forced isolate+ASR retry
                 led = request_moment_hooks(led, cfg, s.id, accounts=accts)   # personas + learned hook styles ride here
                 led = ingest_moment_hooks(led, cfg, s.id, accounts=accts)   # AGENT-5: intersect author-echoed handle keys with real accounts
             except Exception as e:
@@ -495,8 +514,9 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # M3: lock-free producer pass — warms transcript JSON, signals sidecar, render mp4 +
     # fingerprint, stitch mp4 for every catalogued/decided unit. The reduce transaction below
     # re-runs the slow stages and they short-circuit on the warm artifacts (M1 + M2 caches).
-    # Lock-free; saves nothing; fail-open per source.
-    produce.run_all(cfg, aspects, log)
+    # Lock-free; saves nothing; fail-open per source. Results carry missing-transcript errors
+    # the reduce transaction stamps onto the real ledger.
+    produce_results = produce.run_all(cfg, aspects, log)
     lock_ready_sources(cfg)
 
     # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
@@ -523,6 +543,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
         # No lineage heal here (T3.5): suppression is DERIVED on every read by `Ledger.is_suppressed`, so a
         # stored label is never healed. `heal_corrupt_gates` above stays — filesystem corruption is a different class.
         led = reconcile_source_progress(led, cfg, log)
+        _adopt_produce_errors(led, produce_results)
         # B5/E2: snapshot the already-published post ids at transaction ENTRY so the summary's
         # published_in_run is a THIS-RUN delta — a post already published when the pass opened is in
         # `before` and is NOT counted (set difference against the exit state). Ingest already ran (above)

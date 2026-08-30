@@ -91,24 +91,25 @@ def test_breakdown_flags_selection_scope_open_noop(tmp_path):
 def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     d = compose_breakdown(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
-                                       hashtag_corpus=["#myscene"]))   # M3d: cut DERIVES (punchlines->short, low->top)
+                                       hashtag_corpus=["#myscene"]))
     assert d["cut"]["band"] == "" and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
-    assert "#myscene" in d["tags"]["lead"]                        # corpus floats to the lead, like the pipeline
+    assert d["tags"]["lead"] == []                         # posted tags are the source lock, not corpus leads
+    assert "#myscene" in d["tags"]["corpus"]               # leftover field still copied for compose detail
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
-    assert d2["cut"]["source"] == "global"                        # unset profile → global, not persona
+    assert d2["cut"]["source"] == "global"
 
 
 # ---- produces_summary: the operator-facing "what this persona DROPS" lead (S7) ----
 def test_produces_summary_lists_configured_dimensions(tmp_path):
     cfg = Config(root=tmp_path)
     p = Persona(id="p", voice="v", cut_policy=["punchlines", "emotional"], hook_angle="curiosity",
-                hashtag_corpus=["#myscene"])                        # M3d: cut DERIVES (punchlines->short, low->top)
+                hashtag_corpus=["#myscene"])
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
     joined = " · ".join(clauses)
     assert "16-26s" not in joined and "clips" not in joined
     assert "curiosity hooks" in clauses
-    assert any(c.startswith("≤") and "hashtag" in c for c in clauses)  # the hashtag count (lean/corpus is set)
+    assert not any("hashtag" in c for c in clauses)        # lead_tags is always []; corpus is not a caption menu
 
 def test_produces_summary_unset_persona_is_empty(tmp_path):
     # a bare persona configures NOTHING distinctive -> every dimension is silent (global cut, no framing/angle,
@@ -153,11 +154,12 @@ def test_preview_compose_merges_saved_corpus_for_an_existing_id(tmp_path):
     from fanops.studio import personas as sp
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="Curator", voice="v", niche=["hiphop"])
-    Personas.load(cfg)  # sanity
+    Personas.load(cfg)
     from fanops.personas import apply_auto_corpus
     apply_auto_corpus(cfg, "curator", tags=["#myscene"], meta={})
     r = sp.preview_compose(cfg, _Form({"id": "curator", "cut_policy": ["punchlines"]}))
-    assert r.ok and "#myscene" in r.detail["tags"]["lead"]         # the saved corpus shows in the live preview
+    assert r.ok and r.detail["tags"]["lead"] == []
+    assert "#myscene" in r.detail["tags"]["corpus"]
 
 def test_preview_compose_bad_value_is_clean_error(tmp_path):
     from fanops.studio import personas as sp

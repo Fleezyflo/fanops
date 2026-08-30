@@ -188,7 +188,7 @@ def test_persona_facts_resolve_from_real_resolvers(tmp_path):
                                    hashtag_corpus=["#myscene"]))
     assert f["length_band"] == ""
     assert f["framing"] == "center"
-    assert "#myscene" in f["lead_tags"]         # vet_hashtags floats the curated corpus to the lead
+    assert f["lead_tags"] == []                  # caption tags are the source lock, not persona compile
 
 def test_persona_facts_default_length_when_unset(tmp_path):
     from fanops.personas import persona_facts

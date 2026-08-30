@@ -116,13 +116,7 @@
       "lock": "NONE",
       "atomic": true
     },
-    {
-      "artifact": "hashtag_vocab.json",
-      "owner": "fanops.hashtag_vocab",
-      "lock": "NONE",
-      "atomic": true,
-      "role": "LLM niche-vocab seeds per persona_id (MOL-644); folds into persona_terms"
-    },
+
     {
       "artifact": "cutover.json",
       "owner": "fanops.track",

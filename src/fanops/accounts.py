@@ -83,11 +83,8 @@ class Account(BaseModel):
                                            # value reloads fine and resolve_top_bias ignores it (-> global) —
                                            # fail-open. add_account is the strict WRITE boundary (refuses
                                            # anything not in config.FRAMING_NAMES).
-    hashtag_corpus: list[str] = Field(default_factory=list)   # B1: the per-persona curated hashtag pool, HYDRATED in
-                                           # memory from the linked Persona at load (never stored on the account row —
-                                           # personas.json owns it). Empty on an unlinked account -> vet_hashtags(corpus=[])
-                                           # is byte-identical to today. The caption path floats these ahead of the frozen rank
-                                           # (M3: the curated corpus is the SOLE per-account hashtag differentiator).
+    hashtag_corpus: list[str] = Field(default_factory=list)   # leftover, HYDRATED from the linked Persona at load
+                                           # (never stored on the account row). Not the caption menu.
     # Lever engine (M-levers): explicit per-characteristic direction HYDRATED from the linked Persona at load,
     # which personas.compose_persona_instruction renders into the surface `persona` the casting/hook/caption
     # payloads carry. ADDITIVE — empty on every legacy/unlinked account, so compose returns the bare persona
@@ -346,7 +343,7 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
             continue                                 # no link + no voice match -> inline values stand
         if per.voice:
             acc.persona = per.voice                  # the persona owns the voice (empty voice -> keep inline)
-        acc.hashtag_corpus = list(per.hashtag_corpus)   # B1: the persona owns the curated corpus (the caption path reads it; M3 — the sole hashtag differentiator)
+        acc.hashtag_corpus = list(per.hashtag_corpus)   # leftover field copy; caption tags are the source lock
         # Lever engine: the persona owns each lever (empty -> compose ignores it -> byte-identical). clip_profile/
         # framing override the account's own ONLY when the persona pins them (else the account/global default stands).
         acc.content_focus = per.content_focus            # MOL-523: free text, not a token list
@@ -486,7 +483,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
     handle. New accounts default to status=active (so they appear in the mapping list at once) and
     access=postiz; account_id stays empty — the per-platform ids are set afterward via write_integration /
     the mapping UI. Returns the handle; raises ValueError on bad input. (M3: tag_lean retired — a linked
-    persona's curated hashtag_corpus is the per-account hashtag differentiator.)"""
+    Posted hashtags are the source lock, not persona hashtag_corpus.)"""
     handle = validate_account_handle(handle)
     plats = [getattr(x, "value", x) for x in platforms]      # accept Platform enums or value strings
     valid = {pf.value for pf in Platform}

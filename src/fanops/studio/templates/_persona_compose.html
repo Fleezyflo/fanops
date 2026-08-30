@@ -30,11 +30,6 @@
       {% if d.cut.fragments %}<span class="compose-prov">{% for f in d.cut.fragments %}<span class="frag" title="{{ f.text }}">← {{ f.source }}</span> {% endfor %}</span>{% endif %}
       <span class="muted">(set by {{ d.cut.source }})</span>
     </div>
-    <div class="compose-row">
-      <span class="compose-tag">HASHTAGS</span>
-      <span class="compose-text">{{ d.tags.lead | join(' ') if d.tags.lead else '—' }}</span>
-      {% if d.tags.corpus %}<span class="muted">(corpus leads)</span>{% endif %}
-    </div>
   </div>
   {% for n in d.noops %}<p class="compose-warn">⚠ {{ n }}</p>{% endfor %}
 {% elif result and not result.ok %}

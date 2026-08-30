@@ -4,7 +4,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
 from fanops.clip import render_moment, snap_window, _trusted_transcript
 from fanops import overlay
-from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LEGACY_EN
+from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, LEGACY_EN
 
 
 def _fake_run_writing_clip(captured):
@@ -28,10 +28,10 @@ def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker,
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    junk = {**MUSIC_HALLUC, "start": 9.4, "end": 9.8, "text": "junk start"}
+    junk = {**LOW_LOGPROB, "start": 9.4, "end": 9.8, "text": "junk start"}
     good = talk_seg("they slept on me", start=9.3, end=12.0)
     good_end = talk_seg("watch this part", start=15.0, end=17.2)
-    junk_end = {**MUSIC_HALLUC, "start": 16.0, "end": 16.6, "text": "junk end"}
+    junk_end = {**LOW_LOGPROB, "start": 16.0, "end": 16.6, "text": "junk end"}
     tr = [junk, good, good_end, junk_end]
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -53,8 +53,8 @@ def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeyp
     """Music/b-roll window: only rejected ASR -> no junk in subs; snap ignores junk boundaries."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    tr = [{**MUSIC_HALLUC, "start": 9.6, "end": 10.0, "text": "background noise"},
-          {**MUSIC_HALLUC, "start": 21.5, "end": 22.2, "text": "more noise"}]
+    tr = [{**LOW_LOGPROB, "start": 9.6, "end": 10.0, "text": "background noise"},
+          {**LOW_LOGPROB, "start": 21.5, "end": 22.2, "text": "more noise"}]
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=60.0, language="en", transcript=tr))

@@ -8,18 +8,20 @@ Speech-trust (L1–L3, always-on — no env toggle): each segment gets a stamped
 degraded / rejected). Production gates (subs burn, moment pick, hook excerpt, framing classify)
 consume only full-tier segments via trusted_segments / window_has_trusted_speech /
 excerpt_for_window. degraded = legacy cache missing ASR quality keys → _adopt_cached_transcript
-refuses adoption and the next pass re-transcribes. rejected = junk/script flap or failed L1 thresholds.
+refuses adoption and the next pass re-transcribes. rejected = empty text, script flap, or failed
+decoder-quality L1 (avg_logprob / compression_ratio). no_speech_prob is stored but never a veto —
+it is a window-level speech-vs-music prior and false-rejects sung/rapped lyrics.
 
 real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on real audio
 (whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
 for segment_trusted / window_has_trusted_speech in production paths.
 
-ENGINE: prefers faster-whisper (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
+ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
 (default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
-(int8 makes even large-v3 practical on CPU). FAILS OPEN to the legacy `whisper` CLI (turbo) when
-faster-whisper is absent (CI / air-gapped), so transcription always runs."""
+(int8 makes even large-v3 practical on CPU). Absent [asr] is SourceState.error / ToolchainMissingError.
+There is no whisper-CLI fallback."""
 from __future__ import annotations
-import contextlib, json, logging, shutil, subprocess, sys, time
+import contextlib, json, logging, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -130,10 +132,9 @@ def whisper_cmd(src: str, out_dir: str, model: str = "turbo", language: str = ""
     return cmd + [src]
 
 def _fw_available() -> bool:
-    """True iff the faster-whisper engine (the [asr] extra) is importable. When False,
-    transcribe_source degrades to the legacy `whisper` CLI — fail-open, today's behavior."""
+    """True iff the faster-whisper engine (the [asr] extra) is importable."""
     try: import faster_whisper; return True       # noqa: F401  (probe only)
-    except ImportError: return False              # the [asr] extra isn't installed -> legacy whisper CLI path
+    except ImportError: return False
 
 def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     # faster-whisper runner invocation (`python -m fanops._fwrun`). Same --model/--output_dir flags
@@ -143,17 +144,19 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
-# Whisper-default quality thresholds for speech-trust filtering.
-_NO_SPEECH_MAX = 0.6
+# Decoder-quality floors. no_speech_prob is stored (schema v2 / cache completeness) but is NOT a
+# pass/fail input: faster-whisper copies a window-level speech-vs-music prior onto every segment in
+# the decode chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are
+# confident. VAD already dropped silence; L1 here is "did the decoder commit to this text".
 _AVG_LOGPROB_MIN = -1.0
 _COMPRESSION_RATIO_MAX = 2.4
 
 def _segment_metadata_pass(seg: dict) -> bool:
-    """L1a–L1c: all three quality keys present and within thresholds; partial keys -> False."""
+    """L1: quality keys present, avg_logprob + compression_ratio in range. Partial keys -> False.
+    no_speech_prob is required to be present (cache completeness) and is not thresholded."""
     if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
         return False
     try:
-        if float(seg["no_speech_prob"]) > _NO_SPEECH_MAX: return False
         if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
         if float(seg["compression_ratio"]) > _COMPRESSION_RATIO_MAX: return False
     except (TypeError, ValueError):
@@ -255,14 +258,13 @@ def _segment_script_coherent(text: str, *, src_lang: str | None) -> bool:
     return True
 
 def segment_trusted(seg: dict, *, src_lang: str | None = None) -> bool:
-    """True only for full-trust segments (L1 metadata pass + L2 script coherence)."""
-    tier = seg.get("trust_tier")
-    if tier is None:
-        tier = _trust_tier(seg, src_lang=src_lang)
-    return tier == "full"
+    """True only for full-trust segments (L1 metadata pass + L2 script coherence).
+    Always recomputes from quality keys — a stored trust_tier is a snapshot, not authority
+    (a stale rejected stamp from a previous formula must not freeze live lyrics as junk)."""
+    return _trust_tier(seg, src_lang=src_lang) == "full"
 
 def trusted_segments(transcript: list[dict] | None, *, src_lang: str | None = None) -> list[dict]:
-    """Filter to full-trust segments only; None/[] -> []. Prefers stamped trust_tier when present."""
+    """Filter to full-trust segments only; None/[] -> []. Recomputes; ignores stored trust_tier."""
     return [s for s in (transcript or []) if segment_trusted(s, src_lang=src_lang)]
 
 def window_has_trusted_speech(src, start: float, end: float) -> bool:
@@ -319,7 +321,8 @@ def purge_source_artifacts(cfg: Config, source_id: str, source_path: str, *,
             (cfg.clips / f"{cid}.render.json").unlink()
 
 
-def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None) -> bool:
+def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: Config | None = None,
+                             keep_state: bool = False) -> bool:
     """Adopt the on-disk whisper JSON into the in-memory Source row. Returns True iff adoption
     succeeded (the cache existed AND parsed AND had the expected shape). A corrupt/truncated cache
     or incomplete quality metadata returns False so the caller can fall through to a real run that
@@ -327,7 +330,9 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: 
 
     Pulled out as a free function (instead of a closure inside transcribe_source) because the
     stage-lock re-check needs to call exactly the same adoption logic — DRY across the
-    'before-lock fast path' and 'after-lock idempotent re-check'."""
+    'before-lock fast path' and 'after-lock idempotent re-check'.
+    keep_state=True refreshes transcript text without rewinding SourceState (a later-stage
+    re-transcribe must not demote picks_decided back to transcribed)."""
     try:
         data = json.loads(cached.read_text())
     except (OSError, json.JSONDecodeError):
@@ -340,22 +345,39 @@ def _adopt_cached_transcript(led: Ledger, source_id: str, cached: Path, *, cfg: 
         src.transcript = _finalize_segments(data.get("segments", []), lang)
         src.language = lang
         src.meta["transcribed"] = True
-        led.set_source_state(source_id, SourceState.transcribed)
+        if not keep_state:
+            led.set_source_state(source_id, SourceState.transcribed)
         _log_transcript_tiers(cfg, source_id, src.transcript or [])
         return True
     except (KeyError, TypeError, AttributeError):
         return False
 
 
+def asr_retry_marker(cfg: Config, source_path: str) -> Path:
+    """One-shot marker: isolate+ASR already retried for a later-stage hook pass."""
+    return cfg.agent_io / "transcripts" / f"{Path(source_path).stem}.asr_retry"
+
+
+def adopt_transcript_keep_state(led: Ledger, cfg: Config, source_id: str) -> bool:
+    """Refresh Source.transcript from the sidecar JSON without changing SourceState."""
+    src = led.sources.get(source_id)
+    if src is None or not src.source_path:
+        return False
+    cached = cfg.agent_io / "transcripts" / f"{Path(src.source_path).stem}.json"
+    if not cached.exists():
+        return False
+    return _adopt_cached_transcript(led, source_id, cached, cfg=cfg, keep_state=True)
+
+
 def _transcribe_toolchain_present() -> bool:
-    """Cheap PATH probe: faster-whisper ([asr] extra) OR legacy whisper CLI."""
-    return _fw_available() or shutil.which("whisper") is not None
+    """Cheap probe: faster-whisper ([asr] extra). No whisper-CLI fallback."""
+    return _fw_available()
 
 
 def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
-                      in_lock: bool = False) -> Ledger:
+                      in_lock: bool = False, force: bool = False) -> Ledger:
     src = led.sources[source_id]
-    if src.meta.get("transcribed") is True:           # idempotent only when it actually ran
+    if not force and src.meta.get("transcribed") is True:           # idempotent only when it actually ran
         return led
     out_dir = cfg.agent_io / "transcripts"
     # M1 fast path: the whisper JSON is named by the source stem and is DETERMINISTIC per source.
@@ -364,7 +386,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     # produce path which will overwrite it. The stem is the SOURCE stem in both engines (isolation
     # moves vocals to "{source_stem}.mp3"), so the lookup is stable.
     cached = out_dir / f"{Path(src.source_path).stem}.json"
-    if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
+    if not force and cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
         try:
             from fanops.artifacts import stamp_stage
             rel = str(cached.relative_to(cfg.agent_io))
@@ -379,7 +401,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
     if in_lock:
         if not _transcribe_toolchain_present():
             raise ToolchainMissingError(
-                "whisper/faster-whisper not found — install [asr] or whisper CLI to transcribe (in-lock probe)")
+                "faster-whisper not found — pip install -e '.[asr]' (in-lock probe)")
         get_logger(cfg)("transcribe", source_id, "defer", reason="cold cache in-lock; deferring whisper to producer")
         return led
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -392,7 +414,7 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # Re-check INSIDE the lock — this is the short-circuit that closes the race. The first
         # producer wrote the JSON; the second producer reaches this line and adopts. Crucially the
         # subprocess.run below NEVER executes in the second producer.
-        if cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
+        if not force and cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
             return led
         return _produce_transcript(led, cfg, source_id, src, out_dir, model)
 
@@ -434,18 +456,17 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
                 # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
                 try: Path(voc).replace(target); audio = str(target)
                 except OSError: audio = src.source_path
-    # Engine: prefer faster-whisper at a DURATION-AWARE model (cfg.asr_model_for with timeout_attempts
-    # for retry downgrade after prior kills). Fail open to the legacy `whisper` CLI when the [asr] extra is
-    # absent — and that fallback is ALSO duration-aware (cfg.whisper_model_for, audit c0-f2).
+    # Engine: faster-whisper only. A missing [asr] extra used to fail open to Homebrew `whisper`,
+    # which left no per-source JSON and stalled the source at catalogued. Refuse instead.
+    if not _fw_available():
+        src.meta["preserve_vocals_on_retry"] = False
+        led.set_source_state(source_id, SourceState.error,
+                             error_reason="faster-whisper not installed — pip install -e '.[asr]'")
+        return led
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
-    if _fw_available():
-        engine = "faster-whisper"
-        used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
-        cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
-    else:
-        engine = "whisper-cli"
-        used_model = _resolve_model(model or cfg.whisper_model_for(src.duration, timeout_attempts=attempts))
-        cmd = whisper_cmd(audio, str(out_dir), used_model, cfg.asr_language)
+    engine = "faster-whisper"
+    used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
+    cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()
     try:

@@ -395,7 +395,7 @@ def _fw_check(rep):
 
 
 def test_doctor_fails_when_faster_whisper_unavailable(tmp_path, monkeypatch):
-    # Bare install (no [asr] extra) -> doctor surfaces the missing preferred ASR engine with the venv recipe.
+    # Bare install (no [asr] extra) -> doctor fails closed with the venv recipe.
     monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
     c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
     assert c is not None and c["ok"] is False and "[asr]" in c["hint"]
@@ -744,6 +744,22 @@ def test_doctor_quota_check_omitted_without_graph(tmp_path):
     assert doctor._graph_hashtag_quota_check(cfg) is None
 
 
+def test_doctor_quota_not_exhausted_with_stale_graph_mute(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("META_GRAPH_TOKEN", "t")
+    monkeypatch.setenv("META_IG_USER_ID", "ig")
+    cfg = Config(root=tmp_path)
+    from fanops.source_tags import GRAPH_TAG_CACHE_NAME
+    p = cfg.control / GRAPH_TAG_CACHE_NAME
+    p.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    p.write_text(json.dumps({"tags": {}, "searches": [], "quota_exhausted_at": now}))
+    row = doctor._graph_hashtag_quota_check(cfg)
+    assert row is not None
+    assert row["ok"] is True
+    assert row.get("severity") != "warn"
+
+
 def test_doctor_surfaces_hashtag_search_quota(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     monkeypatch.setenv("META_GRAPH_TOKEN", "t")
@@ -754,7 +770,7 @@ def test_doctor_surfaces_hashtag_search_quota(tmp_path, monkeypatch):
     p.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat()
     searches = [{"tag": f"#t{i}", "at": now} for i in range(30)]
-    p.write_text(json.dumps({"tags": {}, "searches": searches, "quota_exhausted_at": now}))
+    p.write_text(json.dumps({"tags": {}, "searches": searches}))
     row = doctor._graph_hashtag_quota_check(cfg)
     assert row is not None
     assert row["severity"] == "warn"

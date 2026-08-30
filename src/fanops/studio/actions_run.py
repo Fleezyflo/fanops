@@ -76,14 +76,14 @@ def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts
     from fanops.accounts import Accounts
     from fanops.models import SourceState, batch_id as _batch_id
     name = (batch_name or "").strip()
-    if not name:
-        return ActionResult(ok=False, error="batch name required")
     ids = [s for s in (source_ids or []) if s]
     if not ids:
         return ActionResult(ok=False, error="select at least one pending source")
     try:
         with Ledger.transaction(cfg) as led:
             now_iso = iso_z(_now(None))
+            if not name:
+                name = f"queue-{now_iso}"
             stamp = [sid for sid in ids if (s := led.sources.get(sid)) and s.state is SourceState.pending and not s.batch_id]
             if not stamp:
                 return ActionResult(ok=False, error="no unbound pending sources in selection")
@@ -558,7 +558,8 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     return ActionResult(ok=True, detail=summary)
 
 
-def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True) -> ActionResult:
+def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True,
+                source_ids=(), batch_name: str = "", target_accounts=()) -> ActionResult:
     """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the LLM
     responder, then advance — looped until no gate remains — so finished clips land in Review WITHOUT
     the operator hand-writing a caption. Gates are answered ONLY by the LLM, so the gates always answer
@@ -567,7 +568,8 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
 
     This is the Make-clips click, so it carries queued footage the WHOLE way: every bound held source
     (queue-gate `pending` + a batch) is released to `catalogued` first, then respond+advance cuts it.
-    `detail["released"]` reports how many it took."""
+    `detail["released"]` reports how many it took. Passing `source_ids` binds those unbound pending
+    sources first (default line name `queue-{iso}`) so intake is one POST: tick accounts, Make clips."""
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
     from fanops.responder import get_responder
@@ -583,6 +585,14 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
         return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
     if problems:
         return ActionResult(ok=False, error="accounts.json: " + "; ".join(problems))
+    bind_detail: dict = {}
+    ids = [s for s in (source_ids or []) if s]
+    if ids:
+        bound = bind_queue(cfg, source_ids=ids, batch_name=batch_name,
+                           target_accounts=target_accounts)
+        if not bound.ok:
+            return bound
+        bind_detail = bound.detail or {}
     bt = base_time or iso_z(_now(None))
     responder = get_responder(cfg)
     summary = None
@@ -627,8 +637,11 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     # a green "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
     # `released` rides in the detail on BOTH exits: it is the only proof the click moved held footage, and
     # its absence is exactly what made the old silent no-op look like success.
+    extra = {k: v for k, v in bind_detail.items() if k != "sources"}
+    if bind_detail:
+        extra["bound"] = bind_detail.get("sources")
     if not done:
-        return ActionResult(ok=False, detail={**(summary or {}), "released": released},
+        return ActionResult(ok=False, detail={**(summary or {}), "released": released, **extra},
                             error="auto-prepare did not finish — gates still pending after 10 passes "
                             "(is the LLM CLI working?); run Prepare again or answer them in the Gates tab")
-    return ActionResult(ok=True, detail={**(summary or {}), "released": released})
+    return ActionResult(ok=True, detail={**(summary or {}), "released": released, **extra})

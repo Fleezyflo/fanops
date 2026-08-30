@@ -41,6 +41,12 @@ def test_hydrate_skips_derive_cut_spec(tmp_path):
     assert a.persona_owns_profile is False
 
 
+def test_fit_window_default_has_no_talk_floor():
+    # The primitive itself must not grow a short pick to 12s when callers omit lo/hi.
+    assert fit_window(10.0, 13.0, 120.0) == (10.0, 13.0)
+    assert fit_window(10.0, 40.0, 120.0) == (10.0, 40.0)
+
+
 # 2. Three fit_window sites pass explicit non-band EOF clamp (lo=0, hi=duration|inf).
 @pytest.mark.parametrize("site", ["render_moment", "render_account_cut", "request_moment_hooks"])
 def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):

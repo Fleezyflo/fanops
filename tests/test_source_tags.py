@@ -795,6 +795,51 @@ def test_graph_quota_after_scrape_still_stamps(tmp_path):
     assert rec["lock"] == ["#a", "#b"]
 
 
+def test_graph_search_quota_status_ignores_graph_cache_mute(tmp_path):
+    from datetime import datetime, timezone
+    from fanops.source_tags import (GRAPH_TAG_CACHE_NAME, graph_search_quota_status,
+                                    graph_tag_cache_path)
+    cfg = _cfg(tmp_path)
+    p = graph_tag_cache_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    p.write_text(json.dumps({"tags": {}, "searches": [], "quota_exhausted_at": now}))
+    assert graph_search_quota_status(cfg) == (0, 30, False)
+    assert GRAPH_TAG_CACHE_NAME == "graph_hashtag_cache.json"
+
+
+def test_graph_cache_write_strips_quota_exhausted_at(tmp_path):
+    from datetime import datetime, timezone
+    from fanops.source_tags import (_note_graph_id, graph_tag_cache_path, load_graph_tag_cache)
+    cfg = _cfg(tmp_path)
+    p = graph_tag_cache_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    p.write_text(json.dumps({"tags": {}, "searches": [], "quota_exhausted_at": now}))
+    _note_graph_id(cfg, "#music", "gid-#music")
+    cache = load_graph_tag_cache(cfg)
+    assert "quota_exhausted_at" not in cache
+    assert cache["tags"]["#music"]["id"] == "gid-#music"
+
+
+def test_graph_quota_exhausted_does_not_write_mute(tmp_path):
+    from fanops.meta_graph import GraphQuotaExhausted
+    from fanops.source_tags import load_graph_tag_cache
+    cfg = _cfg(tmp_path)
+    names = ["a", "b"]
+    client = _SearchClient({n: [_Hit(n)] for n in names},
+                           media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+
+    def resolve(_c, tag):
+        raise GraphQuotaExhausted("ig_hashtag_search", code=18, subcode=2207034,
+                                  message="resource limits")
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names,
+                       resolve_fn=resolve, measure_fn=lambda *_a: (10.0, {}))
+    cache = load_graph_tag_cache(cfg)
+    assert "quota_exhausted_at" not in cache
+
+
 def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None):
     names = list(names)
     measured = list(names) if measured is None else list(measured)

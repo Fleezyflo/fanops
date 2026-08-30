@@ -70,10 +70,8 @@ queued post FIRST un-approves back to Review, THEN clears — a post is never le
 - **Every API key is write-only** (`POSTIZ_API_KEY`, `ZERNIO_API_KEY`, `META_GRAPH_TOKEN__<slug>`): set via
   `golive._dual_write`, NEVER rendered back into any template/response. Don't add a field that echoes one.
 - **Persona edits are authoritative** — a blank lever field CLEARS it (`personas.py`). Niche is the exception:
-  an empty niche is refused (`persona niche is required`) — a persona with none cannot discover hashtags. The
-  hashtag corpus is NOT editable: it is DERIVED from platform measurements every tick
-  (`persona_research.derive_corpus`), so the tab shows it read-only. The operator's hashtag lever is the
-  declared niche (`/personas/niche` sets the search root).
+  an empty niche is refused (`persona niche is required`). Posted hashtags come from the source lock
+  (`ship_from_lock`), not a persona corpus. Niche is declared territory, not the caption menu.
 
 ## Where to look
 
