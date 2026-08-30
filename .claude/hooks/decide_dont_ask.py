@@ -4,7 +4,7 @@
 A regex over the question text cannot judge "was this already settled" — a
 polite, nuanced question is exactly the diversion that slips a pattern (proven
 this session). So this guard correlates the question against THIS TURN's real
-context in the transcript, the same un-gameable approach as completion_evidence.
+context in the transcript rather than trusting the question text alone.
 
 The operator is not the agent's coding guidelines: they already know best
 practice, what they want, and the best way. So the default is DECIDE, not ask.
