@@ -1,4 +1,4 @@
-"""Duration-machine kill + omit pick poem — certification tests for the operator unit."""
+"""Pick-owned duration + clipping-persona lens — inverted leftover kill-contract tests."""
 from __future__ import annotations
 import json
 

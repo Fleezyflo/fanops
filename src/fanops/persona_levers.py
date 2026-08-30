@@ -43,9 +43,7 @@ _INTENSITY_OPTIONS = [
 ]
 # MOL-170 highest-intensity-first framing order (was option.intensity); kept until E-3 removes framing_map.
 _FRAMING_PRIORITY = ("punchlines", "hype", "bold-statement", "visual", "emotional", "storytelling")
-# clip_profile: the GLOBAL deterministic cut-length lever (Go-Live default) — catalog-only (no per-persona
-# vocab/clause; per persona the length is DERIVED from content_focus). Options are band names; the catalog
-# effect is computed from bands.band_for (lazy). niche: free text (declared subject terms), no enumerated options.
+# clip_profile: the GLOBAL pick-time length band (Go-Live default) — catalog-only (no per-persona vocab/clause; per persona the length is DERIVED from cut_policy).
 _CLIP_PROFILE_BANDS = ["short", "medium", "long", "talk", "song"]
 
 LEVER_REGISTRY = [
@@ -64,8 +62,8 @@ LEVER_REGISTRY = [
     {"key": "hook_angle", "label": "Hook angle", "kind": "text", "stage": "hook",
      "does": "the strategy of the burned on-screen hook (free text; formerly curiosity vs challenge vs emotional vs result-first vs fomo)",
      "options": []},
-    {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "cut",
-     "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)",
+    {"key": "clip_profile", "label": "Clip length", "kind": "select", "stage": "pick",
+     "does": "the GLOBAL pick-time clip-length band (Go-Live default; per-persona it is derived from cut_policy)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
     {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
      "does": "declared subject territory — not the caption menu; posted tags are the source lock; voice/levers "

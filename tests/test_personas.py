@@ -298,7 +298,7 @@ def test_each_baked_persona_coherent(tmp_path):
         assert all(r["health"] == "ok" for r in rows), {r["key"]: r["health"] for r in rows if r["health"] != "ok"}
 
 
-def test_credibility_first_pick_is_handle_only(tmp_path):
+def test_credibility_first_pick_includes_scope_and_band(tmp_path):
     from fanops.accounts import Accounts
     from fanops.moments import _pick_personas
     cfg = Config(root=tmp_path)

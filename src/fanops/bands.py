@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 class Band(NamedTuple):
-    lo: float       # render floor + prompt short-source threshold: a source below `lo` -> one whole clip
-    hi: float       # render ceiling (seconds)
+    lo: float       # pick-gate floor (validate_pick) + prompt short-source threshold: a source below lo -> one whole clip
+    hi: float       # pick-gate TARGET ceiling (seconds); render does not apply this
     @property
     def span(self) -> float: return (self.lo + self.hi) / 2.0   # midpoint: aim ~one clip per `span` s
 

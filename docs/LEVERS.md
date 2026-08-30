@@ -61,9 +61,9 @@ Then run `fanops lever docs` to regenerate this file.
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|
 
-## clip_profile (stage: cut)
+## clip_profile (stage: pick)
 
-**Does:** the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)
+**Does:** the GLOBAL pick-time clip-length band (Go-Live default; per-persona it is derived from cut_policy)
 
 | value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |
 |-------|----------------------|-------------------------|-----------------|------------|

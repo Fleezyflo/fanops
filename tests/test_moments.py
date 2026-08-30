@@ -1347,7 +1347,7 @@ def test_identical_persona_two_gates(tmp_path):
     rids = {latest_request_id(cfg, "moments", k) for k in keys}
     assert len(rids) == 2
 
-def test_upgrade_bare_gate_ingest_still_works(tmp_path, monkeypatch):
+def test_upgrade_bare_gate_ingest_rejects_below_talk_lo(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")

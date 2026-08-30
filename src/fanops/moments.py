@@ -284,8 +284,7 @@ def _persona_entry(cfg: Config, a) -> dict:
 
 def _pick_personas(cfg: Config, accounts) -> list[dict]:
     """P4a: ONE assembly point for the per-active-persona FULL spec the pick + downstream gates read.
-    Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF or no
-    truthy casting directive (byte-identical persona-blind pick). Fail-open: a bad account row is skipped."""
+    Returns handle+directive+selection_scope+band+framing+hook_angle+corpus. Empty when casting OFF. Every active account is included (directive-less still get a gate). Fail-open: a bad account row is skipped."""
     if accounts is None or not cfg.account_casting:
         return []
     out: list[dict] = []
