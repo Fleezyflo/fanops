@@ -91,8 +91,7 @@ def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
         assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
 
 
-# 3b. No voice / cut_policy / content_focus / select_rule / owning persona lens in pick prompt.
-def test_moment_pick_prompt_omits_persona_poem(tmp_path):
+def test_moment_pick_prompt_includes_persona_lens(tmp_path):
     cfg = Config(root=tmp_path)
     accts = Accounts.load(cfg)
     accts.accounts = [Account(handle="trust", account_id="1", platforms=["instagram"], status="active",
@@ -100,18 +99,15 @@ def test_moment_pick_prompt_omits_persona_poem(tmp_path):
                               cut_policy=["emotional"], selection_scope="credibility_first",
                               hook_angle="curiosity")]
     entry = _persona_entry(cfg, accts.accounts[0])
-    assert entry["directive"] == "" and entry["band"] == "" and entry["content_focus"] == []
+    assert entry["directive"]
+    assert "16-26" in entry["band"]
+    assert entry["selection_scope"]
     p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
                             "guidance": "", "personas": [entry]})
-    low = p.lower()
-    assert "select_rule=" not in p
-    assert "source_data" not in low or "selection lens" not in low
-    assert "underground fan voice" not in p
-    assert "credibility" not in p
-    assert "owning persona" not in low
-    assert "bars only" not in p
-    assert "complete moment" in low
-    assert "6 seconds or less" in low or "6 seconds" in low
+    assert "select_rule=" in p
+    assert "band=" in p
+    assert "16-26" in p
+    assert "owning persona" in p.lower()
 
 
 def test_pick_personas_opens_gates_without_directive(tmp_path):

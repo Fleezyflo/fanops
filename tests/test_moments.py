@@ -379,10 +379,11 @@ def test_pick_personas_returns_full_spec(tmp_path):
     assert len(specs) == 1
     assert set(specs[0]) == PERSONA_PICK_SPEC_KEYS
     assert specs[0]["handle"] == "raw"
-    assert specs[0]["directive"] == "" and specs[0]["band"] == ""
-    assert specs[0]["selection_scope"] == ""
+    assert specs[0]["directive"]
+    assert "8-15" in specs[0]["band"]
+    assert specs[0]["selection_scope"]
     assert specs[0]["framing"] in ("top", "center")
-    assert specs[0]["hook_angle"] == ""
+    assert specs[0]["hook_angle"] == "curiosity"
     assert specs[0]["corpus"] == ["#detroitrap", "#bars"]
 
 def test_pick_personas_empty_when_casting_off(tmp_path, monkeypatch):
@@ -427,9 +428,10 @@ def test_request_packs_full_persona_spec_list(tmp_path):
         assert PERSONA_PICK_SPEC_KEYS <= set(spec)
         assert "signal_peaks" in spec
         assert spec["handle"] == h
-        assert spec["directive"] == "" and spec["band"] == ""
+        assert spec["directive"]
+        assert "8-15" in spec["band"]
         assert spec["framing"] in ("top", "center")
-        assert spec["selection_scope"] == "" and spec["hook_angle"] == ""
+        assert spec["selection_scope"] and spec["hook_angle"]
         assert isinstance(spec["corpus"], list)
 
 def test_request_reuses_frames_once(tmp_path, mocker):

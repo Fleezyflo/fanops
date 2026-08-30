@@ -308,7 +308,8 @@ def test_credibility_first_pick_is_handle_only(tmp_path):
     specs = _pick_personas(cfg, Accounts.load(cfg))
     assert len(specs) == 1
     assert specs[0]["handle"] == "trust"
-    assert specs[0]["selection_scope"] == "" and specs[0]["band"] == ""
+    assert specs[0]["selection_scope"]
+    assert specs[0]["band"]
 
 
 def test_baked_personas_mappable_to_account(tmp_path):

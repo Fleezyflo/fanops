@@ -237,21 +237,35 @@ def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=
     kept = [s for i, s in enumerate(segs) if i in keep_idx]         # restore chronological order
     return kept, len(segs) - len(kept)
 
+def _owner_profile(cfg: Config, a) -> str:
+    """Pin > cut_policy-derived > global FANOPS_CLIP_PROFILE. ONE resolver for prompt, ingest, stamp."""
+    from fanops.persona_directives import resolved_cut_spec
+    prof, _ = resolved_cut_spec(a)
+    return prof or cfg.resolve_clip_profile(a)
+
 def _persona_entry(cfg: Config, a) -> dict:
-    """Per-account pick spec — handle + gate filters only (no clip-order poem in the pick prompt)."""
+    """Per-account pick spec — handle + compiled lens (directive/band/scope) for the pick prompt."""
+    from fanops.persona_directives import casting_directive, resolved_cut_spec
+    from fanops.bands import band_for
+    d = casting_directive(a)
+    prof = _owner_profile(cfg, a)
+    band = band_for(prof)
     pin_fr = (getattr(a, "framing", None) or "").strip().lower()
-    framing = pin_fr if pin_fr in ("top", "center") else ("top" if cfg.resolve_top_bias(a) else "center")
+    _, derived_fr = resolved_cut_spec(a)
+    framing = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(a) else "center"))
     intensity = (getattr(a, "intensity", None) or "")
     if isinstance(intensity, str): intensity = intensity.strip().lower() or None
     else: intensity = None
+    cf = getattr(a, "content_focus", None)
+    cf_s = cf if isinstance(cf, str) else ""
     return {"handle": a.handle,
-            "directive": "",
-            "selection_scope": "",
-            "band": "",
+            "directive": (d.select_rule or d.register) if d else "",
+            "selection_scope": (d.scope_lens if d else "") or (getattr(a, "selection_scope", None) or ""),
+            "band": f"{band.lo:g}-{band.hi:g}s",
             "framing": framing,
-            "content_focus": [],
+            "content_focus": cf_s,
             "intensity": intensity or "",
-            "hook_angle": "",
+            "hook_angle": (getattr(a, "hook_angle", None) or ""),
             "corpus": list(getattr(a, "hashtag_corpus", None) or [])}
 
 def _pick_personas(cfg: Config, accounts) -> list[dict]:
