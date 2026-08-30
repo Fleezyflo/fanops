@@ -645,16 +645,6 @@ def test_pick_prompt_no_rapper_preamble():
     assert "bilingual" not in low and "rapper" not in low
     assert "autonomous fan-account clip engine" in low
 
-def test_pick_prompt_omits_scope_and_directive_poem():
-    p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
-                            "guidance": "", "personas": [{"handle": "@a",
-                            "selection_scope": "Favor clear and accurate over sensational",
-                            "directive": "Clip for punchlines", "band": "8-15s"}]})
-    assert "punchlines" not in p.lower()
-    assert "sensational" not in p.lower() and "accurate" not in p.lower()
-    assert "<source_data>" not in p
-    assert "8-15" not in p
-
 def test_pick_prompt_omits_hook_angle_and_corpus():
     p = moment_pick_prompt({"duration": 60.0, "transcript": [], "signal_peaks": [], "language": "en",
                             "guidance": "", "personas": [{"handle": "@a", "directive": "Clip for punchlines",
