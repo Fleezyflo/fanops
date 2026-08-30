@@ -670,7 +670,7 @@ def test_ingest_partial_rejection_keeps_valid_drops_invalid(tmp_path):
     assert tokens == {"14.00-28.00", "40.00-54.00"}              # invalid dropped, two valid kept
     assert led.sources["src_1"].state is SourceState.picks_decided
 
-def test_ingest_talk_account_drops_eight_second_pick(tmp_path):
+def test_ingest_talk_account_keeps_eight_second_pick(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{
@@ -679,10 +679,8 @@ def test_ingest_talk_account_drops_eight_second_pick(tmp_path):
     accts = Accounts.load(cfg)
     led = request_moments(led, cfg, "src_1", accounts=accts)
     led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8, "short"), _mp(20, 36, "inband")], handle="talky")
-    moms = led.moments_of("src_1")
-    assert len(moms) == 1
-    m = next(iter(moms))
-    assert abs((m.end - m.start) - 16.0) < 0.01
+    moms = sorted(led.moments_of("src_1"), key=lambda m: m.start)
+    assert [(round(m.end - m.start, 1),) for m in moms] == [(8.0,), (16.0,)]
 
 def test_validate_pick_min_length_and_eof_tolerance():
     assert validate_pick(MomentPick(start=10.0, end=10.3, reason="r"), duration=20.0) is None       # short complete window ships
@@ -1346,13 +1344,14 @@ def test_identical_persona_two_gates(tmp_path):
     rids = {latest_request_id(cfg, "moments", k) for k in keys}
     assert len(rids) == 2
 
-def test_upgrade_bare_gate_ingest_rejects_below_talk_lo(tmp_path, monkeypatch):
+def test_upgrade_bare_gate_ingest_keeps_below_talk_lo(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8)])
-    assert led.moments_of("src_1") == []
-    assert led.sources["src_1"].state is SourceState.error
+    moms = led.moments_of("src_1")
+    assert len(moms) == 1 and abs((moms[0].end - moms[0].start) - 8.0) < 0.01
+    assert led.sources["src_1"].state is SourceState.picks_decided
 
 def test_rerequest_sweeps_stale_gates(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

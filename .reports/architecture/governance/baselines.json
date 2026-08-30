@@ -7,6 +7,7 @@
     "route REMOVED: POST /personas/corpus/remove",
     "route REMOVED: POST /personas/recommend",
     "route REMOVED: POST /personas/research",
+    "route REMOVED: POST /golive/clip-profile",
     "CLI verb REMOVED: `migrate`",
     "CLI verb REMOVED: `reconcile-retired`",
     "module fanops.origin_backfill was REMOVED — every KB claim about it is now about nothing",

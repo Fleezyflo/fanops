@@ -171,7 +171,7 @@ def test_render_spec_band_tagged_when_profile_differs(tmp_path):
     m_talk = Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="talk", hook="H")
     rid_long, wants_cut, profile, _ = render_spec(cfg, clip=clip, hook="H", moment=m_long)
     rid_talk, _, _, _ = render_spec(cfg, clip=clip, hook="H", moment=m_talk)
-    assert wants_cut is True and profile == "long" and rid_long != rid_talk
+    assert wants_cut is True and profile == "long" and rid_long == rid_talk
 
 def test_same_moment_same_profile_one_render(tmp_path, mocker):
     cfg = Config(root=tmp_path)

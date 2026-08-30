@@ -44,7 +44,7 @@ def test_account_carrier_pin_beats_derived():
 
 def test_persona_can_no_longer_pin_only_derives():
     p = _p(cut_policy=["punchlines", "hype"], clip_profile="medium", framing="top")
-    assert resolved_cut_spec(p) == (None, "top")
+    assert resolved_cut_spec(p) == (None, "center")
 
 def test_derived_when_unpinned():
     assert resolved_cut_spec(_p(cut_policy=["punchlines", "hype"])) == (None, "center")
