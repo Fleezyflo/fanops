@@ -940,8 +940,10 @@
       ],
       "lazy": [
         "fanops.accounts",
+        "fanops.bands",
         "fanops.caption",
         "fanops.ids",
+        "fanops.persona_directives",
         "fanops.personas",
         "fanops.signals",
         "fanops.text",
@@ -1008,6 +1010,7 @@
       ],
       "lazy": [
         "fanops",
+        "fanops.bands",
         "fanops.persona_levers",
         "fanops.persona_research"
       ],
@@ -1299,7 +1302,9 @@
       "typing": []
     },
     "fanops.prompts": {
-      "compile": [],
+      "compile": [
+        "fanops.bands"
+      ],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2215,7 +2220,7 @@
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
     "fanops.autopilot": 2,
-    "fanops.bands": 4,
+    "fanops.bands": 5,
     "fanops.batches": 0,
     "fanops.canary": 0,
     "fanops.caption": 2,
@@ -2435,7 +2440,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 9,
-    "fanops.prompts": 0,
+    "fanops.prompts": 1,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
     "fanops.reframe": 8,
@@ -2492,7 +2497,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 251,
+  "lazy_downward_count": 254,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3553,7 +3558,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 6,
-    "fanops.prompts": 0,
+    "fanops.prompts": 1,
     "fanops.recaption": 5,
     "fanops.reconcile": 3,
     "fanops.reframe": 6,
@@ -3628,7 +3633,6 @@
       "fanops.persona_levers",
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
-      "fanops.prompts",
       "fanops.secret_provider",
       "fanops.studio",
       "fanops.studio.actions_common",
@@ -3652,6 +3656,7 @@
       "fanops.persona_directives",
       "fanops.persona_research",
       "fanops.post.providers",
+      "fanops.prompts",
       "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
@@ -3789,8 +3794,8 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 598,
-    "lazy_edges": 372,
+    "compile_edges_G1": 599,
+    "lazy_edges": 375,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,
     "lazy_edges_to_equal_or_higher_level": 121,

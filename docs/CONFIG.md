@@ -50,7 +50,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 ## Pipeline: ingest / transcribe / signals / framing
 | Var | Default | Effect | Set |
 |---|---|---|---|
-| `FANOPS_CLIP_PROFILE` | `talk` | Global clip-length band | S |
+| `FANOPS_CLIP_PROFILE` | `talk` | Global pick-time clip-length band (talk 12-22s). Render cuts the picked window (EOF clamp); it does not pad or trim to the band | S |
 | `FANOPS_VISUAL_START` | on | Strongest-opening-frame cut refinement | .env |
 | `FANOPS_SMART_FRAMING` | on | Subject-aware reframe. ON REQUIRES the `[framing]` extra (opencv) — render REFUSES (`ToolchainMissingError`, exit 2) if cv2 absent, not a silent centre-crop. Set `0` to centre-crop without cv2 (a detection miss still fails open to centered) | .env |
 | `FANOPS_QUEUE_GATE` | on | Hold new footage as pending until operator queues + releases; also PARKS machine-origin moment re-opens (`adjust.amplify`) on the source until the Make tab releases them (`0` restores auto-ingest and serves re-opens unparked) | .env |
