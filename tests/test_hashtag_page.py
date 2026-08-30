@@ -1,7 +1,5 @@
-# tests/test_hashtag_page.py — U11 the Hashtags observatory page (read-only after MOL-515).
-# Covers: GET render-inertness (zero network), rotation consecutive-duplicate detection, the three
-# cache states (empty / unreadable / ok), and the read-only corpora rows. Ban list deleted (MOL-515).
-# Mirrors test_studio_app.py's client fixture; respects the _LEAKY_ENV gotcha.
+# tests/test_hashtag_page.py — Hashtags page: source locks (ship menu), play-ranked cache, duplicate-line warn.
+# GET is network-inert. Ban list deleted (MOL-515). Mirrors test_studio_app.py's client fixture.
 import json
 from datetime import datetime, timezone, timedelta
 
@@ -26,17 +24,6 @@ def _client(cfg):
 
 def _z(dt):
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _cache(cfg, values, *, at=None):
-    """Write the measurement cache in its real shape. `values` are tag SIZES (`media_count`) — the primary
-    rank since MOL-692 — plus a legacy median so the row also reads as measured."""
-    at = at or datetime.now(timezone.utc).isoformat()
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({
-        t: {"graph_id": "id-" + t.lstrip("#"), SIZE_FIELD: float(v), METRIC_FIELD: 1.0,
-            "measured_at": at}
-        for t, v in values.items()}))
 
 
 # ── ban list gone (MOL-515) ─────────────────────────────────────────────────────────────────────
@@ -72,8 +59,11 @@ def test_page_get_is_network_inert(tmp_path, monkeypatch):
     r = _client(cfg).get("/hashtags")
     assert r.status_code == 200
     html = r.data.decode()
-    for needle in ("Source locks", "Corpora at a glance", "Measurement cache", "Rotation health"):
+    for needle in ("Source locks", "Measurement cache", "Rotation health"):
         assert needle in html
+    assert "Corpora at a glance" not in html
+    assert "corpus leads" not in html
+    assert "Lead:" not in html
     assert "Ban lane" not in html
     assert "/hashtags/ban" not in html
 
@@ -139,45 +129,22 @@ def test_absent_cache_is_empty_not_a_frozen_floor(tmp_path):
     assert status.state == "empty" and status.tags == []
 
 
-def test_ok_cache_ranks_chips(tmp_path):
+def test_ok_cache_ranks_chips_by_play(tmp_path):
     cfg = Config(root=tmp_path)
     at = "2026-07-20T00:00:00+00:00"
-    _cache(cfg, {"#low": 10, "#high": 900, "#mid": 500}, at=at)
+    # media_count DESC would be #folder then #hot; play_rank_key must put #hot first.
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#folder": {"graph_id": "id-folder", SIZE_FIELD: 900.0, METRIC_FIELD: 10.0, "measured_at": at},
+        "#hot": {"graph_id": "id-hot", SIZE_FIELD: 10.0, METRIC_FIELD: 900.0, "measured_at": at},
+    }))
     status = views_hashtags._store_status(cfg)
-    # MOL-692: TWO fields, named separately — there is no single "metric" number on this page any more.
     assert status.state == "ok"
     assert SIZE_FIELD in status.size_label and TREND_FIELD in status.trend_label
     assert not hasattr(status, "metric_field")
-    assert [r["tag"] for r in status.tags] == ["#high", "#mid", "#low"]   # media_count desc
-    assert [r["size"] for r in status.tags] == [900.0, 500.0, 10.0]
+    assert [r["tag"] for r in status.tags] == ["#hot", "#folder"]
     assert all("banned" not in r for r in status.tags)
-    assert status.oldest == at and status.age                                # freshness, not an allowance
-
-
-# ── acceptance #5: corpus rows byte-truth, no edit controls ─────────────────────────────────────
-
-def test_corpus_rows_read_only(tmp_path):
-    cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="Music Blogger", niche=["hiphop"])
-    _cache(cfg, {"#rap": 100, "#hiphop": 900})
-    blob = json.loads(cfg.hashtags_path.read_text())
-    blob["last_complete_pass"] = "2026-08-11T12:00:00+00:00"
-    cfg.hashtags_path.write_text(json.dumps(blob))
-    core.apply_auto_corpus(cfg, pid, tags=["#rap", "#hiphop"], meta={
-        "#rap": {METRIC_FIELD: 100.0, "measured_at": "2026-07-20T00:00:00+00:00", "from": "#rap"},
-        "#hiphop": {METRIC_FIELD: 900.0, "measured_at": "2026-07-21T00:00:00+00:00", "from": "#rap"}})
-    rows = views_hashtags._corpora_rows(cfg)
-    row = next(r for r in rows if r.pid == pid)
-    assert row.size == 2                                 # byte-truth from personas.json
-    assert row.top3 == ["#hiphop", "#rap"]               # biggest first (media_count 900 vs 100)
-    assert row.last_refreshed == "2026-08-11T12:00:00+00:00"   # Layer A last_complete_pass
-    # The section-1 HTML must carry NO add/remove/research/ban controls (the corpus is DERIVED).
-    html = _client(cfg).get("/hashtags").data.decode()
-    section1 = html.split("<h3>Measurement cache</h3>")[0]   # everything before section 2 is section 1 + header
-    assert "/personas/corpus/add" not in section1        # the add/remove corpus routes are GONE entirely
-    assert "/personas/research" not in section1          # ...as is the research proposal lane
-    assert "/hashtags/ban" not in html                   # ban forms gone from the whole page
-    assert "edit →" in section1                          # but the read-only link to Personas is present
+    assert status.oldest == at and status.age
 
 
 def test_lock_rows_ready_missing_and_in_progress(tmp_path):
@@ -205,28 +172,34 @@ def test_lock_rows_ready_missing_and_in_progress(tmp_path):
     assert by["src_gone"].state == "missing"
     html = _client(cfg).get("/hashtags").data.decode()
     assert "Source locks" in html and "2 of 4 sources" in html
-    assert "not the posted caption menu" in html or "not</strong> the posted caption menu" in html
+    assert "Corpora at a glance" not in html
+    assert not hasattr(page, "corpora")
+    assert not hasattr(views_hashtags, "_corpora_rows")
+    assert not hasattr(views_hashtags, "CorpusRow")
 
 
-def test_corpus_row_size_is_byte_truth_from_personas_json(tmp_path):
-    # A-11 deleted the deprecated-corpus record and its "Retired" column; `size` is the whole row story.
+def test_lock_row_shows_all_twelve(tmp_path):
     cfg = Config(root=tmp_path)
-    pid = core.add_persona(cfg, name="P1", niche=["hiphop"])
-    raw = json.loads(cfg.personas_path.read_text())
-    for d in raw["personas"]:
-        if d["id"] == pid: d["hashtag_corpus"] = ["#legacyone", "#legacytwo"]
-    cfg.personas_path.write_text(json.dumps(raw))
-    row = next(r for r in views_hashtags._corpora_rows(cfg) if r.pid == pid)
-    assert row.size == 2
-    assert not hasattr(row, "deprecated")
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_full", source_path=str(tmp_path / "a.mp4"), title="full lock"))
+    led.save()
+    lock = [f"#t{i:02d}" for i in range(12)]
+    from fanops.source_tags import source_tag_locks_path
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_full": {"pile": lock, "lock": lock, "researched_at": "2026-08-19T00:00:00Z"},
+    }))
+    page = views_hashtags.hashtags_page(cfg, led=led)
+    row = next(r for r in page.locks if r.sid == "src_full")
+    assert row.tags == lock and row.n == 12
+    html = _client(cfg).get("/hashtags").data.decode()
+    for t in lock:
+        assert t in html
 
 
-
-# --- MOL-512 (C-2): Studio transparency lead_tags are persona-scoped --------------------------
-
-def test_persona_facts_store_is_aligned_pool_not_global_ranked(tmp_path):
-    """Personas-page transparency (persona_facts) vets over `_aligned_pool`, not ranked_tags(load_measurements).
-    A global-cache winner unaligned to this persona must not appear in lead_tags."""
+def test_persona_facts_lead_tags_are_empty(tmp_path):
+    """Caption hashtags are the source lock — persona_facts must not present corpus leads as the menu."""
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
     now = datetime.now(timezone.utc).isoformat()
@@ -238,6 +211,9 @@ def test_persona_facts_store_is_aligned_pool_not_global_ranked(tmp_path):
         "#globalwinner": {"graph_id": "3", METRIC_FIELD: 9999.0, "measured_at": now},
     }))
     per = core.Personas.load(cfg).get(pid)
-    lead = core.persona_facts(cfg, per)["lead_tags"]
-    assert "#globalwinner" not in lead
-    assert "#detroitrap" in lead or "#hiphop" in lead
+    facts = core.persona_facts(cfg, per)
+    assert facts["lead_tags"] == []
+    html = _client(cfg).get("/personas").data.decode()
+    assert "Lead:" not in html
+    assert "corpus leads" not in html
+    assert "Hashtags (" not in html

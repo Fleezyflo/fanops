@@ -1,11 +1,10 @@
-{# src/fanops/studio/templates/hashtags.html — U11: per-source locks (the ship menu), then Layer A/B
-   discovery (not posted tags), then rotation health. Read-only. Zero Graph on load. #}
+{# src/fanops/studio/templates/hashtags.html — source locks (ship menu), measurement cache, duplicate-line warning. Read-only. Zero Graph on load. #}
 {% extends "base.html" %}
 {% block title %}Hashtags{% endblock %}
 {% block body %}
   <h2>Hashtags</h2>
-  <p class="muted">Posted tags come from each video's <strong>source lock</strong>. The measurement cache and
-    persona corpora below are discovery — they are not the caption menu. This page makes <strong>no</strong>
+  <p class="muted">Posted tags come from each video's <strong>source lock</strong> (picks ∩ lock, cap 4).
+    The measurement cache meters those names — it is not the caption menu. This page makes <strong>no</strong>
     Graph calls.</p>
   {% include "_hashtags_panel.html" %}
 {% endblock %}

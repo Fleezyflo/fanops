@@ -831,3 +831,21 @@ def test_run_summary_needs_reconcile_counts_the_whole_column(tmp_path):
     s = _build_summary(cfg, before=set())
     assert s["needs_reconcile"] == 3                  # no error_reason value splits the tally any more
     assert "gave_up" not in s
+
+
+def test_advance_stamps_produce_error_when_transcript_missing(tmp_path, mocker):
+    from fanops.produce import SourceResult
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/x.mp4", state=SourceState.catalogued))
+    mocker.patch("fanops.produce.run_all",
+                 return_value=[SourceResult("s1", "whisper produced no JSON (rc=1): boom")])
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    s = Ledger.load(cfg).sources["s1"]
+    assert s.state is SourceState.error
+    assert "no JSON" in (s.error_reason or "")
+    mocker.patch("fanops.produce.run_all", return_value=[])
+    advance(cfg, base_time="2026-06-02T18:00:00Z")
+    s2 = Ledger.load(cfg).sources["s1"]
+    assert s2.state is SourceState.error
+    assert "no JSON" in (s2.error_reason or "")

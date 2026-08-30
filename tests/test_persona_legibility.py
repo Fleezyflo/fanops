@@ -9,7 +9,6 @@ import pytest
 pytest.importorskip("flask")
 from fanops.config import Config
 from fanops import personas as core
-from fanops.studio import views
 
 
 def _client(cfg):
@@ -62,26 +61,17 @@ def test_blank_clears_hint_renders(tmp_path):
     assert "Blank intensity or hook angle clears on save." in zone2
 
 
-def test_corpus_chips_carry_the_measurement_and_its_anchor(tmp_path):
-    # Derivation meta drives the chip: each tag shows Instagram's own tag SIZE (`media_count`, the primary
-    # rank since MOL-692) and the ANCHOR tag whose top posts surfaced it ("via #hiphop") — the honest "why
-    # is this here". A tag with NO meta entry degrades to a PLAIN chip rather than inventing a number.
+def test_personas_page_does_not_render_corpus_as_caption_menu(tmp_path):
     from fanops.hashtags import SIZE_FIELD
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="P1", voice="v1", niche=["hiphop"])
     core.apply_auto_corpus(cfg, pid, tags=["#derivedtag", "#barenometa"], meta={
         "#derivedtag": {SIZE_FIELD: 1500.0, "measured_at": "2026-07-01T00:00:00+00:00", "from": "#hiphop"}})
-    # the read-model carries the value + anchor per tag
-    card = next(c for c in views.personas_page(cfg).personas if c.id == pid)
-    by_tag = {r["tag"]: r for r in card.corpus_tags}
-    assert by_tag["#derivedtag"]["value"] == 1500.0 and by_tag["#derivedtag"]["from"] == "#hiphop"
-    assert by_tag["#barenometa"]["value"] is None and by_tag["#barenometa"]["from"] is None
-    # and the rendered chips: the measured tag shows its number + anchor, the bare one shows neither
     html = _panel(cfg)
-    corpus = html.split('class="persona-corpus"', 1)[1]
-    assert "1500" in corpus and "via #hiphop" in corpus
-    bare = corpus.split("#barenometa", 1)[1][:80]
-    assert "corpus-prov" not in bare and "reach-n" not in bare, "a meta-less tag must render a plain chip"
+    assert 'class="persona-corpus"' not in html
+    assert "Lead:" not in html
+    assert "via #hiphop" not in html
+    assert "corpus leads" not in html
 
 
 def test_edit_one_lever_round_trip(tmp_path):

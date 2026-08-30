@@ -208,7 +208,7 @@ class TranscriptPage:
 
 
 def _transcript_page(cfg: Config, led: Ledger, src, offset: int) -> TranscriptPage:
-    """200-seg pages; words[] count-only; ledger fallback labelled; trust_tier stamped read-only."""
+    """200-seg pages; words[] count-only; ledger fallback labelled; trust_tier recomputed from quality keys."""
     from fanops.artifacts import transcript_sidecar_path
     from fanops.transcribe import _trust_tier
     segs, source = [], "none"
@@ -230,8 +230,7 @@ def _transcript_page(cfg: Config, led: Ledger, src, offset: int) -> TranscriptPa
     for s in segs[off:off + _TRANSCRIPT_PAGE]:
         if isinstance(s, dict):
             seg = dict(s)
-            if "trust_tier" not in seg:
-                seg["trust_tier"] = _trust_tier(seg, src_lang=lang)
+            seg["trust_tier"] = _trust_tier(seg, src_lang=lang)
             page.append(seg)
         else:
             page.append(s)

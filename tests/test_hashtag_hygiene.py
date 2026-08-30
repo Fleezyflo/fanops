@@ -55,24 +55,5 @@ def test_keysmash_beats_length_in_the_reason_string():
     assert "keysmash" in tag_defect(_FYP)
 
 
-def test_structurally_junk_tag_never_enters_a_derived_corpus(tmp_path):
-    # The gate's real call site: persona_research._aligned_pool screens every measured candidate through
-    # is_curatable before it can be chosen, so a keysmash in the cache cannot become a corpus tag.
-    import json
-    from datetime import datetime, timezone
-    from fanops.config import Config
-    from fanops.hashtags import METRIC_FIELD
-    from fanops.personas import Personas, add_persona
-    from fanops.persona_research import derive_corpus
-    cfg = Config(root=tmp_path)
-    pid = add_persona(cfg, name="Hiphop", voice="any register", niche=["hiphop"], id="curator")
-    at = datetime.now(timezone.utc).isoformat()
-    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({
-        _FYP: {"graph_id": "id-fyp", METRIC_FIELD: 9999.0, "measured_at": at, "media_count": 50_000.0,
-               "from": {"#hiphop": 9}},
-        "#bars": {"graph_id": "id-bars", METRIC_FIELD: 10.0, "measured_at": at, "media_count": 50_000.0,
-                  "from": {"#hiphop": 2}}}))
-    derive_corpus(cfg, pid)
-    corpus = Personas.load(cfg).get(pid).hashtag_corpus
-    assert corpus == ["#bars"]                           # the keysmash loses despite the higher metric
+def test_structurally_junk_tag_is_not_curatable():
+    assert not is_curatable(_FYP)

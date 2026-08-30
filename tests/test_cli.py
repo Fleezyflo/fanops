@@ -1,5 +1,35 @@
 import json
+import pytest
 from fanops.cli import main
+
+def test_hashtags_cli_help_is_safari_sidecar(capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["hashtags", "--help"])
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "instagrapi" not in out.lower()
+    assert "chrome" not in out.lower()
+    assert "Safari" in out or "safari" in out.lower() or "sidecar" in out.lower() or "lock" in out.lower()
+    with pytest.raises(SystemExit) as e:
+        main(["hashtags", "refresh", "--help"])
+    assert e.value.code == 0
+    refresh = capsys.readouterr().out
+    assert "instagrapi" not in refresh.lower()
+    assert "harvest" not in refresh.lower()
+    assert "Safari" in refresh
+    with pytest.raises(SystemExit) as e:
+        main(["hashtags", "scrape-login", "--help"])
+    assert e.value.code == 0
+    login = capsys.readouterr().out
+    assert "Chrome" not in login
+    assert "Safari" in login
+    with pytest.raises(SystemExit) as e:
+        main(["hashtags", "discover", "--help"])
+    assert e.value.code == 0
+    disc = capsys.readouterr().out
+    assert "persona" not in disc.lower() or "lock" in disc.lower()
+    assert "lock" in disc.lower()
+
 
 def test_gates_blocked_note_flags_remaining_gates():
     # After the run loop, gates still awaiting must produce a LOUD, distinct signal — not be buried

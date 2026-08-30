@@ -294,6 +294,13 @@ def test_check_scope_resolver_conventions():
     assert "tests/test_smart_framing.py" in r(["src/fanops/framing.py"])
     assert "tests/test_ledger.py" in r(["src/fanops/ledger.py"])
     assert r(["src/fanops/controlio.py"]) == ["tests/test_controlio.py"]
+    mapped = r(["src/fanops/hashtags.py"])
+    assert "tests/test_hashtags.py" in mapped
+    assert "tests/test_source_tag_lock.py" in mapped
+    assert "tests/test_hashtag_layer_b_tombstone.py" in mapped
+    views_mapped = r(["src/fanops/studio/views.py"])
+    assert "tests/test_studio_views.py" in views_mapped
+    assert "tests/test_studio_personas.py" in views_mapped
 
 
 def test_check_scope_covers_all_src_modules():

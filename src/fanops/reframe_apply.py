@@ -48,7 +48,6 @@ from pathlib import Path
 from fanops import clip as clipmod
 from fanops import framing
 from fanops import overlay
-from fanops.bands import band_for
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
@@ -326,8 +325,9 @@ def _render_inputs(paths: ReframePaths, cfg: Config, led: Ledger, c):
     `reframe.current_payload` hashes, so the render and the fingerprint cannot disagree."""
     m = led.moments[c.parent_id]
     src = led.sources[m.parent_id]
-    band = band_for(clipmod._moment_profile(m, cfg))
-    cs, ce = clipmod.fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
     if cfg.visual_start:
         cs, _k = clipmod.pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks,

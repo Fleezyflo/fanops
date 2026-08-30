@@ -1,10 +1,7 @@
 # tests/test_fanops_hashtags.py
-# Layer A — instagrapi is the network source; the only writer of the measurement cache
-# (00_control/hashtags.json). One pass per POSTING persona: description -> terms -> anchor tags ->
-# ONE medias_top fetch per tag -> {like_count, co-occurring tags}. NO ledger, NO doctor gate, NO local
-# budget (Instagram throttle is the sole governor — see test_hashtag_platform_truth.py).
-# This file owns the DRIVER contract: the written file's shape + order, accrual, the corrupt-personas
-# abort, the 12h throttle, and the CLI verbs.
+# Measurement cache writer (00_control/hashtags.json). Live tick remesures sidecar pile ∪ lock
+# via Safari. Injected-client harvest is a test lab, not the operator path. Caption membership
+# is ship_from_lock, not this cache. NO ledger, NO doctor gate.
 import inspect
 import json
 import pytest
@@ -104,8 +101,8 @@ def test_refresh_store_midpass_flush_survives_later_crash(tmp_path, monkeypatch)
     assert list(Personas.load(cfg).get("mid").hashtag_corpus or []) == []
 
 
-def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
-    """Layer B is on the Layer A write path — refresh alone updates corpora; no separate force."""
+def test_refresh_store_does_not_write_persona_corpus(tmp_path, monkeypatch):
+    """Measurement writes hashtags.json only. Persona.hashtag_corpus stays empty."""
     cfg = Config(root=tmp_path); pid = _persona(cfg)
     from fanops.personas import Personas
     assert list(Personas.load(cfg).get(pid).hashtag_corpus or []) == []
@@ -113,7 +110,7 @@ def test_refresh_store_derives_corpora_on_its_own_writes(tmp_path, monkeypatch):
         {"#hiphop": 500, "#alpha": 100}, cooccur="#alpha",
         media_count_by_tag={"#hiphop": 4_000_000, "#alpha": 50_000}))
     corp = list(Personas.load(cfg).get(pid).hashtag_corpus or [])
-    assert "#hiphop" in corp and "#alpha" in corp
+    assert corp == []
 
 
 def test_refresh_store_takes_no_ledger_and_no_doctor_gate(tmp_path, monkeypatch):
@@ -219,28 +216,35 @@ def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
     assert _sess.read_text() == original
 
 
-def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
+def test_cmd_hashtags_discover_reports_locks_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
-    from datetime import datetime, timezone
-    cfg = Config(root=tmp_path); pid = _persona(cfg)
+    from fanops.ledger import Ledger
+    from fanops.models import Source
+    from fanops.source_tags import source_tag_locks_path
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"), title="vid"))
+    led.save()
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {"pile": ["#alpha"], "lock": ["#alpha", "#beta"], "researched_at": "2026-08-19T00:00:00Z"},
+    }))
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
-        "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0, "media_count": 50_000.0,
-        "measured_at": datetime.now(timezone.utc).isoformat(), "from": {"#hiphop": 3}}}))
+    cfg.hashtags_path.write_text("{}")
     before = cfg.hashtags_path.read_text()
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
-    assert rc == 0 and "#detroitrap" in blob and pid in blob
-    assert "play_count" in blob or "like_count" in blob
+    assert rc == 0 and "#alpha" in blob and "#beta" in blob and "src_1" in blob
+    assert "discover_done" in blob
     assert cfg.hashtags_path.read_text() == before
 
 
-def test_cmd_hashtags_discover_no_personas(tmp_path):
+def test_cmd_hashtags_discover_no_sources(tmp_path):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     cfg = Config(root=tmp_path)
     rc = cmd_hashtags_discover(cfg)
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
-    assert rc == 0 and any(r["outcome"] == "no_personas" for r in recs)
+    assert rc == 0 and any(r["outcome"] == "no_sources" for r in recs)
 
 
 def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):
@@ -1128,9 +1132,8 @@ def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     assert out["refreshed"] is True and client.media_calls  # corrupt → no cooldown gate
 
 
-def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path, monkeypatch):
-    """MOL-695: measured==0 with no tag mutation → byte/mtime-identical hashtags.json; no rederive."""
-    import fanops.fanops_hashtags as fh
+def test_zero_progress_pass_preserves_hashtags_bytes(tmp_path, monkeypatch):
+    """MOL-695: measured==0 with no tag mutation → byte/mtime-identical hashtags.json."""
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); _persona(cfg)
     t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
@@ -1138,11 +1141,6 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     before = cfg.hashtags_path.read_bytes()
     mtime = cfg.hashtags_path.stat().st_mtime_ns
     stamp = json.loads(before)["last_complete_pass"]
-    calls = {"n": 0}
-    real = fh._rederive_posting_corpora
-    def boom(*a, **k):
-        calls["n"] += 1; return real(*a, **k)
-    monkeypatch.setattr(fh, "_rederive_posting_corpora", boom)
     # Age past complete gate but refuse the only due work → measured=0, cache unchanged.
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}),
                         now=t0 + timedelta(hours=25))
@@ -1150,7 +1148,6 @@ def test_zero_progress_pass_preserves_hashtags_bytes_and_skips_rederive(tmp_path
     assert cfg.hashtags_path.read_bytes() == before
     assert cfg.hashtags_path.stat().st_mtime_ns == mtime
     assert json.loads(cfg.hashtags_path.read_text())["last_complete_pass"] == stamp
-    assert calls["n"] == 0
 
 
 def test_empty_due_queue_with_sessions_advances_complete_stamp(tmp_path, monkeypatch):
@@ -1203,17 +1200,6 @@ def test_zero_progress_still_writes_when_tag_records_mutate(tmp_path, monkeypatc
     assert "#orphan" not in load_measurements(cfg)
 
 
-def _count_rederives(monkeypatch):
-    """Count `_rederive_posting_corpora` calls while still running the real derive."""
-    import fanops.fanops_hashtags as fh
-    calls = {"n": 0}
-    real = fh._rederive_posting_corpora
-    def counted(*a, **k):
-        calls["n"] += 1; return real(*a, **k)
-    monkeypatch.setattr(fh, "_rederive_posting_corpora", counted)
-    return calls
-
-
 def _many_anchor_persona(cfg, n, *, pid="many"):
     """A posting persona with `n` distinct niche terms → n unmeasured anchors → n measures in one pass.
     Every co-tag a fake caption carries is itself an anchor, so nothing is discovered off-queue."""
@@ -1226,11 +1212,8 @@ def _many_anchor_persona(cfg, n, *, pid="many"):
     return {f"#{n_}": float(10 + i) for i, n_ in enumerate(niches)}
 
 
-def test_rederive_runs_once_per_pass_not_once_per_midpass_flush(tmp_path, monkeypatch):
-    """MOL-694: a 20-measure pass flushes 4 times for crash safety but derives corpora exactly ONCE.
-
-    The flush is measurement durability; Layer B is a pure recompute of the WHOLE store, so running it
-    per flush re-derived every posting persona ~N/5 times per pass for one usable result."""
+def test_midpass_flush_does_not_write_persona_corpus(tmp_path, monkeypatch):
+    """A 20-measure pass flushes 4 times for crash safety; corpus stays empty."""
     import fanops.fanops_hashtags as fh
     cfg = Config(root=tmp_path)
     metrics = _many_anchor_persona(cfg, 20)
@@ -1241,43 +1224,39 @@ def test_rederive_runs_once_per_pass_not_once_per_midpass_flush(tmp_path, monkey
             writes["n"] += 1
         return real_write(path, *a, **k)
     monkeypatch.setattr(fh, "write_json_atomic", counted_write)
-    calls = _count_rederives(monkeypatch)
     out = refresh_store(cfg, scrape_client=_FakeClient(metrics))
     assert out["written"] is True and out["measured"] == 20
     assert writes["n"] == 5                                  # KEEP: flushes at 5/10/15/20 + the final write
-    assert calls["n"] == 1                                   # one derive round, at pass end
     from fanops.personas import Personas
-    assert list(Personas.load(cfg).get("many").hashtag_corpus or [])   # and it actually landed
+    assert list(Personas.load(cfg).get("many").hashtag_corpus or []) == []
 
 
-def test_throttled_pass_with_progress_rederives_once_at_stop(tmp_path, monkeypatch):
-    """An early stop is still a pass END: measured>0 → exactly one derive round, never zero, never per-flush."""
+def test_throttled_pass_with_progress_still_writes(tmp_path, monkeypatch):
+    """An early stop is still a pass END: measured>0 writes the cache; corpus stays empty."""
     cfg = Config(root=tmp_path)
     metrics = _many_anchor_persona(cfg, 20)
-    calls = _count_rederives(monkeypatch)
     out = refresh_store(cfg, scrape_client=_FakeClient(metrics, throttle_after=6))
     assert out["throttled"] is True and out["measured"] == 6  # crossed one mid-pass flush, then stopped
     assert out["written"] is True
-    assert calls["n"] == 1
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get("many").hashtag_corpus or []) == []
 
 
-def test_try_cap_stop_with_progress_rederives_once(tmp_path, monkeypatch):
-    """try_cap incompleteness ends the pass too — same single derive round as a clean finish."""
+def test_try_cap_stop_with_progress_still_writes(tmp_path, monkeypatch):
+    """try_cap incompleteness ends the pass too — cache writes; corpus stays empty."""
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_TRY_CAP", "7")
     cfg = Config(root=tmp_path)
     metrics = _many_anchor_persona(cfg, 20)
-    calls = _count_rederives(monkeypatch)
     out = refresh_store(cfg, scrape_client=_FakeClient(metrics))
     assert out["throttled"] is True and out["tried"] == 7 and out["measured"] == 7
-    assert calls["n"] == 1
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get("many").hashtag_corpus or []) == []
 
 
-def test_eviction_only_write_does_not_rederive(tmp_path, monkeypatch):
-    """MOL-694: rederive is keyed on measured>0, so a measured==0 pass that writes only because an orphan
-    was evicted does NOT derive. Nothing is lost: the write moved hashtags.json, so the fingerprinted
-    safety net (`persona_research.refresh_corpora_if_due`) sees changed inputs on the next tick."""
+def test_eviction_only_write_does_not_touch_persona_corpus(tmp_path, monkeypatch):
+    """measured==0 pass that writes only because an orphan was evicted leaves corpus empty."""
     from datetime import datetime, timezone
-    cfg = Config(root=tmp_path); _persona(cfg)
+    cfg = Config(root=tmp_path); pid = _persona(cfg)
     now = datetime(2026, 7, 28, tzinfo=timezone.utc)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text(json.dumps({
@@ -1286,11 +1265,11 @@ def test_eviction_only_write_does_not_rederive(tmp_path, monkeypatch):
         "#orphan": {"graph_id": "id-orphan", "like_count": 9.0,
                     "measured_at": now.isoformat(), "from": {"#punchlines": 4}},
         "last_complete_pass": now.isoformat()}))
-    calls = _count_rederives(monkeypatch)
     out = refresh_store(cfg, scrape_client=_FakeClient({}, refuse_tags={"#hiphop", "hiphop"}), now=now)
     assert out["measured"] == 0 and out["written"] is True
     assert "#orphan" not in load_measurements(cfg)
-    assert calls["n"] == 0
+    from fanops.personas import Personas
+    assert list(Personas.load(cfg).get(pid).hashtag_corpus or []) == []
 
 
 def test_refresh_pass_priority_queue_due_tiers(tmp_path, monkeypatch):

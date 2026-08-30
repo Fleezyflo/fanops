@@ -56,4 +56,14 @@ def test_ucb_real_request_carries_bandit_pick_and_is_deterministic(tmp_path, mon
     _seed_on_disk_ledger(cfg2)
     led2 = Ledger.load(cfg2)
     request_captions(led2, cfg2, "clip_1", [("a", Platform.instagram)])
-    assert request_path(cfg2, "captions", "clip_1").read_text() == first
+    second = json.loads(request_path(cfg2, "captions", "clip_1").read_text())
+    assert second.get("learned_hooks") == payload.get("learned_hooks")
+    # Bandit pick fields (the UCB scorer's output keys on the caption request) must match across reruns;
+    # request_id and opened_at are mint stamps and are expected to differ.
+    for key in ("learned_hooks", "learned_hooks_transferred"):
+        if key in payload or key in second:
+            assert second.get(key) == payload.get(key)
+    volatile = {"request_id", "opened_at"}
+    assert {k: v for k, v in second.items() if k not in volatile} == {
+        k: v for k, v in payload.items() if k not in volatile
+    }

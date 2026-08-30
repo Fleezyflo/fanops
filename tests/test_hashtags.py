@@ -1,60 +1,9 @@
-"""vet_hashtags — the deterministic <=4 selector. The model no longer freely chooses tags: whatever it
-returns is filtered to the MEASUREMENT CACHE union the surface's corpus, ordered by the platform metric,
-backfilled, and HARD-capped at 4 (the operator rule). `store` is the cache as an ordered menu
-(`ranked_tags(load_measurements(cfg))`) — there is no frozen hand-ranked pool left to fall back on, so a
-cold cache ships SHORT rather than padded (pinned in test_hashtag_platform_truth.py)."""
+"""Measurement cache reader + ingest lock membership (ship_from_lock)."""
 import json
-from fanops.models import Platform
-from fanops.hashtags import METRIC_FIELD, load_measurements, vet_hashtags
+from fanops.hashtags import METRIC_FIELD, load_measurements
 
 # A measured menu, metric-ranked (what ranked_tags returns). Membership + rank in one list.
 STORE = ["#hiphop", "#rap", "#hiphopmusic", "#rapper", "#bars", "#newmusic", "#undergroundhiphop"]
-
-
-def test_hard_caps_at_four():
-    # six measured tags in -> never more than four out
-    out = vet_hashtags(["#hiphop", "#rap", "#hiphopmusic", "#rapper", "#bars", "#newmusic"],
-                       Platform.tiktok, "en", store=STORE)
-    assert len(out) <= 4
-
-
-def test_drops_random_ai_words_keeps_only_measured():
-    out = vet_hashtags(["#hiphop", "#totallymadeup", "#xyzzy", "#vibes2026"], Platform.instagram, "en",
-                       store=STORE)
-    assert "#totallymadeup" not in out and "#xyzzy" not in out and "#vibes2026" not in out
-    assert all(t in STORE for t in out)                    # survivors: measured cache only
-
-
-def test_store_order_is_the_rank():
-    # the menu arrives metric-DESC, and that order is what the selector honours (no second ranking here)
-    out = vet_hashtags(["#undergroundhiphop", "#hiphop"], Platform.tiktok, "en", store=STORE)
-    assert out.index("#hiphop") < out.index("#undergroundhiphop")
-
-
-def test_arabic_clip_gets_an_arabic_tag():
-    out = vet_hashtags(["#hiphop"], Platform.tiktok, "ar", store=STORE)
-    assert any("arab" in t for t in out)            # language/region floor for an AR clip
-
-
-def test_english_clip_not_forced_arabic():
-    out = vet_hashtags(["#hiphop", "#rap", "#rapper", "#newmusic"], Platform.tiktok, "en", store=STORE)
-    assert not any("arab" in t for t in out)
-
-
-def test_normalizes_and_dedupes_case_and_hash():
-    out = vet_hashtags(["Rap", "#RAP", "rap"], Platform.tiktok, "en", store=STORE)
-    assert out.count("#rap") == 1                   # one canonical form, no dupes
-
-
-def test_empty_input_backfills_from_the_measured_menu():
-    out = vet_hashtags([], Platform.tiktok, "en", store=STORE)
-    assert len(out) == 4
-    assert all(t in STORE for t in out)                 # never random — measured cache only
-
-
-def test_returns_all_lowercase_hash_prefixed():
-    out = vet_hashtags(["HipHop", "rap"], Platform.instagram, "en", store=STORE)
-    assert all(t.startswith("#") and t == t.lower() for t in out)
 
 
 # --- the measurement cache reader ---------------------------------------------------------------
@@ -95,83 +44,7 @@ def test_load_measurements_drops_half_records_and_the_legacy_shape(tmp_path):
 
 # --- per-account hashtag CORPUS (persona differentiation) ---------------------------------------
 
-def test_corpus_account_ships_corpus_only_without_discovery_pad():
-    # discovery floor deleted: a corpus-only account ships its curated tags, never a #fyp/#reels pad.
-    out = vet_hashtags(None, Platform.tiktok, "en", corpus=["#lyrics", "#bars", "#newmusic"])
-    assert out == ["#lyrics", "#bars", "#newmusic"]
-    assert not any(t in ("#fyp", "#foryou", "#viral", "#reels") for t in out)
-
-
-def test_corpus_none_is_byte_identical_to_default():
-    cases = [(["#hiphop", "#bars"], Platform.tiktok, "en"),
-             ([], Platform.instagram, "en"),
-             (["#undergroundhiphop", "#hiphop"], Platform.tiktok, "ar")]
-    for tags, plat, lang in cases:
-        assert (vet_hashtags(tags, plat, lang, store=STORE, corpus=None)
-                == vet_hashtags(tags, plat, lang, store=STORE))
-
-
-def test_corpus_floats_its_tag_ahead_of_the_metric_rank():
-    out = vet_hashtags(["#hiphop", "#bars"], Platform.tiktok, "en", store=STORE,
-                       corpus=["#lyrics", "#bars", "#newmusic"])
-    assert out.index("#bars") < out.index("#hiphop")   # the corpus tier leads the measured rank
-
-
-def test_corpus_leads_the_line():
-    out = vet_hashtags(None, Platform.instagram, "en", store=STORE,
-                       corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert out[0] == "#viral"                        # corpus order leads the metric backfill
-
-
-def test_corpus_still_hard_caps_at_four():
-    out = vet_hashtags(["#hiphop", "#rap", "#rapper", "#bars", "#newmusic"],
-                       Platform.tiktok, "en", store=STORE,
-                       corpus=["#freestyle", "#undergroundhiphop", "#trap"])
-    assert len(out) <= 4
-
-
-def test_arabic_slot_survives_a_corpus():
-    out = vet_hashtags(["#hiphop"], Platform.tiktok, "ar", store=STORE,
-                       corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert any("arab" in t for t in out)            # language/region floor holds under a corpus
-
-
-def test_arabic_floor_survives_even_when_model_fills_all_slots():
-    # the model returns 4 measured non-Arabic tags for an AR clip under a corpus -> kept fills before
-    # backfill; the floor must STILL reserve a region slot (the HIGH the reviewer caught).
-    out = vet_hashtags(["#viral", "#hiphop", "#rap", "#rapper"], Platform.tiktok, "ar",
-                       store=STORE + ["#viral"], corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert len(out) == 4 and any("arab" in t for t in out)
-
-
-def test_arabic_floor_noop_when_model_already_has_arabic_tag():
-    out = vet_hashtags(["#arabicmusic", "#viral", "#hiphop", "#rap"], Platform.tiktok, "ar",
-                       store=STORE + ["#viral", "#arabicmusic"], corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert out.count("#arabicmusic") == 1 and len(out) == 4   # no double-add, no displacement
-
-
-def test_arabic_floor_survives_when_model_returns_arabic_past_the_cap():
-    # the audit residual: model returns 5+ tags incl. #arabicmusic; under a bold corpus it sorts PAST the
-    # cap and the old floor check (vs `seen`) skipped -> dropped. The fix promotes it into the window.
-    out = vet_hashtags(["#viral", "#hiphop", "#rap", "#rapper", "#arabicmusic"], Platform.tiktok, "ar",
-                       store=STORE + ["#viral", "#arabicmusic"], corpus=["#viral", "#rapmusic", "#hiphop"])
-    assert len(out) == 4 and any("arab" in t for t in out)
-
-
 # ---- the AR floor fires on CORPUS too, so a corpus-led persona keeps region reach ----
-def test_corpus_only_ar_clip_reserves_the_region_floor_even_when_corpus_fills_all_slots():
-    # a corpus that fills all 4 slots on an AR clip: the region floor must still RESERVE a tail slot.
-    out = vet_hashtags([], Platform.instagram, "ar", corpus=["#alpha", "#beta", "#gamma", "#delta"])
-    assert len(out) == 4 and any("arab" in t for t in out)
-
-
-def test_corpus_only_does_not_pad_with_discovery():
-    # discovery floor deleted: a corpus-led persona ships its curated tags only — no #reels/#fyp pad.
-    out = vet_hashtags([], Platform.instagram, "en", corpus=["#myscene", "#another", "#third"])
-    assert out == ["#myscene", "#another", "#third"]
-    assert "#reels" not in out
-
-
 # --- MOL-511 (C-1): ingest vets from per-surface hashtag_store (not the global cache) -----------
 
 def test_ingest_scopes_vet_store_per_surface(tmp_path):

@@ -1,12 +1,12 @@
 # tests/test_vocals.py
-import subprocess
+import subprocess, sys
 from pathlib import Path
 import fanops.vocals as vocals
 from fanops.vocals import demucs_cmd, isolate_vocals
 
 def test_demucs_cmd_shape():
     cmd = demucs_cmd("/s/x.mp4", "/out")
-    assert cmd[0] == "demucs"
+    assert cmd[:3] == [sys.executable, "-m", "demucs"]
     assert "--two-stems=vocals" in cmd        # only split vocals vs the rest (faster than 4-stem)
     assert "--mp3" in cmd                       # write via lameenc, NOT torchaudio.save (torchcodec)
     assert "-o" in cmd and "/out" in cmd
