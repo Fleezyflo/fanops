@@ -109,9 +109,9 @@ def _seed_persona_cut(cfg):
 def test_card_renders_cause_via_macro(tmp_path):
     cfg = Config(root=tmp_path); _seed_persona_cut(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "28–45s" in html                                # the long band label still shows
+    assert "28–45s" in html                                # leftover profile name still labels the chip
     assert 'class="cause"' in html                         # the _prov macro's inline cause marker is present
-    assert "persona long" in html                          # WHY: linked persona derived the length
+    assert "persona long" not in html                      # length is not persona-derived
     assert "clip length band" not in html                  # the OLD hand-rolled parallel chip title is GONE
 
 

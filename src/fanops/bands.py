@@ -1,9 +1,7 @@
 # src/fanops/bands.py
-"""Clip-length BANDS by content type. ONE home so the pick gate (prompts._band_from_payload /
-moments.validate_pick) and operator labels agree. Render does not pad or trim to the band —
-clip.fit_window is EOF-clamp only (lo=0). band_for resolves an operator profile name
-(Config.clip_profile / FANOPS_CLIP_PROFILE) to a Band, falling back to TALK for anything
-unknown (the validate-or-default posture — never crash an autonomous run over a bad profile)."""
+"""Clip-length BAND names leftover on Account.clip_profile / FANOPS_CLIP_PROFILE rows.
+The pick is the cut — ingest and render do not apply these numbers. band_for still
+resolves a stored profile name so old rows load; unknown/empty -> TALK."""
 from __future__ import annotations
 from typing import NamedTuple
 

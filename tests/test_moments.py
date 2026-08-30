@@ -225,7 +225,7 @@ def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
     led = _ingest_picks(led, cfg, "src_1",
                         [MomentPick(start=10, end=28, reason="punchline", personas=["a"])])
     m = led.moments_of("src_1")[0]
-    assert m.affinities == ["a"] and m.clip_profile == "short" and m.framing == "top"
+    assert m.affinities == ["a"] and m.clip_profile is None and m.framing == "top"
 
 def test_ingest_pending_defers_whole_source(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -380,7 +380,7 @@ def test_pick_personas_returns_full_spec(tmp_path):
     assert set(specs[0]) == PERSONA_PICK_SPEC_KEYS
     assert specs[0]["handle"] == "raw"
     assert specs[0]["directive"]
-    assert "8-15" in specs[0]["band"]
+    assert "band" not in specs[0]
     assert specs[0]["selection_scope"]
     assert specs[0]["framing"] in ("top", "center")
     assert specs[0]["hook_angle"] == "curiosity"
@@ -409,8 +409,7 @@ def test_per_account_request_clip_profile_is_owner(tmp_path):
     accts = _seed_pick_persona_accounts(cfg, "a")
     led = request_moments(led, cfg, "src_1", accounts=accts)
     payload = json.loads(request_path(cfg, "moments", "src_1.a").read_text())
-    assert payload["clip_profile"] == "short"
-    assert payload["personas"][0]["band"].startswith("8")
+    assert "band" not in payload["personas"][0]
 
 def test_request_writes_one_gate_per_targeted_account(tmp_path):
     # Per-account isolation: N targeted accounts -> N gates keyed `{source_id}.{handle}`.
@@ -437,7 +436,7 @@ def test_request_packs_full_persona_spec_list(tmp_path):
         assert "signal_peaks" in spec
         assert spec["handle"] == h
         assert spec["directive"]
-        assert "8-15" in spec["band"]
+        assert "band" not in spec
         assert spec["framing"] in ("top", "center")
         assert spec["selection_scope"] and spec["hook_angle"]
         assert isinstance(spec["corpus"], list)
@@ -595,7 +594,7 @@ def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=5, end=3, reason="r"), duration=20.0) is not None  # end<start
     assert validate_pick(MomentPick(start=-1, end=3, reason="r"), duration=20.0) is not None # start<0
     assert validate_pick(MomentPick(start=15, end=25, reason="r"), duration=20.0) is not None# end>dur
-    assert validate_pick(MomentPick(start=0, end=10, reason="r"), duration=20.0) is None      # ok (>6s)
+    assert validate_pick(MomentPick(start=0, end=10, reason="r"), duration=20.0) is None      # ok
 
 def test_owned_moment_id_includes_handle():
     # P3: two owners at the same timecode yield distinct moment ids; both differ from the bare-token id.
@@ -671,7 +670,7 @@ def test_ingest_partial_rejection_keeps_valid_drops_invalid(tmp_path):
     assert tokens == {"14.00-28.00", "40.00-54.00"}              # invalid dropped, two valid kept
     assert led.sources["src_1"].state is SourceState.picks_decided
 
-def test_ingest_talk_account_drops_eight_second_pick(tmp_path):
+def test_ingest_talk_account_keeps_eight_second_pick(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{
@@ -680,15 +679,13 @@ def test_ingest_talk_account_drops_eight_second_pick(tmp_path):
     accts = Accounts.load(cfg)
     led = request_moments(led, cfg, "src_1", accounts=accts)
     led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8, "short"), _mp(20, 36, "inband")], handle="talky")
-    moms = led.moments_of("src_1")
-    assert len(moms) == 1
-    m = next(iter(moms))
-    assert abs((m.end - m.start) - 16.0) < 0.01
+    moms = sorted(led.moments_of("src_1"), key=lambda m: m.start)
+    assert [(round(m.end - m.start, 1),) for m in moms] == [(8.0,), (16.0,)]
 
 def test_validate_pick_min_length_and_eof_tolerance():
-    assert validate_pick(MomentPick(start=10.0, end=10.3, reason="r"), duration=20.0) is not None  # 0.30s too short
-    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is not None  # 0.50s rejected (<=6s)
-    assert validate_pick(MomentPick(start=10.0, end=17.0, reason="r"), duration=20.0) is None       # 7s ok
+    assert validate_pick(MomentPick(start=10.0, end=10.3, reason="r"), duration=20.0) is None       # short complete window ships
+    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is None
+    assert validate_pick(MomentPick(start=10.0, end=17.0, reason="r"), duration=20.0) is None
     assert validate_pick(MomentPick(start=10.0, end=20.5, reason="r"), duration=20.0) is None        # exactly dur+0.5 ok
     assert validate_pick(MomentPick(start=10.0, end=20.6, reason="r"), duration=20.0) is not None     # dur+0.6 invalid
     assert validate_pick(MomentPick(start=10.0, end=999.0, reason="r"), duration=0.0) is None         # unprobed -> no EOF ceiling
@@ -1347,13 +1344,14 @@ def test_identical_persona_two_gates(tmp_path):
     rids = {latest_request_id(cfg, "moments", k) for k in keys}
     assert len(rids) == 2
 
-def test_upgrade_bare_gate_ingest_rejects_below_talk_lo(tmp_path, monkeypatch):
+def test_upgrade_bare_gate_ingest_keeps_below_talk_lo(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [_mp(0, 8)])
-    assert led.moments_of("src_1") == []
-    assert led.sources["src_1"].state is SourceState.error
+    moms = led.moments_of("src_1")
+    assert len(moms) == 1 and abs((moms[0].end - moms[0].start) - 8.0) < 0.01
+    assert led.sources["src_1"].state is SourceState.picks_decided
 
 def test_rerequest_sweeps_stale_gates(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

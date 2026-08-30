@@ -69,21 +69,11 @@ def snap_window(start: float, end: float, transcript: list[dict] | None,
 
 def fit_window(start: float, end: float, duration: float,
                *, lo: float = 0.0, hi: float = float("inf")) -> tuple[float, float]:
-    """EOF-clamp a picked [start,end]. Default lo=0 / hi=inf: the pick is the cut, no length
-    floor or ceiling. A short pick grows forward from `start` only when a caller passes lo>0;
-    a long pick trims to `hi` from `start` only when hi is finite. A source shorter than `lo`
-    yields the whole source. The start is floored at 0; the end is EOF-clamped to `duration`
-    when probed (duration<=0 means unprobed -> grow/trim without an EOF clamp)."""
-    length = end - start
-    if lo <= length <= hi:
-        return start, end
-    if duration and duration <= lo:
-        return 0.0, duration
-    target = lo if length < lo else hi
-    s, e = start, start + target
-    if duration and e > duration:
-        e = duration; s = e - target
-    return max(0.0, s), e
+    """EOF-clamp a picked [start,end]. The pick is the cut — lo/hi are ignored (no pad, no band trim).
+    Start floored at 0; end clamped to probed `duration` (duration<=0 -> unprobed, no EOF clamp)."""
+    s = max(0.0, start)
+    e = duration if duration and end > duration else end
+    return (s, e) if s < e else (start, end)
 
 # P1 T1 (strongest-frame cut start). How far the entry may shift to land on a stronger frame (a small
 # nudge, like snap_window's max_shift — never invents a length floor), how many candidate frames to probe,

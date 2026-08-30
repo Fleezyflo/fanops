@@ -55,7 +55,7 @@ def test_account_provenance_persona_derived_clip_profile(tmp_path):
     p = core.Personas.load(cfg).get(pid)
     prov = views._account_provenance(cfg, p, ["a"])
     prof = next(f for f in prov[0]["fields"] if f["name"] == "clip_profile")
-    assert prof["source"] == "persona" and prof["value"] == "short"
+    assert prof["source"] == "account" and prof["value"] == "long"
 
 
 def test_account_provenance_account_only_clip_profile(tmp_path):

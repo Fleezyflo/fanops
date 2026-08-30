@@ -400,7 +400,6 @@
       "compile": [
         "fanops",
         "fanops.accounts",
-        "fanops.bands",
         "fanops.casting",
         "fanops.clip",
         "fanops.config",
@@ -849,7 +848,6 @@
     "fanops.lever_docs": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.config",
         "fanops.moments",
         "fanops.persona_levers",
@@ -940,7 +938,6 @@
       ],
       "lazy": [
         "fanops.accounts",
-        "fanops.bands",
         "fanops.caption",
         "fanops.ids",
         "fanops.persona_directives",
@@ -1010,7 +1007,6 @@
       ],
       "lazy": [
         "fanops",
-        "fanops.bands",
         "fanops.persona_levers",
         "fanops.persona_research"
       ],
@@ -1019,9 +1015,7 @@
     },
     "fanops.persona_levers": {
       "compile": [],
-      "lazy": [
-        "fanops.bands"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -1302,9 +1296,7 @@
       "typing": []
     },
     "fanops.prompts": {
-      "compile": [
-        "fanops.bands"
-      ],
+      "compile": [],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2220,7 +2212,7 @@
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
     "fanops.autopilot": 2,
-    "fanops.bands": 5,
+    "fanops.bands": 2,
     "fanops.batches": 0,
     "fanops.canary": 0,
     "fanops.caption": 2,
@@ -2374,7 +2366,7 @@
     "fanops.config_introspect": 3,
     "fanops.control": 1,
     "fanops.controlio": 1,
-    "fanops.crosspost": 13,
+    "fanops.crosspost": 12,
     "fanops.cutover": 4,
     "fanops.cutover_postiz": 4,
     "fanops.daemon": 2,
@@ -2408,7 +2400,7 @@
     "fanops.ledger_bridge": 5,
     "fanops.ledger_sqlite": 2,
     "fanops.ledger_wipe": 3,
-    "fanops.lever_docs": 7,
+    "fanops.lever_docs": 6,
     "fanops.llm": 1,
     "fanops.log": 1,
     "fanops.meta_graph": 4,
@@ -2440,7 +2432,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 9,
-    "fanops.prompts": 1,
+    "fanops.prompts": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
     "fanops.reframe": 8,
@@ -2497,7 +2489,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 254,
+  "lazy_downward_count": 252,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2730,14 +2722,6 @@
       "same_scc": false,
       "to": "fanops.persona_research",
       "to_level": 1
-    },
-    {
-      "from": "fanops.persona_levers",
-      "from_level": 0,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.bands",
-      "to_level": 0
     },
     {
       "from": "fanops.persona_store",
@@ -3558,7 +3542,7 @@
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 6,
-    "fanops.prompts": 1,
+    "fanops.prompts": 0,
     "fanops.recaption": 5,
     "fanops.reconcile": 3,
     "fanops.reframe": 6,
@@ -3633,6 +3617,7 @@
       "fanops.persona_levers",
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
+      "fanops.prompts",
       "fanops.secret_provider",
       "fanops.studio",
       "fanops.studio.actions_common",
@@ -3656,7 +3641,6 @@
       "fanops.persona_directives",
       "fanops.persona_research",
       "fanops.post.providers",
-      "fanops.prompts",
       "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
@@ -3794,11 +3778,11 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 599,
-    "lazy_edges": 375,
-    "lazy_edges_lateral": 50,
+    "compile_edges_G1": 596,
+    "lazy_edges": 372,
+    "lazy_edges_lateral": 49,
     "lazy_edges_strictly_upward": 71,
-    "lazy_edges_to_equal_or_higher_level": 121,
+    "lazy_edges_to_equal_or_higher_level": 120,
     "modules": 140,
     "optional_edges": 0,
     "typing_only_edges": 7

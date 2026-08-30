@@ -629,7 +629,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_backend",
-      "line": 116,
+      "line": 111,
       "methods": [
         "POST"
       ],
@@ -640,7 +640,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_demote",
-      "line": 139,
+      "line": 134,
       "methods": [
         "POST"
       ],
@@ -651,7 +651,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_meta_creds",
-      "line": 107,
+      "line": 102,
       "methods": [
         "POST"
       ],
@@ -662,7 +662,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_persona",
-      "line": 124,
+      "line": 119,
       "methods": [
         "POST"
       ],
@@ -673,7 +673,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_promote",
-      "line": 129,
+      "line": 124,
       "methods": [
         "POST"
       ],
@@ -684,7 +684,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_remove",
-      "line": 134,
+      "line": 129,
       "methods": [
         "POST"
       ],
@@ -695,7 +695,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 198,
+      "line": 193,
       "methods": [
         "GET"
       ],
@@ -706,7 +706,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_adopt",
-      "line": 155,
+      "line": 150,
       "methods": [
         "POST"
       ],
@@ -717,7 +717,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_amplify",
-      "line": 72,
+      "line": 67,
       "methods": [
         "POST"
       ],
@@ -738,17 +738,6 @@
     },
     {
       "decorator": "app.post",
-      "handler": "do_golive_clip_profile",
-      "line": 45,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_golive",
-      "mutating": true,
-      "path": "/golive/clip-profile"
-    },
-    {
-      "decorator": "app.post",
       "handler": "do_golive_config",
       "line": 26,
       "methods": [
@@ -761,7 +750,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 193,
+      "line": 188,
       "methods": [
         "GET"
       ],
@@ -772,7 +761,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_daemon_install",
-      "line": 55,
+      "line": 50,
       "methods": [
         "POST"
       ],
@@ -783,7 +772,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_daemon_uninstall",
-      "line": 61,
+      "line": 56,
       "methods": [
         "POST"
       ],
@@ -794,7 +783,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_discover",
-      "line": 148,
+      "line": 143,
       "methods": [
         "POST"
       ],
@@ -805,7 +794,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 237,
+      "line": 232,
       "methods": [
         "POST"
       ],
@@ -816,7 +805,7 @@
     {
       "decorator": "app.get",
       "handler": "do_golive_health",
-      "line": 166,
+      "line": 161,
       "methods": [
         "GET"
       ],
@@ -827,7 +816,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_learn_amplify",
-      "line": 77,
+      "line": 72,
       "methods": [
         "POST"
       ],
@@ -838,7 +827,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_learn_retire",
-      "line": 82,
+      "line": 77,
       "methods": [
         "POST"
       ],
@@ -849,7 +838,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_learning",
-      "line": 66,
+      "line": 61,
       "methods": [
         "POST"
       ],
@@ -860,7 +849,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 203,
+      "line": 198,
       "methods": [
         "GET"
       ],
@@ -871,7 +860,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 230,
+      "line": 225,
       "methods": [
         "POST"
       ],
@@ -882,7 +871,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_llm_transport",
-      "line": 50,
+      "line": 45,
       "methods": [
         "POST"
       ],
@@ -893,7 +882,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 208,
+      "line": 203,
       "methods": [
         "POST"
       ],
@@ -904,7 +893,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_pause",
-      "line": 87,
+      "line": 82,
       "methods": [
         "POST"
       ],
@@ -915,7 +904,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_refresh",
-      "line": 144,
+      "line": 139,
       "methods": [
         "POST"
       ],
@@ -926,7 +915,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_transfer",
-      "line": 97,
+      "line": 92,
       "methods": [
         "POST"
       ],
@@ -937,7 +926,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_ucb",
-      "line": 92,
+      "line": 87,
       "methods": [
         "POST"
       ],
@@ -948,7 +937,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 241,
+      "line": 236,
       "methods": [
         "POST"
       ],
@@ -959,7 +948,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_zernio_config",
-      "line": 102,
+      "line": 97,
       "methods": [
         "POST"
       ],
@@ -2107,8 +2096,8 @@
   "totals": {
     "cli_add_parser_sites": 75,
     "cli_verbs_unique": 70,
-    "route_endpoints": 149,
-    "route_endpoints_mutating": 107,
-    "route_unique_paths": 148
+    "route_endpoints": 148,
+    "route_endpoints_mutating": 106,
+    "route_unique_paths": 147
   }
 }

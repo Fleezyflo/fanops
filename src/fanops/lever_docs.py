@@ -6,7 +6,7 @@ import inspect
 from pathlib import Path
 from fanops.config import Config
 from fanops import persona_levers as pl
-from fanops import bands, moments, prompts
+from fanops import moments, prompts
 from fanops.personas import baked_personas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -40,12 +40,10 @@ def _mod_const_line(mod, name: str) -> str:
 
 
 def _content_focus_row(opt: dict) -> str:
-    prof = opt.get("profile") or "talk"
     fr = opt.get("framing") or "center"
-    b = bands.band_for(prof)
     clause = opt.get("clause", "")
-    det = f"derived band={prof} ({b.lo:g}-{b.hi:g}s), framing={fr}"
-    cut = f"{prof} clips ({b.lo:g}-{b.hi:g}s), {fr} crop"
+    det = f"framing={fr} (length is the picked window)"
+    cut = f"{fr} crop"
     phase = "moments gate (pick) → steers frame-seeing hook author"
     return f"| `{opt['value']}` | {clause!r} | {det} | {cut} | {phase} |"
 
@@ -70,12 +68,6 @@ def _hook_angle_row(opt: dict) -> str:
     clause = opt.get("clause", "")
     return (f"| `{opt['value']}` | {clause!r} | hook strategy only (no peak/band geometry) | "
             f"n/a (hook text) | hook gate (moment_hooks) |")
-
-
-def _clip_profile_row(opt: dict) -> str:
-    b = bands.band_for(opt["value"])
-    return (f"| `{opt['value']}` | n/a (global band name) | band_for → {b.lo:g}-{b.hi:g}s pick-time length band | "
-            f"{b.lo:g}-{b.hi:g}s picks | pick gate (render EOF-clamp only) |")
 
 
 def archetype_crosswalk_rows() -> list[dict]:
@@ -111,15 +103,14 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
     how = ("\n## How to change an option's EFFECT\n\n"
            "| lever / effect | edit |\n"
            "|----------------|------|\n"
-           "| cut_policy options, clauses, band/framing | "
+           "| cut_policy options, clauses, framing | "
            "`src/fanops/persona_levers.py` → `_CONTENT_FOCUS_OPTIONS` / `LEVER_REGISTRY` |\n"
            "| content_focus / selection_scope / hook_angle | FREE TEXT — no vocabulary to edit; the operator's "
            "own words compile straight into the directive |\n"
            "| intensity options (peak filter) | "
            "`src/fanops/persona_levers.py` → `_INTENSITY_OPTIONS` / `LEVER_REGISTRY` |\n"
-           "| clip band seconds | `src/fanops/bands.py` → `_PROFILES` / `TALK`/`SHORT`/… |\n"
            "| peak intensity filter (P4b) | `src/fanops/signals.py` → `filter_peaks_by_intensity` |\n"
-           "| derived cut from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |\n"
+           "| derived framing from cut_policy | `src/fanops/persona_directives.py` → `derive_cut_spec` |\n"
            "\nThen run `fanops lever docs` to regenerate this file.\n")
     table_hdr = ("\n| value | what it tells the LLM | deterministic operation | cut consequence | phase/gate |\n"
                  "|-------|----------------------|-------------------------|-----------------|------------|")
@@ -143,8 +134,6 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
                 parts.append(_selection_scope_row(opt))
             elif key == "hook_angle":
                 parts.append(_hook_angle_row(opt))
-            elif key == "clip_profile":
-                parts.append(_clip_profile_row(opt))
     parts.append("\n" + _archetype_crosswalk_section() + "\n")
     return "\n".join(parts)
 
@@ -156,25 +145,18 @@ def render_thresholds(cfg: Config) -> str:
     table = ("\n| NAME | current value | what it controls | raising | lowering | edit |\n"
              "|------|---------------|------------------|---------|----------|------|")
     rows: list[str] = []
-    for name in ("short", "medium", "long", "talk", "song"):
-        b = bands.band_for(name)
-        rows.append(f"| `bands.{name}` | {b.lo:g}-{b.hi:g}s | pick-time length band for `{name}` profile (render does not pad) | "
-                    f"wider `{name}` clips everywhere this band applies | tighter `{name}` clips | "
-                    f"`{_mod_const_line(bands, name.upper())}` |")
     rows.append(f"| `_MAX_OVERLAP_FRAC` | {moments._MAX_OVERLAP_FRAC} | two picks overlapping more than this fraction "
                 f"of the shorter span are deduped | fewer near-duplicate picks survive | more overlap allowed | "
                 f"`{_mod_const_line(moments, '_MAX_OVERLAP_FRAC')}` |")
     rows.append(f"| `_MAX_TARGET_PICKS` | {prompts._MAX_TARGET_PICKS} | per-persona pick ceiling in the moment prompt | "
                 f"model may aim for more picks on long sources | fewer picks requested | "
                 f"`{_mod_const_line(prompts, '_MAX_TARGET_PICKS')}` |")
-    rows.append(f"| `_target_pick_count` | `round(duration / band.span)` capped 1..{prompts._MAX_TARGET_PICKS} | "
-                f"how many clips to aim for by source length | more picks on long sources | fewer picks | "
+    rows.append(f"| `_target_pick_count` | ceiling `{prompts._MAX_TARGET_PICKS}` on a probed source (0 if unprobed) | "
+                f"how many clips to aim for | more picks allowed | fewer picks allowed | "
                 f"`{_def_line(prompts._target_pick_count, 'src/fanops/prompts.py')}` |")
     rows.append("| `filter_peaks_by_intensity` terciles | `lo_thr = scores[n//3]`, `hi_thr = scores[(2*n)//3]` | "
                 "what score counts as high/low energy for P4b peak filtering | stricter slice (fewer peaks kept) | "
                 "looser slice | `src/fanops/signals.py` → `filter_peaks_by_intensity` |")
-    rows.append(f"| `_MIN_MOMENT_S` | {moments._MIN_MOMENT_S}s | minimum pick duration (noise floor) | "
-                f"reject shorter spans | allow shorter picks | `{_mod_const_line(moments, '_MIN_MOMENT_S')}` |")
     rows.append(f"| `_EOF_TOLERANCE_S` | {moments._EOF_TOLERANCE_S}s | pick may extend past probed EOF by this much | "
                 f"more EOF overrun tolerated | stricter EOF bound | `{_mod_const_line(moments, '_EOF_TOLERANCE_S')}` |")
     return hdr + table + "\n" + "\n".join(rows) + "\n"

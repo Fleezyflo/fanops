@@ -297,21 +297,6 @@ def uninstall_daemon(cfg: Config) -> ActionResult:
     return ActionResult(ok=res.get("stopped", False), detail={"daemon_removed": True, "stopped": res.get("stopped", False)})
 
 
-def set_clip_profile(cfg: Config, profile: str) -> ActionResult:
-    """Set FANOPS_CLIP_PROFILE (clip-length band) from the Go-Live tab. Length tiers: 'short' (8-15s),
-    'medium' (16-26s), 'long' (28-45s); legacy content-type bands 'talk' (12-22s) / 'song' (18-35s) stay
-    valid (M2 additive — no remap). Persisted VERBATIM (no normalize -> no learning-cohort split). Validates
-    the value (unknown -> clean error, never silently mis-set); dual-written."""
-    profile = (profile or "").strip().lower()
-    _ALLOWED = ("short", "medium", "long", "talk", "song")
-    if profile not in _ALLOWED:
-        return ActionResult(ok=False, error=f"clip profile must be one of {_ALLOWED} (got {profile!r})")
-    err = _dual_write(cfg, "FANOPS_CLIP_PROFILE", profile)
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"clip_profile": profile})
-
-
 # ── Advanced learning levers (Phase 6) ──────────────────────────────────────────────────────────────
 # Four default-OFF INTENT flags for the A/B learning loop, surfaced from env-only into the Go-Live tab.
 # These set operator intent; the apply paths stay learning_validated-frozen (a flag ON does NOT unfreeze

@@ -1,6 +1,5 @@
 # tests/test_prompts.py
 import re
-from fanops.bands import TALK, SONG
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt, _target_pick_count, _MAX_TARGET_PICKS
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 
@@ -113,51 +112,45 @@ def test_moment_pick_prompt_target_is_a_ceiling_but_forbids_zero_on_content():
     assert "ceiling" in p and "up to" in p        # the count is an UPPER bound, not a floor/quota
     assert "undershoot" not in p                  # the old FLOOR framing (forced quota) is gone
 
-def test_target_pick_count_uses_band_span():
+def test_target_pick_count_is_ceiling_only():
     assert _target_pick_count(0.0) == 0
-    assert _target_pick_count(10.0, TALK) == 1
-    assert _target_pick_count(60.0, TALK) == max(1, min(_MAX_TARGET_PICKS, round(60.0 / TALK.span)))
-    assert _target_pick_count(700.0, TALK) == _MAX_TARGET_PICKS
-    assert _target_pick_count(120.0, SONG) < _target_pick_count(120.0, TALK)
+    assert _target_pick_count(10.0) == _MAX_TARGET_PICKS
+    assert _target_pick_count(60.0) == _MAX_TARGET_PICKS
+    assert _target_pick_count(700.0) == _MAX_TARGET_PICKS
 
-def test_moment_pick_prompt_targets_talk_band():
+def test_moment_pick_prompt_has_no_duration_band():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": "", "clip_profile": "talk"})
-    assert "12-22" in p
-    assert "TARGET 12-22" in p
-    assert "no fixed duration" not in p.lower()
-    assert "complete moment" in p.lower()
-    assert "6 seconds or less" in p.lower()
-    assert str(_target_pick_count(90.0, TALK)) in p
-
-def test_moment_pick_prompt_song_band_not_talk():
-    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
-                            "language": "en", "guidance": "", "clip_profile": "song"})
-    assert "18-35" in p
-    assert "TARGET 18-35" in p
+    low = p.lower()
     assert "12-22" not in p
+    assert "target " not in low
+    assert "no fixed duration" in low
+    assert "complete moment" in low
+    assert "6 seconds" not in low
+    assert str(_target_pick_count(90.0)) in p
 
-def test_moment_pick_prompt_persona_band_overrides_global():
+def test_moment_pick_prompt_ignores_clip_profile_and_persona_band():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
-                            "language": "en", "guidance": "", "clip_profile": "talk",
+                            "language": "en", "guidance": "", "clip_profile": "song",
                             "personas": [{"handle": "x", "band": "28-45s",
                                           "directive": "Clip for this account: storytelling."}]})
-    assert "28-45" in p
-    assert "TARGET 28-45" in p
-    assert "TARGET 12-22" not in p
+    assert "18-35" not in p
+    assert "28-45" not in p
+    assert "band=" not in p
+    assert "TARGET " not in p
 
 def test_moment_pick_prompt_short_source_still_allows_picks():
     p = moment_pick_prompt({"duration": 10.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
     low = p.lower()
     assert "dead footage" in low
-    assert "SHORT SOURCE" in p
-    assert "EXACTLY ONE" in p
+    assert "SHORT SOURCE" not in p
+    assert "EXACTLY ONE" not in p
 
 def test_moment_pick_prompt_long_source_asks_for_multiple_nonoverlapping():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
-    assert str(_target_pick_count(90.0, TALK)) in p
+    assert str(_target_pick_count(90.0)) in p
     assert "overlap" in p.lower()              # prefer distinct windows; code dedups downstream
 
 def test_prompt_overlap_contract():

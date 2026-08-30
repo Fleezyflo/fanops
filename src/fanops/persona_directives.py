@@ -41,33 +41,25 @@ class Directive:
     def __repr__(self) -> str: return f"Directive({self._rendered!r})"
 
 
-# P2: DERIVE a per-account CUT default (length tier + framing) from the persona's content_focus, so DEFINING a
-# distinct persona IS defining a distinct CLIP — no hand-set clip_profile needed. content_focus -> length (a
-# punchline is a quick rewatchable unit; a story needs room) + framing (intensity/framing keys on each focus).
-# M1: both maps are registry projections; _FOCUS_PROFILE is ordered LONGER-bias-first; _FRAMING_MAP is ordered
-# HIGHEST-intensity-first (MOL-170 — framing moved off the retired energy lever).
+# P2: DERIVE framing from cut_policy. Length is the picker's window. _FRAMING_MAP is highest-intensity-first.
 _FOCUS_PROFILE = dict(_levers.focus_profile_map())
 _FRAMING_MAP = dict(_levers.framing_map())
 
 
 def derive_cut_spec(p):
-    """The CUT default a persona implies from its cut_policy (MOL-523) — (clip_profile|None, framing|None).
-    cut_policy picks the LENGTH (first match in _FOCUS_PROFILE's longer-bias-first order) and the FRAMING
-    (first match in _FRAMING_MAP's highest-intensity-first order). Unmapped/empty -> None (global stands)."""
+    """The CUT default a persona implies from its cut_policy — (None, framing|None).
+    Length is the picker's window. cut_policy picks FRAMING only (highest-intensity-first).
+    Unmapped/empty -> None (global stands)."""
     pol = list(getattr(p, "cut_policy", None) or [])
-    profile = next((v for k, v in _FOCUS_PROFILE.items() if k in pol), None)
     framing = next((v for k, v in _FRAMING_MAP.items() if k in pol), None)
-    return profile, framing
+    return None, framing
 
 
 def resolved_cut_spec(p):
-    """The persona's EFFECTIVE cut spec = explicit pin OVER derived default OVER None (global). The ONE
-    function both hydration (accounts._hydrate_from_personas) and the operator UI (compose_breakdown.cut)
-    read, so the floor can't drift. A non-blank Persona.clip_profile/framing pin always wins. Pure."""
-    d_prof, d_fr = derive_cut_spec(p)
-    prof = (getattr(p, "clip_profile", None) or "").strip() or d_prof
+    """Effective cut spec: (None, framing). Length is the picked window. Framing = pin OVER derived OVER None."""
+    _, d_fr = derive_cut_spec(p)
     fr = (getattr(p, "framing", None) or "").strip().lower() or d_fr
-    return (prof or None, fr or None)
+    return (None, fr or None)
 
 
 def _base_voice(p) -> str:
@@ -194,14 +186,9 @@ def _caption_fragments(p) -> list[dict]:
 
 
 def _cut_fragments(p) -> list[dict]:
-    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> the
-    length band + framing. Empty when neither derives (a global cut, or a carrier-pin-only cut with no levers)."""
+    """The CUT's pieces (M4 provenance): cut_policy -> framing only. Length is the picked window."""
     frags: list[dict] = []
-    d_prof, d_fr = derive_cut_spec(p)
-    if d_prof:
-        from fanops.bands import band_for
-        b = band_for(d_prof)
-        frags.append({"source": "cut_policy", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from cut_policy)"})
+    _, d_fr = derive_cut_spec(p)
     if d_fr:
         frags.append({"source": "cut_policy", "text": f"{d_fr} crop (derived from cut_policy)"})
     return frags
@@ -222,13 +209,10 @@ def compose_breakdown(cfg: Config, p) -> dict:
             "fragments": _hook_fragments(p), "shadowed": [],
             "angle": (getattr(p, "hook_angle", None) or None)}    # S7: the EFFECTIVE structured angle
     caption = {"text": caption_directive(p), "override": False, "fragments": _caption_fragments(p)}
-    pin_prof = (getattr(p, "clip_profile", None) or "").strip()
-    res_prof, res_fr = resolved_cut_spec(p)               # carrier pin > derived > None — the SAME floor hydration applies
-    from fanops.bands import band_for
-    band = band_for(res_prof or "")
-    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
-           "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
-           "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (cut_policy)
+    _, res_fr = resolved_cut_spec(p)
+    cut = {"band": "", "framing": res_fr,
+           "source": "derived" if res_fr else "global",
+           "fragments": _cut_fragments(p)}
     facts = persona_facts(cfg, p)
     tags = {"lead": facts["lead_tags"],
             "terms": facts["terms"],
@@ -292,9 +276,6 @@ def produces_summary(breakdown: dict) -> list[str]:
     configured dimension: a global cut, an unset framing/angle, and hashtags (the source lock, not a persona
     compile) are all SILENT — so an unconfigured persona yields []. Pure; reads only the passed dict, never the disk."""
     out: list[str] = []
-    cut = breakdown.get("cut") or {}
-    if cut.get("source") and cut.get("source") != "global" and cut.get("band"):
-        out.append(f"~{cut['band']} clips")
     angle = (breakdown.get("hook") or {}).get("angle")
     if angle:
         out.append(f"{angle} hooks")
@@ -302,11 +283,9 @@ def produces_summary(breakdown: dict) -> list[str]:
 
 
 def persona_facts(cfg: Config, p) -> dict:
-    """Transparency read: cut length band + framing + niche terms. Caption hashtags are the source lock
-    (`ship_from_lock`), not a persona compile output — `lead_tags` is always []."""
-    from fanops.bands import band_for
+    """Transparency read: cut framing + niche terms. Caption hashtags are the source lock
+    (`ship_from_lock`), not a persona compile output — `lead_tags` is always []. Length is the pick."""
     from fanops.persona_research import persona_terms
-    prof, fr = resolved_cut_spec(p)
-    band = band_for(prof)
-    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": [],
+    _, fr = resolved_cut_spec(p)
+    return {"length_band": "", "framing": fr, "lead_tags": [],
             "terms": persona_terms(p, cfg)}

@@ -47,7 +47,7 @@ def test_add_persona_persists_levers(tmp_path):
     p = Personas.load(cfg).get("curator")
     assert p.cut_policy == ["storytelling", "emotional"] and p.selection_scope is None
     assert p.hook_angle == "emotional"
-    assert resolved_cut_spec(p) == ("long", "top")
+    assert resolved_cut_spec(p) == (None, "top")
 
 def test_add_persona_rejects_unknown_lever(tmp_path):
     # MOL-523: only the VOCABULARY levers can reject a value. selection_scope is free text now, so any
@@ -110,7 +110,7 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
     assert a.persona == "tasteful" and a.cut_policy == ["storytelling"] and a.selection_scope == "open"
     assert a.hook_angle == "emotional"
-    assert a.clip_profile == "long" and a.framing == "top" and a.persona_owns_profile is True
+    assert a.clip_profile is None and a.framing == "top" and a.persona_owns_profile is False
 
 def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg = Config(root=tmp_path)
@@ -186,7 +186,7 @@ def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                    hashtag_corpus=["#myscene"]))
-    assert f["length_band"] == "16-26s"
+    assert f["length_band"] == ""
     assert f["framing"] == "center"
     assert f["lead_tags"] == []                  # caption tags are the source lock, not persona compile
 
@@ -194,14 +194,14 @@ def test_persona_facts_default_length_when_unset(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", voice="v"))
-    assert f["length_band"] == "12-22s" and f["framing"] is None
+    assert f["length_band"] == "" and f["framing"] is None
 
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", cut_policy=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
-    assert card.length_band == "28-45s"
+    assert card.length_band == ""
     assert isinstance(card.lead_tags, list)
 
 def test_personas_panel_renders_transparency_facts(tmp_path):
@@ -284,7 +284,7 @@ def test_selection_scope_replaces_energy_in_registry():
     keys = [lv["key"] for lv in _pl.LEVER_REGISTRY]
     assert "energy" not in keys and "selection_scope" in keys
     assert keys == ["content_focus", "cut_policy", "intensity", "selection_scope", "hook_angle",
-                    "clip_profile", "niche"]
+                    "niche"]
     assert set(_pl.vocab("selection_scope")) == set()   # MOL-523: free text — no vocabulary to enumerate
     assert "energy" not in _pl.editable_fields()
     assert "selection_scope" in _pl.editable_fields()
@@ -294,9 +294,9 @@ def test_selection_scope_replaces_energy_in_registry():
 def test_content_focus_derives_framing():
     assert _pl.framing_map()["storytelling"] == "top"
     assert _pl.framing_map()["punchlines"] == "center"
-    assert resolved_cut_spec(Persona(id="p", cut_policy=["storytelling"])) == ("long", "top")
-    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines"])) == ("short", "center")
-    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines", "storytelling"])) == ("long", "center")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["storytelling"])) == (None, "top")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines"])) == (None, "center")
+    assert resolved_cut_spec(Persona(id="p", cut_policy=["punchlines", "storytelling"])) == (None, "center")
 
 
 def test_resolve_top_bias_still_reads_account_framing(tmp_path):
@@ -318,15 +318,15 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
     p = Personas.load(cfg).get("curator")
     assert p.selection_scope is None                         # honest unset — no energy→open inference
     assert not hasattr(p, "energy") or getattr(p, "energy", None) is None
-    assert resolved_cut_spec(p) == ("long", "top")
+    assert resolved_cut_spec(p) == (None, "top")
     from fanops.personas import casting_directive, compose_breakdown
     assert "introspective" not in str(casting_directive(p))          # old energy=low clause gone; framing from focus
     d = compose_breakdown(cfg, p)
-    assert d["cut"]["framing"] == "top" and d["cut"]["band"] == "28-45s"
+    assert d["cut"]["framing"] == "top" and d["cut"]["band"] == ""
 
 
 def test_no_new_lever_family():
-    assert len(_pl.LEVER_REGISTRY) == 7        # MOL-523 split content_focus -> content_focus + cut_policy
+    assert len(_pl.LEVER_REGISTRY) == 6        # clip_profile catalog lever removed — length is the pick
     persona_levers = {lv["key"] for lv in _pl.LEVER_REGISTRY if lv["key"] not in ("clip_profile", "niche")}
     assert persona_levers == set(_pl.editable_fields()) - {"voice", "niche"}
 

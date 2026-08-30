@@ -61,4 +61,4 @@ def test_render_spec_same_id_for_same_moment_spec(tmp_path):
                state=MomentState.clipped, hook="watch this", clip_profile="talk", framing="top")
     rid_a, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m)
     rid_b, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m)
-    assert rid_a == rid_b == child_id("render", "clip_1", "watch this\x1fband:12-22\x1fframe:top")
+    assert rid_a == rid_b == child_id("render", "clip_1", "watch this\x1fframe:top")

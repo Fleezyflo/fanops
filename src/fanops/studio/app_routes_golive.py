@@ -41,11 +41,6 @@ def register_golive_routes(app, cfg):
         # (changes which posts are BORN, not whether they publish).
         return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
 
-    @app.post("/golive/clip-profile")
-    def do_golive_clip_profile():
-        # Phase 2: set the clip-length band (FANOPS_CLIP_PROFILE = talk|song); validated in the setter.
-        return _golive_panel(golive.set_clip_profile(cfg, request.form.get("profile", "")))
-
     @app.post("/golive/llm-transport")
     def do_golive_llm_transport():
         # FANOPS_LLM_TRANSPORT=claude|cursor — which headless CLI shells when the AI responder is ON.
