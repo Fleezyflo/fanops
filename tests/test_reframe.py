@@ -67,9 +67,9 @@ def _corpus(tmp_path, monkeypatch, *, hook=None, framing_pin=None, segments=None
 
     if stamp_fp:
         m, src = led.moments["mom_1"], led.sources["src_1"]
-        from fanops.bands import band_for
-        band = band_for(clipmod._moment_profile(m, cfg))
-        cs, ce = clipmod.fit_window(m.start, m.end, src.duration, lo=band.lo, hi=band.hi)
+        dur = src.duration or 0.0
+        hi = dur if dur > 0 else float("inf")
+        cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
         cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration)
         ass, _ = clipmod._build_ass_text(led, cfg, "mom_1", cid, Fmt.r9x16, clip_start=cs, clip_end=ce)
         p = clipmod._render_fingerprint_payload(src.source_path, cs, ce, Fmt.r9x16.value, 1920, 1080,
