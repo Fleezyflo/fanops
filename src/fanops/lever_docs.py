@@ -129,9 +129,9 @@ def render_levers(cfg: Config) -> str:  # cfg reserved for future persona-aware 
         if key == "niche":
             parts.append(f"\n## {key} (stage: {lv['stage']})\n\n"
                          f"**Does:** {lv['does']}\n\n"
-                         "Declared territory (`Persona.niche`) is the ONLY Layer A search root (MOL-637): "
-                         "`persona_research.persona_terms` returns niche only — voice/levers stay on "
-                         "captions+hooks. The measured corpus it derives then leads caption hashtags.\n")
+                         "Declared territory (`Persona.niche`) is identity, not the caption menu. "
+                         "`persona_research.persona_terms` returns niche only. Posted tags are "
+                         "`ship_from_lock` (source lock ∩ model picks, cap 4).\n")
             continue
         parts.append(f"\n## {key} (stage: {lv['stage']})\n\n**Does:** {lv['does']}\n{table_hdr}")
         for opt in lv["options"]:

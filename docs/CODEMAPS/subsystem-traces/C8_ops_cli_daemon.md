@@ -1,4 +1,5 @@
 > Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+> **Not the hashtag ship path.** The unattended tick remesures sidecar pile∪lock via Safari (`refresh_store_if_due`); it does not call `expand_vocab_if_due` / `refresh_corpora_if_due`. See `docs/CODEMAPS/hashtag-lifecycle.md`.
 
 # C8: Ops, CLI & Daemon
 

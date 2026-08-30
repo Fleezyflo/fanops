@@ -68,7 +68,7 @@ LEVER_REGISTRY = [
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
     {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
-     "does": "declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers "
+     "does": "declared subject territory — not the caption menu; posted tags are the source lock; voice/levers "
              "stay on captions+hooks, not discovery", "options": []},
 ]
 

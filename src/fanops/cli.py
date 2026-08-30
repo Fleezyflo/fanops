@@ -1027,11 +1027,23 @@ def main(argv: list[str] | None = None) -> int:
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
-    p_hash = sub.add_parser("hashtags", help="the platform hashtag measurement cache (instagrapi like_count)")
+    p_hash = sub.add_parser("hashtags", help="source-lock measurement cache (Safari play_count)")
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
-    hash_sub.add_parser("refresh", help="measure each persona's niche now (resolve->measure->harvest); needs scrape session")
-    hash_sub.add_parser("scrape-login", help="open the FanOps Chrome profile and promote the device envelope")
-    hash_sub.add_parser("discover", help="report each persona's measured niche from the cache (read-only, zero network)")
+    hash_sub.add_parser(
+        "refresh",
+        help="remesure sidecar pile and lock names now via Safari",
+        description="remesure sidecar pile and lock names now via Safari",
+    )
+    hash_sub.add_parser(
+        "scrape-login",
+        help="open Safari on Instagram and promote the device envelope",
+        description="open Safari on Instagram and promote the device envelope",
+    )
+    hash_sub.add_parser(
+        "discover",
+        help="report each source lock (read-only, zero network)",
+        description="report each source lock (read-only, zero network)",
+    )
     p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
     lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
     lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")

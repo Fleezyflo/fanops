@@ -17,9 +17,9 @@ Lock menu order (what the sidecar advertises as `hashtag_store`) is
 produced by `source_tags.lock_from_pile` (positive `play_count` only,
 `play_rank_key`, cap 12).
 
-Layer B corpora / `vet_hashtags` / band constants (`MEGA_*`, `_ARABIC`,
-`size_rank_key`) remain in tree as **observatory / legacy**. They do not write
-the posted tag array.
+Studio `/hashtags` shows source locks (full cap-12 list) and a play-ranked
+measurement cache. It does not show persona corpora as a caption menu.
+`fanops hashtags discover` reports source locks.
 
 Metric honesty for measurement rows: visibility is **only** Instagram fields
 stored on the tag — never an invented blended `reach`. Persisted record shape is
@@ -47,8 +47,9 @@ that source). Never the persona store ∪ corpus.
   7 days.
 - Same Safari `open_web_session` plane as lock produce.
 
-Manual `fanops hashtags refresh` still runs Layer A `refresh_store` (harvest /
-discovery path) — that is operator-flagged, not the unattended tick.
+Manual `fanops hashtags refresh` is the same sidecar remesure
+(`cmd_hashtags_refresh` → `_remesure_sidecar`). Live `refresh_store()` without
+an injected client aborts `safari_only` — harvest is not a live operator path.
 
 ## Ship — `hashtags.ship_from_lock`
 
@@ -63,19 +64,12 @@ tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4)
 - Cap = 4
 - No floors, no backfill, no mega / AR composition
 
-## Layer B — observatory / legacy (not posted tags)
+## Layer B — still compiles, not on the post
 
-`persona_research.derive_corpus` + `hashtags.vet_hashtags` still exist:
-
-- Relatedness → candidate → `size_rank_key` banded rank → `corpus_target` cut
-- `vet_hashtags`: membership = store ∪ corpus; AR floor; `MEGA_SLOT_MAX`;
-  corpus-lead / LRU
-
-Studio / `fanops hashtags discover` may surface this. **Caption does not ship
-it.** Treat any doc that says "posted tags = store ∪ corpus" as stale.
-
-`refresh_corpora_if_due` may still run on the tick as a fingerprint-gated
-recompute of that observatory corpus — it does not change the ship path.
+`persona_research.derive_corpus` + `hashtags.vet_hashtags` still exist in tree
+(deletion is a follow-up). They do not write the posted tag array, are not on
+the run loop, and are not shown as a caption menu. `refresh_corpora_if_due` is
+not called from `_cmd_run_pass`.
 
 ## Attribution severance
 

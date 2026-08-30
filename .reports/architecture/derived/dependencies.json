@@ -567,6 +567,7 @@
         "fanops.errors",
         "fanops.ig_hashtag_scrape",
         "fanops.ig_web_scrape",
+        "fanops.ledger",
         "fanops.persona_research",
         "fanops.personas",
         "fanops.source_tags"
@@ -1030,9 +1031,6 @@
       ],
       "lazy": [
         "fanops",
-        "fanops.hashtags",
-        "fanops.log",
-        "fanops.models",
         "fanops.persona_levers",
         "fanops.persona_research"
       ],
@@ -1933,11 +1931,9 @@
         "fanops.hashtags",
         "fanops.ledger",
         "fanops.log",
-        "fanops.personas",
         "fanops.studio.views_results"
       ],
       "lazy": [
-        "fanops.fanops_hashtags",
         "fanops.source_tags"
       ],
       "optional": [],
@@ -2325,7 +2321,7 @@
     "fanops.persona_levers": 4,
     "fanops.persona_research": 1,
     "fanops.persona_store": 1,
-    "fanops.personas": 8,
+    "fanops.personas": 7,
     "fanops.pipeline": 2,
     "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 0,
@@ -2521,7 +2517,7 @@
     "fanops.studio.thumb_media": 3,
     "fanops.studio.views": 12,
     "fanops.studio.views_common": 4,
-    "fanops.studio.views_hashtags": 6,
+    "fanops.studio.views_hashtags": 5,
     "fanops.studio.views_library": 4,
     "fanops.studio.views_live": 3,
     "fanops.studio.views_results": 7,
@@ -2744,22 +2740,6 @@
       "same_scc": false,
       "to": "fanops.timeutil",
       "to_level": 0
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.log",
-      "to_level": 1
-    },
-    {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.models",
-      "to_level": 1
     },
     {
       "from": "fanops.persona_levers",
@@ -3412,14 +3392,6 @@
       "to_level": 4
     },
     {
-      "from": "fanops.persona_directives",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.hashtags",
-      "to_level": 2
-    },
-    {
       "from": "fanops.persona_research",
       "from_level": 3,
       "jump": 1,
@@ -3900,11 +3872,11 @@
     "G2_largest_scc_size": 75,
     "G2_module_sccs_total": 60,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 609,
-    "lazy_edges": 387,
-    "lazy_edges_lateral": 48,
-    "lazy_edges_strictly_upward": 80,
-    "lazy_edges_to_equal_or_higher_level": 128,
+    "compile_edges_G1": 608,
+    "lazy_edges": 384,
+    "lazy_edges_lateral": 46,
+    "lazy_edges_strictly_upward": 79,
+    "lazy_edges_to_equal_or_higher_level": 125,
     "modules": 142,
     "optional_edges": 0,
     "typing_only_edges": 7

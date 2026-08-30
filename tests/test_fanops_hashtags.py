@@ -219,28 +219,35 @@ def test_open_client_unattended_skips_account_info_probe(tmp_path, monkeypatch):
     assert _sess.read_text() == original
 
 
-def test_cmd_hashtags_discover_reports_and_writes_nothing(tmp_path, monkeypatch):
+def test_cmd_hashtags_discover_reports_locks_and_writes_nothing(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import cmd_hashtags_discover
-    from datetime import datetime, timezone
-    cfg = Config(root=tmp_path); pid = _persona(cfg)
+    from fanops.ledger import Ledger
+    from fanops.models import Source
+    from fanops.source_tags import source_tag_locks_path
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"), title="vid"))
+    led.save()
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {"pile": ["#alpha"], "lock": ["#alpha", "#beta"], "researched_at": "2026-08-19T00:00:00Z"},
+    }))
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.hashtags_path.write_text(json.dumps({"#detroitrap": {
-        "graph_id": "id-detroitrap", METRIC_FIELD: 4200.0, "media_count": 50_000.0,
-        "measured_at": datetime.now(timezone.utc).isoformat(), "from": {"#hiphop": 3}}}))
+    cfg.hashtags_path.write_text("{}")
     before = cfg.hashtags_path.read_text()
     rc = cmd_hashtags_discover(cfg)
     blob = cfg.log_path.read_text()
-    assert rc == 0 and "#detroitrap" in blob and pid in blob
-    assert "play_count" in blob or "like_count" in blob
+    assert rc == 0 and "#alpha" in blob and "#beta" in blob and "src_1" in blob
+    assert "discover_done" in blob
     assert cfg.hashtags_path.read_text() == before
 
 
-def test_cmd_hashtags_discover_no_personas(tmp_path):
+def test_cmd_hashtags_discover_no_sources(tmp_path):
     from fanops.fanops_hashtags import cmd_hashtags_discover
     cfg = Config(root=tmp_path)
     rc = cmd_hashtags_discover(cfg)
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
-    assert rc == 0 and any(r["outcome"] == "no_personas" for r in recs)
+    assert rc == 0 and any(r["outcome"] == "no_sources" for r in recs)
 
 
 def test_refresh_store_if_due_throttles_and_fail_open(tmp_path, monkeypatch):

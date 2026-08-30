@@ -56,8 +56,7 @@ def test_persona_facts_failopen_on_weird_corpus(tmp_path):
     cfg = Config(root=tmp_path)
     p = SimpleNamespace(clip_profile=None, framing="top", hashtag_corpus=["#detroitrap", 7])
     facts = core.persona_facts(cfg, p)                      # must return cleanly, not raise
-    assert facts["framing"] == "top" and isinstance(facts["lead_tags"], list)
-    assert "#detroitrap" in facts["lead_tags"]
+    assert facts["framing"] == "top" and facts["lead_tags"] == []
 
 
 def test_corpus_hard_capped_at_4():
@@ -282,9 +281,8 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
 
 # --- MOL-512 (C-2): persona_facts lead_tags use this persona's aligned pool --------------------
 
-def test_persona_facts_lead_tags_use_aligned_pool_not_global(tmp_path):
-    """lead_tags must not surface a foreign persona's / unaligned global-cache winner.
-    Same cache shape as C-3: hiphop-aligned vs podcast-aligned vs unaligned #globalwinner."""
+def test_persona_facts_lead_tags_are_not_the_caption_menu(tmp_path):
+    """persona_facts must not present corpus / aligned-pool tags as caption leads."""
     cfg = Config(root=tmp_path)
     pid = core.add_persona(cfg, name="Hip", voice="va", niche=["hiphop"], id="pa")
     _write_meas(cfg, {
@@ -295,10 +293,7 @@ def test_persona_facts_lead_tags_use_aligned_pool_not_global(tmp_path):
         "#globalwinner": (9999, None),
     })
     per = core.Personas.load(cfg).get(pid)
-    facts = core.persona_facts(cfg, per)
-    lead = facts["lead_tags"]
-    assert "#detroitrap" in lead or "#hiphop" in lead
-    assert "#interview" not in lead and "#podcast" not in lead and "#globalwinner" not in lead
+    assert core.persona_facts(cfg, per)["lead_tags"] == []
 
 
 # --- HV1-PR3: caption menu is the source lock ---------------------------------------------------

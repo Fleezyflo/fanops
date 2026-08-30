@@ -14,7 +14,7 @@
     <fieldset class="levers">
       <legend>Persona knobs — change one to see what it compiles to below
         <span class="lever-clears-hint muted">Blank intensity or hook angle clears on save.</span></legend>
-      <p class="muted lever-knob-guide">Voice + hook angle shape writing · cut policy sets clip length + crop · intensity filters which peaks survive · niche seeds hashtag discovery.</p>
+      <p class="muted lever-knob-guide">Voice + hook angle shape writing · cut policy sets clip length + crop · intensity filters which peaks survive · niche is declared territory (not the caption menu).</p>
       <div class="lever-group">
         <span class="lever-label">Cut policy · what kind of moment (derives clip length + framing)</span>
         {% for c in levers.cut_policy %}
@@ -29,14 +29,14 @@
       <label>Hook angle · on-screen hook strategy
         <textarea name="hook_angle" rows="2" placeholder="the strategy of the burned on-screen hook — blank means any"
         >{{ p.hook_angle if p and p.hook_angle else '' }}</textarea></label>
-      <label>Niche · hashtag territory seeds (Layer A search roots)
+      <label>Niche · declared territory
         <input type="text" name="niche" value="{{ p.niche | join(', ') if p and p.niche else '' }}"
           placeholder="e.g. hiphop, drill" size="36" required
-          title="declared subject terms the next measurement pass searches Instagram for"></label>
+          title="declared subject territory — posted hashtags come from the source lock, not this field"></label>
     </fieldset>
   </div>
   <div id="persona-compose-{{ cid }}" class="persona-compose" aria-live="polite">
-    <p class="muted">Change a knob above to see what this persona compiles to — cut policy drives length/crop, niche drives hashtags, voice/hook drive writing, intensity filters peaks.</p>
+    <p class="muted">Change a knob above to see what this persona compiles to — cut policy drives length/crop, voice/hook drive writing, intensity filters peaks. Posted hashtags come from the source lock.</p>
   </div>
 {% endmacro %}
 

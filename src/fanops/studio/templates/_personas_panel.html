@@ -1,8 +1,6 @@
 {# src/fanops/studio/templates/_personas_panel.html — the Personas tab body, htmx-swapped in place
-   (#personas-panel). Add a persona via intake; each card is THREE legible zones (U9): identity → an INLINE
-   editor (the same do_personas_edit route + lever_fields macro the drawer uses) → the derived output + the
-   curated hashtag corpus. Every form swaps the whole panel (outerHTML) so the list + result update after each
-   action. The lever macros live in _persona_levers.html (shared with the drawer). Autoescape stays on (no |safe). #}
+   (#personas-panel). Each card: identity → inline editor → derived cut/hook/caption. Posted hashtags
+   are the source lock, not a persona corpus. Autoescape stays on (no |safe). #}
 {% from "_persona_levers.html" import lever_fields, levers_reference %}
 {% from "_term.html" import term %}
 <div id="personas-panel" aria-live="polite">
@@ -27,9 +25,9 @@
   <section class="persona-step persona-add-step">
     <details class="disclosure-step">
       <summary class="step-summary">+ Add a persona</summary>
-      <p class="muted persona-levers-intro">Each persona has five knobs{{ term('lever') }} — voice, cut policy, intensity, hook angle, and niche — that shape clips, hooks, captions, and hashtags.</p>
+      <p class="muted persona-levers-intro">Each persona has five knobs{{ term('lever') }} — voice, cut policy, intensity, hook angle, and niche — that shape clips, hooks, and captions. Posted hashtags come from the source lock, not the persona.</p>
       {{ levers_reference(lever_ref) }}
-      <p class="muted">Name it, set its voice and knobs. Hashtag corpus is derived after the persona exists.</p>
+      <p class="muted">Name it, set its voice and knobs.</p>
       <form hx-post="{{ url_for('do_personas_add') }}" hx-target="#personas-panel" hx-swap="outerHTML">
         <label>Name <input type="text" name="name" placeholder="e.g. Music Blogger" size="22" required></label>
         <label class="block">Voice
@@ -50,7 +48,7 @@
     {% for p in page.personas %}
       {# U9: THREE legible zones per card — (1) what this is, (2) what you can change, (3) what the system
          derives. The zones answer, in order: identity → editable knobs (with each knob's engine effect) →
-         derived output the operator only reads (except the curated hashtag corpus). #}
+         derived cut / hook / caption (posted hashtags are the source lock). #}
       <article class="persona-card">
 
         {# ── Zone 1 — What this is (read-only identity) ───────────────────────────────────────────── #}
@@ -112,14 +110,6 @@
             <input type="hidden" name="id" value="{{ p.id }}">
             <button type="submit" class="ghost" title="save territory seeds">Save seeds</button>
           </form>
-          {% if p.discovery_roots %}
-          <p class="persona-discovery muted" title="LLM-generated Layer A search roots — unique ones also attribute in Layer B; search-only means shared/sibling-owned">
-            Generated roots:
-            {% for r in p.discovery_roots %}
-              <span class="chip tag ro{{ ' search-only' if r.role == 'search-only' else '' }}">#{{ r.term }}{% if r.role == 'search-only' %}<span class="corpus-prov auto" title="shared or sibling-owned — Layer A search only">search-only</span>{% endif %}</span>
-            {% endfor %}
-          </p>
-          {% endif %}
         </section>
 
         {# ── Zone 3 — What the system derives (read-only) ─────────────────────────────────────────────
@@ -141,18 +131,6 @@
             {% for c in p.cut_policy or [] %} · {{ c }}{% endfor %}
             {% if p.hook_angle %} · {{ p.hook_angle }} hook{% endif %}
           </p>
-
-          {# 3 · Hashtag corpus — READ-ONLY. Every tag here was measured on Instagram and chosen by that
-             number; there is nothing to add, remove or pin. Each chip shows Top median play_count (else like_count)
-             and the anchor tag whose top posts surfaced it. #}
-          <div class="persona-corpus">
-            <span class="muted persona-corpus-label">Hashtags ({{ p.corpus|length }}) — derived from live Instagram measurements</span>
-            {% if p.corpus_refreshed_at %}<span class="corpus-refreshed muted" title="when these measurements were taken">measured {{ p.corpus_refreshed_at }}</span>{% endif %}
-            {% for row in p.corpus_tags %}
-              {% set t = row.tag %}
-              <span class="chip tag ro{{ ' high-reach' if t in p.reach_tags else '' }}">{{ t }}{% if row.value is not none %}<span class="reach-n" title="Instagram's own media_count — posts carrying this tag">· {{ row.value | int }} posts</span>{% endif %}{% if row.from %}<span class="corpus-prov auto" title="found alongside {{ row.from }} in Instagram's top posts">via {{ row.from }}</span>{% endif %}</span>
-            {% else %}<span class="muted">nothing measured for this persona yet</span>{% endfor %}
-          </div>
         </section>
       </article>
     {% endfor %}
