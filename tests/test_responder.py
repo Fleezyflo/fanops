@@ -321,6 +321,25 @@ def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     assert data["hook"] == "the line you replay" and "request_id" in data
 
 
+def test_moment_hooks_frames_unread_leaves_gate_pending(tmp_path, monkeypatch):
+    # Unread frames must not write a reason-only hook=; the gate stays pending so the next tick re-runs.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmFramesUnreadError
+    key = "src_1.14.00-21.00"
+    write_request(cfg, kind="moment_hooks", key=key,
+                  payload={"source_id": "src_1", "moment_id": "m1", "token": "14.00-21.00",
+                           "start": 14.0, "end": 21.0, "reason": "punchline",
+                           "transcript_excerpt": "they slept on me", "frames": ["/k/w0.jpg"]})
+    def boom(kind, payload):
+        raise LlmFramesUnreadError("attached frames unread")
+    n = LlmResponder(cfg, model=boom).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moment_hooks", key).exists()
+
+
 # ---- AGENT-2: a context-limit failure becomes a LABELLED degraded source, never an infinite-pending wedge ----
 def test_context_limit_failure_marks_source_degraded_not_infinite_pending(tmp_path, monkeypatch):
     from fanops.ledger import Ledger

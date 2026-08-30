@@ -68,7 +68,7 @@ LEVER_REGISTRY = [
      "does": "the GLOBAL deterministic cut-length band (Go-Live default; per-persona it is derived from cut_policy)",
      "options": [{"value": n} for n in _CLIP_PROFILE_BANDS]},
     {"key": "niche", "label": "Territory seeds", "kind": "tags", "stage": "caption",
-     "does": "declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers "
+     "does": "declared subject territory — not the caption menu; posted tags are the source lock; voice/levers "
              "stay on captions+hooks, not discovery", "options": []},
 ]
 
@@ -80,8 +80,7 @@ LEVER_REGISTRY = [
 # the exact over-claim trap (the catalog's global `clip_profile` is NOT the persona `clip_profile` pin). So
 # EDITABILITY here is defined as "the persona save route persists this field" — kept honest by the behavioral
 # editor-parity test — NOT by catalog-key presence.
-# Identity + DERIVED state. `hashtag_corpus` is not a lever any more: it is recomputed every tick from
-# platform measurements (persona_research.derive_corpus), so it has — and should have — no editor control.
+# Identity + leftover unused state. `hashtag_corpus` is not a lever: caption tags are the source lock.
 PERSONA_FIELD_EXEMPT = frozenset({"id", "name", "hashtag_corpus"})
 
 # The EDITABLE coherent levers: model field -> the output CHANNEL(s) it owns. Distinctness rule = "<=1 owner per

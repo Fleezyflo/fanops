@@ -141,12 +141,12 @@ from "passed silently" would rebuild the blind spot it exists to close.
   independent; never touches the e2e job. Whether it is actually ENABLED in GitHub is DC-8's
   question — from 2026-07-14 it was not, and nothing here could tell.
 
-## Scheduled lane — cron/dispatch only; nothing of it runs on a PR
-- ci.yml `e2e` job — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`
-  turns integration skips into failures) + the `@slow` cross-face proofs. Runs on
-  `workflow_dispatch` or the 04:00 UTC nightly ONLY (job-level `if`, since 2026-07-24). A render or
-  publish regression can merge green and be caught by the nightly — the accepted, disclosed cost of
-  not holding PR iteration for ~7 minutes.
+## Scheduled lane — cron only; nothing of it runs on a PR
+- `ci-e2e.yml` — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`
+  turns integration skips into failures) + the `@slow` cross-face proofs. Runs on the 04:00 UTC
+  cron schedule ONLY. `ci.yml` has no E2E job and no `workflow_dispatch`. A render or publish
+  regression can merge green and be caught by the nightly — the accepted, disclosed cost of not
+  holding PR iteration for ~7 minutes.
 
 ## Tooling entrypoints — machinery, not gates
 - `python -m tools.arch [selftest|ci|impact|regen]` and `python -m tools.ci
@@ -154,7 +154,6 @@ from "passed silently" would rebuild the blind spot it exists to close.
   them from the repo venv (`.venv/bin/python`); bare `python` lacks the YAML dependency.
 - `./scripts/check.sh` — the local lint-only runner (ruff + scoped checks; never pytest —
   the test suite is CI-only in this repo).
-- `scripts/repo_sweep.py` — read-only inventory sweep, consumed by `scripts/orchestrate.py`.
 - **Architecture derived merge hygiene (MOL-833):** `.gitattributes` sets `merge=ours` on
   `.reports/architecture/derived/**` so concurrent PRs that each regen those tracked artifacts do
   not conflict. `./scripts/setup-hooks.sh` arms both `core.hooksPath=.githooks` and

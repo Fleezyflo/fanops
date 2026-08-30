@@ -11,7 +11,7 @@ from fanops.moments import (request_moments, ingest_moments, request_moment_hook
 from fanops.agentstep import gate_keys_for
 from fanops.adjust import amplify
 from fanops.ids import child_id
-from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LEGACY_EN
+from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, LEGACY_EN
 
 # M1b (frame-seeing two-pass): the moment gate is split. PASS 1 (request_moments/ingest_moments) picks
 # the WINDOWS -> moments are born `picked` (NOT renderable) and the source lands `picks_decided`. PASS 2
@@ -545,7 +545,7 @@ def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                  state=SourceState.signalled, duration=60.0, language="en",
-                 transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                 transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}],
                  meta={"transcribed": True})
     pick = MomentPick(start=14.0, end=22.0, reason="visual beat",
                       transcript_excerpt="invented LLM line")
@@ -557,7 +557,7 @@ def test_request_moments_logs_speech_untrusted_dropped(tmp_path):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
                           transcript=[talk_seg("good line", start=0.0, end=3.0),
-                                      {**MUSIC_HALLUC, "start": 14.0, "end": 18.0}],
+                                      {**LOW_LOGPROB, "start": 14.0, "end": 18.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
@@ -569,7 +569,7 @@ def test_ingest_logs_excerpt_overwritten(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{**MUSIC_HALLUC, "start": 14.0, "end": 28.0}],
+                          transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
@@ -717,22 +717,155 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     led = request_moment_hooks(led, cfg, "src_1")     # second pass — must be a no-op for this gate
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") == rid1
 
-def test_request_moment_hooks_skips_llm_when_no_trusted_speech(tmp_path):
+def test_request_moment_hooks_opens_gate_when_no_trusted_speech(tmp_path):
+    # Speech-trust does not auto-answer hook=None. No media file → ASR cannot retry, so the
+    # author still opens (never a silent hookless clip). ingest stays pending until a response.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{**MUSIC_HALLUC, "start": 10.0, "end": 28.0}],
+                          transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
     led = request_moment_hooks(led, cfg, "src_1")
-    from fanops.agentstep import read_response
-    dec = read_response(cfg, "moment_hooks", "src_1.14.00-22.00", MomentHookDecision)
-    assert dec is not None and dec.hook is None
+    from fanops.agentstep import read_response, latest_request_id
+    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") is not None
+    assert read_response(cfg, "moment_hooks", "src_1.14.00-22.00", MomentHookDecision) is None
     led = ingest_moment_hooks(led, cfg, "src_1")
+    assert led.moments_of("src_1")[0].state is MomentState.picked
     assert led.moments_of("src_1")[0].hook is None
-    assert led.moments_of("src_1")[0].state is MomentState.decided
+    assert led.sources["src_1"].state is SourceState.picks_decided
+
+
+def test_request_moment_hooks_uses_live_excerpt_not_stale(tmp_path):
+    # Ingest-time excerpt can be empty (old nsp veto). PASS 2 must send live trusted text, not
+    # frames+reason with a stale blank excerpt.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="bar lands")])
+    m = led.moments_of("src_1")[0]
+    led.moments[m.id] = m.model_copy(update={"transcript_excerpt": ""})
+    led = request_moment_hooks(led, cfg, "src_1")
+    payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-22.00").read_text())
+    assert "slept on me" in payload["transcript_excerpt"]
+    assert led.moments_of("src_1")[0].transcript_excerpt  # ledger excerpt refreshed too
+
+
+def test_request_moment_hooks_defers_when_asr_retry_needed(tmp_path, monkeypatch):
+    # Real file, isolation never ran, window has no trusted speech → do NOT open the author
+    # on frames+reason. Produce force-retried ASR first.
+    monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    mp4 = cfg.sources / "src_1.mp4"
+    mp4.parent.mkdir(parents=True, exist_ok=True)
+    mp4.write_bytes(b"\x00")
+    led.add_source(Source(id="src_1", source_path=str(mp4),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
+                          signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
+                          meta={"transcribed": True}))
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    from fanops.agentstep import latest_request_id
+    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-22.00") is None
+
+
+def test_request_moment_hooks_reopens_unread_frame_hook(tmp_path):
+    # A decided hook stamped hook_frames_unread was authored from reason, not frames. Re-run.
+    from fanops.agentstep import write_request, write_response, latest_request_id, read_response
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    key = _hook_gate_key("src_1", m)
+    rid = write_request(cfg, kind="moment_hooks", key=key, payload={"source_id": "src_1"})
+    write_response(cfg, "moment_hooks", key,
+                   MomentHookDecision(hook="wait for it", request_id=rid).model_dump_json())
+    led.moments[m.id] = m.model_copy(update={"hook": "wait for it", "hook_frames_unread": True})
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook_frames_unread is False
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert latest_request_id(cfg, "moment_hooks", key) is not None
+    assert read_response(cfg, "moment_hooks", key, MomentHookDecision) is None
+
+
+def test_request_moment_hooks_reopens_hookless_decided(tmp_path):
+    # A decided moment with no hook and no hook_removed is PASS 2 unfinished (the old skip leftover).
+    # Reopen: discard the fake answer, demote to picked, open a real author gate.
+    from fanops.agentstep import write_request, write_response, latest_request_id, read_response
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    key = _hook_gate_key("src_1", m)
+    rid = write_request(cfg, kind="moment_hooks", key=key, payload={"source_id": "src_1"})
+    write_response(cfg, "moment_hooks", key,
+                   MomentHookDecision(hook=None, request_id=rid).model_dump_json())
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook is None
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert latest_request_id(cfg, "moment_hooks", key) is not None
+    assert read_response(cfg, "moment_hooks", key, MomentHookDecision) is None
+
+
+def test_request_moment_hooks_reopens_hookless_clipped(tmp_path):
+    # Skip leftovers already rendered (clipped + hook=None + fake gate answer). PASS 2 still
+    # never authored — demote and open the author so the recut fingerprint can pick up a hook.
+    from fanops.agentstep import write_request, write_response, latest_request_id, read_response
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    key = _hook_gate_key("src_1", m)
+    rid = write_request(cfg, kind="moment_hooks", key=key, payload={"source_id": "src_1"})
+    write_response(cfg, "moment_hooks", key,
+                   MomentHookDecision(hook=None, request_id=rid).model_dump_json())
+    led.set_moment_state(m.id, MomentState.clipped)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.picked and m.hook is None
+    assert led.sources["src_1"].state is SourceState.picks_decided
+    assert latest_request_id(cfg, "moment_hooks", key) is not None
+    assert read_response(cfg, "moment_hooks", key, MomentHookDecision) is None
+
+
+def test_request_moment_hooks_does_not_reopen_decided_without_gate(tmp_path):
+    # Pipeline render fixtures plant decided+hook=None with no moment_hooks answer. That is not a
+    # skip leftover — do not demote them or clips never render.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.decided and m.hook is None
+    assert led.sources["src_1"].state is SourceState.moments_decided
+
+
+def test_request_moment_hooks_does_not_reopen_stripped_hook(tmp_path):
+    # ingest-stripped (hook_removed set) stays decided — Review restore, not a skip leftover.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=22.0, reason="visual beat")])
+    m = led.moments_of("src_1")[0]
+    led.moments[m.id] = m.model_copy(update={"hook": None, "hook_removed": "wait for the drop"})
+    led.set_moment_state(m.id, MomentState.decided)
+    led.set_source_state("src_1", SourceState.moments_decided)
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.state is MomentState.decided and m.hook_removed == "wait for the drop"
+    assert led.sources["src_1"].state is SourceState.moments_decided
 
 def test_ingest_overwrites_junk_excerpt(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

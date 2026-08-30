@@ -290,6 +290,51 @@ def test_run_route_shows_primary_make_button(tmp_path):
     assert b"Make clips" in r.data
 
 
+def test_run_panel_pending_is_one_make_button(tmp_path, monkeypatch):
+    """Gate ON + unbound pending: tick accounts + Make clips, no name field, no duplicate Make clips."""
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/v/clip.mp4", state=SourceState.pending))
+    from fanops.studio.app import create_app
+    app = create_app(cfg); app.config.update(TESTING=True)
+    html = app.test_client().get("/run").data.decode()
+    assert "Add to queue" not in html
+    assert "Queue line name" not in html
+    assert 'name="source_ids"' in html
+    assert "/run/prepare" in html
+    assert "/run/bind-queue" not in html
+    assert "Cut every released source" not in html
+
+
+def test_run_next_step_pending_unbound_is_make_clips():
+    n = views.run_next_step(_st(queue_gate=True, pending_unbound_count=2, native_total=2))
+    assert n["key"] == "queue" and "Make clips" in n["label"]
+    assert "Add to queue" not in n["hint"]
+
+
+def test_run_prepare_route_passes_source_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    monkeypatch.setattr("fanops.responder.get_responder",
+                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
+    monkeypatch.setattr("fanops.pipeline.advance",
+                        lambda c, *, base_time: {"sources": 0, "awaiting": {"moments": 0, "captions": 0}})
+    from fanops.studio.app import create_app
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/v/clip.mp4", state=SourceState.pending))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "account_id": "x", "platforms": ["instagram"], "status": "active"}]}))
+    app = create_app(cfg); app.config.update(TESTING=True)
+    r = app.test_client().post("/run/prepare", data={"source_ids": "s1", "target_accounts": "a"})
+    assert r.status_code == 200
+    led = Ledger.load(cfg)
+    src = led.sources["s1"]
+    assert src.batch_id is not None
+    assert led.get_batch(src.batch_id).target_accounts == ["a"]
+
+
 # ---- actions.run_pull ----
 def test_run_pull_rejects_non_http_url(tmp_path):
     res = actions.run_pull(Config(root=tmp_path), "not-a-url")

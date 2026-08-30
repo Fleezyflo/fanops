@@ -6,7 +6,7 @@ from fanops.ledger import Ledger
 from fanops.pipeline import advance
 from fanops.agentstep import request_path, response_path, latest_request_id, gate_keys_for
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, PostState
-from fanops.transcribe import _cached_models, _resolve_model, real_transcript_signal
+from fanops.transcribe import real_transcript_signal
 
 pytestmark = pytest.mark.integration
 
@@ -24,13 +24,6 @@ def _skip_or_fail(reason: str) -> None:
 
 def _have(*bins): return all(shutil.which(b) for b in bins)
 
-def _whisper_model_runnable(model: str) -> bool:
-    """True iff `model` can actually transcribe here without a network fetch: its checkpoint is
-    cached, or the resolver can fall back to one that is. On a fresh host with no cached
-    checkpoint at all, whisper would have to download — which fails offline — so we skip
-    (real-tooling test, real tool genuinely unavailable) rather than fail."""
-    return _resolve_model(model) in _cached_models()
-
 def _make_spoken_sample(dst: Path) -> bool:
     """Render a short clip with REAL speech so whisper has something to transcribe."""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -45,29 +38,22 @@ def _make_spoken_sample(dst: Path) -> bool:
     if not wav.exists():
         return False
     # wide source so the 9:16 crop path is exercised
-    # Full 6s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
+    # Full 8s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
     # validates. -shortest would clamp the clip to the ~1.6s TTS and make a 4s pick out-of-bounds.
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=6:size=1280x720:rate=30",
-                    "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "6", str(dst)],
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=8:size=1280x720:rate=30",
+                    "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "8", str(dst)],
                    check=False, capture_output=True)
     return dst.exists()
 
 def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # pipeline must catalogue+advance, not hold pending
-    if not _have("ffmpeg", "ffprobe", "whisper"):
-        _skip_or_fail("needs ffmpeg + whisper on PATH")
-    # This is the legacy `whisper` CLI golden path (gated on the `whisper` binary, pinned to a cached
-    # `tiny` checkpoint). Pin the engine to the CLI so the proof is deterministic even where the [asr]
-    # extra (faster-whisper) is installed — otherwise transcribe would divert to the fw large-v3 runner,
-    # ignore FANOPS_WHISPER_MODEL, and attempt a >1GB download. The fw+large-v3 default is proven on real
-    # data by the operator-run full re-transcribe, not gated into CI behind a heavy model.
-    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
-    # Pin the model in-test so the golden path is self-contained: `advance()` -> transcribe
-    # reads FANOPS_WHISPER_MODEL, and this guarantees `tiny` regardless of the caller's env.
-    monkeypatch.setenv("FANOPS_WHISPER_MODEL", _PINNED_WHISPER_MODEL)
-    if not _whisper_model_runnable(_PINNED_WHISPER_MODEL):
-        _skip_or_fail(f"no cached whisper checkpoint for '{_PINNED_WHISPER_MODEL}' "
-                      "(would require a network download that fails offline)")
+    if not _have("ffmpeg", "ffprobe"):
+        _skip_or_fail("needs ffmpeg + ffprobe on PATH")
+    from fanops.transcribe import _fw_available
+    if not _fw_available():
+        _skip_or_fail("needs the [asr] extra (faster-whisper) — no whisper-CLI fallback")
+    # Pin tiny so the golden path does not try a >1GB large-v3 download.
+    monkeypatch.setenv("FANOPS_ASR_MODEL", _PINNED_WHISPER_MODEL)
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -100,7 +86,7 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     rid = latest_request_id(cfg, "moments", pick_key)
     response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
-        picks=[{"start": 0.0, "end": 4.0, "reason": "the line", "transcript_excerpt": "they slept on me"}]
+        picks=[{"start": 0.0, "end": 6.5, "reason": "the line", "transcript_excerpt": "they slept on me"}]
     ).model_dump_json())
 
     # M1b: ingesting the pick lands picks_decided + opens the per-pick frame-seeing hook gate (real

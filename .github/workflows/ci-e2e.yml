@@ -1,0 +1,131 @@
+name: CI E2E
+
+on:
+  schedule:
+    # The nightly full-E2E proof lane. The real-tooling suite does not run on ordinary pushes or
+    # pull requests, so this is what stops it rotting unobserved. A red nightly is a signal to look,
+    # not a merge gate.
+    - cron: "0 4 * * *"
+
+concurrency:
+  group: ci-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  e2e:
+    # ON-DEMAND + NIGHTLY ONLY. The full real-tooling suite runs on a manual dispatch or the nightly
+    # schedule, never on a push or pull request, and is NOT a required context — a red nightly is a
+    # signal to look, not a merge gate. The job-level `if` is the WHOLE decision: do not reintroduce
+    # an in-job trigger-gate step, which makes the context report green without running anything.
+    # When the job runs, the suite really runs (FANOPS_REQUIRE_E2E=1 turns integration skips into
+    # failures).
+    name: real-tooling E2E (must run, not skip)
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/ci-e2e.txt
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /var/cache/apt
+            /var/lib/apt/lists
+          key: apt-ffmpeg-espeak-${{ hashFiles('.github/workflows/ci-e2e.yml') }}-${{ runner.os }}
+          restore-keys: |
+            apt-ffmpeg-espeak-${{ runner.os }}-
+      - name: Install real toolchain (ffmpeg + espeak TTS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak
+      - name: Install from hashed lock (dev+transcribe+studio+compose+framing; MOL-195/196 — reproducible)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements/ci-e2e.txt
+          pip install -e . --no-deps
+      - name: pip-audit (E2E environment — MOL-733)
+        # Environment mode is the DEFAULT — it is the absence of `-r`, not a flag — and it is what
+        # this lane needs: the E2E closure carries direct-URL pins that requirements mode cannot
+        # resolve, so auditing what is actually INSTALLED is the only reading that covers them.
+        # `--desc` has nothing to do with the mode; it adds the vulnerability description column.
+        #
+        # Two knobs, deliberately both set and doing different things: `continue-on-error` keeps a
+        # finding OFF the merge path (this stays advisory), while `pipefail` makes the exit code
+        # OBSERVABLE — without it `tee` returns 0 and the step reports success whether the audit
+        # was clean or found everything. The negative control in the `unit` job is what proves that
+        # exit code means something.
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pip install pip-audit
+          pip-audit --desc | tee pip-audit-e2e-report.txt
+      - name: Upload E2E pip-audit report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-pip-audit-report
+          path: pip-audit-e2e-report.txt
+          if-no-files-found: ignore
+      - name: Cache whisper 'tiny' checkpoint
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/whisper
+          key: whisper-tiny-${{ hashFiles('pyproject.toml') }}-${{ runner.os }}
+          restore-keys: |
+            whisper-tiny-${{ runner.os }}-
+      - name: Pre-fetch whisper 'tiny' (so the E2E never needs a network fetch mid-test)
+        run: |
+          python -c "import whisper; whisper.load_model('tiny')"
+      # A preflight, not a duplicate: without it a missing binary surfaces as a confusing deep
+      # failure inside a render instead of an obvious one here.
+      - name: Verify toolchain on PATH
+        run: |
+          for b in ffmpeg ffprobe whisper espeak; do command -v "$b" || { echo "MISSING: $b"; exit 1; }; done
+      # The pipeline's only real-tooling proof. Without it a mock can mask a broken render —
+      # which is precisely why the skip→fail hook above exists to keep this honest.
+      - name: Integration suite — E2E MUST run (FANOPS_REQUIRE_E2E=1 fails on skip)
+        id: e2e-integration
+        env:
+          FANOPS_REQUIRE_E2E: "1"
+          FANOPS_REQUIRE_STUDIO: "1"
+          FANOPS_WHISPER_MODEL: "tiny"
+        run: |
+          set -o pipefail
+          # MOL-830: `not macos_only` is a DESELECT, not a skip, and the difference is the whole
+          # point. This job runs on ubuntu and sets FANOPS_REQUIRE_E2E=1, which turns any
+          # integration-marked SKIP into a failure — so a skipif on a launchd-only test would still
+          # red the job. Deselecting never collects it, which keeps "must run, not skip" true for
+          # every test that remains. The cost is stated out loud in the marker and in MOL-830:
+          # daemon reload has NO CI coverage. Running it on a macos runner is what would close that.
+          python -m pytest -q -m "integration and not ci_hook_regression and not asr and not macos_only" -rs \
+            --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-integration.log   # MOL-452
+      - name: CI duration report (e2e integration)
+        if: always() && (steps.e2e-integration.outcome == 'success' || steps.e2e-integration.outcome == 'failure')
+        continue-on-error: true
+        run: |
+          python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
+            --sha "${{ github.sha }}" --json-out ci-timing.partial.json
+      # Two things live here: the cross-cutting closed-loop regressions, AND
+      # test_negative_control_is_detected — the only BLOCKING-path run of the arch negative
+      # controls. Drop this step and the arch validators can go decorative with no blocking
+      # detector at all; ARCH-CONTROLS is advisory and cannot cover it.
+      - name: Slow cross-face proofs (hermetic — no real toolchain required)
+        id: e2e-slow
+        env:
+          FANOPS_REQUIRE_STUDIO: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q -m slow --durations=25 --durations-min=1.0 2>&1 | tee pytest-e2e-slow.log   # MOL-452
+      - name: CI duration report (e2e slow)
+        if: always() && (steps.e2e-slow.outcome == 'success' || steps.e2e-slow.outcome == 'failure')
+        continue-on-error: true
+        run: |
+          python scripts/ci_timing_report.py --step e2e_slow --log pytest-e2e-slow.log \
+            --sha "${{ github.sha }}" --json-out ci-timing.partial.json --merge-in

@@ -1,3 +1,5 @@
+> **Not the ship path.** Posted tags are lock ∩ model picks (`ship_from_lock`). This brief describes the retired `vet_hashtags` + corpus menu. See `docs/CODEMAPS/hashtag-lifecycle.md`.
+
 # Brief — Hashtag model diversity
 
 **Unit tag:** `Unit: hashtag-model-diversity`

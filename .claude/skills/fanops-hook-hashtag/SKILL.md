@@ -7,11 +7,9 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 
 > **Source of truth = code.** Hook patterns live in `prompts._hook_spec`. Caption
 > ship is `hashtags.ship_from_lock` (picks ∩ source lock, cap 4) — no AR floor,
-> no mega slot, no store ∪ corpus. The DRIFT-GUARD blocks below still mirror
-> constants that exist for Layer B / legacy `vet_hashtags` (observatory only —
-> not posted tags); `tests/test_skill_drift.py` keeps those lists honest. Edit
-> code + doc together. Caption membership is the source lock only. Lock order
-> for the menu is `play_count` then 7-day reel max, not `size_rank_key`.
+> no mega slot, no store ∪ corpus. `tests/test_skill_drift.py` keeps hook patterns
+> and ship rules honest. Caption membership is the source lock only. Lock order
+> for the menu is `play_count` then 7-day reel max.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **posted caption** — one hook sentence
@@ -21,11 +19,6 @@ like flying"), hashtags were 5–15 random words. Both are now grounded in what
 actually works, with proof.
 
 ## Drift guards (machine-readable; mirror-tested against the code)
-
-<!-- DRIFT-GUARD:hashtags — legacy Layer B / vet_hashtags AR region list (hashtags._ARABIC), sorted. NOT the caption ship path (ship_from_lock has no floors). Format constant only; not a reach claim. -->
-```text
-#arabicmusic #arabicmusiclovers #arabtiktok
-```
 
 <!-- DRIFT-GUARD:patterns — the proven hook MECHANISMS (4 psychological triggers + 5 evidence-rewrite mechanisms); each must appear lowercased in prompts._hook_spec -->
 ```text
@@ -40,12 +33,11 @@ social proof
 fomo
 ```
 
-<!-- DRIFT-GUARD:composition — legacy Layer B / vet_hashtags band + slot constants (hashtags.py). Integers only; equals MEGA_MEDIA_FLOOR / MID_MEDIA_FLOOR / INT32_MEDIA_COUNT / MEGA_SLOT_MAX. NOT applied by ship_from_lock. -->
+<!-- DRIFT-GUARD:composition — size-band constants on the measurement cache (hashtags.py). Integers only; equals MEGA_MEDIA_FLOOR / MID_MEDIA_FLOOR / INT32_MEDIA_COUNT. NOT applied by ship_from_lock. -->
 ```text
 MEGA_MEDIA_FLOOR=2_000_000
 MID_MEDIA_FLOOR=10_000
 INT32_MEDIA_COUNT=2_147_483_647
-MEGA_SLOT_MAX=1
 ```
 
 ## Operator hard rules (override any generic advice below)
@@ -190,8 +182,7 @@ not the caption menu.
 Rank / choose-key for the lock menu: `play_count` DESC, then
 `current_top_reel_play_max_7d` (7-day reel max). `media_count` may appear as a
 number on the metrics row; it is **not** the caption menu order.
-`size_band` / `size_rank_key` are Layer B observatory derivation (Part 3), not
-the caption menu.
+`size_band` / `size_rank_key` may order cache chips; they are not the caption menu.
 
 ### Shipped line (`ship_from_lock`)
 
@@ -202,8 +193,7 @@ the caption menu.
 - no `VETTED` / `_MEGA` pool, no semantic ban-list
 - no mega / relevance / discovery-slot recipe
 
-`vet_hashtags` (store ∪ corpus, AR floor, `MEGA_SLOT_MAX`) remains in tree as
-Layer B / legacy composition — it does **not** write the posted tag line.
+`vet_hashtags` is deleted. Posted tags are lock ∩ picks only.
 
 ---
 
@@ -219,11 +209,7 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
    `persona_terms`, **not** vocab expand on the loop (HV1-PR4).
 3. **Ship** (`caption` → `hashtags.ship_from_lock`) — picks ∩ lock, cap 4. That
    is every posted tag.
-4. **Layer B — observatory / legacy** (`persona_research.derive_corpus`,
-   `vet_hashtags`) — zero-network corpus derivation and old store∪corpus
-   composition. Still on disk; **does not** decide posted tags. Studio / discover
-   may show it; caption does not ship it.
-5. **Attribution severance** — a tag's worth is Instagram's own number for the
+4. **Attribution severance** — a tag's worth is Instagram's own number for the
    tag, never a post that used it (`tests/test_hashtag_attribution_severance.py`).
 
 ## Wiring (where this lives in the engine)
@@ -231,14 +217,12 @@ Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 - [source_tags.py](../../../src/fanops/source_tags.py) — per-source lock produce / sidecar.
 - [fanops_hashtags.py](../../../src/fanops/fanops_hashtags.py) — tick remesure
   (`refresh_store_if_due` / `_remesure_sidecar`); manual `refresh_store` for Layer A.
-- [hashtags.py](../../../src/fanops/hashtags.py) — `ship_from_lock` (caption ship);
-  `vet_hashtags` / band constants = Layer B legacy only.
+- [hashtags.py](../../../src/fanops/hashtags.py) — `ship_from_lock` (caption ship).
 - [caption.py](../../../src/fanops/caption.py) — ingest/compose call `ship_from_lock`
   against the source lock.
 - [prompts.py](../../../src/fanops/prompts.py) `caption_prompt` — per-surface
   `hashtag_store` is the source lock.
-- [persona_research.py](../../../src/fanops/persona_research.py) — Layer B observatory
-  (`derive_corpus`, `refresh_corpora_if_due`); not the posted line.
+- [persona_research.py](../../../src/fanops/persona_research.py) — niche terms only; not the posted line.
 - [ig_web_scrape.py](../../../src/fanops/ig_web_scrape.py) — Safari XHR for lock + remesure.
 - [ig_hashtag_scrape.py](../../../src/fanops/ig_hashtag_scrape.py) — Layer A network helpers
   (manual refresh / harvest).

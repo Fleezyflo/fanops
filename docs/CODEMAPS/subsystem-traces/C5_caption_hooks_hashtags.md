@@ -1,4 +1,5 @@
 > Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
+> **Not the ship path.** Posted tags are `hashtags.ship_from_lock` against the source lock. See `docs/CODEMAPS/hashtag-lifecycle.md`.
 
 # C5: Caption, Hooks & Hashtags
 

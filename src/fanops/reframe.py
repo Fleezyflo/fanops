@@ -38,7 +38,6 @@ from pathlib import Path
 
 from fanops import clip as clipmod
 from fanops import framing
-from fanops.bands import band_for
 from fanops.config import Config
 from fanops.framing_outcomes import (LEGITIMATE_CENTER_OUTCOMES, RESOLVED_OUTCOMES, UNRESOLVED_OUTCOMES,
                                      FramingOutcome as _FO, FramingStrategy as _FS, UnknownFramingOutcome)
@@ -189,10 +188,11 @@ def _is_bare_clip(c) -> bool:
 
 
 def _window_candidates(paths: ReframePaths, cfg: Config, m, src) -> list:
-    """The historical cut window. Pure recomputation (band -> fit -> snap), plus the visual-start
+    """The historical cut window. Pure recomputation (EOF-clamp fit -> snap), plus the visual-start
     refinement recovered from its PRODUCTION sidecar — the decision, not a re-probe."""
-    band = band_for(clipmod._moment_profile(m, cfg))
-    cs, ce = clipmod.fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
     out = [((cs, ce), "window:band+snap")]
     if cfg.visual_start:
@@ -257,8 +257,9 @@ def _seed_scratch_vstart(paths: ReframePaths, cfg: Config, m, src) -> None:
     """Copy the production visual-start DECISION into scratch so the new payload's window is the one a
     re-render would actually use — and so nothing re-probes ffmpeg for a decision already on disk.
     Read production, WRITE SCRATCH. The one direction that is allowed."""
-    band = band_for(clipmod._moment_profile(m, cfg))
-    cs, ce = clipmod.fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
     key = vstart_key(src.source_path, cs, ce)
     v = paths.read_vstart(key)
@@ -280,8 +281,9 @@ def current_payload(paths: ReframePaths, cfg: Config, led: Ledger, c):
     src = led.sources[m.parent_id]
     _seed_scratch_vstart(paths, cfg, m, src)
 
-    band = band_for(clipmod._moment_profile(m, cfg))
-    cs, ce = clipmod.fit_window(m.start, m.end, src.duration or 0.0, lo=band.lo, hi=band.hi)
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
     if cfg.visual_start:
         cs, _kind = clipmod.pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks,
