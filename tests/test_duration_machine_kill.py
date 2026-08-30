@@ -6,6 +6,7 @@ import json
 import pytest
 
 from fanops.accounts import Accounts, Account, _hydrate_from_personas
+from fanops.bands import TALK, SHORT
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import MomentPick
@@ -118,11 +119,21 @@ def test_pick_personas_opens_gates_without_directive(tmp_path):
     assert len(_pick_personas(cfg, accts)) == 1
 
 
-# 5. validate_pick rejects <=6s; 0.51s does not ingest.
-def test_validate_pick_rejects_six_seconds_or_less():
-    assert validate_pick(MomentPick(start=10.0, end=10.5, reason="r"), duration=20.0) is not None
-    assert validate_pick(MomentPick(start=10.0, end=16.1, reason="r"), duration=20.0) is None
+# 5. validate_pick is band-aware; scrap floor only when band is None.
+def test_validate_pick_talk_band_rejects_eight_seconds():
+    assert validate_pick(MomentPick(start=10.0, end=18.0, reason="r"), duration=60.0, band=TALK) is not None
+    assert validate_pick(MomentPick(start=10.0, end=24.0, reason="r"), duration=60.0, band=TALK) is None
+
+def test_validate_pick_short_band_allows_eight():
+    assert validate_pick(MomentPick(start=10.0, end=18.0, reason="r"), duration=60.0, band=SHORT) is None
+    assert validate_pick(MomentPick(start=10.0, end=17.0, reason="r"), duration=60.0, band=SHORT) is not None
+
+def test_validate_pick_without_band_keeps_six_second_scrap_floor():
     assert validate_pick(MomentPick(start=10.0, end=16.0, reason="r"), duration=20.0) is not None
+    assert validate_pick(MomentPick(start=10.0, end=16.1, reason="r"), duration=20.0) is None
+
+def test_validate_pick_whole_source_shorter_than_band_is_ok():
+    assert validate_pick(MomentPick(start=0.0, end=9.0, reason="r"), duration=9.0, band=TALK) is None
 
 
 # 6. produces_summary / compose contain no length-band tokens.

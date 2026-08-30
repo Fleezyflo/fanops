@@ -163,7 +163,7 @@ def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
             peers.append(p); out.append(p)
     return out
 
-def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> str | None:
+def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None, band=None) -> str | None:
     """Return a reason string if the pick is invalid, else None."""
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
         return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
@@ -173,8 +173,14 @@ def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> s
         return f"start<0 ({pick.start})"
     if duration and pick.end > duration + _EOF_TOLERANCE_S:   # duration==0 means unprobed: skip EOF check
         return f"end>{duration} ({pick.end})"
-    if (pick.end - pick.start) <= _MIN_MOMENT_S:
-        return f"too short ({pick.end - pick.start:.2f}s)"
+    length = pick.end - pick.start
+    if band is not None and duration and duration < band.lo:
+        if pick.start > 0 or pick.end < duration - _EOF_TOLERANCE_S:
+            return f"too short ({length:.2f}s)"
+    elif band is not None and length < band.lo:
+        return f"too short ({length:.2f}s)"
+    elif band is None and length <= _MIN_MOMENT_S:
+        return f"too short ({length:.2f}s)"
     if not (pick.reason or "").strip():
         return "blank reason"   # MOM-6: a rationale-less pick rides the casting fit signal + hook brief blind
     if src is not None and cfg is not None and (pick.transcript_excerpt or "").strip():
@@ -242,6 +248,14 @@ def _owner_profile(cfg: Config, a) -> str:
     from fanops.persona_directives import resolved_cut_spec
     prof, _ = resolved_cut_spec(a)
     return prof or cfg.resolve_clip_profile(a)
+
+def _band_for_pick(cfg: Config, pick, by_handle: dict):
+    from fanops.bands import band_for
+    owner = _pick_owner(pick)
+    acct = by_handle.get(owner) if owner else None
+    if acct is not None:
+        return band_for(_owner_profile(cfg, acct))
+    return band_for(cfg.clip_profile)
 
 def _persona_entry(cfg: Config, a) -> dict:
     """Per-account pick spec — handle + compiled lens (directive/band/scope) for the pick prompt."""
@@ -467,6 +481,12 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
     any_invalid = False
     all_empty = True
     log = get_logger(cfg)
+    try:
+        from fanops.accounts import Accounts
+        by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
+    except Exception as exc:
+        get_logger(cfg)("source", source_id, "accounts_load_failed", err=str(exc)[:120])
+        by_handle = {}
     prefix = f"{source_id}."
     for key in sorted(keys):
         dec = read_response(cfg, "moments", key, MomentDecision)
@@ -480,7 +500,8 @@ def _ingest_moments_dotted(led: Ledger, cfg: Config, source_id: str, keys: list[
             if echoed and echoed != owner:
                 log("moments", f"{source_id}.{owner}", "owner_mismatch", warn=True, echoed=echoed)
             stamped = pick.model_copy(update={"personas": [owner]})
-            bad = validate_pick(stamped, duration=src.duration or 0.0, src=src, cfg=cfg)
+            bad = validate_pick(stamped, duration=src.duration or 0.0, src=src, cfg=cfg,
+                                band=_band_for_pick(cfg, stamped, by_handle))
             if bad:
                 continue
             gate_valid.append(stamped)
@@ -519,11 +540,18 @@ def ingest_moments(led: Ledger, cfg: Config, source_id: str) -> Ledger:
         return led
     _maybe_stamp_source_title(led, source_id, dec)
     src = led.sources[source_id]
+    try:
+        from fanops.accounts import Accounts
+        by_handle = {a.handle: a for a in Accounts.load(cfg).accounts}
+    except Exception as exc:
+        get_logger(cfg)("source", source_id, "accounts_load_failed", err=str(exc)[:120])
+        by_handle = {}
     rejected = 0
     reasons: list[str] = []
     valid: list[MomentPick] = []
     for pick in dec.picks:
-        bad = validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg)
+        bad = validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg,
+                            band=_band_for_pick(cfg, pick, by_handle))
         if bad:
             rejected += 1; reasons.append(bad)
             continue
