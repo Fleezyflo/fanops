@@ -7,6 +7,7 @@ request payload (MomentRequest/CaptionRequest, already carrying context.md brand
 from __future__ import annotations
 import json
 import re
+from fanops.bands import Band, TALK, band_for
 
 _NEUTRAL_BRAIN = "You are the editorial brain of an autonomous fan-account clip engine"
 
@@ -53,11 +54,26 @@ def _data_fence(label: str, body: str) -> str:
 _MAX_TARGET_PICKS = 30   # CEILING only (the prompt frames it as "up to N", never a quota): a long source
                          # can yield up to 30 strong clips; unprobed sources omit the count line.
 
-def _target_pick_count(duration: float) -> int:
-    """How many non-overlapping clips to AIM for. <=0 (unprobed) -> 0 (no target, let the model decide);
-    else the global ceiling (_MAX_TARGET_PICKS) — a max, never a duration-derived quota."""
+def _target_pick_count(duration: float, band: Band = TALK) -> int:
+    """How many non-overlapping clips to AIM for, by source length and content BAND.
+    Unprobed -> 0; shorter than band.lo -> 1 whole-source clip; else ~one per band.span, capped."""
     if duration <= 0: return 0
-    return _MAX_TARGET_PICKS
+    if duration < band.lo: return 1
+    return max(1, min(_MAX_TARGET_PICKS, round(duration / band.span)))
+
+def _band_from_payload(payload: dict) -> Band:
+    personas = payload.get("personas") or []
+    if len(personas) == 1:
+        raw = (personas[0].get("band") or "").strip().rstrip("sS")
+        if "-" in raw:
+            lo_s, hi_s = raw.split("-", 1)
+            try:
+                lo, hi = float(lo_s), float(hi_s)
+                if lo > 0 and hi >= lo:
+                    return Band(lo, hi)
+            except (TypeError, ValueError):
+                pass
+    return band_for(payload.get("clip_profile"))
 
 def _hook_spec(max_words: int = 6, directive=None, *, allow_null: bool = False) -> str:
     """Shared on-screen hook craft. Universal retention-science floor + persona-supplied demos/bans (MOL-173)."""
@@ -165,11 +181,13 @@ def moment_pick_prompt(payload: dict) -> str:
     """M1b PASS 1 — choose the WINDOWS only. No hook authoring here: the on-screen hook for each picked
     clip is written by a SEPARATE pass (moment_hook_prompt) that SEES that clip's own opening frames, so
     the author can never write a hook for footage it never saw. Keeps the whole-source survey frames (a
-    picking aid: judge which windows are visually strong) and the brief fence. Length is the picked complete
-    moment — no seconds target, no persona clip-order poem."""
+    picking aid: judge which windows are visually strong) and the brief fence. Length TARGET is the
+    payload band (`_band_from_payload`)."""
     duration = payload.get("duration", 0.0)
     personas = payload.get("personas") or []
-    per_owner = _target_pick_count(duration)
+    band = _band_from_payload(payload)
+    lo, hi = int(band.lo), int(band.hi)
+    per_owner = _target_pick_count(duration, band)
     n_accts = len(personas) if personas else 1
     target = (per_owner * n_accts) if per_owner else 0
     acct_ceiling = (f" ({per_owner} per account × {n_accts} accounts)" if per_owner and n_accts > 1 else "")
@@ -178,12 +196,14 @@ def moment_pick_prompt(payload: dict) -> str:
                      if n_accts > 1 else
                      "prefer distinct, non-overlapping windows — near-duplicates are de-duplicated downstream. ")
     aim = (f"  - Pick UP TO {target}{acct_ceiling} clips from this ~{duration:.0f}s source — {target} is a "
-           "hard CEILING, NOT a quota to fill. Include EVERY genuinely strong, distinct moment (don't be "
-           "stingy), but STOP at the ceiling and return FEWER when the source honestly lacks that many. "
-           f"Spread across the timeline; {overlap_scope}"
-           "NEVER pad with weak fragments to hit a "
-           "number — strong-and-fewer beats weak-and-many.\n"
+           "hard CEILING, NOT a quota to fill. Include every complete in-band moment; return FEWER when the "
+           "source honestly lacks that many. NEVER pad with weak fragments to hit a number — strong-and-fewer "
+           f"beats weak-and-many. Spread across the timeline; {overlap_scope}\n"
            ) if target else ""
+    short = (f"  - SHORT SOURCE: this source is under {band.lo:.0f}s, so return EXACTLY ONE "
+             "pick covering the whole source (start=0, end=SOURCE DURATION). NEVER return an empty "
+             "list for a short source — a short clip is still worth posting.\n"
+             ) if 0 < duration < band.lo else ""
     persona_block = ""
     if personas:
         if len(personas) == 1:
@@ -202,7 +222,7 @@ def moment_pick_prompt(payload: dict) -> str:
             )
     return (
         f"{_NEUTRAL_BRAIN}. From the transcript and signal peaks below, choose the MOMENTS most worth cutting "
-        "into vertical clips. Return ONLY the JSON object matching the provided schema "
+        f"into {lo}-{hi} second vertical clips. Return ONLY the JSON object matching the provided schema "
         "— no prose, no preamble, no explanation, no code fences; your entire answer is the JSON. You "
         "choose the WINDOWS only here; the on-screen hook for each clip is authored in a SEPARATE pass "
         "that sees the picked clip's own frames.\n"
@@ -213,9 +233,9 @@ def moment_pick_prompt(payload: dict) -> str:
         "HARD RULES for every pick:\n"
         f"  - 0 <= start < end <= {duration} (timestamps MUST be real, finite seconds, in-bounds; "
         "never NaN/Infinity).\n"
-        "  - Each pick is a COMPLETE MOMENT: include its lead-in and payoff so the clip feels whole. "
-        "There is no fixed duration — set start/end to the natural boundaries of the moment. Scrap "
-        "fragments of 6 seconds or less are rejected.\n"
+        f"  - TARGET {lo}-{hi} seconds per clip: set start/end so (end - start) is about {lo}-{hi} "
+        "seconds. This is a complete moment — include lead-in and payoff. NEVER a scrap of 6 seconds or less.\n"
+        f"{short}"
         f"{aim}"
         "  - `reason` is REQUIRED: one sentence on WHY this moment is scroll-stopping (what makes a "
         "viewer stop). Never use em-dashes (—) or en-dashes (–); use a comma or period.\n"

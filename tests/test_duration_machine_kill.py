@@ -11,7 +11,7 @@ from fanops.ledger import Ledger
 from fanops.models import MomentPick
 from fanops.moments import validate_pick, _persona_entry, _pick_personas, request_moment_hooks
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
-from fanops.prompts import moment_pick_prompt, _target_pick_count
+from fanops.prompts import moment_pick_prompt
 from fanops.clip import render_moment, fit_window
 from tests.test_moments import _src
 
@@ -91,16 +91,6 @@ def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
         assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
 
 
-# 3. moment_pick_prompt has no seconds target anywhere.
-def test_moment_pick_prompt_no_seconds_target():
-    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
-                            "language": "en", "guidance": "", "clip_profile": "song"})
-    low = p.lower()
-    for forbidden in ("12-22", "18-35", "8-15", "16-26", "28-45", "target {", "band=", "second vertical",
-                      "short source", "whole source"):
-        assert forbidden not in low
-
-
 # 3b. No voice / cut_policy / content_focus / select_rule / owning persona lens in pick prompt.
 def test_moment_pick_prompt_omits_persona_poem(tmp_path):
     cfg = Config(root=tmp_path)
@@ -130,15 +120,6 @@ def test_pick_personas_opens_gates_without_directive(tmp_path):
     accts.accounts = [Account(handle="a", account_id="1", platforms=["instagram"], status="active",
                               persona="voice only")]
     assert len(_pick_personas(cfg, accts)) == 1
-
-
-# 4. _target_pick_count does not read band.span.
-def test_target_pick_count_no_band_span():
-    src = inspect.getsource(_target_pick_count)
-    assert "band" not in src and "span" not in src and "/ 30" not in src
-    assert _target_pick_count(0.0) == 0
-    assert _target_pick_count(60.0) == 30
-    assert _target_pick_count(700.0) == 30
 
 
 # 5. validate_pick rejects <=6s; 0.51s does not ingest.
