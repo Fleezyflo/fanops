@@ -327,7 +327,6 @@
     "fanops.clip": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.config",
         "fanops.errors",
         "fanops.frames",
@@ -1349,7 +1348,6 @@
     "fanops.reframe": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.clip",
         "fanops.config",
         "fanops.framing",
@@ -1365,7 +1363,6 @@
     "fanops.reframe_apply": {
       "compile": [
         "fanops",
-        "fanops.bands",
         "fanops.clip",
         "fanops.config",
         "fanops.controlio",
@@ -2218,7 +2215,7 @@
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
     "fanops.autopilot": 2,
-    "fanops.bands": 7,
+    "fanops.bands": 4,
     "fanops.batches": 0,
     "fanops.canary": 0,
     "fanops.caption": 2,
@@ -2366,7 +2363,7 @@
     "fanops.caption": 9,
     "fanops.casting": 0,
     "fanops.cli": 21,
-    "fanops.clip": 11,
+    "fanops.clip": 10,
     "fanops.compose": 0,
     "fanops.config": 0,
     "fanops.config_introspect": 3,
@@ -2441,8 +2438,8 @@
     "fanops.prompts": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
-    "fanops.reframe": 9,
-    "fanops.reframe_apply": 10,
+    "fanops.reframe": 8,
+    "fanops.reframe_apply": 9,
     "fanops.responder": 10,
     "fanops.router": 1,
     "fanops.secret_provider": 0,
@@ -3792,7 +3789,7 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 601,
+    "compile_edges_G1": 598,
     "lazy_edges": 372,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,

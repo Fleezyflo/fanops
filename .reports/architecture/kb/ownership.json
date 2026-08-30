@@ -140,12 +140,6 @@
       ],
       "note": "The ONE entity with a NATURAL key (the platform's own Graph media_id) and no lineage by construction.",
       "confidence": "CERTAIN"
-    },
-    {
-      "asset": "hashtag_vocab.json",
-      "authoritative_owner": "fanops.hashtag_vocab",
-      "lock": "NONE",
-      "note": "MOL-644 durable LLM niche-vocab seeds; not the shipping corpus"
     }
   ],
   "control_files": [
