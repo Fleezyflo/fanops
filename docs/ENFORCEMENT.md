@@ -154,7 +154,6 @@ from "passed silently" would rebuild the blind spot it exists to close.
   them from the repo venv (`.venv/bin/python`); bare `python` lacks the YAML dependency.
 - `./scripts/check.sh` — the local lint-only runner (ruff + scoped checks; never pytest —
   the test suite is CI-only in this repo).
-- `scripts/repo_sweep.py` — read-only inventory sweep, consumed by `scripts/orchestrate.py`.
 - **Architecture derived merge hygiene (MOL-833):** `.gitattributes` sets `merge=ours` on
   `.reports/architecture/derived/**` so concurrent PRs that each regen those tracked artifacts do
   not conflict. `./scripts/setup-hooks.sh` arms both `core.hooksPath=.githooks` and
