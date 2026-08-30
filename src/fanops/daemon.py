@@ -71,11 +71,18 @@ def _fanops_bin() -> str:
     # never a different one earlier on PATH.
     return str(Path(sys.executable).parent / "fanops")
 
+_FFMPEG_FULL_BIN = Path("/opt/homebrew/opt/ffmpeg-full/bin")
+
+def _ffmpeg_full_dir() -> str | None:
+    """Homebrew ffmpeg-full (libass / subtitles). None when the keg is absent — CI, Linux."""
+    return str(_FFMPEG_FULL_BIN) if (_FFMPEG_FULL_BIN / "ffmpeg").exists() else None
+
 def _daemon_path() -> str:
     """Full PATH to bake into the plist (launchd gives a bare one). Order: venv bin, ~/.local/bin
     when it holds `claude` (the native-install symlink — tracks the operator's CURRENT claude), the
     bin dirs holding `claude`/`cursor-agent` per shutil.which, homebrew (ffmpeg/whisper), then the
     system defaults. De-duped, absolute — nothing depends on a sourced shell profile at fire time.
+    ffmpeg-full's bin precedes `/opt/homebrew/bin` so lite `ffmpeg` never wins (no on-screen hook).
 
     The stable shim dir goes AHEAD of the which()-derived parent because which() answers from THIS
     process's PATH: under the keeper's baked plist PATH that re-derives the same stale pin forever
@@ -90,7 +97,12 @@ def _daemon_path() -> str:
         found = shutil.which(_bin)
         if found:
             parts.append(str(Path(found).parent))
-    parts += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    tail = []
+    full = _ffmpeg_full_dir()
+    if full:
+        tail.append(full)
+    tail += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    parts += tail
     seen: set[str] = set(); out: list[str] = []
     for p in parts:
         if p and p not in seen:
@@ -377,16 +389,27 @@ def ensure(cfg: Config) -> dict:
                 # unreadable. Exactly one kickstart per drift, then quiet until the fresh heartbeat clears it.
                 pid, age = _pump_pid_age_s()
                 settle = _adopt_settle_s(cfg)
+                from fanops.pipeline_run import run_held
                 if pid is not None and (age is None or age < settle):
                     _log.warning("ensure.kickstart_stale_code: pump pid=%s age=%ss < %ss settle (or unreadable) "
                                  "— skipping to avoid a restart storm (running=%s deployed=%s)",
                                  pid, age, settle, running, deployed)
+                elif run_held(cfg):
+                    # A live pass holds the run flock for the whole transcribe/produce — SIGTERM here
+                    # restarts whisper from zero and the operator sees a "stuck" stage that was not stuck.
+                    _log.warning("ensure.kickstart_stale_code: run flock held — skipping mid-pass SIGTERM "
+                                 "(running=%s deployed=%s)", running, deployed)
                 else:
                     _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
                                timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
                     _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
                     if action == "none":
                         action = "kickstart_stale_code"
+    ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
+    from fanops.errors import fail_open
+    with fail_open("ensure.refresh_daemon_strip"):
+        from fanops.health import refresh_daemon_strip_snapshot
+        refresh_daemon_strip_snapshot(cfg)                # keep Studio's strip fresh during a long pass
     return {"label": LABEL, "loaded": loaded, "action": action}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
@@ -445,6 +468,20 @@ def _install_keeper(cfg: Config) -> dict:
     write_text_atomic(kp, render_keeper_plist(cfg))
     return {"keeper_loaded": _load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
 
+def ensure_keeper_loaded(cfg: Config) -> bool:
+    """Re-bootstrap the keeper if its plist is on disk but launchd has dropped it.
+
+    The keeper cannot heal itself: it is the thing that is unloaded. The pump (KeepAlive resident)
+    calls this each loop tick; `ensure()` also calls it so a still-firing keeper is a no-op."""
+    if sys.platform != "darwin":
+        return False
+    kp = keeper_plist_path()
+    if not kp.exists():
+        return False
+    if _confirm_loaded(KEEPER_LABEL):
+        return True
+    return _load_plist(kp, KEEPER_LABEL)
+
 def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | None = None) -> dict:
     """Readiness for one host-level poll-timer sibling. plist-on-disk + not-loaded = ALARM."""
     if poll_interval_s is None:
@@ -454,11 +491,15 @@ def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | 
                 break
     installed = sibling_plist_path(label).exists()
     try:
-        r = _launchctl("list", label)
-        loaded = r.returncode == 0
-        pid = _grep_int(r.stdout, "PID") if loaded else None
+        # `print gui/UID/label` is the loaded probe (`_confirm_loaded`). `list label` is PID-only —
+        # a StartInterval job is loaded-and-idle with no PID, and list has been observed to miss it.
+        loaded = _confirm_loaded(label)
+        pid = None
+        if loaded:
+            r = _launchctl("list", label)
+            pid = _grep_int(r.stdout, "PID") if r.returncode == 0 else None
     except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
-        _log.warning("sibling_agent_status: launchctl list %s failed (%s)", label, exc)
+        _log.warning("sibling_agent_status: launchctl probe %s failed (%s)", label, exc)
         loaded, pid = False, None
     if not installed:
         verdict = "not installed"

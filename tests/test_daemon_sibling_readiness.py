@@ -10,10 +10,14 @@ from fanops import daemon, doctor
 
 def _fake_launchctl(**spec):
     def run(cmd, *a, **k):
-        label = cmd[2] if len(cmd) > 2 and cmd[1] == "list" else ""
         verb = cmd[1] if len(cmd) > 1 else ""
-        key = label if label in spec else verb
-        rc, out = spec.get(key, spec.get(verb, (0, "")))
+        if verb == "print" and len(cmd) > 2:
+            label = cmd[2].rsplit("/", 1)[-1]
+            rc, out = spec.get(label, spec.get("print", (0, "")))
+        elif verb == "list" and len(cmd) > 2:
+            rc, out = spec.get(cmd[2], spec.get("list", (0, "")))
+        else:
+            rc, out = spec.get(verb, (0, ""))
         return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
     return run
 

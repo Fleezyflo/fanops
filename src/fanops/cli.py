@@ -1797,6 +1797,8 @@ def _dispatch(cfg: Config, args) -> int:
                 cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
                 base_time = _fresh_run_base_time()
                 try:
+                    with fail_open("run.ensure_keeper_loaded"):
+                        daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
                     if (s := _cmd_run_pass(cfg, base_time)) is not None:
                         _heartbeat(cfg, s, origin="loop"); print(s)
                         from fanops.health import refresh_runtime_snapshots

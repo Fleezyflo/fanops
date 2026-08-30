@@ -91,6 +91,21 @@ def test_daemon_path_without_stable_claude_is_unchanged(tmp_path, monkeypatch):
     assert str(tmp_path / ".local" / "bin") not in daemon._daemon_path().split(":")
 
 
+def test_daemon_path_prefers_ffmpeg_full_over_lite_homebrew(monkeypatch):
+    monkeypatch.setattr(daemon, "_ffmpeg_full_dir", lambda: "/opt/homebrew/opt/ffmpeg-full/bin")
+    parts = daemon._daemon_path().split(":")
+    assert "/opt/homebrew/opt/ffmpeg-full/bin" in parts
+    assert "/opt/homebrew/bin" in parts
+    assert parts.index("/opt/homebrew/opt/ffmpeg-full/bin") < parts.index("/opt/homebrew/bin")
+
+
+def test_daemon_path_omits_ffmpeg_full_when_absent(monkeypatch):
+    monkeypatch.setattr(daemon, "_ffmpeg_full_dir", lambda: None)
+    parts = daemon._daemon_path().split(":")
+    assert "/opt/homebrew/opt/ffmpeg-full/bin" not in parts
+    assert "/opt/homebrew/bin" in parts
+
+
 def test_install_bootstraps_idempotently(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")

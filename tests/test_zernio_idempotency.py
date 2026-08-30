@@ -662,6 +662,15 @@ def test_52_connecttimeout_is_retried(tmp_path, monkeypatch):
     p = _publish(cfg, _post(), rec, monkeypatch)
     assert len(rec.calls) == 2 and p.state is PostState.submitted
 
+def test_52b_readtimeout_is_retried_as_idempotent_replay(tmp_path, monkeypatch):
+    # Same x-request-id: a ReadTimeout retry is a replay, not a second create. Parking on the first
+    # timeout left TikTok posts in needs_reconcile with a fanops_ token Zernio GET 400s on.
+    cfg = _cfg(tmp_path, monkeypatch)
+    rec = _Rec(requests.exceptions.ReadTimeout("blip"), _R(201, {"_id": "z1"}))
+    p = _publish(cfg, _post(), rec, monkeypatch)
+    assert len(rec.calls) == 2 and p.state is PostState.submitted
+    assert rec.rids[0] == rec.rids[1]
+
 def test_53_other_request_exception_parks_needs_reconcile(tmp_path, monkeypatch):
     # The body may have landed (the response, not the request, was lost) — never `failed`.
     cfg = _cfg(tmp_path, monkeypatch)

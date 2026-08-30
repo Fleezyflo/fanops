@@ -17,8 +17,11 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/controlio.py": ("tests/test_controlio.py",),
     "src/fanops/config_introspect.py": ("tests/test_config_verb.py",),
     "src/fanops/cli.py": ("tests/test_cli_wipe.py", "tests/test_cli_retire_source.py", "tests/test_source_lifecycle.py",
-                         "tests/test_cli.py"),
+                         "tests/test_cli.py", "tests/test_daemon_keeper.py"),
     "src/fanops/cutover_postiz.py": ("tests/test_cutover.py",),
+    "src/fanops/daemon.py": ("tests/test_daemon_plist.py", "tests/test_daemon_keeper.py",
+                             "tests/test_daemon_sibling_readiness.py", "tests/test_self_adopt.py",
+                             "tests/test_daemon_readiness.py"),
     "src/fanops/errors.py": ("tests/test_cli.py", "tests/test_swallow_ratchet.py"),
     "src/fanops/fanops_account_stats.py": ("tests/test_home_rebuild.py",),
     "src/fanops/framing.py": ("tests/test_smart_framing.py",),
@@ -40,6 +43,8 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/timing_bias.py": ("tests/test_culmination_coverage.py",),
     "src/fanops/transcribe.py": ("tests/test_transcribe.py", "tests/test_speech_trust.py"),
     "src/fanops/post/run.py": ("tests/test_post_run.py",),
+    "src/fanops/post/zernio.py": ("tests/test_zernio.py", "tests/test_zernio_idempotency.py"),
+    "src/fanops/post/postiz.py": ("tests/test_postiz.py", "tests/test_youtube_publish.py"),
     # zernio_outcome is the private Zernio create-result type; its behaviour is only meaningful as the
     # thing ZernioPoster maps onto the ledger, so it is covered where that mapping is proven.
     "src/fanops/post/zernio_outcome.py": ("tests/test_zernio_idempotency.py",),

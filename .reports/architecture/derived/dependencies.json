@@ -454,6 +454,7 @@
         "fanops",
         "fanops.controlio",
         "fanops.errors",
+        "fanops.health",
         "fanops.health_model",
         "fanops.pipeline_run"
       ],
@@ -3226,6 +3227,14 @@
       "from_level": 1,
       "jump": 1,
       "same_scc": false,
+      "to": "fanops.health",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
       "to": "fanops.pipeline_run",
       "to_level": 2
     },
@@ -3779,10 +3788,10 @@
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 596,
-    "lazy_edges": 372,
+    "lazy_edges": 373,
     "lazy_edges_lateral": 49,
-    "lazy_edges_strictly_upward": 71,
-    "lazy_edges_to_equal_or_higher_level": 120,
+    "lazy_edges_strictly_upward": 72,
+    "lazy_edges_to_equal_or_higher_level": 121,
     "modules": 140,
     "optional_edges": 0,
     "typing_only_edges": 7

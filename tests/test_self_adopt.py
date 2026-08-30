@@ -185,6 +185,23 @@ def test_storm_guard_lets_settled_pump_through(tmp_path, monkeypatch):
     assert res["action"] == "kickstart_stale_code"
 
 
+def test_no_kickstart_while_run_flock_held(tmp_path, monkeypatch):
+    # Settled PID + SHA drift would SIGTERM the pump — except a live pass holds the run flock
+    # (whisper / demucs). Kickstarting mid-pass is how a transcribe restarts from zero.
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (4321, 99999))
+    monkeypatch.setattr("fanops.pipeline_run.run_held", lambda cfg: True)
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls
+    assert res["action"] == "none"
+
+
 def test_kill_switch_blocks_drift_kickstart(tmp_path, monkeypatch):
     # FANOPS_AUTO_ADOPT=0 -> the whole drift branch is skipped even with drift present.
     cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)

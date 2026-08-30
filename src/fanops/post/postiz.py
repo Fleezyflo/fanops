@@ -439,10 +439,13 @@ class PostizPoster:
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
         # The payload's post_type is RENDERED from the post's own declaration — never guessed here.
-        # An undeclared row (post_type None/blank) is refused BEFORE any network; `_publish_one`
-        # lands it `failed` with ErrorKind.bad_payload (MOL-781).
+        # An undeclared IG row (post_type None/blank) is refused BEFORE any network; `_publish_one`
+        # lands it `failed` with ErrorKind.bad_payload (MOL-781). YouTube's DTO has no post_type
+        # (mint leaves None); refusing it failed every YouTube row at this gate.
         declared = (post.post_type or "").strip()
-        if not declared:
+        if post.platform is Platform.youtube:
+            declared = declared or "post"
+        elif not declared:
             raise ValueError(
                 f"{post.platform.value} post {post.id} reached publish with undeclared post_type "
                 f"— refusing to guess post|story"
