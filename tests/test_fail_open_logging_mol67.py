@@ -75,8 +75,8 @@ def test_demucs_env_narrowed_does_not_swallow_unrelated(tmp_path, monkeypatch):
         vocals._demucs_env()
 
 
-# ── 3. persona_directives.persona_facts — except -> store = None (cfg in scope) ──
-def test_persona_facts_logs_on_measurement_cache_read_error(tmp_path, monkeypatch):
+# ── 3. persona_directives.persona_facts — persona_facts does not read the measurement cache ──
+def test_persona_facts_does_not_read_measurement_cache(tmp_path, monkeypatch):
     from fanops import persona_directives
     cfg = _cfg(tmp_path)
 
@@ -93,9 +93,8 @@ def test_persona_facts_logs_on_measurement_cache_read_error(tmp_path, monkeypatc
         energy = None
 
     facts = persona_directives.persona_facts(cfg, _P())
-    assert set(facts) == {"length_band", "framing", "lead_tags", "terms"}   # fallback shape (cache unreadable)
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "personas" in log_text or "persona" in log_text          # logged before falling to store=None
+    assert set(facts) == {"length_band", "framing", "lead_tags", "terms"}
+    assert facts["lead_tags"] == []
 
 
 # (site 4 — meta_graph._read_queries, the local hashtag budget reader — is GONE with the budget fiction.)
