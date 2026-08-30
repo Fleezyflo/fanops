@@ -174,9 +174,8 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
     assert set(c.meta_captions) == {"a/instagram", "a/tiktok"}
 
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
-    # The operator rule: <=4 hashtags, HARD, and only PLATFORM-MEASURED tags (never random AI words).
-    # ingest must filter whatever the model returns through vet_hashtags before storing. With a cold
-    # measurement cache and no corpus, EVERY model pick dies and the line is honest-empty (no discovery pad).
+    # The operator rule: <=4 hashtags, HARD, and only source-lock members (never random AI words).
+    # ingest filters through ship_from_lock. Empty completed lock -> honest-empty (no discovery pad).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
@@ -607,7 +606,7 @@ def _accts(cfg, rows):
 def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
     # no accounts -> no lean/corpus; content is a CLIP-level signal so it still applies (the clip's own
     # transcript drives its tags regardless of accounts). The expected line carries that same content.
-    from fanops.hashtags import vet_hashtags
+    from fanops.hashtags import ship_from_lock
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])   # no accounts -> no lean
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -618,7 +617,7 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
         CaptionItem(surface="a/instagram", caption="c", hashtags=tags)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert mc == vet_hashtags(tags, Platform.instagram, "en")  # no lean; model picks not in content set
+    assert mc == ship_from_lock(tags, [])  # empty completed lock → no tags
 
 
 # ---- MOL-168 / AGENT-6: caption platform is REQUEST-record-authoritative; no tail-parse or instagram-coerce ----

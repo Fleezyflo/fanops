@@ -53,10 +53,9 @@ desktop = ["pywebview>=5"]
 compose = ["moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9"]
 # Accurate music transcription (the two biggest ASR-accuracy levers for rap/song): Demucs strips the
 # beat so Whisper reads the lyrics, not the instrumental; faster-whisper runs large-v3 (the proven
-# accuracy winner over turbo) at int8 so it's practical on CPU. OPTIONAL + lazy + FAIL-OPEN like the
-# others — `pip install -e .` stays free of both; only `.[asr]` pulls them (drags torch). Without the
-# extra, isolate_vocals returns RAW audio and transcribe falls back to the legacy `whisper` CLI, so a
-# no-[asr] install transcribes exactly as before. certifi ships the CA bundle (macOS model-download fix).
+# accuracy winner over turbo) at int8 so it's practical on CPU. OPTIONAL at install (drags torch) —
+# only `.[asr]` pulls them. REQUIRED at transcribe time: missing extra is SourceState.error, not a
+# whisper-CLI fallback. certifi ships the CA bundle (macOS model-download fix).
 asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi"]
 # Subject-aware reframe (smart framing): OpenCV detects the dominant face per cut window so the 9:16 crop
 # follows the subject instead of the blind top/center guess. OPTIONAL + lazy + FAIL-OPEN like the others —

@@ -4,14 +4,15 @@ RECONCILES them into content-addressed Moment units (upsert + cascade-delete of 
 moments' lineage), so amplify actually changes the set instead of silently no-opping (the
 v1 bug). No tiers, no quotas — the agent returns as many valid picks as are worth posting."""
 from __future__ import annotations
-import logging, math
+import logging, math, os
 from datetime import datetime, timezone
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Moment, MomentRequest, MomentDecision, MomentPick, MomentState, SourceState,
                            MomentHookRequest, MomentHookDecision)
 from fanops.ids import child_id
-from fanops.agentstep import write_request, write_response, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
+from fanops.agentstep import write_request, read_response, latest_request_id, discard_gates_for, discard_gate, clear_attempts, gate_keys_for
 from fanops.hookcheck import is_weak_hook
 from fanops.keyframes import extract_keyframes
 from fanops.clip import fit_window
@@ -21,7 +22,6 @@ from fanops.control import load_guidance
 from fanops.moment_hook_learning import proven_hook_styles
 from fanops.personas import hook_author_slot
 from fanops.accounts import AccountStatus
-import os
 
 _log = logging.getLogger("fanops.moments")
 
@@ -548,13 +548,112 @@ def _hook_personas_for_moment(m, accounts) -> list:
             return [_hook_persona_entry(a)]
     return []
 
+def _unhooked_decided(led: Ledger, source_id: str) -> list:
+    """Decided or clipped moments that never got a hook and were not ingest-stripped.
+    Skip leftovers render to clipped (hook=None) — PASS 2 still never authored; reopen them too."""
+    return [m for m in led.moments.values()
+            if m.parent_id == source_id
+            and m.state in (MomentState.decided, MomentState.clipped)
+            and not (m.hook or "").strip()
+            and not (m.hook_removed or "").strip()]
+
+
+def _fake_null_hook_answer(cfg: Config, source_id: str, m) -> bool:
+    """True when PASS 2 wrote hook=None onto disk (the old no-speech skip / author-null). A decided
+    hookless moment with NO gate file is a test/render fixture, not a skip leftover."""
+    dec = read_response(cfg, "moment_hooks", _hook_gate_key(source_id, m), MomentHookDecision)
+    return dec is not None and not (dec.hook or "").strip()
+
+
+def source_needs_asr_retry(led: Ledger, cfg: Config, source_id: str) -> bool:
+    """True when PASS 2 would only have frames+reason because the window has no trusted speech
+    AND vocal isolation never ran. Frames+reason are not a substitute — isolate+ASR must re-run
+    once. Missing media / already-retried / already-isolated → False (author opens with what exists)."""
+    src = led.sources.get(source_id)
+    if src is None or not cfg.isolate_vocals:
+        return False
+    if src.meta.get("vocals_isolated"):
+        return False
+    if not (src.source_path and os.path.exists(src.source_path)):
+        return False
+    from fanops.transcribe import asr_retry_marker, window_has_trusted_speech
+    stem = Path(src.source_path).stem
+    out = cfg.agent_io / "transcripts"
+    if (out / f"{stem}.mp3").exists() or asr_retry_marker(cfg, src.source_path).exists():
+        return False
+    for m in led.moments.values():
+        if m.parent_id != source_id:
+            continue
+        if m.state is MomentState.picked:
+            pass
+        elif m.state in (MomentState.decided, MomentState.clipped) and (
+                getattr(m, "hook_frames_unread", False)
+                or (not (m.hook or "").strip() and not (m.hook_removed or "").strip())):
+            pass
+        else:
+            continue
+        dur = src.duration or 0.0
+        hi = dur if dur > 0 else float("inf")
+        cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
+        if not window_has_trusted_speech(src, cs, ce):
+            return True
+    return False
+
+
+def source_needs_hook_pass(led: Ledger, cfg: Config, source_id: str) -> bool:
+    """True when PASS 2 still owes a hook: picks waiting, a skip/null answer still on disk,
+    or a hook authored without actually reading the attached frames."""
+    src = led.sources.get(source_id)
+    if src is None:
+        return False
+    if src.state is SourceState.picks_decided:
+        return True
+    if any(_fake_null_hook_answer(cfg, source_id, m) for m in _unhooked_decided(led, source_id)):
+        return True
+    return any(getattr(m, "hook_frames_unread", False)
+               for m in led.moments.values()
+               if m.parent_id == source_id and m.state is MomentState.decided)
+
+
+def _reopen_unhooked(led: Ledger, cfg: Config, source_id: str) -> int:
+    """Demote skip/null-hook and unread-frame decided moments back to picked and drop their
+    answers so request_moment_hooks can open a real author gate. Not a backfill job — PASS 2
+    was never done (null skip) or was not frame-grounded (unread)."""
+    n = 0
+    for m in _unhooked_decided(led, source_id):
+        if not _fake_null_hook_answer(cfg, source_id, m):
+            continue
+        discard_gate(cfg, "moment_hooks", _hook_gate_key(source_id, m))
+        led.set_moment_state(m.id, MomentState.picked)
+        n += 1
+    for m in list(led.moments.values()):
+        if m.parent_id != source_id or m.state is not MomentState.decided:
+            continue
+        if not getattr(m, "hook_frames_unread", False):
+            continue
+        discard_gate(cfg, "moment_hooks", _hook_gate_key(source_id, m))
+        led.moments[m.id] = m.model_copy(update={"hook_frames_unread": False})
+        led.set_moment_state(m.id, MomentState.picked)
+        n += 1
+    if n:
+        led.set_source_state(source_id, SourceState.picks_decided)
+        get_logger(cfg)("source", source_id, "hooks_reopened", count=n)
+    return n
+
+
 def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 request — open ONE frame-seeing hook gate per `picked` moment of this source. Each
     request carries the picked WINDOW + stills extracted over that window (fit_window — the same cut the
     renderer makes), plus the per-account personas + learned hook styles (the hook-authoring context that
     used to ride the single-pass gate). Write-ONCE per moment (guard: a request already on disk is never
     re-stamped, so an in-flight answer is never invalidated). The source stays `picks_decided`;
-    ingest_moment_hooks promotes it once every pick's hook has landed."""
+    ingest_moment_hooks promotes it once every pick's hook has landed.
+
+    A clip without a hook is not a valid completion. Speech-trust does not auto-answer hook=None.
+    Already-decided hookless moments (skip leftovers) and unread-frame hooks are reopened here.
+    The author gets a LIVE transcript excerpt (trust recomputed); frames+reason without words
+    defer the gate so isolate+ASR can re-run once."""
+    _reopen_unhooked(led, cfg, source_id)
     src = led.sources[source_id]
     # P6: each moment's hook author sees ONLY its owner (m.affinities[0]); persona-blind moments get no
     # personas key content -> the shared hook path (byte-identical fallback).
@@ -562,7 +661,8 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
     # flag is off / accounts is None / on any scorer error (fail-open).
     styles = proven_hook_styles(led, cfg, accounts)
     guidance = load_guidance(cfg)
-    from fanops.transcribe import window_has_trusted_speech
+    from fanops.transcribe import excerpt_for_window
+    retry = source_needs_asr_retry(led, cfg, source_id)
     for m in list(led.moments.values()):
         if m.parent_id != source_id or m.state is not MomentState.picked:
             continue
@@ -582,10 +682,18 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         else:
             peaks = env_peaks
         segs = list(m.segments) if m.segments else None
+        excerpt = excerpt_for_window(src, cs, ce)
+        if excerpt and excerpt != (m.transcript_excerpt or ""):
+            led.moments[m.id] = m.model_copy(update={"transcript_excerpt": excerpt})
+            m = led.moments[m.id]
+        if not excerpt and retry:
+            get_logger(cfg)("source", source_id, "hook_deferred_asr_retry", moment=m.id)
+            continue
         personas = _hook_personas_for_moment(m, accounts)
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
-                                    transcript_excerpt=m.transcript_excerpt, signal_score=m.signal_score,
+                                    transcript_excerpt=excerpt or m.transcript_excerpt,
+                                    signal_score=m.signal_score,
                                     language=src.language, guidance=guidance,
                                     clip_profile=cfg.clip_profile,
                                     frames=_window_frames(cfg, src, cs, ce, segments=segs),
@@ -593,12 +701,6 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         payload.pop("request_id", None)
         if styles:
             payload["learned_hooks"] = styles      # optional KEY (mirrors caption), not a model field
-        if not window_has_trusted_speech(src, cs, ce):
-            rid = write_request(cfg, kind="moment_hooks", key=key, payload=payload)
-            write_response(cfg, "moment_hooks", key,
-                           MomentHookDecision(hook=None, request_id=rid).model_dump_json(indent=2))
-            get_logger(cfg)("source", source_id, "hook_skipped_no_speech", moment=m.id)
-            continue
         write_request(cfg, kind="moment_hooks", key=key, payload=payload)
     return led
 

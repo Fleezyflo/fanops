@@ -4,7 +4,8 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
-from fanops.transcribe import whisper_cmd, fw_cmd, transcribe_source, _adopt_cached_transcript, _finalize_segments, _segment
+from fanops.transcribe import (whisper_cmd, fw_cmd, transcribe_source, _adopt_cached_transcript,
+                               _finalize_segments, _segment, adopt_transcript_keep_state)
 from tests.fixtures.speech_segments import LEGACY_EN, talk_seg
 
 def test_segment_passes_through_quality_metadata():
@@ -115,24 +116,16 @@ def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypat
     transcribe_source(led, cfg, "src_1")
     assert captured["cmd"][captured["cmd"].index("--language") + 1] == "ar"
 
-def test_transcribe_falls_back_to_whisper_cli_when_fw_unavailable(tmp_path, mocker):
-    # FAIL-OPEN: no faster-whisper (CI / air-gapped) -> degrade to the legacy `whisper` CLI (turbo),
-    # today's behavior, so transcription still works. Never an error just because the extra is absent.
+def test_transcribe_refuses_when_fw_unavailable(tmp_path, mocker):
     mocker.patch("fanops.transcribe._fw_available", return_value=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
-    assert captured["cmd"][0] == "whisper"                             # legacy CLI, not the runner
-    assert led.sources["src_1"].state is SourceState.transcribed
+    spy.assert_not_called()
+    assert led.sources["src_1"].state is SourceState.error
+    assert "[asr]" in (led.sources["src_1"].error_reason or "")
 
 def test_transcribe_uses_isolated_vocals_when_enabled(tmp_path, mocker, monkeypatch):
     # With isolation ON, transcribe_source strips the beat first and whisper transcribes the ISOLATED
@@ -269,12 +262,9 @@ def test_missing_json_goes_to_error_not_crash(tmp_path, mocker):
     assert "boom" in (led.sources["src_1"].error_reason or "")
     assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is True  # MOL-814: whisper-only
 
-def test_whisper_absent_goes_to_error_not_crash(tmp_path, mocker):
-    # whisper binary off PATH -> subprocess.run raises FileNotFoundError before the process
-    # starts (check=False only suppresses a nonzero RETURNCODE). Mirror the no-JSON branch:
-    # record SourceState.error gracefully with a clear "toolchain missing: whisper" reason,
-    # NOT an uncaught raise that the pipeline reports as an opaque "FileNotFoundError: whisper".
-    mocker.patch("fanops.transcribe._fw_available", return_value=False)   # legacy `whisper` CLI path
+def test_fwrun_absent_goes_to_error_not_crash(tmp_path, mocker):
+    # runner unspawnable -> subprocess.run raises FileNotFoundError before the process starts.
+    # Record SourceState.error, never an uncaught raise.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
@@ -283,7 +273,7 @@ def test_whisper_absent_goes_to_error_not_crash(tmp_path, mocker):
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=absent)
     led = transcribe_source(led, cfg, "src_1")     # must NOT raise
     assert led.sources["src_1"].state is SourceState.error
-    assert "toolchain missing: whisper" in (led.sources["src_1"].error_reason or "")
+    assert "toolchain missing:" in (led.sources["src_1"].error_reason or "")
     assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is False  # MOL-814: not whisper-only
 
 def test_transcribe_idempotent_when_already_done(tmp_path, mocker):
@@ -399,3 +389,44 @@ def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
     assert "whisper JSON malformed" in (s.error_reason or "")
     assert s.meta.get("transcribed") is not True   # a re-run actually retries
     assert s.meta.get("preserve_vocals_on_retry") is False  # MOL-814: deliberate asymmetry vs timeout/no-JSON
+
+
+def test_adopt_keep_state_does_not_rewind_picks_decided(tmp_path):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    js_dir = cfg.agent_io / "transcripts"
+    js_dir.mkdir(parents=True)
+    (js_dir / "vid.json").write_text(json.dumps({
+        "language": "en",
+        "segments": [talk_seg("new lyric line", start=0.0, end=2.0)],
+    }))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=path, state=SourceState.picks_decided,
+                          duration=10.0, language="en",
+                          transcript=[talk_seg("old", start=0.0, end=2.0)],
+                          meta={"transcribed": True}))
+    assert adopt_transcript_keep_state(led, cfg, "s1") is True
+    assert led.sources["s1"].state is SourceState.picks_decided
+    assert "new lyric" in led.sources["s1"].transcript[0]["text"]
+
+
+def test_transcribe_source_force_bypasses_idempotent_cache(tmp_path, mocker):
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    (cfg.agent_io / "transcripts").mkdir(parents=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps({
+        "language": "en", "segments": [talk_seg("cached", start=0.0, end=1.0)],
+    }))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path=path, state=SourceState.picks_decided,
+                          duration=10.0, meta={"transcribed": True}))
+    called = []
+    def fake(led, cfg, source_id, src, out_dir, model):
+        called.append(source_id)
+        return led
+    mocker.patch("fanops.transcribe._produce_transcript", side_effect=fake)
+    transcribe_source(led, cfg, "s1")
+    assert called == []                                    # transcribed=True, no force
+    transcribe_source(led, cfg, "s1", force=True)
+    assert called == ["s1"]                                # force re-runs isolate+ASR

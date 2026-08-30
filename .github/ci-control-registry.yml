@@ -51,21 +51,22 @@ controls:
     job: base-install
     branch_protection_context: "base install (no extras) refuses smart-framing"
 
+  - id: CI-TIMING
+    classification: advisory
+    workflow: .github/workflows/ci.yml
+    job: ci-timing
+
+  # ===== ci-e2e.yml =================================================================================
   - id: CI-E2E
     classification: scheduled
-    workflow: .github/workflows/ci.yml
+    workflow: .github/workflows/ci-e2e.yml
     job: e2e
     branch_protection_context: "real-tooling E2E (must run, not skip)"
 
   - id: CI-E2E-PIPAUDIT
     classification: scheduled
-    workflow: .github/workflows/ci.yml
+    workflow: .github/workflows/ci-e2e.yml
     job: e2e  # Audits the E2E toolchain environment without duplicating the large install
-
-  - id: CI-TIMING
-    classification: advisory
-    workflow: .github/workflows/ci.yml
-    job: ci-timing
 
   # ===== architecture.yml ===========================================================================
   - id: ARCH-IMPACT

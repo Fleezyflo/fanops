@@ -1,20 +1,11 @@
 """Drift guard: the fanops-hook-hashtag SKILL.md is DOCUMENTATION; the source of truth is the code
-(ship_from_lock for caption ship; Layer B / vet_hashtags constants still mirrored for honesty;
-prompts._hook_spec for hooks). The doc duplicates those values, so without a test it can silently
-drift from what actually runs. These tests parse the machine-readable DRIFT-GUARD blocks in
-SKILL.md and assert they match the code — mutate either side and this goes red.
-
-Caption ship is `ship_from_lock` (source lock only). AR floor / mega / store∪corpus are NOT the
-ship path — the skill must not teach them as consume/ship. Drift-guard blocks still mirror the
-legacy constants that exist for Layer B / vet_hashtags so those lists cannot silently rot."""
+(ship_from_lock for caption ship; prompts._hook_spec for hooks)."""
 import re
 from pathlib import Path
 from fanops.hashtags import (
     INT32_MEDIA_COUNT,
     MEGA_MEDIA_FLOOR,
-    MEGA_SLOT_MAX,
     MID_MEDIA_FLOOR,
-    _ARABIC,
 )
 from fanops.prompts import _hook_spec
 
@@ -31,7 +22,6 @@ _COMPOSITION = {
     "MEGA_MEDIA_FLOOR": int(MEGA_MEDIA_FLOOR),
     "MID_MEDIA_FLOOR": int(MID_MEDIA_FLOOR),
     "INT32_MEDIA_COUNT": int(INT32_MEDIA_COUNT),
-    "MEGA_SLOT_MAX": int(MEGA_SLOT_MAX),
 }
 
 # Old Part 2 4-slot recipe — any of these in Part 2 means the skill is teaching deleted composition.
@@ -66,12 +56,6 @@ def _operator_rule(n: int) -> str:
     return m.group(0)
 
 
-def _composition_floors() -> list[str]:
-    """Legacy Layer B AR list still mirrored in the drift guard. Sorted so the doc has ONE
-    canonical ordering to mirror."""
-    return sorted(set(_ARABIC))
-
-
 def _composition_constants() -> dict[str, int]:
     out: dict[str, int] = {}
     for ln in _guard_block("composition").splitlines():
@@ -82,11 +66,6 @@ def _composition_constants() -> dict[str, int]:
         assert sep, f"unparseable DRIFT-GUARD:composition line: {ln!r}"
         out[key.strip()] = int(raw.replace("_", "").strip())
     return out
-
-
-def test_skill_composition_floors_match_code():
-    doc_tags = re.findall(r"#\S+", _guard_block("hashtags"))
-    assert doc_tags == _composition_floors()       # doc list == the code's composition floors, in order
 
 
 def test_skill_hook_patterns_match_code():
@@ -115,7 +94,7 @@ def test_skill_part2_is_ship_from_lock_not_banded_composition():
     assert "ar region floor" not in part2 or "no** ar region" in part2 or "no ar region" in part2
     assert re.search(r"\bno\b.*\bar region floor\b|\bno\b.*\b_arabic\b", part2)
     assert re.search(r"\bno\b.*\bmega", part2)
-    assert "vet_hashtags" in part2  # named as legacy / not the posted line
+    assert "vet_hashtags" in part2 and "deleted" in part2
 
 
 def test_skill_caption_is_sentence_plus_tags_not_tag_line():

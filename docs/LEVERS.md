@@ -75,9 +75,9 @@ Then run `fanops lever docs` to regenerate this file.
 
 ## niche (stage: caption)
 
-**Does:** declared subject terms — the ONLY Layer A hashtag search roots (MOL-637); voice/levers stay on captions+hooks, not discovery
+**Does:** declared subject territory — not the caption menu; posted tags are the source lock; voice/levers stay on captions+hooks, not discovery
 
-Declared territory (`Persona.niche`) is the ONLY Layer A search root (MOL-637): `persona_research.persona_terms` returns niche only — voice/levers stay on captions+hooks. The measured corpus it derives then leads caption hashtags.
+Declared territory (`Persona.niche`) is identity, not the caption menu. `persona_research.persona_terms` returns niche only. Posted tags are `ship_from_lock` (source lock ∩ model picks, cap 4).
 
 
 ## ARCHETYPE CROSSWALK

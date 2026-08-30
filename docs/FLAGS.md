@@ -1,9 +1,10 @@
 # FanOps improvement-flag registry
 
-Per-account differentiation and closed-loop hashtag discovery ship **ON by default** — they are the system's
-purpose, not opt-ins. Each keeps a **legacy OFF code path** (an operator escape hatch) guarded by an env var and
-pinned by a **firewall test** that proves the OFF behavior stays correct. This page is the single source of truth
-for what each flag does, how to disable it, and which test guards its OFF contract.
+Per-account differentiation ships **ON by default** — it is the system's purpose, not an opt-in.
+Hashtag ticks remesure known sidecar names; they do not discover a persona corpus. Each flag keeps a
+**legacy OFF code path** (an operator escape hatch) guarded by an env var and pinned by a **firewall
+test** that proves the OFF behavior stays correct. This page is the single source of truth for what
+each flag does, how to disable it, and which test guards its OFF contract.
 
 > **Why this doc exists** (remediation-loop #15): the OFF paths are NOT parallel-code duplication — each flag
 > gates *entry* to a feature with an early return, and each has a dedicated firewall test. There was no code to
@@ -11,7 +12,7 @@ for what each flag does, how to disable it, and which test guards its OFF contra
 > firewall test exists. The flags' env-var leakage is also neutralized per-test by `tests/conftest.py`
 > (`_LEAKY_ENV`) so a value in the operator's repo `.env` never silently flips a unit test.
 
-## Default-ON flags (per-account differentiation + discovery)
+## Default-ON flags (per-account differentiation)
 
 | Flag | Env var (OFF) | Default | What ON does | What OFF restores |
 |---|---|---|---|---|

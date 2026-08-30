@@ -141,3 +141,32 @@ def test_grandfather_catalogued_untouched(tmp_path, mocker):
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.sources["legacy"].state is SourceState.catalogued and led.sources["legacy"].batch_id == "b-old"
+
+
+def test_bind_queue_defaults_blank_name(tmp_path, mocker):
+    cfg = Config(root=tmp_path); _put_video(cfg, mocker); _seed_accounts(cfg, ["a"])
+    actions.catalogue_inbox(cfg)
+    sid = next(iter(Ledger.load(cfg).sources))
+    res = actions.bind_queue(cfg, source_ids=[sid], batch_name="  ", target_accounts=["a"])
+    assert res.ok and res.detail["batch"].startswith("queue-")
+    b = Ledger.load(cfg).get_batch(res.detail["batch_id"])
+    assert b is not None and b.name.startswith("queue-")
+
+
+def test_prepare_binds_then_releases(tmp_path, mocker, monkeypatch):
+    """One POST: source_ids + accounts bind, then run_prepare releases bound pending."""
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path); _put_video(cfg, mocker, "a.mp4"); _put_video(cfg, mocker, "b.mp4")
+    _seed_accounts(cfg, ["a", "b"])
+    actions.catalogue_inbox(cfg)
+    sids = sorted(Ledger.load(cfg).sources)
+    mocker.patch("fanops.produce.run_all")
+    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
+    res = actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True,
+                              source_ids=[sids[0]], target_accounts=["a"])
+    assert res.ok and res.detail["released"] == 1 and res.detail.get("bound") == 1
+    led = Ledger.load(cfg)
+    assert led.sources[sids[0]].state is SourceState.catalogued
+    assert led.sources[sids[0]].batch_id is not None
+    assert led.get_batch(led.sources[sids[0]].batch_id).target_accounts == ["a"]
+    assert led.sources[sids[1]].state is SourceState.pending and led.sources[sids[1]].batch_id is None

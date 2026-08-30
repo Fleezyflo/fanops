@@ -265,7 +265,7 @@
     ],
     "fanops.reframe": [
       {
-        "line": 61,
+        "line": 60,
         "members": [
           "ALREADY_REFRAMED",
           "DRIFT",
@@ -626,7 +626,7 @@
           "selection_scope",
           "voice"
         ],
-        "line": 42,
+        "line": 36,
         "name": "Persona"
       }
     ]

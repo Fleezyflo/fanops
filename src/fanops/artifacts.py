@@ -190,6 +190,8 @@ def is_transient_error(reason: str | None) -> bool:
     r = reason.lower()
     if "toolchain missing" in r or "corrupt gate" in r:
         return False
+    if "produced no json" in r or "produced no transcript json" in r:
+        return False
     if "deterministic ceiling" in r or "attempt 3/3" in r:
         return False
     if "timeoutexpired" in r or "timed out" in r or "stagebusyerror" in r:
