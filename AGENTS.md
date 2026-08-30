@@ -26,6 +26,9 @@ Operator docs live in [README.md](README.md) — install, quickstart, the `fanop
 | Broad refactor `check.sh` cannot scope | `./scripts/check-full.sh` — full local parity, minutes |
 | Architecture gates | `python -m tools.arch [selftest\|ci\|impact\|regen]` |
 | CI registry gates | `python -m tools.ci` |
+| After push | `gh pr checks --watch` on the PR |
+
+**Do not dispatch workflows to verify a ticket.** Merge gate is PR checks only. E2E runs on the 04:00 UTC schedule via `ci-e2e.yml`.
 
 **Tests are CI-only.** Do not run `pytest` locally — parallel wave suites take the machine down. Claude Code refuses it via `permissions.deny` in `.claude/settings.json`; nothing refuses it in Cursor, so the rule is yours to keep. Write the tests with the change; GitHub CI on the PR executes them.
 

@@ -20,6 +20,7 @@ import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
 _CI_YML = _ROOT / ".github" / "workflows" / "ci.yml"
+_CI_E2E_YML = _ROOT / ".github" / "workflows" / "ci-e2e.yml"
 _E2E_LOCK = _ROOT / "requirements" / "ci-e2e.txt"
 
 # consumer step name -> (producer step id, the log it reads)
@@ -36,11 +37,13 @@ def _pinned(lock: str, name: str) -> bool:
 
 
 def _steps() -> dict[str, dict]:
-    doc = yaml.safe_load(_CI_YML.read_text(encoding="utf-8")) or {}
     out: dict[str, dict] = {}
-    for job in (doc.get("jobs") or {}).values():
-        for step in (job or {}).get("steps") or []:
-            if isinstance(step, dict) and step.get("name"): out[step["name"]] = step
+    for workflow in (_CI_YML, _CI_E2E_YML):
+        doc = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
+        for job in (doc.get("jobs") or {}).values():
+            for step in (job or {}).get("steps") or []:
+                if isinstance(step, dict) and step.get("name"):
+                    out[step["name"]] = step
     return out
 
 
@@ -58,7 +61,8 @@ def test_e2e_lock_pins_the_linux_only_whisper_closure():
 def test_log_reading_step_allowlists_its_producer_outcome(consumer):
     producer, log = _CONSUMERS[consumer]
     step = _steps().get(consumer)
-    assert step is not None, f"step {consumer!r} vanished from ci.yml — update _CONSUMERS"
+    assert step is not None, (
+        f"step {consumer!r} vanished from ci.yml and ci-e2e.yml — update _CONSUMERS")
     assert log in (step.get("run") or ""), f"{consumer!r} no longer reads {log}"
     cond = " ".join((step.get("if") or "").split())
     outcome = f"steps.{producer}.outcome"

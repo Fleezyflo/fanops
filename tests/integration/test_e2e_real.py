@@ -38,10 +38,10 @@ def _make_spoken_sample(dst: Path) -> bool:
     if not wav.exists():
         return False
     # wide source so the 9:16 crop path is exercised
-    # Full 6s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
+    # Full 8s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
     # validates. -shortest would clamp the clip to the ~1.6s TTS and make a 4s pick out-of-bounds.
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=6:size=1280x720:rate=30",
-                    "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "6", str(dst)],
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=8:size=1280x720:rate=30",
+                    "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "8", str(dst)],
                    check=False, capture_output=True)
     return dst.exists()
 
@@ -86,7 +86,7 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     rid = latest_request_id(cfg, "moments", pick_key)
     response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
-        picks=[{"start": 0.0, "end": 4.0, "reason": "the line", "transcript_excerpt": "they slept on me"}]
+        picks=[{"start": 0.0, "end": 6.5, "reason": "the line", "transcript_excerpt": "they slept on me"}]
     ).model_dump_json())
 
     # M1b: ingesting the pick lands picks_decided + opens the per-pick frame-seeing hook gate (real
