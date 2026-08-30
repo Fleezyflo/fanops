@@ -332,11 +332,13 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     # error still propagates (hydrate semantics unchanged). Breadcrumb via fail_open, never silent.
     loaded: dict = {}
     with fail_open("accounts._hydrate_from_personas"):
-        from fanops.personas import Personas
+        from fanops.personas import Personas, resolved_cut_spec
         loaded["reg"] = Personas.load(cfg)
+        loaded["resolved_cut_spec"] = resolved_cut_spec
     reg = loaded.get("reg")
     if reg is None:
         return                                       # corrupt/unreadable personas.json -> inline values stand
+    resolved_cut_spec = loaded.get("resolved_cut_spec")
     for acc in accts.accounts:
         per = _persona_for_account(acc, reg)
         if per is None:
@@ -351,6 +353,10 @@ def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
         acc.selection_scope = per.selection_scope
         acc.hook_angle = per.hook_angle
         acc.intensity = per.intensity
+        if resolved_cut_spec is not None:
+            _prof, _fr = resolved_cut_spec(per)
+            if _prof: acc.clip_profile = _prof; acc.persona_owns_profile = True
+            if _fr: acc.framing = _fr
         # M3e: the per-dimension directive OVERRIDES were retired — nothing to hydrate; the structured levers
         # (content_focus/selection_scope/hook_angle) above always compile the directives, the voice carries the register.
 

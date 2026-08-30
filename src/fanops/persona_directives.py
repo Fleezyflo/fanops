@@ -194,10 +194,14 @@ def _caption_fragments(p) -> list[dict]:
 
 
 def _cut_fragments(p) -> list[dict]:
-    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> framing
-    only (length bands are no longer compiled into the clip order)."""
+    """The CUT's pieces (M4 provenance), each tagged with the lever that DERIVES it: cut_policy -> the
+    length band + framing. Empty when neither derives (a global cut, or a carrier-pin-only cut with no levers)."""
     frags: list[dict] = []
-    _, d_fr = derive_cut_spec(p)
+    d_prof, d_fr = derive_cut_spec(p)
+    if d_prof:
+        from fanops.bands import band_for
+        b = band_for(d_prof)
+        frags.append({"source": "cut_policy", "text": f"{b.lo:g}-{b.hi:g}s ({d_prof}, derived from cut_policy)"})
     if d_fr:
         frags.append({"source": "cut_policy", "text": f"{d_fr} crop (derived from cut_policy)"})
     return frags
@@ -220,7 +224,9 @@ def compose_breakdown(cfg: Config, p) -> dict:
     caption = {"text": caption_directive(p), "override": False, "fragments": _caption_fragments(p)}
     pin_prof = (getattr(p, "clip_profile", None) or "").strip()
     res_prof, res_fr = resolved_cut_spec(p)               # carrier pin > derived > None — the SAME floor hydration applies
-    cut = {"band": "", "framing": res_fr,
+    from fanops.bands import band_for
+    band = band_for(res_prof or "")
+    cut = {"band": f"{band.lo:g}-{band.hi:g}s", "framing": res_fr,
            "source": ("persona" if pin_prof else ("derived" if res_prof else "global")),
            "fragments": _cut_fragments(p)}                # M4: the lever(s) that DERIVE the cut (cut_policy)
     facts = persona_facts(cfg, p)
@@ -282,10 +288,13 @@ def manifest(cfg: Config, p) -> list[dict]:
 def produces_summary(breakdown: dict) -> list[str]:
     """S7 — the operator-facing "what this persona PRODUCES" lead: an ordered clause list distilled from the
     SAME compose_breakdown detail (parity-guaranteed — no second resolver, so it can't drift from what the
-    pipeline runs), e.g. ['curiosity hooks']. Each clause is shown ONLY for a deliberately-configured
-    dimension: a global cut, an unset framing/angle, and hashtags (the source lock, not a persona compile)
-    are all SILENT — so an unconfigured persona yields []. Pure; reads only the passed dict, never the disk."""
+    pipeline runs), e.g. ['~8-15s clips', 'curiosity hooks']. Each clause is shown ONLY for a deliberately-
+    configured dimension: a global cut, an unset framing/angle, and hashtags (the source lock, not a persona
+    compile) are all SILENT — so an unconfigured persona yields []. Pure; reads only the passed dict, never the disk."""
     out: list[str] = []
+    cut = breakdown.get("cut") or {}
+    if cut.get("source") and cut.get("source") != "global" and cut.get("band"):
+        out.append(f"~{cut['band']} clips")
     angle = (breakdown.get("hook") or {}).get("angle")
     if angle:
         out.append(f"{angle} hooks")
@@ -293,9 +302,11 @@ def produces_summary(breakdown: dict) -> list[str]:
 
 
 def persona_facts(cfg: Config, p) -> dict:
-    """Transparency read: cut framing + niche terms. Caption hashtags are the source lock
+    """Transparency read: cut length band + framing + niche terms. Caption hashtags are the source lock
     (`ship_from_lock`), not a persona compile output — `lead_tags` is always []."""
+    from fanops.bands import band_for
     from fanops.persona_research import persona_terms
-    _, fr = resolved_cut_spec(p)
-    return {"length_band": "", "framing": fr, "lead_tags": [],
+    prof, fr = resolved_cut_spec(p)
+    band = band_for(prof)
+    return {"length_band": f"{band.lo:.0f}-{band.hi:.0f}s", "framing": fr, "lead_tags": [],
             "terms": persona_terms(p, cfg)}

@@ -53,13 +53,14 @@ def test_derived_when_unpinned():
 def test_global_when_bare():
     assert resolved_cut_spec(_p(voice="v")) == (None, None)
 
-def test_hydration_does_not_stamp_cut_spec(tmp_path):
+def test_hydration_stamps_cut_spec(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
     pid = add_persona(cfg, name="Storyteller", voice="v", cut_policy=["storytelling", "emotional"], niche=["hiphop"])
     link_persona(cfg, "@a", pid)
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.cut_policy == ["storytelling", "emotional"]
-    assert acc.clip_profile is None and acc.framing is None
+    assert acc.clip_profile == "long" and acc.framing == "top"
+    assert acc.persona_owns_profile is True
 
 def test_unlinked_account_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
@@ -73,13 +74,14 @@ def test_compose_breakdown_cut_source_three_way(tmp_path):
     assert compose_breakdown(cfg, pinned)["cut"]["source"] == "persona"
     assert compose_breakdown(cfg, _p(cut_policy=["storytelling"]))["cut"]["source"] == "derived"
     assert compose_breakdown(cfg, _p(voice="v"))["cut"]["source"] == "global"
-    assert compose_breakdown(cfg, _p(cut_policy=["storytelling"]))["cut"]["band"] == ""
+    assert compose_breakdown(cfg, _p(cut_policy=["storytelling"]))["cut"]["band"] == "28-45s"
 
-def test_voice_match_hydrates_levers_not_cut_spec(tmp_path):
+def test_voice_match_hydrates_levers_and_cut_spec(tmp_path):
     cfg = Config(root=tmp_path)
     voice = "music-blogger curator who champions craft."
     _accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": voice}])
     add_persona(cfg, name="Craft", voice=voice, cut_policy=["storytelling", "emotional"], niche=["hiphop"])
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.persona_id is None and acc.cut_policy == ["storytelling", "emotional"]
-    assert acc.clip_profile is None and acc.framing is None
+    assert acc.clip_profile == "long" and acc.framing == "top"
+    assert acc.persona_owns_profile is True

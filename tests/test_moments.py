@@ -404,6 +404,14 @@ def test_pick_request_carries_resolved_persona_spec(tmp_path):
     assert PERSONA_PICK_SPEC_KEYS <= set(payload["personas"][0])
     assert "signal_peaks" in payload["personas"][0]
 
+def test_per_account_request_clip_profile_is_owner(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
+    accts = _seed_pick_persona_accounts(cfg, "a")
+    led = request_moments(led, cfg, "src_1", accounts=accts)
+    payload = json.loads(request_path(cfg, "moments", "src_1.a").read_text())
+    assert payload["clip_profile"] == "short"
+    assert payload["personas"][0]["band"].startswith("8")
+
 def test_request_writes_one_gate_per_targeted_account(tmp_path):
     # Per-account isolation: N targeted accounts -> N gates keyed `{source_id}.{handle}`.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)

@@ -399,7 +399,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
                                 signal_peaks=persona_peaks,
                                 language=src.language,
                                 guidance=g,
-                                clip_profile=cfg.clip_profile,
+                                clip_profile=_owner_profile(cfg, a),
                                 personas=[pe],
                                 frames=frames).model_dump()
         payload.pop("request_id", None)
@@ -414,12 +414,11 @@ def _stamp_owner_spec(cfg: Config, owner: str | None, by_handle: dict) -> tuple[
     acct = by_handle.get(owner)
     if acct is None:
         return None, None
-    prof = cfg.resolve_clip_profile(acct)
+    from fanops.persona_directives import resolved_cut_spec
+    prof = _owner_profile(cfg, acct)
     pin_fr = (getattr(acct, "framing", None) or "").strip().lower()
-    if pin_fr in ("top", "center"):
-        fr = pin_fr
-    else:
-        fr = "top" if cfg.resolve_top_bias(acct) else "center"
+    _, derived_fr = resolved_cut_spec(acct)
+    fr = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(acct) else "center"))
     return prof, fr
 
 def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: list[MomentPick]) -> Ledger:

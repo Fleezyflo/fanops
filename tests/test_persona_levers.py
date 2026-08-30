@@ -186,7 +186,7 @@ def test_persona_facts_resolve_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                    hashtag_corpus=["#myscene"]))
-    assert f["length_band"] == ""
+    assert f["length_band"] == "16-26s"
     assert f["framing"] == "center"
     assert f["lead_tags"] == []                  # caption tags are the source lock, not persona compile
 
@@ -194,14 +194,14 @@ def test_persona_facts_default_length_when_unset(tmp_path):
     from fanops.personas import persona_facts
     cfg = Config(root=tmp_path)
     f = persona_facts(cfg, Persona(id="p", voice="v"))
-    assert f["length_band"] == "" and f["framing"] is None
+    assert f["length_band"] == "12-22s" and f["framing"] is None
 
 def test_personas_page_exposes_facts(tmp_path):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
     add_persona(cfg, name="P", voice="v", cut_policy=["storytelling"], niche=["hiphop"])   # M3d: derives long (28-45s)
     card = next(c for c in views.personas_page(cfg).personas if c.id == "p")
-    assert card.length_band == ""
+    assert card.length_band == "28-45s"
     assert isinstance(card.lead_tags, list)
 
 def test_personas_panel_renders_transparency_facts(tmp_path):
@@ -322,7 +322,7 @@ def test_legacy_energy_key_ignored_scope_unset(tmp_path):
     from fanops.personas import casting_directive, compose_breakdown
     assert "introspective" not in str(casting_directive(p))          # old energy=low clause gone; framing from focus
     d = compose_breakdown(cfg, p)
-    assert d["cut"]["framing"] == "top" and d["cut"]["band"] == ""
+    assert d["cut"]["framing"] == "top" and d["cut"]["band"] == "28-45s"
 
 
 def test_no_new_lever_family():

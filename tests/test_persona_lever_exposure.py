@@ -92,7 +92,7 @@ def test_breakdown_cut_and_tags_from_real_resolvers(tmp_path):
     cfg = Config(root=tmp_path)
     d = compose_breakdown(cfg, Persona(id="p", cut_policy=["punchlines", "emotional"],
                                        hashtag_corpus=["#myscene"]))
-    assert d["cut"]["band"] == "" and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
+    assert d["cut"]["band"] == "16-26s" and d["cut"]["framing"] == "center" and d["cut"]["source"] == "derived"
     assert d["tags"]["lead"] == []                         # posted tags are the source lock, not corpus leads
     assert "#myscene" in d["tags"]["corpus"]               # leftover field still copied for compose detail
     d2 = compose_breakdown(cfg, Persona(id="q", voice="v"))
@@ -106,8 +106,7 @@ def test_produces_summary_lists_configured_dimensions(tmp_path):
                 hashtag_corpus=["#myscene"])
     d = compose_breakdown(cfg, p)
     clauses = produces_summary(d)
-    joined = " · ".join(clauses)
-    assert "16-26s" not in joined and "clips" not in joined
+    assert "~16-26s clips" in clauses
     assert "curiosity hooks" in clauses
     assert not any("hashtag" in c for c in clauses)        # lead_tags is always []; corpus is not a caption menu
 
@@ -121,7 +120,7 @@ def test_produces_summary_hashtag_clause_needs_a_deliberate_posture(tmp_path):
     # length set but NO corpus -> the hashtag clause stays silent (the floor isn't a choice); clips still list.
     cfg = Config(root=tmp_path)
     clauses = produces_summary(compose_breakdown(cfg, Persona(id="p", voice="v", cut_policy=["storytelling"])))
-    assert not any("clips" in c for c in clauses)
+    assert any("clips" in c for c in clauses)
     assert not any("hashtag" in c for c in clauses)
 
 def test_produces_summary_is_embedded_in_breakdown_with_parity(tmp_path):

@@ -1,11 +1,10 @@
 """Duration-machine kill + omit pick poem — certification tests for the operator unit."""
 from __future__ import annotations
-import inspect
 import json
 
 import pytest
 
-from fanops.accounts import Accounts, Account, _hydrate_from_personas
+from fanops.accounts import Accounts, Account
 from fanops.bands import TALK, SHORT
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -27,19 +26,18 @@ def _write_accounts(cfg, accounts):
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
 
-# 1. Hydrate does not call derive_cut_spec; cut_policy does not stamp medium / 16–26.
-def test_hydrate_skips_derive_cut_spec(tmp_path):
+# 1. Hydrate stamps derived cut_spec from cut_policy (emotional → medium / top).
+def test_hydrate_stamps_derived_cut_spec(tmp_path):
     cfg = Config(root=tmp_path)
     pid = add_persona(cfg, name="Emo", voice="v", cut_policy=["emotional"], niche=["hiphop"])
     _write_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
-                           "status": "active", "persona_id": pid, "clip_profile": "talk"}])
-    src = inspect.getsource(_hydrate_from_personas)
-    assert "derive_cut_spec" not in src and "resolved_cut_spec" not in src
+                           "status": "active", "persona_id": pid}])
     accts = Accounts.load(cfg)
     a = accts.accounts[0]
+    assert a.clip_profile == "medium"
+    assert a.persona_owns_profile is True
+    assert a.framing == "top"
     assert a.cut_policy == ["emotional"]
-    assert a.clip_profile == "talk"          # account pin stands — not overwritten to medium
-    assert a.persona_owns_profile is False
 
 
 def test_fit_window_default_has_no_talk_floor():
@@ -136,15 +134,15 @@ def test_validate_pick_whole_source_shorter_than_band_is_ok():
     assert validate_pick(MomentPick(start=0.0, end=9.0, reason="r"), duration=9.0, band=TALK) is None
 
 
-# 6. produces_summary / compose contain no length-band tokens.
-def test_compose_and_produces_summary_no_length_tokens(tmp_path):
+# 6. produces_summary / compose include length-band tokens from cut_policy.
+def test_compose_and_produces_summary_include_length_tokens(tmp_path):
     cfg = Config(root=tmp_path)
     p = Persona(id="p", voice="v", cut_policy=["emotional", "storytelling"], hook_angle="curiosity",
                 hashtag_corpus=["#tag"])
     d = compose_breakdown(cfg, p)
     blob = json.dumps(d) + " ".join(produces_summary(d))
-    for token in ("8-15", "16-26", "12-22", "short", "medium", "talk"):
-        assert token not in blob
+    assert "28-45" in blob or "16-26" in blob
+    assert any("~" in s and "clips" in s for s in produces_summary(d))
 
 
 # 7. No new keys on Persona, Account, or Moment.
