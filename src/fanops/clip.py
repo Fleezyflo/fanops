@@ -10,7 +10,6 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
-from fanops.bands import TALK
 from fanops import overlay, frames, framing
 from fanops.log import get_logger
 from fanops.errors import ToolchainMissingError
@@ -24,12 +23,8 @@ _TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
 # every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
 _FFMPEG_TIMEOUT = 600.0
 
-# A real clip is watchable, not a 3-4s fragment. The model is asked for in-band windows
-# (prompts.moment_prompt); this is the render-time SAFETY NET that guarantees it even when a pick
-# comes back short (or long). The default band is TALK (12-22s); render_moment passes the per-source
-# band (band_for(cfg.clip_profile)) so a song gets the wider 18-35s band. Sources below the floor
-# render whole. The subtitle overlay uses the SAME fitted window. Band lives in fanops.bands (one home).
-_MIN_CLIP_S, _MAX_CLIP_S = TALK.lo, TALK.hi
+# Cut length is the picked moment. No talk/song/short floor or ceiling at render — fit_window
+# defaults are EOF-clamp only. Callers pass hi=source duration (or inf if unprobed).
 
 def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
     """Playable duration for platform-cap checks: rendered cut_seconds when set, else moment envelope."""
@@ -39,7 +34,7 @@ def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
     return None
 
 # How far (seconds) snap_window may move a cut edge to land on a transcript-line boundary. A small
-# nudge: it polishes mid-word starts / mid-phrase ends without overriding the band (fit_window's job).
+# nudge: it polishes mid-word starts / mid-phrase ends without inventing a length floor.
 _SNAP_MAX_SHIFT_S = 1.5
 
 def _nearest(value: float, candidates: list[float], max_shift: float) -> float | None:
@@ -56,7 +51,7 @@ def snap_window(start: float, end: float, transcript: list[dict] | None,
     ends mid-phrase: start -> nearest line `start`, end -> nearest line `end`, each only if within
     `max_shift` seconds (else that edge is left as-is). Returns the window UNCHANGED when there is no
     transcript, or when snapping would invert/empty it (snapped start >= snapped end). Pure; applied
-    AFTER fit_window so the band is enforced first, then the edges land on clean cuts. Lines missing
+    AFTER fit_window (EOF clamp only), then the edges land on clean cuts. Lines missing
     a numeric start/end are skipped (semi-trusted whisper output). Re-applies fit_window's bounds
     invariants the snap could break — a whisper line `start` can be slightly negative and a line `end`
     can overshoot the real EOF — so the snapped start is floored at 0 and the end is clamped to
@@ -72,12 +67,12 @@ def snap_window(start: float, end: float, transcript: list[dict] | None,
     return (s, e) if s < e else (start, end)
 
 def fit_window(start: float, end: float, duration: float,
-               *, lo: float = _MIN_CLIP_S, hi: float = _MAX_CLIP_S) -> tuple[float, float]:
-    """Fit a picked [start,end] to a lo..hi-second clip. In-band picks are returned unchanged. A
-    short pick grows forward from `start` (borrowing lead-in only when it would overrun EOF); a long
-    pick is trimmed to `hi` from `start`. A source shorter than `lo` yields the whole source. The
-    start is floored at 0; the end is EOF-clamped to `duration` when probed (duration<=0 means
-    unprobed -> grow/trim without an EOF clamp)."""
+               *, lo: float = 0.0, hi: float = float("inf")) -> tuple[float, float]:
+    """EOF-clamp a picked [start,end]. Default lo=0 / hi=inf: the pick is the cut, no length
+    floor or ceiling. A short pick grows forward from `start` only when a caller passes lo>0;
+    a long pick trims to `hi` from `start` only when hi is finite. A source shorter than `lo`
+    yields the whole source. The start is floored at 0; the end is EOF-clamped to `duration`
+    when probed (duration<=0 means unprobed -> grow/trim without an EOF clamp)."""
     length = end - start
     if lo <= length <= hi:
         return start, end
@@ -90,7 +85,7 @@ def fit_window(start: float, end: float, duration: float,
     return max(0.0, s), e
 
 # P1 T1 (strongest-frame cut start). How far the entry may shift to land on a stronger frame (a small
-# nudge, like snap_window's max_shift — never overrides the band), how many candidate frames to probe,
+# nudge, like snap_window's max_shift — never invents a length floor), how many candidate frames to probe,
 # the per-frame probe bound (keyframes.py idiom), and the minimum move to count as a real visual pick.
 _VSTART_MAX_SHIFT_S = 1.5
 _VSTART_CANDIDATES = 5
@@ -169,7 +164,7 @@ def _scene_score_near(scene_peaks, t: float) -> float:
 def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, out_dir) -> tuple[float, str]:
     """Refine the cut entry onto the strongest opening frame within a bounded shift. Returns
     (new_start, kind): kind="visual" when a stronger frame moved the start, else "transcript" (the
-    band/snap start is kept). The decision is CACHED in a per-(source,window) sidecar so the in-lock
+    snap start is kept). The decision is CACHED in a per-(source,window) sidecar so the in-lock
     commit pass adopts it with NO ffmpeg (Phase D); the lock-free pre-warm pays the probe cost once.
     Fail-open: any probe failure leaves the start unchanged. PURE selection lives in frames.py."""
     out = Path(out_dir)
@@ -950,7 +945,7 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
         hi = dur if dur > 0 else float("inf")
         cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)  # EOF clamp only — the picked moment
         cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)  # land on clean phrase boundaries
-        # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after band + snap) so the
+        # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after EOF clamp + snap) so the
         # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
         # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
         # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
@@ -1074,12 +1069,12 @@ def render_aspects_for(led: Ledger, cfg: Config, moment_id: str, *,
 
 def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt, profile: str,
                        hook: str, out_path: str, top_bias: bool = False) -> tuple[bool, float | None]:
-    """M2: an override account's OWN per-account CUT. Cut the SOURCE at `profile`'s band (its own LENGTH —
-    @short 8-15s, @long 28-45s off the SAME moment) and burn `hook` (top-third) in ONE ffmpeg pass, written
+    """M2: an override account's OWN per-account CUT. Same picked window as the shared clip (EOF
+    clamp only — no length floor) and burn `hook` (top-third) in ONE ffmpeg pass, written
     ATOMICALLY to out_path. Returns (True, realized_seconds=ce-cs) on success, (False, None) FAIL-OPEN (any
     ffmpeg/parse failure) — the caller then falls back to burn_hook_only on the shared clip, so the
     Render.path file always exists (P3: the realized seconds is recorded on Render.cut_seconds). Unlike
-    render_moment this writes to an ARBITRARY path with a SPECIFIC hook + band, mints NO Clip, and advances
+    render_moment this writes to an ARBITRARY path with a SPECIFIC hook, mints NO Clip, and advances
     NO moment (the shared Clip owns the moment anchor — §4 of the per-account plan). Mirrors render_moment's
     window math (fit_window + snap + visual-start) so the per-account cut opens on the same strong frame the
     shared clip does. The hook .ass is 0-based (build_ass(clip_start=0) — the -ss output is 0-based)."""

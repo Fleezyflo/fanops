@@ -33,9 +33,9 @@ def _stub_framing(monkeypatch, *, ct="talk", detect=_STATS, focus=None, track=No
 
 def _stamp(cfg, led, cid, *, focus=None, track=None, content_type=None, top_bias=None, ass=_OLD_ASS):
     m, src = led.moments["mom_1"], led.sources["src_1"]
-    from fanops.bands import band_for
-    band = band_for(clipmod._moment_profile(m, cfg))
-    cs, ce = clipmod.fit_window(m.start, m.end, src.duration, lo=band.lo, hi=band.hi)
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration)
     tb = clipmod._moment_top_bias(m, cfg) if top_bias is None else top_bias
     p = clipmod._render_fingerprint_payload(
