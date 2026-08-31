@@ -1039,6 +1039,26 @@ def test_error_kind_ignores_digits_in_error_reason():
     assert operator_error(p.error_reason, kind=classify_failure(p)) == "Network blip"
 
 
+def test_inflight_headline_from_token_provenance():
+    from fanops.studio.views_results import inflight_headline
+    fake = _fail_post("f", "x")
+    fake.submission_id = "fanops_abc"
+    assert inflight_headline(fake) == "No backend id — cannot fetch a link"
+    real = _fail_post("r", "x")
+    real.submission_id = "cmtgxb3ma000ep87wxbmawjms"
+    assert inflight_headline(real) == "Waiting for link"
+    none = _fail_post("n", "x")
+    none.submission_id = None
+    assert inflight_headline(none) == "No backend id — cannot fetch a link"
+
+
+def test_operator_error_no_permalink_is_not_published_waiting():
+    from fanops.studio.views_results import operator_error
+    raw = "publish_missing_url: backend returned submitted without a permalink — reconcile will back-fill"
+    assert operator_error(raw) != "Published — waiting for link."
+    assert operator_error("published_no_url parked") == "Published — waiting for link."
+
+
 def test_posted_library_failure_kind_filter(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)

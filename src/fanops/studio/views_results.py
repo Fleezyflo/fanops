@@ -67,6 +67,7 @@ class ScheduleRow:
     ready_reason: Optional[str] = None     # WHY (e.g. "ready — its own cut" | "hook drift …" | "render not finished")
     why_suggested: Optional[str] = None    # one plain sentence explaining the suggested time (account/platform/lead)
     bad_schedule: bool = False            # read-only: scheduled_time present but unparseable (M07 chip)
+    inflight_headline: str = ""           # inflight lane: token-provenance copy, not a hardcoded waiting-for-link
 
 
 @dataclass
@@ -210,7 +211,8 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
             caption=p.caption, variant_hook=_hook_for_post(led, p) or None,
-            bad_schedule=bool((p.scheduled_time or "").strip()) and schedule_utc(p.scheduled_time) is None)
+            bad_schedule=bool((p.scheduled_time or "").strip()) and schedule_utc(p.scheduled_time) is None,
+            inflight_headline=inflight_headline(p) if lane == "inflight" else "")
         if editable:
             row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
@@ -337,7 +339,14 @@ class InflightWatchRow:
     # id OF this post", a candidate means "a record the backend holds that MIGHT be this post". Only the
     # operator can close that gap, so the UI must not let the two read alike.
     reconcile_candidate_id: Optional[str] = None
+    inflight_headline: str = ""
 
+
+def inflight_headline(post) -> str:
+    from fanops.models import is_real_submission_id
+    if is_real_submission_id(getattr(post, "submission_id", None)):
+        return "Waiting for link"
+    return "No backend id — cannot fetch a link"
 
 
 def _schedule_needs_suggestion(scheduled_time: Optional[str], now: datetime) -> bool:
@@ -397,7 +406,8 @@ def inflight_watch(led: Ledger, cfg: Config, *, account: Optional[str] = None,
                                     state=p.state.value, submission_id=p.submission_id,
                                     error_reason=(p.error_reason or "")[:80] or None,
                                     age_minutes=age, since_iso=since,
-                                    reconcile_candidate_id=getattr(p, "reconcile_candidate_id", None)))
+                                    reconcile_candidate_id=getattr(p, "reconcile_candidate_id", None),
+                                    inflight_headline=inflight_headline(p)))
     out.sort(key=lambda r: (-r.age_minutes, r.post_id))
     return out
 
@@ -566,6 +576,7 @@ class PostedRow:
     raw_state: Optional[str] = None         # ledger PostState.value for detail rows
     failure_kind: Optional[str] = None      # failed rows: rate_limit | oversize | bad_payload | transient | unknown
     is_archived: bool = False               # R2: row from 06_published/ supplement (read-only, no repost/crosspost)
+    inflight_headline: str = ""
 
 
 _FAILURE_KINDS = ("rate_limit", "oversize", "bad_payload", "transient", "unknown")
@@ -591,7 +602,7 @@ def operator_error(msg: str | None, *, kind: str | None = None) -> str:
         return ""
     clean = msg.strip()
     low = clean.lower()
-    if "published_no_url" in low or "no permalink" in low or "no_url" in low:
+    if "published_no_url" in low:
         return "Published — waiting for link."
     if "not live" in low or "dryrun" in low:
         return "Publishing is off until you go live."
@@ -726,7 +737,8 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
                       variant_hook=_hook_for_post(led, p) or None,
                       posted_via=classify_post_delivery(p), submission_id=p.submission_id,
                       error_reason=(p.error_reason or "")[:120] or None, raw_state=p.state.value,
-                      failure_kind=classify_failure(p) if p.state in (PostState.failed, PostState.error) else None) for p in posts]
+                      failure_kind=classify_failure(p) if p.state in (PostState.failed, PostState.error) else None,
+                      inflight_headline=inflight_headline(p)) for p in posts]
 
 
 def posted_archive_rows(cfg: Config, *, ledger_ids: set[str] | None = None) -> list[PostedRow]:

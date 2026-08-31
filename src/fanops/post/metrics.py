@@ -225,6 +225,16 @@ class PostizStatusClient:
             if r.get("errorMessage") is not None:
                 rec["errorMessage"] = r.get("errorMessage")
             out.setdefault(r["id"], rec)
+        from fanops.postiz_lifecycle import local_postiz_errors
+        extra = local_postiz_errors(self.cfg, list(out))
+        for sid, raw in extra.items():
+            rec = out.get(sid)
+            if rec is None or rec.get("error") is not None or rec.get("errorMessage") is not None:
+                continue
+            rec["error"] = raw
+            msg = poster_fail_reason(raw)
+            if msg:
+                rec["errorMessage"] = msg
         return out
 
     def list_all(self) -> dict[str, dict]:

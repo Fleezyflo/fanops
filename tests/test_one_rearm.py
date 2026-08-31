@@ -26,7 +26,7 @@ def test_four_public_rearm_entry_points_survive():
 
 
 def test_one_rearm_body_owner():
-    """P1: the three-field re-arm write lives in exactly one helper; four callers use it."""
+    """P1: the three-field re-arm write lives in exactly one helper; paced rate-limit retry lives in run.py."""
     funcs = _funcs()
     assert "_rearm_to_queued" in funcs, "missing sole re-arm write owner"
     helper = funcs["_rearm_to_queued"]
@@ -36,6 +36,7 @@ def test_one_rearm_body_owner():
     assert "error_reason=None" in helper_src
     assert "submission_id" in helper_src
     # no other function in this file may call set_post_state(..., PostState.queued, ...)
+    # retry_rate_limited_failures delegates to post.run (paced); three remaining verbs re-arm here.
     queued_owners = []
     for name, node in funcs.items():
         for sub in ast.walk(node):
@@ -50,7 +51,7 @@ def test_one_rearm_body_owner():
     # four call sites
     calls = [n for n in ast.walk(_TREE)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_rearm_to_queued"]
-    assert len(calls) == 4, f"expected 4 _rearm_to_queued call sites, got {len(calls)}"
+    assert len(calls) == 3, f"expected 3 _rearm_to_queued call sites, got {len(calls)}"
 
 
 def test_refuse_retired_sole_can_promote_and_no_retired_enum():

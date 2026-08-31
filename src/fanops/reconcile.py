@@ -81,30 +81,40 @@ def _capture_poll_exc(results: dict, sid: str, exc: BaseException) -> None:
 
 
 def _apply_age_terminal(post, now) -> dict | None:
-    """RC-2 (S04): the un-strand escalation, as a PURE FUNCTION OF (state, age).
+    """Age ladder as a PURE FUNCTION OF (state, age, token provenance). Two rungs, unpollable close first.
 
-    It consults NEITHER this pass's observation, NOR the token's provenance (fake vs real), NOR
-    error_reason — the three incidental conditions the old ladder gated on, each of which could veto
-    the move on its own: a raising poll `continue`d before ever reaching it; `_is_fake_token`
-    excluded every real backend id; a stale `error_reason` suppressed the visit from pass one.
-    reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it
+    It consults NEITHER this pass's observation NOR error_reason — a raising poll `continue`d before
+    ever reaching it, and a stale `error_reason` used to suppress the visit from pass one. Token
+    provenance (fake vs real) IS consulted: a birth token will never answer, a real backend id still
+    can. reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it
     cannot move a post out of the in-flight-submit lane, nothing can.
 
     Returns {"update": <model_copy update>, "log": <event>} to apply+log, or None when the post is
-    not past the deadline. The predicate is the WHOLE of it — (state, age), nothing else:
+    not past the deadline:
 
-      submitting + age > _SUBMITTING_ESCALATE_AFTER (24h) -> needs_reconcile (still observed, the
-                                                             digest's reconcile column owns it,
-                                                             never re-queueable)
+      not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
+          (submitting/submitted/needs_reconcile)
+          -> failed + ErrorKind.unknown (a birth token cannot be polled; inflight only while a
+             future observation can resolve it; unknown so the daemon cannot auto-retry a fanops_ id)
 
-    That is the ONLY rung, deliberately. The give-up rung this function used to carry declared a
-    post lost purely because it was old — a verdict about a backend it had not heard from, written
-    into `error_reason` where three substring parsers read it. Postiz's row now answers the
-    question, so no age needs to guess at it."""
+      remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
+          -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
+
+    The deleted give-up rung that age-failed a REAL backend id stays deleted: waiting is not failing
+    when the backend can still answer."""
     age = _parked_age(post, now)
     if age is None:
         return None                                       # no measurable deadline -> never a false escalation
     hrs = int(age.total_seconds() // 3600)
+    real = is_real_submission_id(getattr(post, "submission_id", None))
+    if (not real) and age > _SUBMITTING_ESCALATE_AFTER and post.state in (
+            PostState.submitting, PostState.submitted, PostState.needs_reconcile):
+        return {"update": {"state": PostState.failed,
+                           "error_kind": ErrorKind.unknown,
+                           "error_reason": (f"unpollable birth token closed after {hrs}h — "
+                                            "backend will never answer fanops_*; verify on the "
+                                            "channel before retry (retry may double-post)")[:400]},
+                "log": "closed: unpollable->failed"}
     if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
         return {"update": {"state": PostState.needs_reconcile,
                            "error_reason": (f"escalated submitting->needs_reconcile after {hrs}h "

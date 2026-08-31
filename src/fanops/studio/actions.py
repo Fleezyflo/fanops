@@ -1093,32 +1093,27 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
 
 
 def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit", stagger_min: int = 2) -> ActionResult:
-    """Queue all failed posts whose error_reason is a rate-limit (429) for daemon retry."""
+    """Pace 429 retries through the same one-per-integration daemon helper. stagger_min is ignored."""
+    from fanops.post.run import _requeue_rate_limited_for_daemon
     from fanops.studio.views_results import classify_failure
-    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
-           if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
-    if not ids:
-        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
-    retried: list[str] = []; skipped_retired: list[str] = []
-    now = _now(None)
+    led = Ledger.load(cfg)
+    skipped_retired = [pid for pid, p in led.posts.items()
+                       if p.state in (PostState.failed, PostState.error)
+                       and classify_failure(p) == "rate_limit"
+                       and _refuse_retired(cfg, led, p)]
+    candidates = [pid for pid, p in led.posts.items()
+                  if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
     try:
-        with Ledger.transaction(cfg) as led:
-            for i, pid in enumerate(ids):
-                p = led.posts.get(pid)
-                if p is None or p.state not in (PostState.failed, PostState.error):
-                    continue
-                if _refuse_retired(cfg, led, p):
-                    skipped_retired.append(pid); continue
-                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                _rearm_to_queued(led, pid)
-                retried.append(pid)
+        n = _requeue_rate_limited_for_daemon(cfg)
     except Exception as exc:
         get_logger(cfg)("recover", "-", "retry_rate_limit_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
+    after = Ledger.load(cfg)
+    retried = [pid for pid in candidates if after.posts[pid].state is PostState.queued]
     if retried:
-        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "skipped_retired": len(skipped_retired),
-                                          "post_ids": retried, "outcome": "retried_rate_limit", "stagger_min": stagger_min})
+        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=n)
+    return ActionResult(ok=True, detail={"retried": n, "skipped_retired": len(skipped_retired),
+                                          "post_ids": retried, "outcome": "retried_rate_limit"})
 
 
 
