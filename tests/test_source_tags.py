@@ -711,10 +711,13 @@ def test_lock_ready_sources_no_whisper_errors_no_stamp(tmp_path):
     from fanops.models import Source, SourceState
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
+    # Newest-first: visit no-whisper src_1 first so no_transcript logs, then lock src_2.
     led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_2", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "b")
     lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]},
@@ -975,9 +978,11 @@ def test_lock_ready_after_quota_on_a_tries_b(tmp_path):
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "a")
     _write_whisper(cfg, "b")
@@ -1159,9 +1164,11 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "a")
     _write_whisper(cfg, "b")
