@@ -28,12 +28,14 @@ this module makes none.
 Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
 idempotency token (submission_id="fanops_..."), which is not a real backend id, so such a post can
 never appear in a Postiz window and is never a Zernio GET key. It is never mirrored and never
-carries a postiz_state, but it IS still visited, so the (state, age) escalation can move a
-crash-stranded `submitting` claim into `needs_reconcile`. A post with genuinely NO submission_id
-at all (older data) is SKIPPED for human reconcile (the digest surfaces it). A real backend id
-from an ambiguous-5xx body overwrites the token, making that post cleanly auto-reconcilable. We
-never guess a post's fate — a wrong guess either drops a live post (untrackable) or re-queues a
-live one (double-publish), the exact C1/cascade hazards.
+carries a postiz_state, but it IS still visited, so the (state, age) ladder can close an unpollable
+token (failed/unknown past 24h — I5) or move a crash-stranded real-id `submitting` claim into
+`needs_reconcile`. A post with genuinely NO submission_id at all (older data) is SKIPPED for human
+reconcile (the digest surfaces it). A real backend id from an ambiguous-5xx body overwrites the
+token, making that post cleanly auto-reconcilable. We never guess a post's fate from a missing
+backend row — a wrong guess either drops a live post (untrackable) or re-queues a live one
+(double-publish), the exact C1/cascade hazards. A birth token is not a missing row; it will never
+answer, so past the deadline it leaves inflight.
 
 A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass. A TRANSPORT
 failure is a log line and nothing else: a failed bulk fetch mirrors nobody this pass, and a failed
@@ -50,14 +52,12 @@ from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
 from datetime import datetime, timezone, timedelta
 
-# XC-1: a `submitting` post still un-resolvable this long past its schedule is a crash-stranded CLAIM
-# (post/run.py marks submitting + persists BEFORE the network; a mid-network crash leaves it here, and
-# publish_due never re-drives a non-`queued` post). Escalate it to needs_reconcile so the digest's reconcile
-# column owns it instead of a perpetual in-flight-submit. 6h covers any real slow submit; 24h is unambiguous.
-# This is the ONE remaining age-driven write, and it is a state MOVE between two non-re-queueable states —
-# it decides nothing about whether the post is live. There is no longer any age at which the system declares
-# a post lost: waiting is not failing, and a post the backend has not resolved is LATE (a fact the digest
-# derives from the row and the schedule on every read), never terminal.
+# XC-1 / I5: a parked post still un-resolvable this long past its schedule leaves the in-flight-submit
+# lane. 6h covers any real slow submit; 24h is unambiguous. Two age-driven writes:
+#   unpollable (not a real backend id) inflight → failed/unknown (I5 close; never GET, never auto-retry)
+#   real-id submitting → needs_reconcile (still observed; never re-queueable)
+# A real backend id is NEVER age-failed: waiting is not failing, and a post the backend has not resolved
+# is LATE (digest-derived from the row and the schedule on every read), never terminal.
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
 # Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
@@ -81,30 +81,40 @@ def _capture_poll_exc(results: dict, sid: str, exc: BaseException) -> None:
 
 
 def _apply_age_terminal(post, now) -> dict | None:
-    """RC-2 (S04): the un-strand escalation, as a PURE FUNCTION OF (state, age).
+    """Age ladder as a PURE FUNCTION OF (state, age, token provenance). Two rungs, unpollable close first.
 
-    It consults NEITHER this pass's observation, NOR the token's provenance (fake vs real), NOR
-    error_reason — the three incidental conditions the old ladder gated on, each of which could veto
-    the move on its own: a raising poll `continue`d before ever reaching it; `_is_fake_token`
-    excluded every real backend id; a stale `error_reason` suppressed the visit from pass one.
-    reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it
+    It consults NEITHER this pass's observation NOR error_reason — a raising poll `continue`d before
+    ever reaching it, and a stale `error_reason` used to suppress the visit from pass one. Token
+    provenance (fake vs real) IS consulted: a birth token will never answer, a real backend id still
+    can. reconcile is the SOLE reader of `submitting` (publish_due iterates `queued` only), so if it
     cannot move a post out of the in-flight-submit lane, nothing can.
 
     Returns {"update": <model_copy update>, "log": <event>} to apply+log, or None when the post is
-    not past the deadline. The predicate is the WHOLE of it — (state, age), nothing else:
+    not past the deadline:
 
-      submitting + age > _SUBMITTING_ESCALATE_AFTER (24h) -> needs_reconcile (still observed, the
-                                                             digest's reconcile column owns it,
-                                                             never re-queueable)
+      not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
+          (submitting/submitted/needs_reconcile)
+          -> failed + ErrorKind.unknown (I5: a birth token cannot be polled; inflight only while a
+             future observation can resolve it; unknown so the daemon cannot auto-retry a fanops_ id)
 
-    That is the ONLY rung, deliberately. The give-up rung this function used to carry declared a
-    post lost purely because it was old — a verdict about a backend it had not heard from, written
-    into `error_reason` where three substring parsers read it. Postiz's row now answers the
-    question, so no age needs to guess at it."""
+      remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
+          -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
+
+    The deleted give-up rung that age-failed a REAL backend id stays deleted: waiting is not failing
+    when the backend can still answer."""
     age = _parked_age(post, now)
     if age is None:
         return None                                       # no measurable deadline -> never a false escalation
     hrs = int(age.total_seconds() // 3600)
+    real = is_real_submission_id(getattr(post, "submission_id", None))
+    if (not real) and age > _SUBMITTING_ESCALATE_AFTER and post.state in (
+            PostState.submitting, PostState.submitted, PostState.needs_reconcile):
+        return {"update": {"state": PostState.failed,
+                           "error_kind": ErrorKind.unknown,
+                           "error_reason": (f"unpollable birth token closed after {hrs}h — "
+                                            "backend will never answer fanops_*; verify on the "
+                                            "channel before retry (retry may double-post)")[:400]},
+                "log": "closed: unpollable->failed"}
     if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
         return {"update": {"state": PostState.needs_reconcile,
                            "error_reason": (f"escalated submitting->needs_reconcile after {hrs}h "
@@ -845,18 +855,18 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
 
 
 def report_terminals(led: Ledger, now: Optional[datetime] = None) -> list[dict]:
-    """REPORT-ONLY: for every reconcilable post, what the (state, age) escalation WOULD write THIS pass —
+    """REPORT-ONLY: for every reconcilable post, what the (state, age) ladder WOULD write THIS pass —
     consulting the SAME `_apply_age_terminal` the live pass uses, but WRITING NOTHING.
 
-    TWO kinds of row, one shape (`post_id`/`state`/`event`/`would_set_state`/`reason`), escalations first:
+    TWO kinds of row, one shape (`post_id`/`state`/`event`/`would_set_state`/`reason`), writes first:
 
-      escalation — the one surviving ladder rung (submitting -> needs_reconcile). `would_set_state`
-                   DIFFERS from `state`: this WOULD write.
-      lateness   — `pending_lateness` below. `would_set_state` EQUALS `state`: nothing would write, the
-                   row is here so the preview shows the pending posts the backend has stopped resolving
-                   instead of leaving them invisible until an operator goes looking.
+      write    — a ladder rung would write (`would_set_state` DIFFERS from `state`): I5 unpollable
+                 close (fanops_ → failed/unknown) or submitting→needs_reconcile (real id only).
+      lateness — `pending_lateness` below. `would_set_state` EQUALS `state`: nothing would write, the
+                 row is here so the preview shows the pending posts the backend has stopped resolving
+                 instead of leaving them invisible until an operator goes looking.
 
-    An empty list means the escalation would write nothing AND nothing pending is past its schedule."""
+    An empty list means the ladder would write nothing AND nothing pending is past its schedule."""
     now = now or datetime.now(timezone.utc)
     out: list[dict] = []
     for post in led.posts.values():
