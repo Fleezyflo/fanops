@@ -11,7 +11,7 @@ from fanops.ledger import Ledger
 from fanops.models import MomentPick
 from fanops.moments import validate_pick, _persona_entry, _pick_personas, request_moment_hooks
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
-from fanops.prompts import moment_pick_prompt, _target_pick_count
+from fanops.prompts import moment_pick_prompt
 from fanops.clip import render_moment, fit_window
 from tests.test_moments import _src
 
@@ -93,10 +93,10 @@ def test_moment_pick_prompt_has_no_seconds_target():
                             "language": "en", "guidance": "", "clip_profile": "song"})
     low = p.lower()
     for forbidden in ("12-22", "18-35", "8-15", "16-26", "28-45", "target ", "band=",
-                      "short source", "whole source", "6 seconds"):
+                      "short source", "whole source", "6 seconds", "no fixed duration",
+                      "8s", "30s", "stingy", "up to", "align with a transcript line"):
         assert forbidden not in low
-    assert "no fixed duration" in low
-    assert "complete moment" in low
+    assert "verse" in low and "chorus" in low and "exchange" in low and "consecutive" in low
 
 
 def test_moment_pick_prompt_keeps_lens_omits_band(tmp_path):
@@ -126,12 +126,10 @@ def test_pick_personas_opens_gates_without_directive(tmp_path):
 
 
 def test_target_pick_count_is_ceiling_only():
-    src = inspect.getsource(_target_pick_count)
-    assert "band" not in src and "span" not in src
-    assert _target_pick_count(0.0) == 0
-    assert _target_pick_count(10.0) == 30
-    assert _target_pick_count(60.0) == 30
-    assert _target_pick_count(700.0) == 30
+    import fanops.prompts as pmod
+    assert not hasattr(pmod, "_target_pick_count")
+    assert not hasattr(pmod, "_MAX_TARGET_PICKS")
+    assert "_target_pick_count" not in inspect.getsource(moment_pick_prompt)
 
 
 def test_validate_pick_admits_short_complete_window():

@@ -6,26 +6,10 @@ import inspect
 from pathlib import Path
 from fanops.config import Config
 from fanops import persona_levers as pl
-from fanops import moments, prompts
+from fanops import moments
 from fanops.personas import baked_personas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _def_line(obj, fallback: str) -> str:
-    """`module.py:line` for a function or module attribute (threshold edit pointer)."""
-    try:
-        if inspect.isfunction(obj) or inspect.ismethod(obj):
-            return f"{obj.__module__.replace('.', '/')}.py:{inspect.getsourcelines(obj)[1]}"
-        mod = inspect.getmodule(obj)
-        if mod and hasattr(obj, "__name__"):
-            _, line = inspect.getsourcelines(mod)
-            for i, row in enumerate(inspect.getsourcelines(mod)[0], start=line):
-                if f"{obj.__name__}" in row and "=" in row:
-                    return f"{mod.__name__.replace('.', '/')}.py:{i}"
-    except (OSError, TypeError):
-        pass
-    return fallback
 
 
 def _mod_const_line(mod, name: str) -> str:
@@ -148,12 +132,6 @@ def render_thresholds(cfg: Config) -> str:
     rows.append(f"| `_MAX_OVERLAP_FRAC` | {moments._MAX_OVERLAP_FRAC} | two picks overlapping more than this fraction "
                 f"of the shorter span are deduped | fewer near-duplicate picks survive | more overlap allowed | "
                 f"`{_mod_const_line(moments, '_MAX_OVERLAP_FRAC')}` |")
-    rows.append(f"| `_MAX_TARGET_PICKS` | {prompts._MAX_TARGET_PICKS} | per-persona pick ceiling in the moment prompt | "
-                f"model may aim for more picks on long sources | fewer picks requested | "
-                f"`{_mod_const_line(prompts, '_MAX_TARGET_PICKS')}` |")
-    rows.append(f"| `_target_pick_count` | ceiling `{prompts._MAX_TARGET_PICKS}` on a probed source (0 if unprobed) | "
-                f"how many clips to aim for | more picks allowed | fewer picks allowed | "
-                f"`{_def_line(prompts._target_pick_count, 'src/fanops/prompts.py')}` |")
     rows.append("| `filter_peaks_by_intensity` terciles | `lo_thr = scores[n//3]`, `hi_thr = scores[(2*n)//3]` | "
                 "what score counts as high/low energy for P4b peak filtering | stricter slice (fewer peaks kept) | "
                 "looser slice | `src/fanops/signals.py` → `filter_peaks_by_intensity` |")

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fanops.config import Config
 from fanops import persona_levers as pl
-from fanops import moments, prompts
+from fanops import moments
 from fanops.personas import baked_personas
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +63,8 @@ def test_threshold_docs_lists_live_values():
     from fanops.lever_docs import render_thresholds
     md = render_thresholds(_cfg())
     assert str(moments._MAX_OVERLAP_FRAC) in md
-    assert str(prompts._MAX_TARGET_PICKS) in md
+    assert "_MAX_TARGET_PICKS" not in md
+    assert "_target_pick_count" not in md
     assert "tercile" in md.lower() or "filter_peaks_by_intensity" in md
     assert str(moments._EOF_TOLERANCE_S) in md
     assert "_MIN_MOMENT_S" not in md

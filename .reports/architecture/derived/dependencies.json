@@ -851,8 +851,7 @@
         "fanops.config",
         "fanops.moments",
         "fanops.persona_levers",
-        "fanops.personas",
-        "fanops.prompts"
+        "fanops.personas"
       ],
       "lazy": [
         "fanops.log"
@@ -2290,7 +2289,7 @@
     "fanops.post.zernio_outcome": 1,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 1,
-    "fanops.prompts": 2,
+    "fanops.prompts": 1,
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
     "fanops.reframe": 2,
@@ -2400,7 +2399,7 @@
     "fanops.ledger_bridge": 5,
     "fanops.ledger_sqlite": 2,
     "fanops.ledger_wipe": 3,
-    "fanops.lever_docs": 6,
+    "fanops.lever_docs": 5,
     "fanops.llm": 1,
     "fanops.log": 1,
     "fanops.meta_graph": 4,
@@ -3778,7 +3777,7 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 596,
+    "compile_edges_G1": 595,
     "lazy_edges": 372,
     "lazy_edges_lateral": 49,
     "lazy_edges_strictly_upward": 71,
