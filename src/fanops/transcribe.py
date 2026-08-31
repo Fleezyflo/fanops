@@ -430,9 +430,9 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     only contract change is that callers no longer pass lock_held= and the timeout is the single
     length-scaled cap — both deliberate consequences of M1's architecture collapse."""
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
-    # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is
-    # absent/fails, so this never blocks transcription. The isolated mp3 is moved next to the whisper
-    # output under the SOURCE stem so the per-source .json lookup below stays unique + unchanged.
+    # LYRICS, not the instrumental. Isolation ON + demucs/move failure -> SourceState.error (never
+    # decode the mix). Isolation OFF leaves `audio` as the source path. The isolated mp3 is moved
+    # next to the whisper output under the SOURCE stem so the per-source .json lookup stays unique.
     audio = src.source_path
     if cfg.isolate_vocals:
         stem_mp3 = out_dir / f"{Path(src.source_path).stem}.mp3"
@@ -444,18 +444,23 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         if audio == src.source_path:
             from fanops.pipeline_run import note_stage
             note_stage(cfg, "transcribe:demucs", source_id)
-            voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
-            if voc != src.source_path:
-                src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window
-                                                              # reads non-speech windows as MUSIC (wider lock), not silence
-                target = out_dir / f"{Path(src.source_path).stem}.mp3"
-                # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
-                # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
-                # per-source cache lookup ({source_stem}.json) never finds -> re-transcribe every run +
-                # clobbered shared vocals.json. Source-stem fallback keeps the cache deterministic (we
-                # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
-                try: Path(voc).replace(target); audio = str(target)
-                except OSError: audio = src.source_path
+            try:
+                voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
+            except ToolchainMissingError as e:
+                led.set_source_state(source_id, SourceState.error,
+                                     error_reason=f"vocals isolation failed: {e}")
+                return led
+            # a demucs vocal stem exists -> framing.classify_window reads non-speech windows as MUSIC
+            target = out_dir / f"{Path(src.source_path).stem}.mp3"
+            # Move under the SOURCE stem so whisper writes {source_stem}.json (stable cache key).
+            # Move failure used to fall back to the mix — that silent degrade is gone; error instead.
+            try:
+                Path(voc).replace(target); audio = str(target)
+                src.meta["vocals_isolated"] = True
+            except OSError as e:
+                led.set_source_state(source_id, SourceState.error,
+                                     error_reason=f"vocals isolation failed: {e}")
+                return led
     # Engine: faster-whisper only. A missing [asr] extra used to fail open to Homebrew `whisper`,
     # which left no per-source JSON and stalled the source at catalogued. Refuse instead.
     if not _fw_available():

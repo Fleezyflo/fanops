@@ -153,10 +153,8 @@ def test_transcribe_uses_isolated_vocals_when_enabled(tmp_path, mocker, monkeypa
     assert s.state is SourceState.transcribed and s.transcript[0]["text"] == "ورا الستارة"
 
 def test_transcribe_failopen_to_source_stem_when_vocal_move_fails(tmp_path, mocker, monkeypatch):
-    # ECC-review fix #3: when the isolated-vocals move raises OSError (e.g. cross-device), the OLD
-    # fallback used the vocals path (stem "vocals") so whisper wrote vocals.json — the per-source
-    # cache lookup ({source_stem}.json) then MISSED forever, re-transcribing every run and clobbering
-    # the shared vocals.json. The fallback must keep the SOURCE stem so the JSON name is deterministic.
+    # When the isolated-vocals move raises OSError (e.g. cross-device), error the source — never fall
+    # back to the mix / never call whisper.
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -164,38 +162,29 @@ def test_transcribe_failopen_to_source_stem_when_vocal_move_fails(tmp_path, mock
     voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")
     mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
     mocker.patch("pathlib.Path.replace", side_effect=OSError("cross-device link"))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
-    stem = Path(captured["cmd"][-1]).stem
-    assert stem == "src_1", f"move-failure fallback used stem {stem!r}; must stay the SOURCE stem for a stable cache"
-    assert led.sources["src_1"].state is SourceState.transcribed
+    spy.assert_not_called()
+    s = led.sources["src_1"]
+    assert s.state is SourceState.error
+    assert "vocals isolation failed:" in (s.error_reason or "")
 
 def test_transcribe_failopen_to_raw_when_isolation_unavailable(tmp_path, mocker, monkeypatch):
-    # isolation ON but demucs absent -> isolate_vocals returns the RAW path -> whisper transcribes the
-    # original source (today's behavior). Never blocks.
+    # isolation ON but demucs unavailable -> isolate_vocals raises ToolchainMissingError -> source
+    # errors; whisper must NOT decode the mix.
+    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    mocker.patch("fanops.transcribe.isolate_vocals", side_effect=lambda p, o, **k: p)   # fail-open: raw
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    mocker.patch("fanops.transcribe.isolate_vocals",
+                 side_effect=ToolchainMissingError("demucs unavailable"))
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
-    assert captured["cmd"][-1].endswith("src_1.mp4")       # transcribed the RAW source, not a vocals file
-    assert led.sources["src_1"].state is SourceState.transcribed
+    spy.assert_not_called()
+    s = led.sources["src_1"]
+    assert s.state is SourceState.error
+    assert "vocals isolation failed:" in (s.error_reason or "")
 
 def test_transcribe_captures_word_timestamps_when_present(tmp_path, mocker):
     # whisper --word_timestamps adds a per-segment `words` list ([{word,start,end}]); capture it so
