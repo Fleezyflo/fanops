@@ -590,7 +590,7 @@
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
-        "line": 942
+        "line": 943
       }
     ],
     "fanops.transcribe": [
@@ -617,27 +617,27 @@
     "fanops.clip": [
       {
         "call": "subprocess.run",
-        "line": 118
+        "line": 117
       },
       {
         "call": "subprocess.run",
-        "line": 129
+        "line": 128
       },
       {
         "call": "subprocess.run",
-        "line": 529
+        "line": 528
       },
       {
         "call": "subprocess.run",
-        "line": 636
+        "line": 635
       },
       {
         "call": "subprocess.run",
-        "line": 644
+        "line": 643
       },
       {
         "call": "subprocess.run",
-        "line": 652
+        "line": 651
       }
     ],
     "fanops.daemon": [
@@ -765,7 +765,7 @@
     "fanops.reframe": [
       {
         "call": "subprocess.run",
-        "line": 553
+        "line": 555
       }
     ],
     "fanops.reframe_apply": [

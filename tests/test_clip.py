@@ -600,17 +600,17 @@ def test_render_moment_keeps_in_band_window(tmp_path, mocker):
     ss, dur = _capture_render(tmp_path, mocker, 10.0, 28.0, duration=120.0)  # 18s pick already
     assert ss == 10.0 and dur == 18.0                                        # left exactly as picked
 
-# --- boundary snapping: a clip should never begin mid-word or end mid-phrase -------------------
-# snap_window nudges each edge (<= max_shift) onto a nearby transcript-line boundary; render_moment
-# applies it AFTER fit_window (EOF clamp only), then the edges land on clean cuts.
+# --- boundary snapping: a clip should never begin mid-word ------------------------------------
+# snap_window nudges start (<= max_shift) onto a nearby transcript-line start; end follows by the
+# same Δ. render_moment applies it AFTER fit_window (EOF clamp only). No independent end snap.
 
 def test_snap_window_pulls_start_to_line_start():
     tr = [{"start": 9.4, "end": 12.0, "text": "a"}, {"start": 12.0, "end": 16.0, "text": "b"}]
-    assert snap_window(10.0, 16.0, tr) == (9.4, 16.0)      # mid-line start 10.0 -> line start 9.4
+    assert snap_window(10.0, 16.0, tr) == (9.4, 15.4)      # mid-line start 10.0 -> 9.4; end follows Δ=-0.6
 
 def test_snap_window_extends_end_to_line_end():
     tr = [{"start": 0.0, "end": 4.0, "text": "a"}, {"start": 4.0, "end": 17.2, "text": "b"}]
-    assert snap_window(0.0, 16.5, tr) == (0.0, 17.2)       # mid-phrase end 16.5 -> phrase end 17.2
+    assert snap_window(0.0, 16.5, tr) == (0.0, 16.5)       # start already on a line start -> identity (no end snap)
 
 def test_snap_window_leaves_edges_with_no_near_boundary():
     tr = [{"start": 0.0, "end": 5.0, "text": "a"}]
@@ -622,23 +622,23 @@ def test_snap_window_no_transcript_is_identity():
 
 def test_snap_window_ignores_malformed_lines():
     tr = [{"text": "no times"}, {"start": 9.5, "end": 20.0, "text": "ok"}]
-    assert snap_window(10.0, 20.4, tr) == (9.5, 20.0)      # lines missing start/end are skipped
+    assert snap_window(10.0, 20.4, tr) == (9.5, 19.9)      # malformed skipped; start 9.5, end follows Δ=-0.5
 
 def test_snap_window_never_inverts():
-    # snapping the start forward and the end backward could cross them — must keep the original window
+    # start-only slide to 13.0 keeps the 0.2s span; independent-edge snap would have inverted
     tr = [{"start": 13.0, "end": 99.0, "text": "late"}, {"start": 0.0, "end": 12.5, "text": "early"}]
-    assert snap_window(12.9, 13.1, tr) == (12.9, 13.1)
+    assert snap_window(12.9, 13.1, tr) == (13.0, 13.2)
 
 def test_snap_window_clamps_end_to_duration():
     # a whisper line end can overshoot the real file end; the snapped end must not exceed duration
     # (restores fit_window's EOF clamp, which snap runs after and would otherwise undo).
     tr = [{"start": 0.0, "end": 23.4, "text": "x"}]
-    assert snap_window(0.0, 22.0, tr, duration=22.0) == (0.0, 22.0)   # 23.4 within max_shift but EOF-clamped
+    assert snap_window(0.0, 22.0, tr, duration=22.0) == (0.0, 22.0)   # start already on a line start -> identity
 
 def test_snap_window_clamps_negative_start_to_zero():
-    # a whisper first-segment start can be slightly negative; the snapped start must stay >= 0
+    # whisper first-segment start can be slightly negative; slide then zero-clip (no pad)
     tr = [{"start": -0.8, "end": 20.0, "text": "x"}]
-    assert snap_window(0.3, 20.0, tr, duration=60.0) == (0.0, 20.0)
+    assert snap_window(0.3, 20.0, tr, duration=60.0) == (0.0, 18.9)
 
 def _capture_render_full(tmp_path, mocker, monkeypatch, *, start, end, duration, transcript=None, profile=None):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")            # isolate: no subtitle pass in these cuts
@@ -665,7 +665,7 @@ def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monk
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=28.0,
                                   duration=120.0, transcript=tr)   # 18s in-band pick
     assert ss == 9.3                                       # start snapped to the line boundary
-    assert round(ss + to, 1) == 28.4                       # end snapped to the phrase end
+    assert to == 18.0                                      # pick span preserved; end follows start
 
 def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatch):
     junk = {**LOW_LOGPROB, "start": 9.4, "end": 9.8, "text": "junk start"}
@@ -676,7 +676,7 @@ def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatc
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
                                   duration=120.0, transcript=tr)
     assert ss == 9.3                                       # trusted start, not junk 9.4
-    assert round(ss + to, 1) == 17.2                       # snapped end; no band widen past phrase end
+    assert to == 6.5                                       # pick span preserved; junk end ignored
 
 def test_render_moment_keeps_profile_pick_unchanged(tmp_path, mocker, monkeypatch):
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
@@ -788,9 +788,10 @@ def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mo
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
     assert clip.first_frame_kind == "visual"
-    assert clip.cut_seconds is not None and clip.cut_seconds > 0
     cmd = captured["cmd"]
     assert abs(float(cmd[cmd.index("-ss") + 1]) - target) < 1e-3   # cut start moved onto the strong frame
+    assert float(cmd[cmd.index("-to") + 1]) == 18                   # pick span preserved; end follows start
+    assert clip.cut_seconds == 18
     assert "-c:a" in cmd                                            # audio still encoded -> untouched
 
 def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkeypatch):

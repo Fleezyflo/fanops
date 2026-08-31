@@ -44,7 +44,7 @@ def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker,
     assert clip.state is ClipState.rendered
     cmd = captured["cmd"]
     assert float(cmd[cmd.index("-ss") + 1]) == 9.3
-    assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 17.2
+    assert float(cmd[cmd.index("-to") + 1]) == 6.5          # pick span preserved, not ss+to == 17.2
     assert "subtitles=" not in _vf_of(cmd)
     assert not list(cfg.clips.glob("*.ass"))
 
@@ -70,7 +70,7 @@ def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeyp
     assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 22.0
     src = led.sources["src_1"]
     assert _trusted_transcript(src) == []
-    assert snap_window(10.0, 22.0, tr) == (9.6, 22.2)    # raw junk WOULD snap — proves the filter matters
+    assert snap_window(10.0, 22.0, tr) == (9.6, 21.6)    # raw junk WOULD snap start and slide end — filter matters
     assert snap_window(10.0, 22.0, _trusted_transcript(src)) == (10.0, 22.0)
 
 

@@ -200,7 +200,8 @@ def _window_candidates(paths: ReframePaths, cfg: Config, m, src) -> list:
         if v is not None:
             # kind == "transcript" means pick_visual_start kept the band+snap start, so this candidate
             # COLLAPSES onto the one above — one payload, two labels. That is recorded, not resolved.
-            out.append(((v[0], ce), f"window:vstart[{v[1]}]"))
+            vs, ve = clipmod._slide_start(cs, ce, v[0], dur)
+            out.append(((vs, ve), f"window:vstart[{v[1]}]"))
     return out
 
 
@@ -286,8 +287,9 @@ def current_payload(paths: ReframePaths, cfg: Config, led: Ledger, c):
     cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
     cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
     if cfg.visual_start:
-        cs, _kind = clipmod.pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks,
+        vs, _kind = clipmod.pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks,
                                               out_dir=cfg.clips)          # scratch out_dir; sidecar seeded above
+        cs, ce = clipmod._slide_start(cs, ce, vs, src.duration or 0.0)
 
     ass_text, _hbf = clipmod._build_ass_text(led, cfg, c.parent_id, c.id, c.aspect,
                                              clip_start=cs, clip_end=ce)   # PURE — no write
