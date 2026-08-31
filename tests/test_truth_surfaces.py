@@ -137,6 +137,7 @@ def test_run_idle_shows_queued_not_in_progress(tmp_path):
 
 def test_run_active_shows_in_progress(tmp_path):
     import os
+    import re
     from fanops.pipeline_run import note_stage, _lock_path
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
@@ -148,8 +149,9 @@ def test_run_active_shows_in_progress(tmp_path):
     try:
         note_stage(cfg, "produce", "src-1")
         html = _client(cfg).get("/run").data.decode()
-        assert "in progress" in html.lower()
-        assert "produce:src-1" in html or "run_chip" in html or "produce" in html
+        assert "produce:src-1" in html
+        assert re.search(r'<strong>\d+</strong> waiting', html, re.I)
+        assert not re.search(r'<strong>\d+</strong> in progress', html, re.I)
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)

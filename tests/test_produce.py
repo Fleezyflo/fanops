@@ -87,3 +87,42 @@ def test_produce_retries_asr_when_hook_windows_lack_speech(tmp_path, mocker, mon
     _produce_one(cfg, "src_1", set(), log=lambda *a, **k: None)
     assert calls and calls[0].get("force") is True
     assert (cfg.agent_io / "transcripts" / "src_1.asr_retry").exists()
+
+
+def test_produce_source_ids_skips_inventory_and_orders_newest_first(tmp_path):
+    from fanops.produce import produce_source_ids
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_old_work", source_path=path, state=SourceState.picks_decided,
+                              created_at="2026-07-13T00:00:00Z"))
+        led.add_source(Source(id="src_new_work", source_path=path, state=SourceState.catalogued,
+                              created_at="2026-08-29T00:00:00Z"))
+        led.add_source(Source(id="src_library", source_path=path, state=SourceState.moments_decided,
+                              created_at="2026-08-30T00:00:00Z"))
+        led.add_source(Source(id="src_retired", source_path=path, state=SourceState.retired,
+                              created_at="2026-08-31T00:00:00Z"))
+        led.add_source(Source(id="src_third", source_path=path, state=SourceState.catalogued,
+                              origin_kind="third_party", created_at="2026-09-01T00:00:00Z"))
+    ids = produce_source_ids(Ledger.load(cfg))
+    assert ids == ["src_new_work", "src_old_work"]
+
+
+def test_run_all_calls_produce_one_only_for_work_remaining_newest_first(tmp_path, mocker):
+    from fanops.produce import run_all, SourceResult
+    cfg = Config(root=tmp_path)
+    path = str(tmp_path / "vid.mp4")
+    Path(path).write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_old", source_path=path, state=SourceState.picks_decided,
+                              created_at="2026-07-01T00:00:00Z"))
+        led.add_source(Source(id="src_new", source_path=path, state=SourceState.catalogued,
+                              created_at="2026-08-01T00:00:00Z"))
+        led.add_source(Source(id="src_done", source_path=path, state=SourceState.moments_decided,
+                              created_at="2026-08-15T00:00:00Z"))
+    seen = []
+    mocker.patch("fanops.produce._produce_one",
+                 side_effect=lambda cfg, sid, aspects, log=None: seen.append(sid) or SourceResult(sid, None))
+    run_all(cfg, set(), log=lambda *a, **k: None)
+    assert seen == ["src_new", "src_old"]
