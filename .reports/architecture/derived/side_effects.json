@@ -135,23 +135,31 @@
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 242
+        "line": 260
       },
       {
         "call": "Ledger.transaction",
-        "line": 288
+        "line": 306
       },
       {
         "call": "Ledger.transaction",
-        "line": 425
+        "line": 446
       },
       {
         "call": "Ledger.transaction",
-        "line": 463
+        "line": 484
       },
       {
         "call": "Ledger.transaction",
-        "line": 487
+        "line": 508
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 557
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 649
       }
     ],
     "fanops.recaption": [
@@ -167,11 +175,11 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 491
+        "line": 501
       },
       {
         "call": "Ledger.transaction",
-        "line": 619
+        "line": 629
       }
     ],
     "fanops.responder": [
@@ -255,35 +263,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1105
+        "line": 1131
       },
       {
         "call": "Ledger.transaction",
-        "line": 1136
+        "line": 1164
       },
       {
         "call": "Ledger.transaction",
-        "line": 1169
+        "line": 1199
       },
       {
         "call": "Ledger.transaction",
-        "line": 1204
+        "line": 1246
       },
       {
         "call": "Ledger.transaction",
-        "line": 1251
+        "line": 1257
       },
       {
         "call": "Ledger.transaction",
-        "line": 1262
+        "line": 1268
       },
       {
         "call": "Ledger.transaction",
-        "line": 1273
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1299
+        "line": 1294
       }
     ],
     "fanops.studio.actions_approve": [
@@ -519,33 +523,33 @@
       },
       {
         "call": "requests.get",
-        "line": 346
+        "line": 356
       },
       {
         "call": "requests.get",
-        "line": 573
+        "line": 583
       }
     ],
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 199
+        "line": 212
       },
       {
         "call": "requests.post",
-        "line": 229
+        "line": 242
       },
       {
         "call": "requests.post",
-        "line": 298
+        "line": 311
       },
       {
         "call": "requests.get",
-        "line": 322
+        "line": 335
       },
       {
         "call": "requests.post",
-        "line": 463
+        "line": 476
       }
     ],
     "fanops.post.zernio": [
@@ -759,7 +763,11 @@
     "fanops.postiz_lifecycle": [
       {
         "call": "subprocess.run",
-        "line": 69
+        "line": 71
+      },
+      {
+        "call": "subprocess.run",
+        "line": 110
       }
     ],
     "fanops.reframe": [
@@ -805,11 +813,11 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 82,
+    "ledger_transaction_sites": 83,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 40
   }
 }
