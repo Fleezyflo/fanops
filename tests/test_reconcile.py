@@ -614,9 +614,8 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
 
 def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_nothing(tmp_path):
     # MOL-791: the preview carries TWO row kinds in ONE shape, told apart by would_set_state vs state.
-    #   esc   — 30h `submitting`, CLIENT token: the surviving escalation rung fires (would_set_state
-    #           MOVES). No lateness row: a fanops_ token can never match a backend row, so there is no
-    #           backend silence to report.
+    #   esc   — 30h `submitting`, CLIENT token: I5 unpollable close fires (would_set_state MOVES to
+    #           failed). No lateness row: a fanops_ token can never match a backend row.
     #   old   — 80h `needs_reconcile`, REAL id, never mirrored: the deleted give-up rung would have
     #           declared it lost; now it previews as LATENESS ONLY (would_set_state == state).
     #   fresh — 2h `submitting`, client token: previews nothing at all.
@@ -636,8 +635,8 @@ def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_no
     rows = report_terminals(led)
     writes = [r for r in rows if r["would_set_state"] != r["state"]]
     late = [r for r in rows if r["would_set_state"] == r["state"]]
-    assert [r["post_id"] for r in writes] == ["esc"]          # the escalation, and only it, would write
-    assert writes[0]["would_set_state"] == "needs_reconcile" and "escalated" in writes[0]["reason"]
+    assert [r["post_id"] for r in writes] == ["esc"]          # the unpollable close, and only it, would write
+    assert writes[0]["would_set_state"] == "failed" and "unpollable" in writes[0]["reason"]
     assert [r["post_id"] for r in late] == ["old"]            # esc (client token) + fresh (on time) are silent
     assert late[0]["state"] == "needs_reconcile" and late[0]["event"] == "note lateness"
     assert "80h past scheduled_time" in late[0]["reason"] and "never mirrored" in late[0]["reason"]
@@ -904,8 +903,9 @@ def test_a_zernio_backed_resting_post_is_never_stamped_absent(tmp_path, monkeypa
 def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, monkeypatch, mocker):
     # A `fanops_` idempotency token is not a Postiz row id, so no window can ever hold it: mirroring it
     # would record a permanent `absent` that says nothing about the post. It is still VISITED, because the
-    # (state, age) escalation is the one thing that un-strands a crash-stranded submit claim — and that
-    # escalation moves between two non-re-queueable states, deciding nothing about liveness.
+    # (state, age) ladder un-strands a crash-stranded submit claim — I5 closes an unpollable token past
+    # 24h as failed/unknown (never GET, never mirrored).
+    from fanops.models import ErrorKind
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "tok", PostState.submitting, "fanops_deadbeef", hours_ago=30)
@@ -913,8 +913,10 @@ def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, mon
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["tok"]
     assert p.postiz_state is None                             # no row could name it -> no observation
-    assert p.state is PostState.needs_reconcile
-    assert "escalated" in (p.error_reason or "")
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp_path, monkeypatch):
