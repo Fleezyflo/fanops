@@ -202,6 +202,16 @@ def test_no_kickstart_while_run_flock_held(tmp_path, monkeypatch):
     assert res["action"] == "none"
 
 
+def test_ensure_does_not_refresh_daemon_strip_snapshot(tmp_path, monkeypatch):
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "0")
+    called = []
+    monkeypatch.setattr("fanops.health.refresh_daemon_strip_snapshot", lambda c: called.append(c))
+    daemon.ensure(cfg)
+    assert called == []
+    assert _kickstart_argv(uid) not in fake.calls
+
+
 def test_kill_switch_blocks_drift_kickstart(tmp_path, monkeypatch):
     # FANOPS_AUTO_ADOPT=0 -> the whole drift branch is skipped even with drift present.
     cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)

@@ -505,7 +505,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 393
+        "line": 392
       }
     ],
     "fanops.post.metrics": [
@@ -655,23 +655,23 @@
       },
       {
         "call": "subprocess.run",
-        "line": 978
+        "line": 974
       },
       {
         "call": "subprocess.run",
-        "line": 1004
+        "line": 1000
       },
       {
         "call": "subprocess.run",
-        "line": 1009
+        "line": 1005
       },
       {
         "call": "subprocess.run",
-        "line": 1037
+        "line": 1033
       },
       {
         "call": "subprocess.run",
-        "line": 1110
+        "line": 1106
       }
     ],
     "fanops.discover": [
@@ -693,7 +693,7 @@
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 353
+        "line": 352
       }
     ],
     "fanops.ig_hashtag_scrape": [

@@ -406,10 +406,6 @@ def ensure(cfg: Config) -> dict:
                     if action == "none":
                         action = "kickstart_stale_code"
     ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
-    from fanops.errors import fail_open
-    with fail_open("ensure.refresh_daemon_strip"):
-        from fanops.health import refresh_daemon_strip_snapshot
-        refresh_daemon_strip_snapshot(cfg)                # keep Studio's strip fresh during a long pass
     return {"label": LABEL, "loaded": loaded, "action": action}
 
 _VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"

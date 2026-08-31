@@ -996,22 +996,26 @@ def daemon_health(cfg: Config) -> Optional[dict]:
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
-    """Home daemon partial — snapshot + heartbeat overlay via health_model.project_daemon_strip."""
+    """Home daemon partial — snapshot facts + live heartbeat/activity via project_daemon_strip."""
     from fanops.health import SnapshotFreshness, read_daemon_strip_snapshot
-    from fanops.health_model import heartbeat_stale, project_daemon_strip
+    from fanops.health_model import heartbeat_stale, project_daemon_strip, daemon_progress
     from fanops import pipeline
     from fanops.pipeline_run import run_status_line
     sr = read_daemon_strip_snapshot(cfg)
-    if sr.freshness is not SnapshotFreshness.FRESH or not isinstance(sr.data, dict):
+    run_line = run_status_line(cfg)
+    alive_mid, _, _ = daemon_progress(cfg)
+    live_activity = bool(alive_mid) or bool(run_line and run_line != "run=idle")
+    if sr.freshness in (SnapshotFreshness.MISSING, SnapshotFreshness.UNREADABLE) and not live_activity:
         return {"verdict": "unknown", "installed": False, "loaded": False,
                 "hint": f"daemon strip snapshot {sr.freshness.value}"}
+    snap = dict(sr.data) if isinstance(sr.data, dict) else {}
     pending_gates = None
     with fail_open("studio.views.daemon_health_strip.pending_gates"):
         pending_gates = pipeline.pending_gate_count(cfg)
-    age, stale, _iv = heartbeat_stale(cfg, interval=sr.data.get("interval") or 600)
-    run_line = run_status_line(cfg)
+    age, stale, _iv = heartbeat_stale(cfg, interval=snap.get("interval") or 600)
     return project_daemon_strip(
-        sr.data, age=age, stale=stale, pending_gates=pending_gates, run_line=run_line)
+        snap, age=age, stale=stale, pending_gates=pending_gates,
+        run_line=run_line, alive_mid=alive_mid)
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:

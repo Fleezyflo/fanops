@@ -1,19 +1,19 @@
 {
   "$schema": "fanops-arch/derived/MANIFEST",
   "artifacts": {
-    "configuration.json": "94a8c028f3bed2da",
+    "configuration.json": "ad528a558ccb7147",
     "contract_surface.json": "3c764f6a2f410a87",
-    "dependencies.json": "b65302349f67b1f3",
+    "dependencies.json": "3b6457776f81da9a",
     "entities.json": "ff4cda059807b877",
     "modules.json": "31f1fd19999655bb",
     "ratchets.json": "d21a11092562e81b",
-    "side_effects.json": "1f18338b5ecf7582",
+    "side_effects.json": "7afa98a64d109a9b",
     "surfaces.json": "88123268c817b17c",
     "unsupported.json": "60f0bda5252b0381"
   },
   "confidence": "CERTAIN",
   "determinism_contract": "Regenerating with no source change MUST reproduce these digests byte-for-byte. Nothing here stamps a wall-clock time: a generated artifact that changes on every run trains reviewers to ignore its diff.",
-  "fingerprint": "728a523484c80a62",
+  "fingerprint": "28f4373e21c69717",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
