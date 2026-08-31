@@ -24,7 +24,8 @@ def test_whisper_retry_reuses_cached_stem_skips_demucs(tmp_path, mocker, monkeyp
     _catalogued(cfg, path=path, sha256="deadbeef")
     out_dir = cfg.agent_io / "transcripts"
     out_dir.mkdir(parents=True, exist_ok=True)
-    iso = mocker.patch("fanops.transcribe.isolate_vocals")
+    voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")
+    iso = mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 1))
     with Ledger.transaction(cfg) as led:
         led = transcribe_source(led, cfg, "src_1")
