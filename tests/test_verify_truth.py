@@ -16,7 +16,7 @@ Enforcement points:
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, PostState, Platform
-from fanops.reconcile import reconcile_posts, _UNVERIFIED_PREFIX
+from fanops.reconcile import reconcile_posts
 
 
 def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, media_id=None,
@@ -76,7 +76,7 @@ def test_reconcile_promotes_fresh_ig_post_on_postiz_confirmation(tmp_path):
     # A FRESH IG post (no unverified sentinel, no media_id yet) MUST still promote to published on a valid
     # Postiz-confirmed URL. media_id is stamped at promotion from releaseId when the backend supplies it.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "fresh", PostState.needs_reconcile, sub="fanops_tok",
+    _post(led, "fresh", PostState.needs_reconcile, sub="postiz_fresh",
           url="https://www.instagram.com/reel/FRESH/", media_id=None, error_reason=None)
     led = reconcile_posts(led, cfg, get_status=lambda sid: {
         "status": "published", "publicUrl": "https://www.instagram.com/reel/FRESH/"})
@@ -85,15 +85,16 @@ def test_reconcile_promotes_fresh_ig_post_on_postiz_confirmation(tmp_path):
 
 # ---------------------------------------------------------------- TikTok: URL + real id gate (T4) ----
 def test_tiktok_fake_token_quarantines(tmp_path):
-    # TikTok with a fanops_ (fake) submission_id can NEVER attribute a real post -> NOT confirmed -> the post
-    # QUARANTINES (needs_reconcile) even though the backend claims published with a url. FAIL CLOSED.
+    # TikTok with a fanops_ (fake) submission_id is not a GET key (I4) — never confirmed, never rested.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="tt")
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+    polled = []
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {
         "status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"})
     p = led.posts["tt"]
+    assert polled == []
     assert p.state is PostState.needs_reconcile          # fake token -> never rests published
-    assert (p.error_reason or "").startswith(_UNVERIFIED_PREFIX)
+    assert p.state is not PostState.published
 
 
 def test_tiktok_real_id_but_no_url_quarantines(tmp_path, monkeypatch, mocker):
@@ -136,10 +137,14 @@ def test_tiktok_park_is_stable_across_two_passes(tmp_path):
     # interim SIT-PARKED is a deterministic park, NOT a published<->parked thrash every tick.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "tt", PostState.needs_reconcile, platform=Platform.tiktok, sub="fanops_fake", account="tt")
-    def gs(sid): return {"status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"}
+    polled = []
+    def gs(sid):
+        polled.append(sid)
+        return {"status": "published", "publicUrl": "https://www.tiktok.com/@tt/video/7"}
     led = reconcile_posts(led, cfg, get_status=gs)       # pass 1
     first = led.posts["tt"]
     led = reconcile_posts(led, cfg, get_status=gs)       # pass 2
     second = led.posts["tt"]
+    assert polled == []
     assert first.state is PostState.needs_reconcile and second.state is PostState.needs_reconcile
     assert second.error_reason == first.error_reason     # identical -> stable, not thrash

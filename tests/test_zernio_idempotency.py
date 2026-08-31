@@ -46,7 +46,7 @@ class _Rec:
     def __init__(s, *responses):
         s.responses = list(responses) or [_R(201, {"_id": "z1"})]; s.calls = []
     def __call__(s, url, headers=None, json=None, timeout=None):
-        s.calls.append({"url": url, "headers": dict(headers or {}), "payload": json})
+        s.calls.append({"url": url, "headers": dict(headers or {}), "payload": json, "timeout": timeout})
         r = s.responses[min(len(s.calls) - 1, len(s.responses) - 1)]
         if isinstance(r, Exception): raise r
         return r
@@ -99,6 +99,13 @@ def test_01_request_id_header_is_present_on_every_send(tmp_path, monkeypatch):
     _publish(cfg, _post(), rec, monkeypatch)
     assert rec.calls, "no request was issued"
     assert "x-request-id" in rec.calls[0]["headers"]
+
+def test_create_uses_media_read_timeout(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    rec = _Rec(_R(201, {"_id": "z1"}))
+    _publish(cfg, _post(), rec, monkeypatch)
+    assert rec.calls, "create POST must fire"
+    assert rec.calls[0]["timeout"] == (30, 300)
 
 def test_02_request_id_is_a_valid_uuid(tmp_path, monkeypatch):
     # The spec types the header {type: string, format: uuid} — a non-UUID may be rejected or ignored,

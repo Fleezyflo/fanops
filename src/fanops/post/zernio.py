@@ -88,6 +88,7 @@ _IDEMPOTENCY_WINDOW_S = 300.0
 # time.monotonic() (immune to a wall-clock step / NTP correction / DST), per publish call, and checked
 # BEFORE each sleep so the next SEND — not the sleep — lands inside the deadline.
 _RETRY_DEADLINE_S = 240.0
+_CREATE_TIMEOUT = (30, 300)  # connect, read — read matches media PUT
 # PERMANENT constants. Changing either silently re-opens the double-post hole for every in-flight post
 # (a retry would derive a DIFFERENT x-request-id than the send it is retrying, so Zernio would create a
 # second post instead of replaying the first). Chosen once, 2026-07-17. Never regenerate, never "clean up".
@@ -491,7 +492,7 @@ class ZernioPoster:
         delay, sent_any = 1.0, False
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=30)
+                resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=_CREATE_TIMEOUT)
             except requests.exceptions.RequestException as exc:
                 if isinstance(exc, requests.exceptions.ConnectTimeout):
                     # The connection was never established, so THIS attempt sent nothing. Retry inside the

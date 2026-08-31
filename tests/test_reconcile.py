@@ -120,11 +120,9 @@ def test_reconcile_ignores_terminal_and_queued_posts(tmp_path):
     assert led.posts["pub"].state is PostState.published
 
 
-def test_reconcile_polls_a_client_token_post(tmp_path):
-    # AUDIT H1: a post parked as needs_reconcile now ALWAYS carries a submission_id (the client
-    # idempotency token stamped at crosspost), so reconcile can poll it via GET /v2/posts/:id and
-    # resolve it automatically — no longer stranded for human-only reconcile. The token is the id
-    # the poll is keyed by until/unless a real Blotato id overwrites it.
+def test_reconcile_does_not_poll_a_client_token_post(tmp_path):
+    # fanops_ is a birth idempotency token, not a Zernio/Postiz row id.
+    # GET /posts/fanops_* 400s (Invalid post ID) and can never resolve the row.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "pt", PostState.needs_reconcile, sub="fanops_deadbeefcafe")
     polled = []
@@ -132,9 +130,8 @@ def test_reconcile_polls_a_client_token_post(tmp_path):
         polled.append(sid)
         return {"postSubmissionId": sid, "status": "published", "publicUrl": "https://ig.com/p/tok"}
     led = reconcile_posts(led, cfg, get_status=get_status)
-    assert polled == ["fanops_deadbeefcafe"]               # the client token IS pollable
-    assert led.posts["pt"].state is PostState.published
-    assert led.posts["pt"].public_url == "https://ig.com/p/tok"
+    assert polled == []
+    assert led.posts["pt"].state is PostState.needs_reconcile
 
 def test_reconcile_durable_across_save(tmp_path):
     # R1: a malformed publicUrl ("u") fails safe_public_url AND triggers the published_no_url_parked
@@ -149,14 +146,8 @@ def test_reconcile_durable_across_save(tmp_path):
 
 
 def test_reconcile_poll_error_on_one_post_does_not_abort_the_pass(tmp_path):
-    # AUDIT H1 fallout: D1 stamps EVERY crossposted post with a CLIENT idempotency token
-    # (submission_id = "fanops_..."), so a post parked in needs_reconcile after a PURE NETWORK
-    # TIMEOUT carries a fanops_ token that is NOT a real Blotato postSubmissionId. Polling it against
-    # the live API 404s -> BlotatoStatusClient.get_status raises RuntimeError. If that raise escapes
-    # reconcile_posts, every genuinely-published post LATER in iteration order is never reconciled
-    # and stays stuck. The fanops_ post is inserted FIRST so its poll error precedes the real-id
-    # post in led.posts.values() order — the exact order that triggered the bug. The poll error must
-    # be contained to that post (parked, NOT failed — it may be live) so the loop reaches the real id.
+    # A fanops_ birth token is not a GET key. Inserted FIRST in iteration order so a skip-bug that
+    # still GET+raises would abort before the real-id post. The real id must still resolve.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "tok", PostState.needs_reconcile, sub="fanops_deadbeef")   # FIRST in iteration order
     _post(led, "real", PostState.needs_reconcile, sub="sub_real")         # SECOND — must still resolve
@@ -167,9 +158,7 @@ def test_reconcile_poll_error_on_one_post_does_not_abort_the_pass(tmp_path):
             raise RuntimeError("blotato status 404: postSubmissionId not found")
         return {"postSubmissionId": sid, "status": "published", "publicUrl": "https://ig.com/p/real"}
     led = reconcile_posts(led, cfg, get_status=get_status)
-    # both were polled — the first post's error did NOT abort the pass before reaching the second
-    assert polled == ["fanops_deadbeef", "sub_real"]
-    # the fanops_ post is left PARKED (poll error is not evidence it failed — it may be live)
+    assert polled == ["sub_real"]
     assert led.posts["tok"].state is PostState.needs_reconcile
     assert led.posts["tok"].state is not PostState.failed       # MUST NOT guess it failed
     # the genuinely-published post is reconciled in the SAME pass despite the earlier error
@@ -183,7 +172,7 @@ def test_reconcile_read_error_writes_nothing_and_only_logs(tmp_path):
     # error_reason, a field three substring parsers read, and it was also the latch that suppressed the
     # post from every later pass: the breadcrumb that said "stuck" was the mechanism that kept it stuck.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "tok", PostState.submitting, sub="fanops_cafe")
+    _post(led, "tok", PostState.submitting, sub="sub_cafe")
     before = led.posts["tok"].model_dump()
     def get_status(sid):
         raise RuntimeError("postiz status 404: postSubmissionId not found")
@@ -200,7 +189,7 @@ def test_reconcile_logs_each_post(tmp_path):
     # resolves to 'published' and assert the run log records both the stage ('reconcile') and the
     # post id ('p1').
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "p1", PostState.needs_reconcile, sub="fanops_t")
+    _post(led, "p1", PostState.needs_reconcile, sub="sub_t")
     reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "reconcile" in log
@@ -235,12 +224,15 @@ def test_reconcile_logs_every_branch(tmp_path):
     # post gets a distinct id so the positional matcher binds each assertion to exactly one branch.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "noid", PostState.needs_reconcile, sub=None)          # (a) skipped: no submission_id
-    _post(led, "boom", PostState.needs_reconcile, sub="fanops_x")    # (b) poll raises -> poll-error
+    _post(led, "boom", PostState.needs_reconcile, sub="sub_boom")    # (b) poll raises -> poll-error
     _post(led, "fail", PostState.needs_reconcile, sub="sub_fail")    # (c) status failed
     _post(led, "prog", PostState.submitting,      sub="sub_prog")    # (d) in-progress -> left
+    _post(led, "tok", PostState.needs_reconcile, sub="fanops_x")     # birth token: never GET
 
     def get_status(sid):
-        if sid == "fanops_x":
+        if sid.startswith("fanops_"):
+            raise AssertionError(f"must not GET a birth token: {sid}")
+        if sid == "sub_boom":
             raise RuntimeError("blotato status 404: postSubmissionId not found")
         if sid == "sub_fail":
             return {"postSubmissionId": sid, "status": "failed", "errorMessage": "platform rejected"}
@@ -269,6 +261,11 @@ def test_reconcile_logs_every_branch(tmp_path):
     prog_line = _reconcile_log_line_for(cfg, "prog")
     assert prog_line, "no reconcile log line for the in-progress post 'prog'"
     assert "left" in prog_line
+
+    # birth token: visited for the age ladder, never GET, never poll-error.
+    tok_line = _reconcile_log_line_for(cfg, "tok")
+    assert tok_line, "no reconcile log line for the client-token post 'tok'"
+    assert "skipped" in tok_line and "poll-error" not in tok_line
 
 
 def test_reconcile_halts_on_fatal_auth_error(tmp_path):
@@ -350,27 +347,27 @@ def test_reconcile_halts_on_postiz_auth_error(tmp_path):
 
 
 def test_reconcile_published_captures_real_id_over_fanops_token(tmp_path):
-    # CULM-3: a post recovered to published via reconcile must capture the REAL backend id, replacing the
-    # birth fanops_ idempotency token (which analytics 404s) — else pull_metrics can never attribute it.
+    # A fanops_ birth token is not a GET key, so a published poll body cannot overwrite it.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p1", PostState.needs_reconcile, sub="fanops_deadbeef")
+    polled = []
     info = {"postSubmissionId": "blotato_99", "status": "published", "publicUrl": "https://ig.com/p/1"}
-    led = reconcile_posts(led, cfg, get_status=lambda sid: info)
-    assert led.posts["p1"].state is PostState.published
-    assert led.posts["p1"].submission_id == "blotato_99"          # real id captured
+    def get_status(sid):
+        polled.append(sid)
+        return info
+    led = reconcile_posts(led, cfg, get_status=get_status)
+    assert polled == []
+    assert led.posts["p1"].state is PostState.needs_reconcile
+    assert led.posts["p1"].submission_id == "fanops_deadbeef"
 
 def test_reconcile_published_without_real_id_keeps_token_not_none(tmp_path):
-    # No real id in the poll body -> never overwrite the (pollable) token with None.
-    # R1: a 'published' status with NO publicUrl now parks in needs_reconcile (the fail-closed
-    # gate keeps the post pollable on the next pass instead of promoting to a ghost row).
-    # Provide a real publicUrl so the original assertion (token preserved across the promotion)
-    # still holds.
+    # No real id in the poll body -> never overwrite the existing real backend id with None.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _post(led, "p1", PostState.needs_reconcile, sub="fanops_deadbeef")
+    _post(led, "p1", PostState.needs_reconcile, sub="blotato_deadbeef")
     led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published",
                                                             "publicUrl": "https://insta/p/keep"})
     assert led.posts["p1"].state is PostState.published
-    assert led.posts["p1"].submission_id == "fanops_deadbeef"     # NOT overwritten by None
+    assert led.posts["p1"].submission_id == "blotato_deadbeef"     # NOT overwritten by None
 
 def test_reconcile_published_post_is_archived(tmp_path):
     # CULM-Q3: a reconcile-recovered published post must land in the day-bucketed Posted archive too.
@@ -390,8 +387,10 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()))
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
+    polled = []
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
     p = led.posts["ps"]
+    assert polled == []                                          # age ladder must not depend on a GET
     assert p.state is PostState.needs_reconcile
     assert "escalated" in (p.error_reason or "")
 
@@ -403,7 +402,9 @@ def test_submitting_not_escalated_when_fresh(tmp_path):
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()))
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
+    polled = []
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
+    assert polled == []
     assert led.posts["pf"].state is PostState.submitting
 
 
@@ -434,7 +435,9 @@ def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
     before = led.posts["pg"].model_dump()
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
+    polled = []
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
+    assert polled == []
     assert led.posts["pg"].model_dump() == before
 
 
@@ -501,8 +504,10 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
                       error_reason=(reason or None),
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()))
     before = led.posts["m"].model_dump()
+    polled = []
 
     def get_status(sid):
+        polled.append(sid)
         if poll == "raises": raise RuntimeError(f"{backend} 404")
         if poll == "published": return {"status": "published", "publicUrl": "https://x/p/1", "postSubmissionId": "postiz_REAL"}
         if poll == "failed": return {"status": "failed", "errorMessage": "rejected"}
@@ -510,11 +515,19 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
     led = reconcile_posts(led, cfg, get_status=get_status)
     p = led.posts["m"]
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
-    if poll == "published":
+    if token.startswith("fanops_"):
+        assert polled == []                                 # birth token is not a GET key
+        assert p.model_dump() == before                     # age ladder only — no observation
+        assert p.state is PostState.needs_reconcile
+        assert p.state is not PostState.failed
+    elif poll == "published":
+        assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
     elif poll == "failed":
+        assert polled == [token]
         assert p.state is PostState.failed
     else:                                                    # unknown / raises -> no observation to act on...
+        assert polled == [token]
         assert p.model_dump() == before                      # ...so ZERO ledger bytes, in every one of the cells
         assert p.state is not PostState.failed               # ...and never GUESSED re-queueable (double-post)
 
@@ -568,8 +581,11 @@ def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
         def log(*a, **k): spy.append(a)
         return log
     mocker.patch("fanops.reconcile.get_logger", fake_logger)
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled"})
-    assert [a for a in spy if len(a) >= 3 and "left:" in str(a[2])], "a transient-reason post was NOT visited"
+    polled = []
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "scheduled"})
+    assert polled == []
+    assert [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])], \
+        "a transient-reason client-token post was NOT visited"
     assert led.posts["pt"].error_reason == reason                    # visited, and NOT re-stamped
 
 
@@ -661,11 +677,15 @@ def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
         def log(*a, **k): spy.append(a)
         return log
     mocker.patch("fanops.reconcile.get_logger", fake_logger)
-    def gs(sid): return {"status": "scheduled"}
+    polled = []
+    def gs(sid):
+        polled.append(sid)
+        return {"status": "scheduled"}
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 1
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 2
-    lefts = [a for a in spy if len(a) >= 3 and "left:" in str(a[2])]
-    assert len(lefts) == 2                                  # visible on both passes, not silenced by pass 1
+    assert polled == []
+    skips = [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])]
+    assert len(skips) == 2                                  # visible on both passes, not silenced by pass 1
     assert led.posts["pk"].model_dump() == before           # ...and neither pass wrote a ledger byte
 
 
@@ -886,3 +906,23 @@ def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, mon
     assert p.postiz_state is None                             # no row could name it -> no observation
     assert p.state is PostState.needs_reconcile
     assert "escalated" in (p.error_reason or "")
+
+
+def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp_path, monkeypatch):
+    # I4: GET /posts/fanops_* 400s. A Zernio-backed birth token is token_only; a real id is still polled.
+    from fanops.accounts import add_account, set_backend
+    from fanops.reconcile import _reconcile_reads
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tok", parent_id="c", account="tt", account_id="1", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="fanops_deadbeef"))
+    led.add_post(Post(id="real", parent_id="c", account="tt", account_id="1", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="zernio_real_1"))
+    mirrored, token_only, polled = _reconcile_reads(cfg, led, lambda *a, **k: None)
+    assert [p.id for p in token_only] == ["tok"]
+    assert [p.id for p in polled] == ["real"]
+    assert mirrored == []

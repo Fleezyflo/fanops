@@ -1,10 +1,11 @@
 """Reconcile stage (AUDIT H4). Resolves posts stranded in `submitting` (crash mid-publish, FIX F11)
 or `needs_reconcile` (ambiguous 5xx / network timeout after the body was sent, AUDIT C1). Two
 backends, two READ shapes. Zernio has a true per-post lookup (GET /posts/{postSubmissionId} ->
-status in-progress|failed|published|scheduled + publicUrl) and is polled one post at a time. Postiz
-has no per-post endpoint at all, so it is MIRRORED: ONE bulk read of GET /public/v1/posts over the
-widest window (PostizStatusClient.list_all) is projected onto every Postiz-backed post carrying a
-REAL submission id — the pending ones AND the ones already resting published/analyzed. Either shape
+status in-progress|failed|published|scheduled + publicUrl) and is polled one real backend id at a
+time (`is_real_submission_id`; a `fanops_` birth token 400s). Postiz has no per-post endpoint at
+all, so it is MIRRORED: ONE bulk read of GET /public/v1/posts over the widest window
+(PostizStatusClient.list_all) is projected onto every Postiz-backed post carrying a REAL
+submission id — the pending ones AND the ones already resting published/analyzed. Either shape
 REQUIRES the submission id.
 
 The mirror is STATELESS: Postiz's row is the single truth, and a pass over unchanged rows writes
@@ -26,13 +27,13 @@ this module makes none.
 
 Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
 idempotency token (submission_id="fanops_..."), which is not a real backend id, so such a post can
-never appear in a Postiz window. It is never mirrored and never carries a postiz_state, but it IS
-still visited, so the (state, age) escalation can move a crash-stranded `submitting` claim into
-`needs_reconcile`. A post with genuinely NO submission_id at all (older data) is SKIPPED for human
-reconcile (the digest surfaces it). A real backend id from an ambiguous-5xx body overwrites the
-token, making that post cleanly auto-reconcilable. We never guess a post's fate — a wrong guess
-either drops a live post (untrackable) or re-queues a live one (double-publish), the exact
-C1/cascade hazards.
+never appear in a Postiz window and is never a Zernio GET key. It is never mirrored and never
+carries a postiz_state, but it IS still visited, so the (state, age) escalation can move a
+crash-stranded `submitting` claim into `needs_reconcile`. A post with genuinely NO submission_id
+at all (older data) is SKIPPED for human reconcile (the digest surfaces it). A real backend id
+from an ambiguous-5xx body overwrites the token, making that post cleanly auto-reconcilable. We
+never guess a post's fate — a wrong guess either drops a live post (untrackable) or re-queues a
+live one (double-publish), the exact C1/cascade hazards.
 
 A FATAL auth failure from EITHER backend (the shared AuthError base) halts the pass. A TRANSPORT
 failure is a log line and nothing else: a failed bulk fetch mirrors nobody this pass, and a failed
@@ -508,12 +509,12 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
 
       mirrored   — Postiz-backed, a REAL submission id, pending OR resting. One bulk window answers all
                    of them; a resting post is here so its row keeps being observed after it succeeds.
-      token_only — Postiz-backed, pending, carrying only a `fanops_` client token. NO Postiz row can
-                   ever carry that id, so there is nothing to mirror and nothing to poll — but the post
-                   is still VISITED, because the (state, age) escalation is what un-strands it.
-      polled     — Zernio-backed and pending: the per-post GET /posts/{id}, unchanged. Zernio is NOT
-                   mirrored, so a Zernio-backed resting post is out of the surface entirely and is
-                   never written an `absent` it was never asked about.
+      token_only — pending, carrying only a `fanops_` client token (Postiz OR Zernio). NO backend
+                   row can ever carry that id, so there is nothing to mirror and nothing to poll —
+                   but the post is still VISITED, because the (state, age) escalation is what un-strands it.
+      polled     — Zernio-backed, pending, and a REAL submission id: the per-post GET /posts/{id}.
+                   Zernio is NOT mirrored, so a Zernio-backed resting post is out of the surface
+                   entirely and is never written an `absent` it was never asked about.
 
     A post whose channel resolves to no live provider is skipped; that is logged for a pending post
     (it is work not done) and silent for a resting one (there is nothing it was owed)."""
@@ -531,7 +532,10 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
             continue
         if backend != "postiz":
             if not resting:
-                polled.append(p)                         # Zernio: per-post GET; resting posts are not read
+                if is_real_submission_id(p.submission_id):
+                    polled.append(p)                     # Zernio: per-post GET of a real backend id
+                else:
+                    token_only.append(p)                 # fanops_ birth token is not a GET key (I4)
         elif is_real_submission_id(p.submission_id):
             mirrored.append(p)
         elif not resting:
@@ -655,6 +659,14 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if polled_as is not None and polled_as.get(post.id) != post.submission_id:
             log("reconcile", post.id, "skipped: stale poll (submission_id changed)")
             continue                       # M04: post mutated between read and apply — skip cached row
+        if not is_real_submission_id(post.submission_id):
+            term = _apply_age_terminal(post, now)
+            if term is not None:
+                led.posts[post.id] = post.model_copy(update=term["update"])
+                log("reconcile", post.id, term["log"])
+            else:
+                log("reconcile", post.id, "skipped: client token is not a backend id")
+            continue
         if post.submission_id in mirror:
             info = mirror[post.submission_id]
         else:
