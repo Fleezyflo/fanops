@@ -1,16 +1,18 @@
 # src/fanops/source_tags.py
 """Source hashtag lock producer.
 
-Safari scrape completes the per-source lock. Graph may cache/confirm/rank; Graph
-never vetoes membership or withholds researched_at after scrape finished. Empty
-lock = scrape finished with zero admits. Caption waits on researched_at.
+Safari scrape completes the per-source lock. Graph may cache/confirm; Graph
+never vetoes membership, never reorders the lock, and never withholds
+researched_at after scrape finished. Empty lock = scrape finished with zero
+admits. Caption waits on researched_at.
 
-LLM names THIS video (mild→provocative). Search verifies the exact name (no
-siblings on the pile). Lock is positive play_count only, play_rank_key order,
-cap 12. Optional `hydrate_locks_from_known` may write `hydrated_at` + lock from
-already-used tags (zero network) but must never write `researched_at` or open
-the caption gate. Sidecar is cfg.control / source_tag_locks.json — not a Config
-field, not hashtags.json.
+`shortlist_source_tags` names THIS video (existing public tags, not slogans).
+Search verifies the exact name (no siblings on the pile). Lock is positive
+play_count admits in shortlist order, cap 12. Optional
+`hydrate_locks_from_known` may write `hydrated_at` + lock from already-used
+tags (zero network) but must never write `researched_at` or open the caption
+gate. Sidecar is cfg.control / source_tag_locks.json — not a Config field, not
+hashtags.json.
 
 Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
 (graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
@@ -23,7 +25,8 @@ from pathlib import Path
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import (_dedupe_norm, _norm, _num, _scrape_number,
-                             load_measurements, lock_from_pile, play_rank_key)
+                             load_measurements, lock_from_pile, lock_from_shortlist,
+                             play_rank_key)
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.ig_web_scrape import open_web_session
@@ -35,7 +38,7 @@ from fanops.timeutil import iso_z
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
 GRAPH_TAG_CACHE_NAME = "graph_hashtag_cache.json"
 _LOCK_N = 12
-_RESEARCH_CAP = 20
+_RESEARCH_CAP = 12
 _SEARCH_QUOTA = 30
 _SEARCH_WINDOW_DAYS = 7
 _METER_KEYS = ("play_count", "like_count", "media_count",
@@ -239,6 +242,7 @@ def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaini
         "measurements": _snapshot_meters(measurements, list(verified) or list(pile)),
         "remaining": list(remaining),
         "lock": [],
+        "quality_pass": True,
     }
     write_json_atomic(source_tag_locks_path(cfg), table)
 
@@ -256,11 +260,11 @@ def _unsearched_remaining(verified, remaining) -> list[str]:
     return out
 
 
-def _scrape_already_done(search_needed, pending, verified, measurements) -> bool:
+def _scrape_already_done(search_needed, pending, pile, measurements) -> bool:
     """True when a prior Safari walk already finished. Graph quota is not membership."""
     if search_needed:
         return False
-    if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+    if len(lock_from_shortlist(pile, measurements, _LOCK_N)) >= _LOCK_N:
         return True
     return not pending
 
@@ -309,7 +313,8 @@ def _transcript_file_prose(cfg, source) -> str:
     return " ".join(parts)
 
 
-def _default_research(source, excerpt) -> list[str]:
+def shortlist_source_tags(source, excerpt) -> list[str]:
+    """One LLM pass: discovery tags for THIS video. Not a slogan generator."""
     from fanops.llm import claude_json_meta
     from fanops.models import source_display_title
     raw_title = getattr(source, "title", None)
@@ -319,12 +324,16 @@ def _default_research(source, excerpt) -> list[str]:
         title = source_display_title(source)
     language = getattr(source, "language", None) or ""
     prompt = (
-        "Propose Instagram hashtag names for THIS video only.\n"
-        "Range from mild to provocative. Do not name sibling tracks or other videos.\n"
+        "Shortlist Instagram hashtags for THIS video for a fan account that reposts it.\n"
+        "Return 12 names that real people already search to find this kind of clip:\n"
+        "artist or subject names that actually appear, genre, format, and the topic.\n"
+        "Use existing public tags. Do not glue a sentence, hook, or thesis into a hashtag.\n"
+        "Do not invent a unique compound. Do not name sibling tracks or other videos.\n"
+        "Do not pad with wallpaper tags.\n"
         f"title: {title}\n"
         f"language: {language}\n"
         f"transcript: {excerpt or ''}\n"
-        "Return about 20 names. Names only."
+        "Return 12 names. Names only."
     )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
     names = data.get("names") if isinstance(data, dict) else None
@@ -550,6 +559,7 @@ def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
         "pile": list(pile),
         "lock": list(lock),
         "researched_at": iso_z(datetime.now(timezone.utc)),
+        "quality_pass": True,
     }
     if isinstance(measurements, dict):
         snap = _snapshot_meters(measurements, list(lock) or list(pile))
@@ -618,7 +628,7 @@ def hydrate_locks_from_known(cfg, led) -> int:
 
 def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
                      resolve_fn, measure_fn, log) -> None:
-    """Graph ranks scrape admits when it can; Graph death still stamps."""
+    """Graph may attach graph_metric; Graph death still stamps. Graph does not reorder."""
     if _graph_ready(cfg, resolve_fn):
         for tag in verified:
             if _graph_confirmed_n(verified, measurements) >= _LOCK_N:
@@ -654,13 +664,13 @@ def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
             except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
                 break
-    _stamp_source(cfg, table, sid, pile, lock_from_pile(verified, measurements, _LOCK_N),
+    _stamp_source(cfg, table, sid, pile, lock_from_shortlist(pile, measurements, _LOCK_N),
                   measurements)
 
 
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> bool:
-    """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
+    """Shortlist LLM → Safari scrape completes lock. Graph may attach metric; death still stamps.
 
     Charge + rotate via try_cap. A tick with no injected client does one tag
     (instagrapi: delay_range on each XHR, spread work). All peers at cap / dead /
@@ -676,6 +686,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         return False
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    quality = prior.get("quality_pass") is True
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
     measurements = dict(load_measurements(cfg))
@@ -707,14 +718,20 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         elif tag:
             still.append(tag)
     pending = still
-    if llm_names and (
+    scrape_complete = bool(llm_names) and (
         (not pending)
         or _scrape_already_done(False if not pending else search_needed, pending,
-                                verified, measurements)
-    ):
-        _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N),
-                      measurements)
+                                llm_names, measurements)
+    )
+    if scrape_complete:
+        _stamp_source(cfg, table, sid, llm_names,
+                      lock_from_shortlist(llm_names, measurements, _LOCK_N), measurements)
         return False
+    if llm_names and not quality:
+        llm_names = []
+        verified = []
+        pending = []
+        search_needed = True
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
     if first is None:
@@ -722,7 +739,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         return False
     if not llm_names:
         try:
-            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
+            raw_names = (research_fn or shortlist_source_tags)(source, _prose(source, excerpt))
         except Exception as exc:
             log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
             return True
@@ -738,7 +755,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     stagger = client is None
     tags_this_walk = 0
     while pending:
-        if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+        if len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
             break
         raw = pending[0]
         tag = _norm(raw) if isinstance(raw, str) else ""
@@ -786,7 +803,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         _apply_cached_graph(cfg, measurements, tag)
         pending.pop(0)
         tags_this_walk += 1
-    scrape_done = (not pending) or len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N
+    scrape_done = (not pending) or len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
         if verified:

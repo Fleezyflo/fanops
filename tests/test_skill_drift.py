@@ -114,6 +114,8 @@ def test_skill_operator_rule3_is_lock_membership():
     rule3 = _operator_rule(3)
     assert "ship_from_lock" in rule3
     assert "source lock" in rule3.lower()
+    assert "shortlist_source_tags" in rule3
+    assert "shortlist order" in rule3.lower()
     assert "play_count" in rule3
     assert "7-day" in rule3 or "current_top_reel_play_max_7d" in rule3
     assert "80-pile" in rule3 or "store ∪ corpus" in rule3 or "store u corpus" in rule3

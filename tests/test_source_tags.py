@@ -71,47 +71,120 @@ def test_siblings_not_on_pile(tmp_path):
     assert not cfg.hashtags_path.exists()
 
 
-def test_lock_is_play_ranked_capped_twelve(tmp_path):
+def test_produce_lock_caps_twelve_in_shortlist_order(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     search = {n: [_Hit(n)] for n in names}
-    search["bigfolder"] = [_Hit("bigfolder")]
-    search["highplay"] = [_Hit("highplay")]
     media = {f"#{n}": [_Media(1, "", play_count=i + 1)] for i, n in enumerate(names)}
-    media["#bigfolder"] = [_Media(1, "", play_count=10)]
-    media["#highplay"] = [_Media(1, "", play_count=9000)]
-    client = _SearchClient(
-        search,
-        media_by_tag=media,
-        media_count_by_tag={"#bigfolder": 1_500_000, "#highplay": 50_000},
-    )
+    client = _SearchClient(search, media_by_tag=media)
     ensure_source_lock(cfg, _src(), client=client,
-                       research_fn=lambda _s, _e: names + ["bigfolder", "highplay"],
-                       **_ok_graph())
+                       research_fn=lambda _s, _e: names, **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
-    lock = rec["lock"]
-    assert rec["pile"][:16] == [f"#t{i}" for i in range(16)]
-    assert "#bigfolder" in rec["pile"] and "#highplay" in rec["pile"]
-    assert len(lock) == 12
-    assert lock == [f"#t{i}" for i in range(11, -1, -1)]
-    assert "#t15" not in lock
-    assert "#highplay" not in lock
+    assert rec["pile"] == [f"#t{i}" for i in range(12)]
+    assert rec["lock"] == [f"#t{i}" for i in range(12)]
+    assert rec.get("quality_pass") is True
+    assert "#t15" not in rec["lock"]
 
 
-def test_high_media_low_play_loses_to_high_play(tmp_path):
+def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
-        {"bigfolder": [_Hit("bigfolder")], "highplay": [_Hit("highplay")]},
+        {"low": [_Hit("low")], "high": [_Hit("high")]},
         media_by_tag={
-            "#bigfolder": [_Media(1, "", play_count=10)],
-            "#highplay": [_Media(1, "", play_count=9000)],
+            "#low": [_Media(1, "", play_count=1)],
+            "#high": [_Media(1, "", play_count=9000)],
         },
-        media_count_by_tag={"#bigfolder": 1_500_000, "#highplay": 50_000},
     )
     ensure_source_lock(cfg, _src(), client=client,
-                       research_fn=lambda _s, _e: ["bigfolder", "highplay"],
+                       research_fn=lambda *_a: ["low", "high"],
                        **_ok_graph())
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#highplay", "#bigfolder"]
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["lock"] == ["#low", "#high"]
+    assert rec.get("quality_pass") is True
+
+
+def test_shortlist_prompt_is_quality_pass_not_provocative_slogans(tmp_path, mocker):
+    captured = {}
+
+    def fake_claude(prompt, schema, **_k):
+        captured["prompt"] = prompt
+        captured["schema"] = schema
+        return {"names": ["rickross", "hiphop"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    from fanops.source_tags import shortlist_source_tags
+    src = _src(title="Rick Ross talks tiers", language="en",
+               transcript="he says nobody left to fight")
+    names = shortlist_source_tags(src, "he says nobody left to fight")
+    p = captured["prompt"].lower()
+    assert "mild to provocative" not in p
+    assert "about 20 names" not in p
+    assert "glue" in p and "sibling" in p
+    assert "rick ross talks tiers" in captured["prompt"].lower()
+    assert names == ["rickross", "hiphop"]
+
+
+def test_slogan_pile_without_quality_pass_is_reshortlisted(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing", "#dontlookweirdbro"],
+            "verified": ["#whichwayamifacing"],
+            "remaining": ["#dontlookweirdbro"],
+            "lock": [],
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["rickross", "hiphop"]
+
+    client = _SearchClient(
+        {"rickross": [_Hit("rickross")], "hiphop": [_Hit("hiphop")]},
+        media_by_tag={
+            "#rickross": [_Media(1, "", play_count=8)],
+            "#hiphop": [_Media(1, "", play_count=8)],
+        },
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec["pile"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec.get("quality_pass") is True
+    assert rec["researched_at"]
+
+
+def test_quality_pass_unfinished_does_not_reshortlist(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#rickross", "#hiphop"],
+            "verified": ["#rickross"],
+            "remaining": ["#hiphop"],
+            "lock": [],
+            "quality_pass": True,
+            "measurements": {"#rickross": {"play_count": 8.0}},
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["nope"]
+
+    client = _SearchClient(
+        {"hiphop": [_Hit("hiphop")], "rickross": [_Hit("rickross")]},
+        media_by_tag={"#hiphop": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    assert calls["n"] == 0
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["pile"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#rickross", "#hiphop"]
 
 
 def test_like_only_and_graph_only_out_of_lock(tmp_path):
@@ -648,7 +721,7 @@ def test_three_verified_names_six_graph_http(tmp_path):
     assert rec["researched_at"]
 
 
-def test_stop_graph_at_twelve_play_rank(tmp_path):
+def test_stop_graph_at_twelve_shortlist_order(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     client = _SearchClient(
@@ -659,7 +732,7 @@ def test_stop_graph_at_twelve_play_rank(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
     assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(12)]
     assert len(measures) == 12
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(11, -1, -1)]
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(12)]
 
 
 def _norm_tag(tag):

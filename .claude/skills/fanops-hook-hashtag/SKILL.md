@@ -9,7 +9,8 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 > ship is `hashtags.ship_from_lock` (picks ∩ source lock, cap 4) — no AR floor,
 > no mega slot, no store ∪ corpus. `tests/test_skill_drift.py` keeps hook patterns
 > and ship rules honest. Caption membership is the source lock only. Lock order
-> for the menu is `play_count` then 7-day reel max.
+> is the LLM shortlist (`shortlist_source_tags`); caption picks 4 by `play_count`
+> then 7-day reel max.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
 (big text in a clip's first ~2s) and the **posted caption** — one hook sentence
@@ -52,10 +53,12 @@ INT32_MEDIA_COUNT=2_147_483_647
    The posted `caption` is one hook sentence; the 3–4 tags live in `hashtags`.
 3. **Hashtags come from the source lock via `ship_from_lock`** — never words the
    model invents, never the 80-pile / store ∪ corpus. Membership is the lock
-   (`hashtag_store` on every surface of that source). Rank for the lock menu is
-   `play_count` then 7-day reel max (`current_top_reel_play_max_7d`). Empty lock
-   → empty tag line. Invented / off-lock tags die. No AR floor, no mega slot,
-   no `VETTED` pool, no semantic ban-list on the ship path.
+   (`hashtag_store` on every surface of that source). The lock is
+   `shortlist_source_tags` then scrape admit; lock order is shortlist order.
+   Caption picks up to 4 from that lock by `play_count` then 7-day reel max
+   (`current_top_reel_play_max_7d`). Empty lock → empty tag line. Invented /
+   off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no semantic
+   ban-list on the ship path.
 
 ---
 
@@ -179,10 +182,11 @@ line (sentence still ships). **Never** the persona 80-pile
 (`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus — those are
 not the caption menu.
 
-Rank / choose-key for the lock menu: `play_count` DESC, then
-`current_top_reel_play_max_7d` (7-day reel max). `media_count` may appear as a
-number on the metrics row; it is **not** the caption menu order.
-`size_band` / `size_rank_key` may order cache chips; they are not the caption menu.
+Lock list order is the LLM shortlist (not play-rank). Caption choose-key among
+that lock: `play_count` DESC, then `current_top_reel_play_max_7d` (7-day reel
+max). `media_count` may appear as a number on the metrics row; it is **not**
+the caption choose-key. `size_band` / `size_rank_key` may order cache chips;
+they are not the caption menu.
 
 ### Shipped line (`ship_from_lock`)
 
@@ -201,9 +205,10 @@ number on the metrics row; it is **not** the caption menu order.
 
 Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 
-1. **Source lock produce** (`source_tags` + Safari scrape) — per-source sidecar
-   `source_tag_locks.json`: pile → lock (positive `play_count`, `play_rank_key`,
-   cap 12). Caption surfaces read that lock as `hashtag_store`.
+1. **Source lock produce** (`shortlist_source_tags` + Safari scrape) — per-source
+   sidecar `source_tag_locks.json`: LLM shortlist → lock (positive `play_count`
+   admits, shortlist order, cap 12). Caption surfaces read that lock as
+   `hashtag_store`.
 2. **Tick remesure** (`fanops_hashtags.refresh_store_if_due` on the run loop) —
    remesure sidecar pile∪lock names only. **Not** persona discovery, **not**
    `persona_terms`, **not** vocab expand on the loop (HV1-PR4).
