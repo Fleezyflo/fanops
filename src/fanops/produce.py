@@ -149,6 +149,22 @@ def _produce_one(cfg: Config, source_id: str, aspects: set[Fmt], *, log) -> Sour
     return SourceResult(source_id, err)
 
 
+_PRODUCE_STATES = frozenset({
+    SourceState.catalogued, SourceState.transcribed, SourceState.signalled,
+    SourceState.moments_requested, SourceState.picks_decided,
+    SourceState.error, SourceState.moments_empty,
+})
+
+
+def produce_source_ids(led: Ledger) -> list[str]:
+    """Native sources the producer may warm: still in a work-remaining state, newest first.
+    `moments_decided` inventory is skipped — fingerprint-skipping 1500 clipped moments is not work."""
+    rows = [(s.created_at or "", s.id) for s in led.sources.values()
+            if s.origin_kind != "third_party" and s.state in _PRODUCE_STATES]
+    rows.sort(reverse=True)
+    return [sid for _, sid in rows]
+
+
 def run_all(cfg: Config, aspects: set[Fmt], log) -> list[SourceResult]:
     """The single lock-free producer entry point pipeline.advance() calls between the short
     ingest transaction and the main reduce transaction. Warms every catalogued / transcribed /
@@ -168,7 +184,7 @@ def run_all(cfg: Config, aspects: set[Fmt], log) -> list[SourceResult]:
     except Exception as e:
         log("produce", "-", "error", err=str(e)[:120])   # #9: a ledger-load failure HALTS the whole producer pass -> error, not warn (the SECOND load site; both must bump or the fix half-fixes)
         return []
-    ids = [s.id for s in led.sources.values() if s.origin_kind != "third_party"]
+    ids = produce_source_ids(led)
     if ids:
         if cfg.concurrent_sources:
             with ThreadPoolExecutor(max_workers=cfg.concurrent_workers) as ex:
