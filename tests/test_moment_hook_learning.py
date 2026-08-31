@@ -92,15 +92,16 @@ def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch, 
     assert out == ["UCB_WIN"] and ucb.called and not bh.called
 
 
-# ---- C3: the HOOK prompt renders the STYLE block; absent/empty -> byte-identical ----
-# M1b: the learned hook STYLE rides the PASS-2 hook author (moment_hook_prompt), not the pick prompt.
+# ---- C3: the HOOK prompt ignores learned_hooks; presence of the key is a no-op ----
+# Winning styles re-primed the formula bait. Payload may still carry the key; the author does not see it.
 _HBASE = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "",
           "language": "en", "guidance": "", "frames": [], "signal_peaks": []}
 
-def test_moment_hook_prompt_renders_learned_hooks_block():
+def test_moment_hook_prompt_ignores_learned_hooks_block():
     withh = moment_hook_prompt({**_HBASE, "learned_hooks": ["WIN_A"]})
-    assert "WIN_A" in withh and "do NOT copy verbatim" in withh
-    assert "WIN_A" not in moment_hook_prompt(_HBASE)
+    assert "WIN_A" not in withh
+    assert "do NOT copy verbatim" not in withh
+    assert withh == moment_hook_prompt(_HBASE)
 
 def test_moment_hook_prompt_absent_or_empty_learned_hooks_is_byte_identical():
     base = moment_hook_prompt(_HBASE)
