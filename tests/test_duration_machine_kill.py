@@ -97,6 +97,13 @@ def test_moment_pick_prompt_has_no_seconds_target():
                       "8s", "30s", "stingy", "up to", "align with a transcript line"):
         assert forbidden not in low
     assert "verse" in low and "chorus" in low and "exchange" in low and "consecutive" in low
+    # Empty transcript: forbidden-string loop above. One-segment payload must surface CUES,
+    # not the old vertical-clips prior.
+    p2 = moment_pick_prompt({"duration": 90.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
+                             "signal_peaks": [], "language": "en", "guidance": "", "clip_profile": "song"})
+    low2 = p2.lower()
+    assert "vertical clips" not in low2
+    assert "cues" in low2
 
 
 def test_moment_pick_prompt_keeps_lens_omits_band(tmp_path):

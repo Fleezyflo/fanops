@@ -212,6 +212,53 @@ def test_moment_pick_prompt_has_data_not_instructions_directive():
     low = p.lower()
     assert "transcript" in low and "data" in low and "never as instructions" in low
 
+
+def test_moment_pick_prompt_prints_cues_not_whisper_json():
+    tr = [{"start": 1.0, "end": 3.0, "text": "hello",
+           "avg_logprob": -0.3, "no_speech_prob": 0.05, "compression_ratio": 1.5,
+           "words": [{"word": "hello", "start": 1.1, "end": 2.9}]}]
+    p = moment_pick_prompt({"duration": 42.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "cues" in low
+    assert "0  1.000-3.000" in p or "0  1.000-3.000  hello" in p
+    assert "avg_logprob" not in p
+    assert "no_speech_prob" not in p
+    assert '"words"' not in p
+    assert "TRANSCRIPT (JSON):" not in p
+    assert "vertical clips" not in low
+    assert "hello" in p
+
+
+def test_moment_pick_prompt_maps_peaks_onto_cues():
+    tr = [{"start": 10.0, "end": 14.0, "text": "a"},
+          {"start": 14.0, "end": 20.0, "text": "b"}]
+    peaks = [{"t": 15.0, "kind": "scene_cut", "score": 0.6},
+             {"t": 10.2, "kind": "speech_resume", "score": 0.8}]
+    p = moment_pick_prompt({"duration": 90.0, "transcript": tr, "signal_peaks": peaks,
+                            "language": "en", "guidance": ""})
+    assert "cue 1" in p and "scene_cut" in p
+    assert "cue 0" in p and "speech_resume" in p
+    assert '"t": 15.0' not in p and "'t': 15.0" not in p
+
+
+def test_moment_pick_prompt_cue_rule_and_no_vertical_prior():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
+                            "signal_peaks": [], "language": "en", "guidance": ""}).lower()
+    assert "cue" in p
+    assert "consecutive" in p
+    assert "vertical clips" not in p
+    assert "up to" not in p
+    assert "8s" not in p and "30s" not in p
+    assert "align with a transcript line" not in p
+
+
+def test_moment_pick_prompt_no_cues_allows_float_window():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [{"t": 12.0, "kind": "scene_cut", "score": 0.5}],
+                            "language": "en", "guidance": ""}).lower()
+    assert "0 <=" in p and "start" in p
+    assert "cue 0" not in p
+
 # --- hook prompt (pass 2: window-grounded on-screen hook) -------------------------------------------
 def _hook_payload(**over):
     base = {"source_id": "s1", "moment_id": "m1", "token": "14.00-21.00",
