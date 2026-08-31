@@ -639,7 +639,14 @@ def test_run_and_review_show_readonly_cast_state(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     golive.set_account_casting(cfg, True)
     run_html = _client(cfg).get("/run").data.decode()
-    assert "cast-state" in run_html and "moments per account" in run_html.lower()   # Run panel echoes the routing config
+    assert "cast-state" in run_html
+    assert "each account gets its own selected moments" in run_html.lower()
+    assert "clip length is the picked window" in run_html.lower()
+    assert "clip profile" not in run_html.lower()
+    assert "moments per account" not in run_html.lower()
+    review_html = _client(cfg).get("/review").data.decode()
+    assert "clip length is the picked window" in review_html.lower()
+    assert "clip talk" not in review_html.lower()
 
 
 # ---- Phase 3: persona edit + account promote/demote lifecycle ----
