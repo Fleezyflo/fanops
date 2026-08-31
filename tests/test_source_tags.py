@@ -71,47 +71,263 @@ def test_siblings_not_on_pile(tmp_path):
     assert not cfg.hashtags_path.exists()
 
 
-def test_lock_is_play_ranked_capped_twelve(tmp_path):
+def test_produce_lock_caps_twelve_in_shortlist_order(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     search = {n: [_Hit(n)] for n in names}
-    search["bigfolder"] = [_Hit("bigfolder")]
-    search["highplay"] = [_Hit("highplay")]
     media = {f"#{n}": [_Media(1, "", play_count=i + 1)] for i, n in enumerate(names)}
-    media["#bigfolder"] = [_Media(1, "", play_count=10)]
-    media["#highplay"] = [_Media(1, "", play_count=9000)]
-    client = _SearchClient(
-        search,
-        media_by_tag=media,
-        media_count_by_tag={"#bigfolder": 1_500_000, "#highplay": 50_000},
-    )
+    client = _SearchClient(search, media_by_tag=media)
     ensure_source_lock(cfg, _src(), client=client,
-                       research_fn=lambda _s, _e: names + ["bigfolder", "highplay"],
-                       **_ok_graph())
+                       research_fn=lambda _s, _e: names, **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
-    lock = rec["lock"]
-    assert rec["pile"][:16] == [f"#t{i}" for i in range(16)]
-    assert "#bigfolder" in rec["pile"] and "#highplay" in rec["pile"]
-    assert len(lock) == 12
-    assert lock == [f"#t{i}" for i in range(11, -1, -1)]
-    assert "#t15" not in lock
-    assert "#highplay" not in lock
+    assert rec["pile"] == [f"#t{i}" for i in range(12)]
+    assert rec["lock"] == [f"#t{i}" for i in range(12)]
+    assert rec.get("catalog") == [f"#t{i}" for i in range(12)]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
+    assert "#t15" not in rec["lock"]
 
 
-def test_high_media_low_play_loses_to_high_play(tmp_path):
+def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
-        {"bigfolder": [_Hit("bigfolder")], "highplay": [_Hit("highplay")]},
+        {"low": [_Hit("low")], "high": [_Hit("high")]},
         media_by_tag={
-            "#bigfolder": [_Media(1, "", play_count=10)],
-            "#highplay": [_Media(1, "", play_count=9000)],
+            "#low": [_Media(1, "", play_count=1)],
+            "#high": [_Media(1, "", play_count=9000)],
         },
-        media_count_by_tag={"#bigfolder": 1_500_000, "#highplay": 50_000},
     )
     ensure_source_lock(cfg, _src(), client=client,
-                       research_fn=lambda _s, _e: ["bigfolder", "highplay"],
+                       research_fn=lambda *_a: ["low", "high"],
                        **_ok_graph())
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == ["#highplay", "#bigfolder"]
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["lock"] == ["#low", "#high"]
+    assert rec.get("catalog") == ["#low", "#high"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
+
+
+def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
+    captured = {}
+
+    def fake_claude(prompt, schema, **_k):
+        captured["prompt"] = prompt
+        captured["schema"] = schema
+        return {"keep": ["#hiphop", "#inventedslogan", "#rickross"],
+                "reject": ["#fyp"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    from fanops.source_tags import shortlist_source_tags
+    src = _src(title="Rick Ross talks tiers", language="en")
+    catalog = ["#rickross", "#hiphop", "#fyp", "#miami"]
+    names = shortlist_source_tags(src, "he says nobody left to fight", catalog)
+    assert names == ["#hiphop", "#rickross"]
+    assert "#inventedslogan" not in names
+    assert "keep" in captured["schema"]["properties"]
+    assert "names" not in captured["schema"].get("properties", {})
+    p = captured["prompt"]
+    assert "#rickross" in p and "#fyp" in p
+    assert "mild to provocative" not in p.lower()
+    assert "Choose ONLY from the catalog" in p or "only from the catalog" in p.lower()
+
+
+def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
+    called = {"n": 0}
+
+    def fake_claude(*_a, **_k):
+        called["n"] += 1
+        return {"keep": ["#rap"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    from fanops.source_tags import shortlist_source_tags
+    assert shortlist_source_tags(_src(), "x", []) == []
+    assert called["n"] == 0
+
+
+def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing", "#dontlookweirdbro"],
+            "verified": ["#whichwayamifacing", "#dontlookweirdbro"],
+            "measurements": {
+                "#whichwayamifacing": {"play_count": 8.0},
+                "#dontlookweirdbro": {"play_count": 8.0},
+            },
+            "remaining": ["#whichwayamifacing", "#dontlookweirdbro"],
+            "lock": [],
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["rickross", "hiphop"]
+
+    client = _SearchClient(
+        {"rickross": [_Hit("rickross")], "hiphop": [_Hit("hiphop")]},
+        media_by_tag={
+            "#rickross": [_Media(1, "", play_count=8)],
+            "#hiphop": [_Media(1, "", play_count=8)],
+        },
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec["pile"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec.get("catalog") == ["#rickross", "#hiphop"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
+    assert rec["researched_at"]
+
+
+def test_unfinished_with_catalog_does_not_reshortlist(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#rickross", "#hiphop"],
+            "verified": ["#rickross"],
+            "remaining": ["#hiphop"],
+            "lock": [],
+            "catalog": ["#rickross", "#hiphop"],
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
+            "measurements": {"#rickross": {"play_count": 8.0}},
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["nope"]
+
+    client = _SearchClient(
+        {"hiphop": [_Hit("hiphop")], "rickross": [_Hit("rickross")]},
+        media_by_tag={"#hiphop": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    assert calls["n"] == 0
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["pile"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec.get("catalog") == ["#rickross", "#hiphop"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
+
+
+def test_researched_without_catalog_rejudges(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing"],
+            "lock": ["#whichwayamifacing"],
+            "researched_at": "2026-08-19T00:00:00Z",
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["rickross"]
+
+    client = _SearchClient(
+        {"rickross": [_Hit("rickross")]},
+        media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec["lock"] == ["#rickross"]
+    assert rec["pile"] == ["#rickross"]
+    assert rec.get("catalog") == ["#rickross"]
+    assert rec.get("catalog_at")
+    assert rec["researched_at"]
+    assert "quality_pass" not in rec
+
+
+def test_catalog_search_feeds_judge(tmp_path, mocker):
+    def fake_claude(*_a, **_k):
+        return {"keep": ["#rickross"],
+                "reject": ["#fyp", "#whichwayamifacing"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    cfg = _cfg(tmp_path)
+    client = _SearchClient(
+        {"rick ross": [_Hit("rickross"), _Hit("fyp"), _Hit("whichwayamifacing")]},
+        media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["lock"] == ["#rickross"]
+    assert "#fyp" not in rec["lock"]
+    assert rec.get("catalog") == ["#rickross", "#fyp", "#whichwayamifacing"]
+    assert rec.get("catalog_at")
+    assert rec["researched_at"]
+    assert "quality_pass" not in rec
+    assert client.search_calls == ["rick ross"]
+
+
+def test_unattended_researched_without_catalog_resumes(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    mocker.patch("fanops.llm.claude_json_meta", lambda *_a, **_k: (
+        {"keep": ["#rickross"], "reject": ["#fyp"]}, "m", False))
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing"],
+            "lock": ["#whichwayamifacing"],
+            "researched_at": "2026-08-19T00:00:00Z",
+        }
+    }))
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        cli = _SearchClient(
+            {"rick ross": [_Hit("rickross"), _Hit("fyp")]},
+            media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+        )
+        cli._fanops_scrape_user = user
+        return cli
+
+    ensure_source_lock(cfg, _src(title="Rick Ross"), open_client_fn=opener, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("catalog") == ["#rickross", "#fyp"]
+    assert rec.get("catalog_at")
+    assert isinstance(rec.get("remaining"), list)
+    assert rec["lock"] == ["#whichwayamifacing"]
+    assert rec["researched_at"] == "2026-08-19T00:00:00Z"
+    assert seen == ["u"]
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()
+    ensure_source_lock(cfg, _src(title="Rick Ross"), open_client_fn=opener, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert rec2["lock"] == ["#rickross"]
+    assert rec2["researched_at"]
+    assert rec2["researched_at"] != "2026-08-19T00:00:00Z"
+    assert "remaining" not in rec2
+    assert rec2.get("catalog") == ["#rickross", "#fyp"]
+    assert "quality_pass" not in rec2
+
+
+def test_empty_title_search_does_not_stamp(tmp_path, mocker):
+    called = {"n": 0}
+
+    def fake_claude(*_a, **_k):
+        called["n"] += 1
+        return {"keep": ["#rickross"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"rick ross": []})
+    ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
+    assert not source_tag_locks_path(cfg).exists()
+    assert called["n"] == 0
+    assert client.search_calls == ["rick ross"]
 
 
 def test_like_only_and_graph_only_out_of_lock(tmp_path):
@@ -145,6 +361,9 @@ def test_second_call_is_noop_when_researched_at_present(tmp_path):
 
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     first = json.loads(source_tag_locks_path(cfg).read_text())
+    assert first["src_1"].get("catalog") == ["#music"]
+    assert first["src_1"].get("catalog_at")
+    assert "quality_pass" not in first["src_1"]
     client.search_calls.clear()
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     assert calls["n"] == 1
@@ -648,7 +867,7 @@ def test_three_verified_names_six_graph_http(tmp_path):
     assert rec["researched_at"]
 
 
-def test_stop_graph_at_twelve_play_rank(tmp_path):
+def test_stop_graph_at_twelve_shortlist_order(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     client = _SearchClient(
@@ -659,7 +878,7 @@ def test_stop_graph_at_twelve_play_rank(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
     assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(12)]
     assert len(measures) == 12
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(11, -1, -1)]
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(12)]
 
 
 def _norm_tag(tag):
@@ -852,6 +1071,8 @@ def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None)
             "remaining": names,
             "lock": [],
             "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+            "catalog": list(names),
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
         }
     }))
 
@@ -877,6 +1098,9 @@ def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#a", "#b"]
+    assert rec.get("catalog") == ["#a", "#b"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert "quota_exhausted_at" not in rec
     assert seen == []
 
@@ -930,6 +1154,8 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
     table = load_source_tag_locks(cfg)
     assert table["src_a"]["researched_at"]
     assert table["src_a"]["lock"] == ["#a"]
+    assert table["src_a"].get("catalog") == ["#a"]
+    assert "quality_pass" not in table["src_a"]
     assert "src_b" not in table
     assert attempted == []
 
@@ -965,6 +1191,8 @@ def test_lock_ready_skips_unfinished_leftover_to_stamp_complete(tmp_path, monkey
             "remaining": ["#b"],
             "lock": [],
             "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+            "catalog": ["#b"],
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
         },
     }))
     seen = []
@@ -1216,12 +1444,10 @@ def test_hydrate_merges_used_into_completed_lock(tmp_path):
     }))
     hydrate_locks_from_known(cfg, led)
     rec = load_source_tag_locks(cfg)["src_1"]
-    lock = rec["lock"]
-    assert lock[0] == "#hiphop"
-    assert "#jussiesmollett" in lock
+    assert rec["lock"] == ["#jussiesmollett"]
     assert rec["researched_at"] == "2026-08-19T00:00:00Z"
-    assert rec["hydrated_at"]
-    assert len(lock) <= 12
+    assert not rec.get("hydrated_at")
+    assert "#hiphop" not in rec["lock"]
 
 
 def test_known_lock_caps_at_twelve(tmp_path):
@@ -1238,7 +1464,8 @@ def test_pile_cache_hit_stamps_without_safari(tmp_path):
     cfg = _cfg(tmp_path)
     source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     source_tag_locks_path(cfg).write_text(json.dumps({
-        "src_1": {"pile": ["#music"], "verified": [], "remaining": ["#music"], "lock": []},
+        "src_1": {"pile": ["#music"], "verified": [], "remaining": ["#music"], "lock": [],
+                  "catalog": ["#music"], "catalog_at": "2026-08-19T13:15:49.118016Z"},
     }))
     _write_meas(cfg, {"#music": 8.0})
     seen = []
@@ -1252,6 +1479,9 @@ def test_pile_cache_hit_stamps_without_safari(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#music"]
+    assert rec.get("catalog") == ["#music"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert seen == []
 
 

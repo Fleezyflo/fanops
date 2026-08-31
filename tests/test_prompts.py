@@ -52,7 +52,22 @@ def test_caption_prompt_source_has_no_union_corpus():
                                         "hashtag_store": ["#locktag"]}]})
     assert "UNION" not in out
     assert "prefer the tags in that surface's `corpus`" not in out.lower()
-    assert "play_count" in out
+    assert "CLIP FIT" in out
+    assert "Choose by `play_count`" not in out
+    assert "Choose by play_count" not in out
+
+
+def test_caption_prompt_clip_fit_does_not_choose_by_play():
+    out = caption_prompt({
+        "clip_id": "c1", "language": "en", "guidance": "", "transcript_excerpt": "x",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "hashtag_store": ["#rickross", "#hiphop"]}],
+        "hashtag_metrics": {"#hiphop": {"play_count": 9000}, "#rickross": {"play_count": 10}},
+    })
+    assert "CLIP FIT" in out
+    assert "Choose by `play_count`" not in out
+    assert "not the choose-key" in out.lower() or "not the choose-key" in out
+
 
 def test_prompt_does_not_ask_for_request_id():
     # MOL-167: the model must never be asked to echo request_id/source_id — the gate stamps both.

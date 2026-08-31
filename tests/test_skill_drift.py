@@ -83,7 +83,12 @@ def test_skill_part2_is_ship_from_lock_not_banded_composition():
         assert stale not in part2, f"Part 2 still teaches stale recipe {stale!r}"
     assert "ship_from_lock" in part2
     assert "source lock" in part2
+    assert "clip fit" in part2
+    # play_count may remain as a meter; must not be the caption choose-key story
     assert "play_count" in part2
+    assert "not the choose-key" in part2
+    assert "caption choose-key" not in part2
+    assert not re.search(r"choose(?:s|n)? by[` ]*play_count|choose-key among.{0,80}play_count", part2)
     assert "7-day" in part2 or "current_top_reel_play_max_7d" in part2
     assert "80-pile" in part2 or "_per_account_hashtag_stores" in part2
     assert "store ∪ corpus" in part2 or "store u corpus" in part2  # named as NOT the caption menu
@@ -111,13 +116,17 @@ def test_skill_operator_rule3_is_lock_membership():
     rule3 = _operator_rule(3)
     assert "ship_from_lock" in rule3
     assert "source lock" in rule3.lower()
-    assert "play_count" in rule3
-    assert "7-day" in rule3 or "current_top_reel_play_max_7d" in rule3
+    assert "shortlist_source_tags" in rule3
+    assert "clip fit" in rule3.lower()
     assert "80-pile" in rule3 or "store ∪ corpus" in rule3 or "store u corpus" in rule3
     assert "empty lock" in rule3.lower()
     assert "VETTED" in rule3 and re.search(r"no `?VETTED", rule3)
-    assert re.search(r"no semantic ban", rule3, re.I)
+    flat = re.sub(r"\s+", " ", rule3)
+    assert re.search(r"no semantic ban", flat, re.I)
     assert "size_rank_key" not in rule3          # caption path; Layer B stays in Part 3
     # No AR / mega consume claims on the ship rule.
     assert re.search(r"no AR floor|no ar floor", rule3, re.I)
     assert re.search(r"no mega", rule3, re.I)
+    # play_count must not be taught as the caption choose-key
+    assert "Choose by `play_count`" not in rule3
+    assert not re.search(r"picks? up to 4.{0,40}by `?play_count", rule3, re.I)

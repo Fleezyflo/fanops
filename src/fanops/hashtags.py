@@ -179,6 +179,23 @@ def lock_from_pile(names, measurements, n=12) -> list[str]:
     return kept[:n]
 
 
+def lock_from_shortlist(names, measurements, n=12) -> list[str]:
+    """Positive play_count admits, caller order, cap n. Does not re-sort."""
+    recs = measurements if isinstance(measurements, dict) else {}
+    out: list[str] = []
+    for name in _dedupe_norm(names):
+        rec = recs.get(name)
+        if not isinstance(rec, dict):
+            continue
+        plays = _num(rec.get("play_count"))
+        if plays is None or plays <= 0:
+            continue
+        out.append(name)
+        if len(out) >= n:
+            break
+    return out
+
+
 def ship_from_lock(picks, lock, n=4) -> list[str]:
     """Caption ship: picks ∩ lock, pick order, cap n. Empty lock → []. No floors, no backfill."""
     allowed = set(_dedupe_norm(lock))

@@ -1,16 +1,18 @@
 # src/fanops/source_tags.py
 """Source hashtag lock producer.
 
-Safari scrape completes the per-source lock. Graph may cache/confirm/rank; Graph
-never vetoes membership or withholds researched_at after scrape finished. Empty
-lock = scrape finished with zero admits. Caption waits on researched_at.
+Safari scrape completes the per-source lock. Graph may cache/confirm; Graph
+never vetoes membership, never reorders the lock, and never withholds
+researched_at after scrape finished. Empty lock = scrape finished with zero
+admits. Caption waits on researched_at.
 
-LLM names THIS video (mild→provocative). Search verifies the exact name (no
-siblings on the pile). Lock is positive play_count only, play_rank_key order,
-cap 12. Optional `hydrate_locks_from_known` may write `hydrated_at` + lock from
-already-used tags (zero network) but must never write `researched_at` or open
-the caption gate. Sidecar is cfg.control / source_tag_locks.json — not a Config
-field, not hashtags.json.
+`shortlist_source_tags` keeps a subset of a closed catalog (off-catalog dies).
+Search verifies the exact name (no siblings on the pile). Lock is keep ∩
+positive play_count admits in keep order, cap 12. Optional
+`hydrate_locks_from_known` may write `hydrated_at` + lock from already-used
+tags (zero network) but must never write `researched_at` or open the caption
+gate. Sidecar is cfg.control / source_tag_locks.json — not a Config field, not
+hashtags.json.
 
 Graph node id + graph_metric cache by tag name lives in a dedicated sidecar
 (graph_hashtag_cache.json). Never mix with scrape `graph_id` in hashtags.json.
@@ -23,7 +25,8 @@ from pathlib import Path
 from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.hashtags import (_dedupe_norm, _norm, _num, _scrape_number,
-                             load_measurements, lock_from_pile, play_rank_key)
+                             load_measurements, lock_from_pile, lock_from_shortlist,
+                             play_rank_key)
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.ig_web_scrape import open_web_session
@@ -35,16 +38,20 @@ from fanops.timeutil import iso_z
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
 GRAPH_TAG_CACHE_NAME = "graph_hashtag_cache.json"
 _LOCK_N = 12
-_RESEARCH_CAP = 20
+_RESEARCH_CAP = 12
 _SEARCH_QUOTA = 30
 _SEARCH_WINDOW_DAYS = 7
 _METER_KEYS = ("play_count", "like_count", "media_count",
                "current_top_reel_play_max_7d", "top_reel_sample_n", "graph_metric")
 _RESEARCH_SCHEMA = {
     "type": "object",
-    "properties": {"names": {"type": "array", "items": {"type": "string"}}},
-    "required": ["names"],
+    "properties": {
+        "keep": {"type": "array", "items": {"type": "string"}},
+        "reject": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["keep"],
 }
+_CATALOG_CAP = 30
 
 
 def source_tag_locks_path(cfg):
@@ -232,14 +239,23 @@ def _restore_meters(measurements: dict, snap) -> None:
         measurements[n] = merged
 
 
-def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining) -> None:
-    table[sid] = {
+def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining,
+                       catalog, catalog_at) -> None:
+    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    lock = prior.get("lock")
+    row = {
         "pile": list(pile),
         "verified": list(verified),
         "measurements": _snapshot_meters(measurements, list(verified) or list(pile)),
         "remaining": list(remaining),
-        "lock": [],
+        "lock": list(lock) if isinstance(lock, list) else [],
+        "catalog": list(catalog),
+        "catalog_at": catalog_at,
     }
+    at = prior.get("researched_at")
+    if isinstance(at, str) and at.strip():
+        row["researched_at"] = at
+    table[sid] = row
     write_json_atomic(source_tag_locks_path(cfg), table)
 
 
@@ -256,11 +272,11 @@ def _unsearched_remaining(verified, remaining) -> list[str]:
     return out
 
 
-def _scrape_already_done(search_needed, pending, verified, measurements) -> bool:
+def _scrape_already_done(search_needed, pending, pile, measurements) -> bool:
     """True when a prior Safari walk already finished. Graph quota is not membership."""
     if search_needed:
         return False
-    if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+    if len(lock_from_shortlist(pile, measurements, _LOCK_N)) >= _LOCK_N:
         return True
     return not pending
 
@@ -309,28 +325,47 @@ def _transcript_file_prose(cfg, source) -> str:
     return " ".join(parts)
 
 
-def _default_research(source, excerpt) -> list[str]:
+def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
+    """One LLM pass: keep a subset of a closed catalog. Off-catalog names die."""
     from fanops.llm import claude_json_meta
     from fanops.models import source_display_title
+    allowed = _dedupe_norm(catalog)[:_CATALOG_CAP]
+    if not allowed:
+        return []
     raw_title = getattr(source, "title", None)
     if isinstance(raw_title, str) and raw_title.strip():
         title = raw_title.strip()
     else:
         title = source_display_title(source)
     language = getattr(source, "language", None) or ""
+    listed = ", ".join(allowed)
     prompt = (
-        "Propose Instagram hashtag names for THIS video only.\n"
-        "Range from mild to provocative. Do not name sibling tracks or other videos.\n"
+        "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
+        "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
+        "(artist/subject that actually appear, genre, format, topic).\n"
+        "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
+        "Do not invent a name that is not in the catalog.\n"
         f"title: {title}\n"
         f"language: {language}\n"
         f"transcript: {excerpt or ''}\n"
-        "Return about 20 names. Names only."
+        f"catalog: {listed}\n"
+        "Return at most 12 keep names, catalog order unless a clearer fit comes first."
     )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
-    names = data.get("names") if isinstance(data, dict) else None
-    if not isinstance(names, list):
+    keep = data.get("keep") if isinstance(data, dict) else None
+    if not isinstance(keep, list):
         return []
-    return [n for n in names if isinstance(n, str)]
+    allow = set(allowed)
+    out: list[str] = []
+    for raw in keep:
+        if not isinstance(raw, str):
+            continue
+        n = _norm(raw)
+        if n and n in allow and n not in out:
+            out.append(n)
+        if len(out) >= _RESEARCH_CAP:
+            break
+    return out
 
 
 def _researched(table, sid: str) -> bool:
@@ -339,6 +374,19 @@ def _researched(table, sid: str) -> bool:
         return False
     at = rec.get("researched_at")
     return isinstance(at, str) and bool(at.strip())
+
+
+def _has_catalog(rec) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    at = rec.get("catalog_at")
+    if not isinstance(at, str) or not at.strip():
+        return False
+    return isinstance(rec.get("catalog"), list)
+
+
+def _in_progress(rec) -> bool:
+    return isinstance(rec, dict) and isinstance(rec.get("remaining"), list)
 
 
 def _call_opener(opener, cfg, user=None):
@@ -545,11 +593,13 @@ def known_lock(names, measurements, used, n=12, keep=None) -> list[str]:
     return out[:n]
 
 
-def _stamp_source(cfg, table, sid, pile, lock, measurements=None) -> None:
+def _stamp_source(cfg, table, sid, pile, lock, measurements=None, *, catalog, catalog_at) -> None:
     row = {
         "pile": list(pile),
         "lock": list(lock),
         "researched_at": iso_z(datetime.now(timezone.utc)),
+        "catalog": list(catalog),
+        "catalog_at": catalog_at,
     }
     if isinstance(measurements, dict):
         snap = _snapshot_meters(measurements, list(lock) or list(pile))
@@ -596,6 +646,8 @@ def hydrate_locks_from_known(cfg, led) -> int:
         sid = str(getattr(source, "id", "") or "")
         if not sid:
             continue
+        if _researched(table, sid):
+            continue
         used = used_tags_for_source(led, sid)
         if not used:
             continue
@@ -616,9 +668,9 @@ def hydrate_locks_from_known(cfg, led) -> int:
     return n
 
 
-def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
-                     resolve_fn, measure_fn, log) -> None:
-    """Graph ranks scrape admits when it can; Graph death still stamps."""
+def _graph_attach_then_stamp(cfg, table, sid, pile, verified, measurements, *,
+                             catalog, catalog_at, resolve_fn, measure_fn, log) -> None:
+    """Graph may attach graph_metric; Graph death still stamps. Graph does not reorder."""
     if _graph_ready(cfg, resolve_fn):
         for tag in verified:
             if _graph_confirmed_n(verified, measurements) >= _LOCK_N:
@@ -654,13 +706,13 @@ def _rank_then_stamp(cfg, table, sid, pile, verified, measurements, *,
             except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
                 break
-    _stamp_source(cfg, table, sid, pile, lock_from_pile(verified, measurements, _LOCK_N),
-                  measurements)
+    _stamp_source(cfg, table, sid, pile, lock_from_shortlist(pile, measurements, _LOCK_N),
+                  measurements, catalog=catalog, catalog_at=catalog_at)
 
 
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> bool:
-    """Research → Safari scrape completes lock. Graph ranks; Graph death still stamps.
+    """Catalog search, LLM keep, Safari scrape completes lock. Graph may attach; death still stamps.
 
     Charge + rotate via try_cap. A tick with no injected client does one tag
     (instagrapi: delay_range on each XHR, spread work). All peers at cap / dead /
@@ -672,12 +724,14 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     if not sid:
         return False
     table = load_source_tag_locks(cfg)
-    if _researched(table, sid):
-        return False
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    if _researched(table, sid) and _has_catalog(prior) and not _in_progress(prior):
+        return False
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
+    catalog: list[str] = []
+    catalog_at = ""
     measurements = dict(load_measurements(cfg))
     _restore_meters(measurements, prior.get("measurements"))
     verified_prior = prior.get("verified") if isinstance(prior.get("verified"), list) else None
@@ -694,6 +748,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         verified = []
         pending = list(llm_names)
         search_needed = True
+    if _has_catalog(prior):
+        catalog = _dedupe_norm(prior["catalog"])[:_CATALOG_CAP]
+        catalog_at = prior["catalog_at"]
+        llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
     for tag in verified:
         _apply_cached_graph(cfg, measurements, tag)
     _union_lock_meters(table, measurements)
@@ -707,38 +765,77 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         elif tag:
             still.append(tag)
     pending = still
-    if llm_names and (
+    scrape_complete = bool(llm_names) and (
         (not pending)
         or _scrape_already_done(False if not pending else search_needed, pending,
-                                verified, measurements)
-    ):
-        _stamp_source(cfg, table, sid, llm_names, lock_from_pile(verified, measurements, _LOCK_N),
-                      measurements)
+                                llm_names, measurements)
+    )
+    if scrape_complete and _has_catalog(prior):
+        _stamp_source(cfg, table, sid, llm_names,
+                      lock_from_shortlist(llm_names, measurements, _LOCK_N), measurements,
+                      catalog=catalog, catalog_at=catalog_at)
         return False
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
     first = next(walk, None)
     if first is None:
         log("source_tags", sid, "no_scrape")
         return False
-    if not llm_names:
-        try:
-            raw_names = (research_fn or _default_research)(source, _prose(source, excerpt))
-        except Exception as exc:
-            log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
-            return True
-        llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
-        if not llm_names:
-            log("source_tags", sid, "research_fail", level="error", err="research_empty")
-            return True
-        pending = list(llm_names)
-        search_needed = True
     already: dict[str, int] = {}
     spare = iter(walk)
     current = first
     stagger = client is None
     tags_this_walk = 0
+    catalog_search_this_tick = False
+    if not _has_catalog(prior):
+        if research_fn is not None:
+            try:
+                raw_names = research_fn(source, _prose(source, excerpt))
+            except Exception as exc:
+                log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
+                return True
+            llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+            catalog = list(llm_names)
+            catalog_at = iso_z(datetime.now(timezone.utc))
+            if not llm_names:
+                log("source_tags", sid, "research_fail", level="error", err="research_empty")
+                return True
+            verified = []
+            pending = list(llm_names)
+            search_needed = True
+        else:
+            from fanops.models import source_display_title
+            raw_title = getattr(source, "title", None)
+            if isinstance(raw_title, str) and raw_title.strip():
+                title = raw_title.strip()
+            else:
+                title = source_display_title(source)
+            try:
+                hits = search_hashtags_scrape(current, title)
+            except Exception as exc:
+                if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
+                    log("source_tags", sid, "stop_dead", err=type(exc).__name__,
+                        user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
+                    _remember_dead_dump(cfg, current, exc)
+                    return True
+                raise
+            catalog = _dedupe_norm(
+                h.get("name") if isinstance(h, dict) else "" for h in hits)[:_CATALOG_CAP]
+            catalog_at = iso_z(datetime.now(timezone.utc))
+            tags_this_walk += 1
+            catalog_search_this_tick = True
+            if not catalog:
+                log("source_tags", sid, "research_fail", level="error", err="catalog_empty")
+                return True
+            llm_names = shortlist_source_tags(source, _prose(source, excerpt), catalog)
+            verified = list(llm_names)
+            pending = list(llm_names)
+            search_needed = False
+            if not pending:
+                _stamp_source(cfg, table, sid, llm_names, [], measurements,
+                              catalog=catalog, catalog_at=catalog_at)
+                return True
     while pending:
-        if len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N:
+        if len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
             break
         raw = pending[0]
         tag = _norm(raw) if isinstance(raw, str) else ""
@@ -786,15 +883,17 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         _apply_cached_graph(cfg, measurements, tag)
         pending.pop(0)
         tags_this_walk += 1
-    scrape_done = (not pending) or len(lock_from_pile(verified, measurements, _LOCK_N)) >= _LOCK_N
+    scrape_done = (not pending) or len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
-        if verified:
+        if verified or catalog_search_this_tick:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
-                               measurements=measurements, remaining=pending)
+                               measurements=measurements, remaining=pending,
+                               catalog=catalog, catalog_at=catalog_at)
         return True
-    _rank_then_stamp(cfg, table, sid, llm_names, verified, measurements,
-                     resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
+    _graph_attach_then_stamp(cfg, table, sid, llm_names, verified, measurements,
+                             catalog=catalog, catalog_at=catalog_at,
+                             resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)
     return True
 
 
@@ -830,7 +929,8 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
             if getattr(source, "origin_kind", "native") == "third_party":
                 continue
             sid = str(getattr(source, "id", "") or "")
-            if not sid or _researched(table, sid):
+            rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
+            if not sid or (_researched(table, sid) and _has_catalog(rec) and not _in_progress(rec)):
                 continue
             jp = _transcript_json_path(cfg, source)
             has_json = bool(jp and jp.exists())
@@ -850,7 +950,8 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                     err=f"{type(exc).__name__}: {exc}"[:160])
                 return
             table = load_source_tag_locks(cfg)
-            if _researched(table, sid) or walked:
+            rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
+            if walked or (_researched(table, sid) and _has_catalog(rec) and not _in_progress(rec)):
                 return
             opener = _closed
     except Exception as exc:
