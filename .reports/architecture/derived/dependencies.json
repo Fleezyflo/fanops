@@ -1186,7 +1186,8 @@
       "lazy": [
         "fanops",
         "fanops.errors",
-        "fanops.meta_graph"
+        "fanops.meta_graph",
+        "fanops.postiz_lifecycle"
       ],
       "optional": [],
       "typing": []
@@ -1236,6 +1237,8 @@
         "fanops.post.compress",
         "fanops.post.dryrun",
         "fanops.post.media",
+        "fanops.post.metrics",
+        "fanops.post.postiz",
         "fanops.postiz_lifecycle",
         "fanops.studio.views_common",
         "fanops.timeutil"
@@ -2140,6 +2143,7 @@
       "re",
       "requests",
       "secrets",
+      "shlex",
       "shutil",
       "socket",
       "sqlite3",
@@ -2188,6 +2192,7 @@
       "socket",
       "sqlite3",
       "subprocess",
+      "sys",
       "tempfile",
       "time",
       "urllib",
@@ -2489,7 +2494,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 252,
+  "lazy_downward_count": 254,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2770,6 +2775,14 @@
       "same_scc": false,
       "to": "fanops.post",
       "to_level": 3
+    },
+    {
+      "from": "fanops.post.run",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
     },
     {
       "from": "fanops.produce",
@@ -3779,10 +3792,10 @@
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 596,
-    "lazy_edges": 372,
-    "lazy_edges_lateral": 49,
+    "lazy_edges": 375,
+    "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,
-    "lazy_edges_to_equal_or_higher_level": 120,
+    "lazy_edges_to_equal_or_higher_level": 121,
     "modules": 140,
     "optional_edges": 0,
     "typing_only_edges": 7

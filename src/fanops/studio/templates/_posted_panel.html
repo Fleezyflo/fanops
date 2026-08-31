@@ -51,7 +51,7 @@
           {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
           {% else %}<span>Lift {% if r.lift_score is not none %}<span class="lift-num">{{ '%.3f'|format(r.lift_score) }}</span>{% else %}—{% endif %} {{ lineage_delta(r) }}</span>{% endif %}{# MOL-51: Lift value is the dominant per-row datum → MOL-50's .lift-num (Δ vs best stays the quiet .delta-best annotation) #}
           {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener">View on {{ r.platform }} ↗</a>
-          {% elif r.posted_via == 'inflight' %}<span class="muted">Waiting for link</span>{% if r.error_reason %} · <span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
+          {% elif r.posted_via == 'inflight' %}<span class="muted">{{ r.inflight_headline }}</span>{% if r.error_reason %} · <span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
           {% elif r.posted_via == 'dryrun' %}<span class="muted">no link</span>{% elif r.posted_via not in ('failed',) %}<span class="muted">no live link</span>{% endif %}
         </div>
         {% if r.posted_via not in ('failed',) %}

@@ -83,7 +83,7 @@ def test_restore_persona_hook_reburns(tmp_path, mocker):
     assert led2.moments["m1"].hook == "STRIPPED" and led2.moments["m1"].hook_removed is None
     assert led2.clips["c0"].state is ClipState.queued   # queued state PRESERVED across re-render
 
-def test_retry_rate_limit_staggers_schedule(tmp_path):
+def test_retry_rate_limit_one_per_account_not_a_blast(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
     for i, pid in enumerate(["p0", "p1"]):
@@ -97,9 +97,11 @@ def test_retry_rate_limit_staggers_schedule(tmp_path):
                         "error_kind": ErrorKind.rate_limit})
     led.save()
     res = actions.retry_rate_limited_failures(cfg)
-    assert res.ok and res.detail["retried"] == 2
-    times = [Ledger.load(cfg).posts[pid].scheduled_time for pid in ("p0", "p1")]
-    assert times[0] and times[1] and times[0] != times[1]
+    assert res.ok and res.detail["retried"] == 1
+    after = Ledger.load(cfg).posts
+    queued = [pid for pid in ("p0", "p1") if after[pid].state is PostState.queued]
+    failed = [pid for pid in ("p0", "p1") if after[pid].state is PostState.failed]
+    assert len(queued) == 1 and len(failed) == 1
 
 def test_zero_post_clips_surfaces_orphans(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)

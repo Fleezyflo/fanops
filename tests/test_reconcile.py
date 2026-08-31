@@ -380,9 +380,11 @@ def test_reconcile_published_post_is_archived(tmp_path):
 # ---- WS-R1 XC-1/XC-2/XC-6: bounded escalation out of submit/reconcile limbo ----------------------
 
 def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tmp_path):
-    # XC-1: a `submitting` post crash-stranded >24h past schedule on a never-real fanops_ token escalates to
-    # needs_reconcile (the digest reconcile column owns it). State CHANGES; never to a re-queueable `failed`.
+    # I5: a `submitting` post crash-stranded >24h on a never-real fanops_ token cannot be polled.
+    # It leaves inflight as failed/unknown — never needs_reconcile (would stay inflight forever)
+    # and never transient (daemon would auto-retry a fanops_ id). Never GET.
     from datetime import datetime, timezone, timedelta
+    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
@@ -391,8 +393,10 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
     p = led.posts["ps"]
     assert polled == []                                          # age ladder must not depend on a GET
-    assert p.state is PostState.needs_reconcile
-    assert "escalated" in (p.error_reason or "")
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 def test_submitting_not_escalated_when_fresh(tmp_path):
@@ -425,20 +429,23 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
 
 
 def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
-    # THE INVERSION. There used to be an age (72h past schedule) at which reconcile declared a post lost —
-    # a verdict about a backend it had not heard from, written into error_reason. Waiting is not failing:
-    # a post 80h past schedule whose status is still unknown comes out of the pass byte-identical. Nothing
-    # in this module now converts elapsed time into a claim about a publication.
+    # I5 exception to "waiting is not failing": a fanops_ birth token cannot be polled, so past 24h
+    # (here 80h) it leaves inflight as failed/unknown. A real backend id at this age is still
+    # untouched (test_a_real_token_past_the_old_horizon_is_also_untouched). Never GET.
     from datetime import datetime, timezone, timedelta
+    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
-    before = led.posts["pg"].model_dump()
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
+    p = led.posts["pg"]
     assert polled == []
-    assert led.posts["pg"].model_dump() == before
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 @pytest.mark.parametrize("legacy", [
@@ -517,9 +524,11 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if token.startswith("fanops_"):
         assert polled == []                                 # birth token is not a GET key
-        assert p.model_dump() == before                     # age ladder only — no observation
-        assert p.state is PostState.needs_reconcile
-        assert p.state is not PostState.failed
+        assert p.state is PostState.failed                  # I5: unpollable past 24h leaves inflight
+        assert p.state is not PostState.needs_reconcile
+        from fanops.models import ErrorKind
+        assert p.error_kind is ErrorKind.unknown            # never transient — daemon must not auto-retry
+        assert "unpollable" in (p.error_reason or "")
     elif poll == "published":
         assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
@@ -605,9 +614,8 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
 
 def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_nothing(tmp_path):
     # MOL-791: the preview carries TWO row kinds in ONE shape, told apart by would_set_state vs state.
-    #   esc   — 30h `submitting`, CLIENT token: the surviving escalation rung fires (would_set_state
-    #           MOVES). No lateness row: a fanops_ token can never match a backend row, so there is no
-    #           backend silence to report.
+    #   esc   — 30h `submitting`, CLIENT token: I5 unpollable close fires (would_set_state MOVES to
+    #           failed). No lateness row: a fanops_ token can never match a backend row.
     #   old   — 80h `needs_reconcile`, REAL id, never mirrored: the deleted give-up rung would have
     #           declared it lost; now it previews as LATENESS ONLY (would_set_state == state).
     #   fresh — 2h `submitting`, client token: previews nothing at all.
@@ -627,8 +635,8 @@ def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_no
     rows = report_terminals(led)
     writes = [r for r in rows if r["would_set_state"] != r["state"]]
     late = [r for r in rows if r["would_set_state"] == r["state"]]
-    assert [r["post_id"] for r in writes] == ["esc"]          # the escalation, and only it, would write
-    assert writes[0]["would_set_state"] == "needs_reconcile" and "escalated" in writes[0]["reason"]
+    assert [r["post_id"] for r in writes] == ["esc"]          # the unpollable close, and only it, would write
+    assert writes[0]["would_set_state"] == "failed" and "unpollable" in writes[0]["reason"]
     assert [r["post_id"] for r in late] == ["old"]            # esc (client token) + fresh (on time) are silent
     assert late[0]["state"] == "needs_reconcile" and late[0]["event"] == "note lateness"
     assert "80h past scheduled_time" in late[0]["reason"] and "never mirrored" in late[0]["reason"]
@@ -895,8 +903,9 @@ def test_a_zernio_backed_resting_post_is_never_stamped_absent(tmp_path, monkeypa
 def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, monkeypatch, mocker):
     # A `fanops_` idempotency token is not a Postiz row id, so no window can ever hold it: mirroring it
     # would record a permanent `absent` that says nothing about the post. It is still VISITED, because the
-    # (state, age) escalation is the one thing that un-strands a crash-stranded submit claim — and that
-    # escalation moves between two non-re-queueable states, deciding nothing about liveness.
+    # (state, age) ladder un-strands a crash-stranded submit claim — I5 closes an unpollable token past
+    # 24h as failed/unknown (never GET, never mirrored).
+    from fanops.models import ErrorKind
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "tok", PostState.submitting, "fanops_deadbeef", hours_ago=30)
@@ -904,8 +913,10 @@ def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, mon
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["tok"]
     assert p.postiz_state is None                             # no row could name it -> no observation
-    assert p.state is PostState.needs_reconcile
-    assert "escalated" in (p.error_reason or "")
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp_path, monkeypatch):

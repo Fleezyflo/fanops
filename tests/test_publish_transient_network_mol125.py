@@ -4,7 +4,10 @@ import requests as _rq
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, Clip, PostState, ClipState, Platform
-from fanops.post.run import _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon
+from fanops.post.run import (
+    _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon,
+    _requeue_rate_limited_for_daemon, _requeue_proven_dead_for_daemon,
+)
 from fanops.studio.views_common import is_transient_failure
 from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
 
@@ -155,6 +158,148 @@ def test_recover_posts_retries_transient_failed(tmp_path):
     res = recover_posts(cfg, ["dns"], action="retry", reason="studio_retry_transient")
     assert res.ok and res.detail["retried"] == 1
     assert Ledger.load(cfg).posts["dns"].state is PostState.queued
+
+
+def _rate_fail(cfg, pid, *, account_id="ig1", sub=None, retry=0):
+    from fanops.models import Moment, MomentState, Source
+    f = cfg.clips / f"{pid}.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        if "src_1" not in led.sources:
+            led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+        if "mom_1" not in led.moments:
+            led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped))
+        if pid not in led.clips:
+            led.add_clip(Clip(id=pid, parent_id="mom_1", path=str(f), state=ClipState.captioned))
+        led.add_post(Post(id=pid, parent_id=pid, account="a", account_id=account_id,
+                          platform=Platform.instagram, caption="c", state=PostState.failed,
+                          error_kind=ErrorKind.rate_limit, error_reason="postiz 429 (body withheld)",
+                          submission_id=sub, daemon_transient_retry=retry,
+                          scheduled_time="2026-08-31T07:00:00Z"))
+
+
+def test_requeue_rate_limit_one_per_account_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "r1", account_id="ig1")
+    _rate_fail(cfg, "r2", account_id="ig1")
+    assert _requeue_rate_limited_for_daemon(cfg) == 1
+    led = Ledger.load(cfg)
+    queued = [p.id for p in led.posts.values() if p.state is PostState.queued]
+    failed = [p.id for p in led.posts.values() if p.state is PostState.failed]
+    assert len(queued) == 1 and len(failed) == 1
+    assert led.posts[queued[0]].error_kind is None
+    assert led.posts[failed[0]].error_kind is ErrorKind.rate_limit
+
+
+def test_requeue_rate_limit_skips_real_submission_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "real", account_id="ig1", sub="cmtgxb3ma000ep87wxbmawjms")
+    assert _requeue_rate_limited_for_daemon(cfg) == 0
+    assert Ledger.load(cfg).posts["real"].state is PostState.failed
+
+
+_SID = "cmtgxb3ma000ep87wxbmawjms"
+_DEAD = {"state": "ERROR", "releaseURL": None, "releaseId": None}
+
+
+def _dead_fail(cfg, pid, *, account_id="ig1", sid=_SID, url="https://cdn.example/v.mp4"):
+    from fanops.models import Moment, MomentState, Source
+    f = cfg.clips / f"{pid}.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        if "src_1" not in led.sources:
+            led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+        if "mom_1" not in led.moments:
+            led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped))
+        if pid not in led.clips:
+            led.add_clip(Clip(id=pid, parent_id="mom_1", path=str(f), state=ClipState.captioned))
+        led.add_post(Post(id=pid, parent_id=pid, account="a", account_id=account_id,
+                          platform=Platform.instagram, caption="c", state=PostState.failed,
+                          error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (no detail)",
+                          submission_id=sid, media_urls=[url],
+                          scheduled_time="2026-08-31T07:00:00Z"))
+
+
+def test_requeue_proven_dead_rearms_when_media_fetchable(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _dead_fail(cfg, "d1")
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows={_SID: _DEAD}) == 1
+    p = Ledger.load(cfg).posts["d1"]
+    assert p.state is PostState.queued
+    assert p.submission_id is None
+    assert p.error_kind is None
+
+
+def test_requeue_proven_dead_skips_when_release_url_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _dead_fail(cfg, "d1")
+    rows = {_SID: {"state": "ERROR", "releaseURL": "https://youtube.com/watch?v=x", "releaseId": None}}
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows=rows) == 0
+    assert Ledger.load(cfg).posts["d1"].state is PostState.failed
+
+
+def test_requeue_proven_dead_skips_when_release_id_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _dead_fail(cfg, "d1")
+    rows = {_SID: {"state": "ERROR", "releaseURL": None, "releaseId": "17841456789012345"}}
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows=rows) == 0
+    assert Ledger.load(cfg).posts["d1"].state is PostState.failed
+
+
+def test_requeue_proven_dead_one_per_account_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _dead_fail(cfg, "d1", sid="sid_a")
+    _dead_fail(cfg, "d2", sid="sid_b")
+    rows = {"sid_a": dict(_DEAD), "sid_b": dict(_DEAD)}
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows=rows) == 1
+    led = Ledger.load(cfg)
+    queued = [p.id for p in led.posts.values() if p.state is PostState.queued]
+    failed = [p.id for p in led.posts.values() if p.state is PostState.failed]
+    assert len(queued) == 1 and len(failed) == 1
+
+
+def test_requeue_proven_dead_rewrites_tsnet_then_rearms(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setattr(
+        "fanops.post.run.get_media_uploader",
+        lambda cfg, backend: (lambda cfg, path, **kw: "https://uploads.example/rewritten.mp4"))
+    cfg = Config(root=tmp_path)
+    ts = "id|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4"
+    _dead_fail(cfg, "d1", url=ts)
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows={_SID: _DEAD}) == 1
+    p = Ledger.load(cfg).posts["d1"]
+    assert p.state is PostState.queued
+    assert p.media_urls == ["https://uploads.example/rewritten.mp4"]
+
+
+def test_requeue_proven_dead_skips_unfetchable_without_local_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    ts = "id|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4"
+    _dead_fail(cfg, "d1", url=ts)
+    with Ledger.transaction(cfg) as led:
+        led.clips["d1"].path = str(cfg.clips / "missing.mp4")
+    assert _requeue_proven_dead_for_daemon(cfg, postiz_rows={_SID: _DEAD}) == 0
+    assert Ledger.load(cfg).posts["d1"].state is PostState.failed
 
 
 # submission_id idempotency is owned by

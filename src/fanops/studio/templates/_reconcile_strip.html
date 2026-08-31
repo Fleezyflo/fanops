@@ -3,7 +3,7 @@
 <aside class="reconcile-strip" id="reconcile-strip" role="status" aria-label="Waiting for permalinks"
   hx-get="{{ url_for('reconcile_strip_partial', account=nav_account, tab=tab|default('')) }}" hx-trigger="every 45s" hx-select="#reconcile-strip" hx-target="#reconcile-strip" hx-swap="outerHTML">
   <div class="reconcile-strip-head">
-    <strong>Waiting for link</strong>
+    <strong>In flight</strong>
     <span class="muted">{{ inflight_watch|length }} post{{ 's' if inflight_watch|length != 1 else '' }}</span>
     <form class="inline" hx-post="{{ url_for('do_schedule_reconcile', account=nav_account) }}" hx-target="#reconcile-strip" hx-swap="outerHTML">
       <button type="submit">Check now</button>
@@ -18,6 +18,7 @@
     <li class="reconcile-strip-row">
       <span class="reconcile-acct">{{ w.account }}</span>
       <span class="muted">{{ w.platform }}</span>
+      {% if w.inflight_headline %}<span class="muted">{{ w.inflight_headline }}</span>{% endif %}
       {% if w.age_minutes %}<span class="reconcile-age" title="since submission">{% if w.age_minutes >= 120 %}stuck {{ (w.age_minutes // 60) }}h{% elif w.age_minutes >= 60 %}{{ (w.age_minutes // 60) }}h{% else %}{{ w.age_minutes }}m{% endif %}</span>{% endif %}
       {% if w.error_reason %}<span class="err">{{ w.error_reason | operator_error }}</span>{% endif %}
       {# Report 11 §5: UNVERIFIED evidence, never a submission id. The backend named this post when it #}

@@ -18,7 +18,7 @@
           </div>
           <div class="sched-row-controls">
             {% if r.lane == 'inflight' %}
-              <span class="muted">Waiting for link</span>
+              <span class="muted">{{ r.inflight_headline }}</span>
               {% if r.error_reason %}<span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}
               <a class="button ghost" href="{{ url_for('posted', delivery='inflight', account=r.account) }}">View</a>
             {% elif r.editable %}

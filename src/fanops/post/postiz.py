@@ -38,6 +38,19 @@ _POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouT
 _REELS_MEDIA_EXT = ".mp4"                # the extension the vendor's single-media REELS branch keys on (see _is_video_media)
 
 
+def media_host_postiz_can_fetch(url: str, cfg: Config) -> bool:
+    """False when the media host is Tailscale MagicDNS — Postiz-in-Docker cannot resolve it."""
+    raw = (url or "").strip()
+    if "|" in raw:
+        tail = raw.split("|", 1)[1]
+        if tail.startswith("http"):
+            raw = tail
+    host = (urlparse(raw).hostname or "").lower()
+    if not host:
+        return True
+    return not host.endswith(".ts.net")
+
+
 class PostizIntegration(NamedTuple):
     """One connected Postiz channel from GET /public/v1/integrations. `id` is what accounts.json's
     per-platform integrations[platform] (or the shared account_id fallback) carries for a postiz

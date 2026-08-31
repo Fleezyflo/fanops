@@ -72,7 +72,8 @@ def test_schedule_cockpit_shows_next_slot(tmp_path):
 def test_inflight_watch_strip_on_schedule(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
     html = _client(cfg).get("/schedule").data.decode()
-    assert "reconcile-strip" in html and "Waiting for link" in html
+    assert "reconcile-strip" in html and "In flight" in html
+    assert "No backend id — cannot fetch a link" in html
 
 def test_accept_suggested_account(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.queued, when=_PAST)
@@ -89,7 +90,17 @@ def test_account_work_counts_includes_inflight(tmp_path):
 def test_reconcile_strip_partial_route(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
     html = _client(cfg).get("/reconcile-strip?account=@a").data.decode()
-    assert "reconcile-strip" in html and "Waiting for link" in html
+    assert "reconcile-strip" in html and "In flight" in html
+    assert "No backend id — cannot fetch a link" in html
+
+
+def test_inflight_strip_pollable_copy_with_real_sid(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].submission_id = "cmtgxb3ma000ep87wxbmawjms"
+    html = _client(cfg).get("/reconcile-strip?account=@a").data.decode()
+    assert "Waiting for link" in html
+    assert "No backend id" not in html
 
 def test_session_bar_links_inflight(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.needs_reconcile, when=_PAST)
