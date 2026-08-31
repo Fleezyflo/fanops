@@ -169,7 +169,8 @@ def test_refresh_opens_caption_gate_for_rendered_clip(tmp_path):
         "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
     }))
     logs = []
-    _stage_refresh_caption_requests(Ledger.load(cfg), cfg, Accounts.load(cfg),
-                                    lambda *a, **k: logs.append((a, k)))
+    with Ledger.transaction(cfg) as led:
+        _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg),
+                                        lambda *a, **k: logs.append((a, k)))
     assert latest_request_id(cfg, "captions", "clip_1")
     assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
