@@ -57,8 +57,7 @@ INT32_MEDIA_COUNT=2_147_483_647
    `shortlist_source_tags` then scrape admit; lock order is shortlist order.
    Caption picks up to 4 from that lock by `play_count` then 7-day reel max
    (`current_top_reel_play_max_7d`). Empty lock → empty tag line. Invented /
-   off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no semantic
-   ban-list on the ship path.
+   off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no semantic ban-list on the ship path.
 
 ---
 
