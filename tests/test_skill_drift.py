@@ -124,7 +124,8 @@ def test_skill_operator_rule3_is_lock_membership():
     assert "80-pile" in rule3 or "store ∪ corpus" in rule3 or "store u corpus" in rule3
     assert "empty lock" in rule3.lower()
     assert "VETTED" in rule3 and re.search(r"no `?VETTED", rule3)
-    assert re.search(r"no semantic ban", rule3, re.I)
+    flat = re.sub(r"\s+", " ", rule3)
+    assert re.search(r"no semantic ban", flat, re.I)
     assert "size_rank_key" not in rule3          # caption path; Layer B stays in Part 3
     # No AR / mega consume claims on the ship rule.
     assert re.search(r"no AR floor|no ar floor", rule3, re.I)

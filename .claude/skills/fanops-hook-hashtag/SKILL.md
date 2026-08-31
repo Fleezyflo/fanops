@@ -56,8 +56,7 @@ INT32_MEDIA_COUNT=2_147_483_647
    (`hashtag_store` on every surface of that source). The lock is catalog keep ∩
    positive play_count (`shortlist_source_tags` judge, keep order, cap 12).
    Caption picks up to 4 from that lock by CLIP FIT. Empty lock → empty tag line.
-   Invented / off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no
-   semantic ban-list on the ship path.
+   Invented / off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no semantic ban-list on the ship path.
 
 ---
 
