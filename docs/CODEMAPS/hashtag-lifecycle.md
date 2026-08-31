@@ -12,10 +12,11 @@ that source's lock, pick order, hard cap 4. Empty / missing lock → empty tag
 line (sentence still ships). No AR floor, no mega slot, no store ∪ corpus, no
 80-pile, no `vet_hashtags` on the posted line.
 
-Lock membership is `shortlist_source_tags` ∩ positive `play_count`, order is
-shortlist order, cap 12 (`hashtags.lock_from_shortlist`). Caption still picks
-up to 4 from that lock by `play_count` then `current_top_reel_play_max_7d`.
-`lock_from_pile` remains for hydrate / used-tags fill only.
+Lock membership is catalog keep ∩ positive `play_count`, order is keep order,
+cap 12 (`hashtags.lock_from_shortlist`). Caption picks up to 4 from that lock
+by CLIP FIT. `play_count` / `current_top_reel_play_max_7d` are meters on the
+row, not the choose-key. `lock_from_pile` remains for hydrate / used-tags fill
+only.
 
 Studio `/hashtags` shows source locks (full cap-12 list) and a play-ranked
 measurement cache. It does not show persona corpora as a caption menu.
