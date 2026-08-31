@@ -600,11 +600,13 @@ def test_render_moment_keeps_in_band_window(tmp_path, mocker):
     ss, dur = _capture_render(tmp_path, mocker, 10.0, 28.0, duration=120.0)  # 18s pick already
     assert ss == 10.0 and dur == 18.0                                        # left exactly as picked
 
-# --- boundary snapping: a clip should never begin mid-word ------------------------------------
+# --- boundary snapping: snap_window may still slide if called; render must NOT call it ---------
 # snap_window nudges start (<= max_shift) onto a nearby transcript-line start; end follows by the
-# same Δ. render_moment applies it AFTER fit_window (EOF clamp only). No independent end snap.
+# same Δ. This file's RENDER tests lock pick identity. No independent end snap.
 
 def test_snap_window_pulls_start_to_line_start():
+    # snap_window itself may still slide if the function is left in the module;
+    # render must NOT call it. This test file's RENDER tests lock identity.
     tr = [{"start": 9.4, "end": 12.0, "text": "a"}, {"start": 12.0, "end": 16.0, "text": "b"}]
     assert snap_window(10.0, 16.0, tr) == (9.4, 15.4)      # mid-line start 10.0 -> 9.4; end follows Δ=-0.6
 
@@ -660,12 +662,12 @@ def _capture_render_full(tmp_path, mocker, monkeypatch, *, start, end, duration,
     cmd = captured["cmd"]
     return float(cmd[cmd.index("-ss") + 1]), float(cmd[cmd.index("-to") + 1])
 
-def test_render_moment_snaps_cut_to_transcript_boundaries(tmp_path, mocker, monkeypatch):
+def test_render_moment_uses_pick_window(tmp_path, mocker, monkeypatch):
     tr = [talk_seg("a", start=9.3, end=12.0), talk_seg("b", start=25.0, end=28.4)]
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=28.0,
                                   duration=120.0, transcript=tr)   # 18s in-band pick
-    assert ss == 9.3                                       # start snapped to the line boundary
-    assert to == 18.0                                      # pick span preserved; end follows start
+    assert ss == 10.0                                      # pick, not snap to 9.3
+    assert to == 18.0                                      # pick span (end - start)
 
 def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatch):
     junk = {**LOW_LOGPROB, "start": 9.4, "end": 9.8, "text": "junk start"}
@@ -675,19 +677,17 @@ def test_render_moment_snap_ignores_junk_boundaries(tmp_path, mocker, monkeypatc
     tr = [junk, good, good_end, junk_end]
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=16.5,
                                   duration=120.0, transcript=tr)
-    assert ss == 9.3                                       # trusted start, not junk 9.4
-    assert to == 6.5                                       # pick span preserved; junk end ignored
+    assert ss == 10.0                                      # pick, not trusted snap 9.3
+    assert to == 6.5                                       # pick span; junk end ignored
 
 def test_render_moment_keeps_profile_pick_unchanged(tmp_path, mocker, monkeypatch):
     ss, to = _capture_render_full(tmp_path, mocker, monkeypatch, start=10.0, end=24.0,
                                   duration=120.0, profile="song")
     assert to == 14.0
 
-# --- P1 T1: strongest-frame cut start (visual_start) --------------------------------------------
-# render_moment refines the cut start (after the band, before transcript-snap) onto the strongest
-# opening frame within a bounded shift, stamps first_frame_kind/cut_seconds, and leaves audio alone.
-
-from fanops.clip import _vstart_candidate_times
+# --- P1 T1: strongest-frame helper exists; render does not apply it -----------------------------
+# pick_visual_start stays defined (sidecar unit tests below). The cut is the pick; first_frame_kind
+# stays None on the default path.
 
 def _run_render_with_probe(captured, *, strong_at=None):
     """subprocess.run side_effect: signalstats probes (cmd ends with '-') return strong stats at
@@ -774,29 +774,27 @@ def test_pick_visual_start_adopts_versioned_sidecar(tmp_path, mocker):
     spy.assert_not_called()                              # v2 adopted -> no ffmpeg
     assert new_start == 11.0 and kind == "visual"
 
-def test_render_moment_visual_start_moves_cut_and_stamps_provenance(tmp_path, mocker, monkeypatch):
-    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON
+def test_render_moment_visual_start_does_not_move_cut(tmp_path, mocker, monkeypatch):
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)      # default ON — still not applied
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
                           start=10, end=28, reason="r", state=MomentState.decided))
-    target = _vstart_candidate_times(10.0, 28.0)[2]
     captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=None))
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
-    assert clip.first_frame_kind == "visual"
+    assert clip.first_frame_kind is None
     cmd = captured["cmd"]
-    assert abs(float(cmd[cmd.index("-ss") + 1]) - target) < 1e-3   # cut start moved onto the strong frame
-    assert float(cmd[cmd.index("-to") + 1]) == 18                   # pick span preserved; end follows start
+    assert float(cmd[cmd.index("-ss") + 1]) == 10.0                 # pick, not a strong-frame slide
+    assert float(cmd[cmd.index("-to") + 1]) == 18.0
     assert clip.cut_seconds == 18
     assert "-c:a" in cmd                                            # audio still encoded -> untouched
 
 def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkeypatch):
-    # snap runs BEFORE visual, so first_frame_kind="visual" iff the visual pick is the ACTUAL rendered
-    # start — snap can't silently pull it back while the dim still claims "visual" (the P4-poisoning bug).
+    # visual-start is not applied; rendered start is the pick/fit start and first_frame_kind stays None.
     monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -805,13 +803,12 @@ def test_visual_start_provenance_honest_with_transcript(tmp_path, mocker, monkey
                           width=1920, height=1080, duration=120.0, transcript=tr))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
                           start=10, end=28, reason="r", state=MomentState.decided))
-    target = _vstart_candidate_times(9.3, 28.4)[2]               # candidates start from the SNAPPED window
     captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=target))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(captured, strong_at=None))
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.first_frame_kind == "visual"
+    assert clip.first_frame_kind is None
     ss = float(captured["cmd"][captured["cmd"].index("-ss") + 1])
-    assert abs(ss - target) < 1e-3                               # rendered start IS the visual pick
+    assert ss == 10.0                                            # pick/fit start; no snap, no visual slide
 
 def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeypatch):
     # FANOPS_VISUAL_START=0 -> no signalstats probe at all, start unchanged, first_frame_kind None.
@@ -868,29 +865,27 @@ def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "hook_legibility" not in log                          # a clear hook is silent
 
-def test_render_reruns_when_visual_start_changes_fingerprint(tmp_path, mocker, monkeypatch):
-    # P1 T4: the chosen visual start flows into cs -> _render_fingerprint, so a DIFFERENT pick must
-    # bust the Phase D warm-skip and RE-RENDER (never silently reuse the clip cut at the old start).
-    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON
+def test_render_visual_start_does_not_change_fingerprint(tmp_path, mocker, monkeypatch):
+    # visual-start is not applied, so two renders of the same pick share a fingerprint
+    # and the second adopts the warm mp4 (no re-cut).
+    monkeypatch.delenv("FANOPS_VISUAL_START", raising=False)     # ON — still not applied
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
                           start=10, end=28, reason="r", state=MomentState.decided))
-    a, b = _vstart_candidate_times(10.0, 28.0)[1], _vstart_candidate_times(10.0, 28.0)[3]
     cap1 = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap1, strong_at=a))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap1, strong_at=None))
     render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    ss1 = float(cap1["cmd"][cap1["cmd"].index("-ss") + 1]); assert abs(ss1 - a) < 1e-3
-    for f in cfg.clips.glob("vstart_*.json"): f.unlink()          # clear the cached decision -> re-pick
+    ss1 = float(cap1["cmd"][cap1["cmd"].index("-ss") + 1]); assert ss1 == 10.0
+    for f in cfg.clips.glob("vstart_*.json"): f.unlink()
     led.set_moment_state("mom_1", MomentState.decided)
     cap2 = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap2, strong_at=b))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_run_render_with_probe(cap2, strong_at=None))
     render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert "cmd" in cap2, "a changed visual start must re-render (fingerprint busts the warm skip)"
-    ss2 = float(cap2["cmd"][cap2["cmd"].index("-ss") + 1])
-    assert abs(ss2 - b) < 1e-3 and ss1 != ss2
+    assert "cmd" not in cap2, "same pick window must warm-skip (visual-start does not move the cut)"
 
 
 # ---- MOL-178 (S3): supercut render branch — absolute-seek concat, postable, fail-open ----

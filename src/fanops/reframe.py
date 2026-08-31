@@ -188,21 +188,12 @@ def _is_bare_clip(c) -> bool:
 
 
 def _window_candidates(paths: ReframePaths, cfg: Config, m, src) -> list:
-    """The historical cut window. Pure recomputation (EOF-clamp fit -> snap), plus the visual-start
-    refinement recovered from its PRODUCTION sidecar — the decision, not a re-probe."""
+    """The cut window a re-render would use: EOF-clamp fit only. Historical snapped/vstart clips
+    stay UNRECONSTRUCTABLE (fail-closed)."""
     dur = src.duration or 0.0
     hi = dur if dur > 0 else float("inf")
     cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
-    cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
-    out = [((cs, ce), "window:band+snap")]
-    if cfg.visual_start:
-        v = paths.read_vstart(vstart_key(src.source_path, cs, ce))
-        if v is not None:
-            # kind == "transcript" means pick_visual_start kept the band+snap start, so this candidate
-            # COLLAPSES onto the one above — one payload, two labels. That is recorded, not resolved.
-            vs, ve = clipmod._slide_start(cs, ce, v[0], dur)
-            out.append(((vs, ve), f"window:vstart[{v[1]}]"))
-    return out
+    return [((cs, ce), "window:fit")]
 
 
 def _top_bias_candidates(m, cfg: Config) -> list:
@@ -280,16 +271,11 @@ def current_payload(paths: ReframePaths, cfg: Config, led: Ledger, c):
     Returns (payload, FramingResolution)."""
     m = led.moments[c.parent_id]
     src = led.sources[m.parent_id]
-    _seed_scratch_vstart(paths, cfg, m, src)
 
     dur = src.duration or 0.0
     hi = dur if dur > 0 else float("inf")
     cs, ce = clipmod.fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
-    cs, ce = clipmod.snap_window(cs, ce, clipmod._trusted_transcript(src), duration=src.duration or 0.0)
-    if cfg.visual_start:
-        vs, _kind = clipmod.pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks,
-                                              out_dir=cfg.clips)          # scratch out_dir; sidecar seeded above
-        cs, ce = clipmod._slide_start(cs, ce, vs, src.duration or 0.0)
+    # no snap, no pick_visual_start, no _slide_start
 
     ass_text, _hbf = clipmod._build_ass_text(led, cfg, c.parent_id, c.id, c.aspect,
                                              clip_start=cs, clip_end=ce)   # PURE — no write
