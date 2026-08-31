@@ -6,9 +6,9 @@ never vetoes membership, never reorders the lock, and never withholds
 researched_at after scrape finished. Empty lock = scrape finished with zero
 admits. Caption waits on researched_at.
 
-`shortlist_source_tags` names THIS video (existing public tags, not slogans).
-Search verifies the exact name (no siblings on the pile). Lock is positive
-play_count admits in shortlist order, cap 12. Optional
+`shortlist_source_tags` keeps a subset of a closed catalog (off-catalog dies).
+Search verifies the exact name (no siblings on the pile). Lock is keep ∩
+positive play_count admits in keep order, cap 12. Optional
 `hydrate_locks_from_known` may write `hydrated_at` + lock from already-used
 tags (zero network) but must never write `researched_at` or open the caption
 gate. Sidecar is cfg.control / source_tag_locks.json — not a Config field, not
@@ -45,9 +45,13 @@ _METER_KEYS = ("play_count", "like_count", "media_count",
                "current_top_reel_play_max_7d", "top_reel_sample_n", "graph_metric")
 _RESEARCH_SCHEMA = {
     "type": "object",
-    "properties": {"names": {"type": "array", "items": {"type": "string"}}},
-    "required": ["names"],
+    "properties": {
+        "keep": {"type": "array", "items": {"type": "string"}},
+        "reject": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["keep"],
 }
+_CATALOG_CAP = 30
 
 
 def source_tag_locks_path(cfg):
@@ -313,33 +317,47 @@ def _transcript_file_prose(cfg, source) -> str:
     return " ".join(parts)
 
 
-def shortlist_source_tags(source, excerpt) -> list[str]:
-    """One LLM pass: discovery tags for THIS video. Not a slogan generator."""
+def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
+    """One LLM pass: keep a subset of a closed catalog. Off-catalog names die."""
     from fanops.llm import claude_json_meta
     from fanops.models import source_display_title
+    allowed = _dedupe_norm(catalog)[:_CATALOG_CAP]
+    if not allowed:
+        return []
     raw_title = getattr(source, "title", None)
     if isinstance(raw_title, str) and raw_title.strip():
         title = raw_title.strip()
     else:
         title = source_display_title(source)
     language = getattr(source, "language", None) or ""
+    listed = ", ".join(allowed)
     prompt = (
-        "Shortlist Instagram hashtags for THIS video for a fan account that reposts it.\n"
-        "Return 12 names that real people already search to find this kind of clip:\n"
-        "artist or subject names that actually appear, genre, format, and the topic.\n"
-        "Use existing public tags. Do not glue a sentence, hook, or thesis into a hashtag.\n"
-        "Do not invent a unique compound. Do not name sibling tracks or other videos.\n"
-        "Do not pad with wallpaper tags.\n"
+        "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
+        "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
+        "(artist/subject that actually appear, genre, format, topic).\n"
+        "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
+        "Do not invent a name that is not in the catalog.\n"
         f"title: {title}\n"
         f"language: {language}\n"
         f"transcript: {excerpt or ''}\n"
-        "Return 12 names. Names only."
+        f"catalog: {listed}\n"
+        "Return at most 12 keep names, catalog order unless a clearer fit comes first."
     )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
-    names = data.get("names") if isinstance(data, dict) else None
-    if not isinstance(names, list):
+    keep = data.get("keep") if isinstance(data, dict) else None
+    if not isinstance(keep, list):
         return []
-    return [n for n in names if isinstance(n, str)]
+    allow = set(allowed)
+    out: list[str] = []
+    for raw in keep:
+        if not isinstance(raw, str):
+            continue
+        n = _norm(raw)
+        if n and n in allow and n not in out:
+            out.append(n)
+        if len(out) >= _RESEARCH_CAP:
+            break
+    return out
 
 
 def _researched(table, sid: str) -> bool:
@@ -739,7 +757,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         return False
     if not llm_names:
         try:
-            raw_names = (research_fn or shortlist_source_tags)(source, _prose(source, excerpt))
+            raw_names = (research_fn or (lambda s, e: shortlist_source_tags(s, e, [])))(
+                source, _prose(source, excerpt))
         except Exception as exc:
             log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
             return True

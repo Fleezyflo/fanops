@@ -103,25 +103,41 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
     assert rec.get("quality_pass") is True
 
 
-def test_shortlist_prompt_is_quality_pass_not_provocative_slogans(tmp_path, mocker):
+def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     captured = {}
 
     def fake_claude(prompt, schema, **_k):
         captured["prompt"] = prompt
         captured["schema"] = schema
-        return {"names": ["rickross", "hiphop"]}, "m", False
+        return {"keep": ["#hiphop", "#inventedslogan", "#rickross"],
+                "reject": ["#fyp"]}, "m", False
 
     mocker.patch("fanops.llm.claude_json_meta", fake_claude)
     from fanops.source_tags import shortlist_source_tags
-    src = _src(title="Rick Ross talks tiers", language="en",
-               transcript="he says nobody left to fight")
-    names = shortlist_source_tags(src, "he says nobody left to fight")
-    p = captured["prompt"].lower()
-    assert "mild to provocative" not in p
-    assert "about 20 names" not in p
-    assert "glue" in p and "sibling" in p
-    assert "rick ross talks tiers" in captured["prompt"].lower()
-    assert names == ["rickross", "hiphop"]
+    src = _src(title="Rick Ross talks tiers", language="en")
+    catalog = ["#rickross", "#hiphop", "#fyp", "#miami"]
+    names = shortlist_source_tags(src, "he says nobody left to fight", catalog)
+    assert names == ["#hiphop", "#rickross"]
+    assert "#inventedslogan" not in names
+    assert "keep" in captured["schema"]["properties"]
+    assert "names" not in captured["schema"].get("properties", {})
+    p = captured["prompt"]
+    assert "#rickross" in p and "#fyp" in p
+    assert "mild to provocative" not in p.lower()
+    assert "Choose ONLY from the catalog" in p or "only from the catalog" in p.lower()
+
+
+def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
+    called = {"n": 0}
+
+    def fake_claude(*_a, **_k):
+        called["n"] += 1
+        return {"keep": ["#rap"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    from fanops.source_tags import shortlist_source_tags
+    assert shortlist_source_tags(_src(), "x", []) == []
+    assert called["n"] == 0
 
 
 def test_slogan_pile_without_quality_pass_is_reshortlisted(tmp_path):
