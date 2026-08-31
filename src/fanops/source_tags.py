@@ -906,6 +906,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                        resolve_fn=None, measure_fn=None) -> None:
     """After produce, before reduce. One source per real lock attempt. Never raises.
 
+    Walk newest created_at first (same comparator as produce_source_ids).
     Missing whisper JSON on a produce-eligible source logs no_transcript and continues
     (must not starve a later ready source). Graph quota does not skip a source —
     leftover scrape-complete rows stamp; unfinished scrape waits for a Safari seat.
@@ -925,7 +926,10 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
         def _closed(_cfg, user=None, **_k):
             raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
 
-        for source in led.sources.values():
+        sources = list(led.sources.values())
+        sources.sort(key=lambda s: (getattr(s, "created_at", None) or "",
+                                    str(getattr(s, "id", "") or "")), reverse=True)
+        for source in sources:
             if getattr(source, "origin_kind", "native") == "third_party":
                 continue
             sid = str(getattr(source, "id", "") or "")
