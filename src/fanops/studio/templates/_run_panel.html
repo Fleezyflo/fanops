@@ -1,6 +1,6 @@
 {# src/fanops/studio/templates/_run_panel.html — Make page: Add → Queue → Make (U4 queue gate). #}
 <div id="run-panel" aria-live="polite">
-  {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — {{ cast_state.budget }} moments per account{% else %}casting off (every account gets every moment){% endif %} · clip profile <strong>{{ cast_state.profile }}</strong></p>{% endif %}
+  {% if cast_state %}<p class="meta cast-state">Routing: {% if cast_state.casting %}casting ON — each account gets its own selected moments{% else %}casting off (every account gets every moment){% endif %} · clip length is the picked window</p>{% endif %}
 
   {% set _next = run_next_step(status) %}
   <ol class="stage-rail" aria-label="Make pipeline stages">

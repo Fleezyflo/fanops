@@ -332,7 +332,7 @@ def create_app(cfg: Config) -> Flask:
         return {"nav_account": acct, "review_nav": review_nav, "compact": _compact_arg(),
                 "active_source": _source_arg(), "active_state": _state_arg(),
                 "active_view": _view_arg(), "ultra": _ultra_arg(),
-                "cast_state": {"casting": cfg.account_casting, "profile": cfg.clip_profile},
+                "cast_state": {"casting": cfg.account_casting},
                 "cfg": cfg}
 
     @app.context_processor
