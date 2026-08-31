@@ -519,11 +519,11 @@
       },
       {
         "call": "requests.get",
-        "line": 346
+        "line": 356
       },
       {
         "call": "requests.get",
-        "line": 573
+        "line": 583
       }
     ],
     "fanops.post.postiz": [
@@ -759,7 +759,11 @@
     "fanops.postiz_lifecycle": [
       {
         "call": "subprocess.run",
-        "line": 69
+        "line": 71
+      },
+      {
+        "call": "subprocess.run",
+        "line": 110
       }
     ],
     "fanops.reframe": [
@@ -810,6 +814,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 40
   }
 }

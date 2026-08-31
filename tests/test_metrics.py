@@ -249,3 +249,61 @@ def test_postiz_error_row_keeps_error_field(tmp_path, monkeypatch, mocker):
         {"id": "p1", "state": "ERROR", "error": "API access blocked."}]}))
     row = PostizStatusClient(cfg).list_all()["p1"]
     assert row["status"] == "failed" and row["error"] == "API access blocked."
+
+
+def test_local_postiz_errors_silent_under_pytest_without_lookup(tmp_path, monkeypatch):
+    from fanops.postiz_lifecycle import local_postiz_errors
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    assert local_postiz_errors(cfg, ["cmtgxb3ma000ep87wxbmawjms"]) == {}
+
+
+def test_local_postiz_errors_honors_injected_lookup(tmp_path, monkeypatch):
+    from fanops.postiz_lifecycle import local_postiz_errors
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    got = local_postiz_errors(cfg, ["abc"], lookup=lambda ids: {ids[0]: "Refresh channel needed"})
+    assert got == {"abc": "Refresh channel needed"}
+
+
+def test_list_all_fills_stripped_error_from_row_lookup(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, {"posts": [{"id": "p1", "state": "ERROR"}]}))
+    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors",
+                 return_value={"p1": "Refresh channel needed"})
+    row = PostizStatusClient(cfg).list_all()["p1"]
+    assert row["status"] == "failed"
+    assert row["error"] == "Refresh channel needed"
+    assert row["errorMessage"] == "Refresh channel needed"
+
+
+def test_list_all_does_not_overwrite_public_error_field(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    cfg = _pcfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [
+        {"id": "p1", "state": "ERROR", "error": "API access blocked."}]}))
+    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors",
+                 return_value={"p1": "should not win"})
+    row = PostizStatusClient(cfg).list_all()["p1"]
+    assert row["error"] == "API access blocked."
+
+
+def test_list_all_json_post_error_uses_poster_fail_reason(tmp_path, monkeypatch, mocker):
+    from fanops.post.metrics import PostizStatusClient
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    raw = '{"cause":{"failure":{"message":"getaddrinfo ENOTFOUND example.invalid","stackTrace":"Error:\\n    at x"}}}'
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=_R(200, {"posts": [{"id": "p1", "state": "ERROR"}]}))
+    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors", return_value={"p1": raw})
+    row = PostizStatusClient(cfg).list_all()["p1"]
+    assert row["errorMessage"] == "getaddrinfo ENOTFOUND example.invalid"

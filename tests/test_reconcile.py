@@ -926,3 +926,13 @@ def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp
     assert [p.id for p in token_only] == ["tok"]
     assert [p.id for p in polled] == ["real"]
     assert mirrored == []
+
+
+def test_reconcile_failed_carries_poster_error_message(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _post(led, "p2", PostState.needs_reconcile, sub="sub_2")
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "failed", "errorMessage": "Refresh channel needed"})
+    assert led.posts["p2"].state is PostState.failed
+    assert "Refresh channel needed" in (led.posts["p2"].error_reason or "")
+    assert "no detail" not in (led.posts["p2"].error_reason or "")
