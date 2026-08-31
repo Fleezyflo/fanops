@@ -400,6 +400,15 @@ def test_postiz_upload_media_returns_id_and_path(tmp_path, monkeypatch, mocker):
                  return_value=_R(201, {"id": "img1", "path": "https://uploads.postiz.com/a.mp4"}))
     assert postiz_upload_media(cfg, f) == "img1|https://uploads.postiz.com/a.mp4"
 
+def test_postiz_upload_media_refuses_unfetchable_host(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    f = tmp_path / "a.mp4"; f.write_bytes(b"V")
+    ts = "https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4"
+    mocker.patch("fanops.post.postiz.requests.post",
+                 return_value=_R(201, {"id": "img1", "path": ts}))
+    with pytest.raises(RuntimeError, match="unfetchable"):
+        postiz_upload_media(cfg, f)
+
 def test_postiz_upload_media_401_typed(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch)
     f = tmp_path / "a.mp4"; f.write_bytes(b"V")
@@ -570,16 +579,15 @@ def test_rewrite_media_base_rewrites_loopback_upload_path(tmp_path, monkeypatch)
         "https://media.example.com/clips/media/render_x.9x16.mp4"
 
 
-def test_media_host_postiz_can_fetch_allows_r2_and_postiz(tmp_path, monkeypatch):
+def test_media_host_postiz_can_fetch_allows_r2_and_postiz():
     from fanops.post.postiz import media_host_postiz_can_fetch
-    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://cdn.example/clips")
-    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api")
-    cfg = Config(root=tmp_path)
-    assert media_host_postiz_can_fetch("https://cdn.example/clips/x.mp4", cfg) is True
-    assert media_host_postiz_can_fetch("https://uploads.postiz.com/a.mp4", cfg) is True
-    assert media_host_postiz_can_fetch("id|https://localhost/uploads/a.mp4", cfg) is True
+    assert media_host_postiz_can_fetch("https://cdn.example/clips/x.mp4") is True
+    assert media_host_postiz_can_fetch("https://uploads.postiz.com/a.mp4") is True
+    assert media_host_postiz_can_fetch("id|https://localhost/uploads/a.mp4") is True
     assert media_host_postiz_can_fetch(
-        "f3f8e0b0|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/x.mp4", cfg) is False
+        "f3f8e0b0|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/x.mp4") is False
+    assert media_host_postiz_can_fetch(
+        "id|https://other-box.tailabcd.ts.net/uploads/v.mp4") is False
 
 
 def test_rewrite_media_base_passthrough_foreign_https(tmp_path, monkeypatch):
@@ -587,6 +595,13 @@ def test_rewrite_media_base_passthrough_foreign_https(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     ext = "https://uploads.postiz.com/a.mp4"
     assert rewrite_media_base(ext, cfg) == ext
+
+
+def test_rewrite_media_base_does_not_map_tsnet_uploads_onto_r2(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://pub.r2.dev/fanops")
+    cfg = Config(root=tmp_path)
+    ts = "https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4"
+    assert rewrite_media_base(ts, cfg) == ts
 
 
 def test_rewrite_media_base_noop_without_public_base(tmp_path, monkeypatch):
@@ -612,6 +627,9 @@ def test_mirror_media_to_r2_puts_and_returns_public_url(tmp_path, monkeypatch, m
 
 
 def test_postiz_upload_media_uses_r2_mirror_and_upload_from_url(tmp_path, monkeypatch, mocker):
+    # Postiz MAIN_URL is Tailscale; upload-from-url body.path is that host. When R2 is configured
+    # the mint must return FANOPS_MEDIA_PUBLIC_BASE's host (the URL we PUT), not MAIN_URL / .ts.net.
+    from urllib.parse import urlparse
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "k")
@@ -623,13 +641,39 @@ def test_postiz_upload_media_uses_r2_mirror_and_upload_from_url(tmp_path, monkey
     cfg = _cfg(tmp_path, monkeypatch)
     f = tmp_path / "a.mp4"; f.write_bytes(b"V")
     mocker.patch("fanops.post.postiz.requests.put", return_value=_R(200))
+    ts_path = "https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4"
     post = mocker.patch("fanops.post.postiz.requests.post",
-                        return_value=_R(201, {"id": "img1", "path": "https://uploads.postiz.com/a.mp4"}))
+                        return_value=_R(201, {"id": "img1", "path": ts_path}))
     out = postiz_upload_media(cfg, f)
-    assert out == "img1|https://uploads.postiz.com/a.mp4"
     body = post.call_args[1]["json"]
     assert body["url"].startswith("https://pub.r2.dev/fanops/fanops/")
     assert post.call_args[0][0].endswith("/upload-from-url")
+    mid, minted = out.split("|", 1)
+    assert mid == "img1" and minted == body["url"]
+    host = (urlparse(minted).hostname or "")
+    assert host == urlparse(cfg.media_public_base).hostname
+    assert not host.endswith(".ts.net")
+
+
+def test_media_cache_hit_postiz_rejects_tailscale():
+    from fanops.post.media import _media_cache_hit
+    assert _media_cache_hit(
+        "uuid|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/v.mp4", "postiz") is False
+    assert _media_cache_hit(
+        "uuid|https://other-box.tailabcd.ts.net/uploads/v.mp4", "postiz") is False
+    assert _media_cache_hit("id|https://cdn.example/v.mp4", "postiz") is True
+
+
+def test_publish_posts_image_path_is_the_minted_public_url(tmp_path, monkeypatch, mocker):
+    r2 = "https://pub.r2.dev/fanops/fanops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4"
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post()
+    post.media_urls = [f"img1|{r2}"]
+    led = _led(cfg, post)
+    cap = _capture(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    img = cap["json"]["posts"][0]["value"][0]["image"][0]
+    assert img["id"] == "img1" and img["path"] == r2
 
 
 def test_publish_unconfirmed_branches_never_capture_public_url(tmp_path, monkeypatch, mocker):

@@ -67,7 +67,7 @@
   },
   "ceilings": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 83,
+    "ledger_transaction_sites": 82,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 16,
     "rmtree_sites": 6,
