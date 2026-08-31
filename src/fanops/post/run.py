@@ -10,7 +10,7 @@ import os
 import random
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import requests
 from pathlib import Path
 from fanops.config import Config
@@ -226,6 +226,24 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
             elif u.startswith("file://"):
                 new.append(get_media_uploader(cfg, backend)(cfg, Path(u.removeprefix("file://")),
                                                             **_uploader_kwargs(backend, aid)))
+            elif backend == "postiz":
+                from fanops.post.postiz import media_host_postiz_can_fetch
+                if media_host_postiz_can_fetch(u, cfg):
+                    new.append(u)
+                    continue
+                clip = led.clips.get(post.parent_id)
+                path = None
+                if post.render_id:
+                    r = led.get_render(post.render_id)
+                    if r is not None and getattr(r, "path", None):
+                        path = Path(r.path)
+                if path is None and clip is not None and clip.path:
+                    path = Path(clip.path)
+                if path is None or not path.is_file():
+                    raise ValueError(
+                        f"{post.platform.value} post {post.id} media host is unreachable from Postiz "
+                        f"and no local file remains to re-upload")
+                new.append(get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid)))
             else:
                 new.append(u)
         post.media_urls = new
@@ -414,6 +432,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                         "publish failed: " + redact(str(exc), cfg.postiz_api_key, cfg.zernio_api_key)))  # scrub any leaked key
                     post = led.posts[post_id]
             break
+    if (_tally is not None and post.state is PostState.failed
+            and getattr(post, "error_kind", None) is ErrorKind.rate_limit):
+        _tally["rate_limited"] = 1
     net = {f: getattr(post, f) for f in _NET_POST_FIELDS}
     clip = led.clips.get(post.parent_id)
     clip_media = clip.media_url if clip is not None else None   # carry the F44 upload cache forward
@@ -509,6 +530,55 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
     return requeued
 
 
+def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
+    """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle."""
+    requeued = 0
+    led = Ledger.load(cfg)
+    by_acct: dict[str, Post] = {}
+    for p in led.posts_in_state(PostState.failed):
+        if is_real_submission_id(p.submission_id):
+            continue
+        if getattr(p, "error_kind", None) is not ErrorKind.rate_limit:
+            continue
+        if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
+            continue
+        if not led.can_promote(p):
+            continue
+        aid = (p.account_id or p.account or "").strip() or "_"
+        prev = by_acct.get(aid)
+        if prev is None or (p.scheduled_time or "") < (prev.scheduled_time or ""):
+            by_acct[aid] = p
+    if not by_acct:
+        return 0
+    now = datetime.now(timezone.utc)
+    per_min = cfg.postiz_publish_per_min
+    gap = timedelta(seconds=(60.0 / per_min) if per_min > 0 else 0)
+    try:
+        with Ledger.transaction(cfg) as lg:
+            for p in by_acct.values():
+                cur = lg.posts.get(p.id)
+                if cur is None or cur.state is not PostState.failed:
+                    continue
+                if is_real_submission_id(cur.submission_id):
+                    continue
+                if getattr(cur, "error_kind", None) is not ErrorKind.rate_limit:
+                    continue
+                if not lg.can_promote(cur):
+                    continue
+                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
+                if n > _DAEMON_TRANSIENT_MAX:
+                    continue
+                cur.submission_id = None
+                cur.scheduled_time = iso_z(now + gap)
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
+                                  daemon_transient_retry=n)
+                requeued += 1
+    except Exception as exc:
+        get_logger(cfg)("publish", "-", "requeue_rate_limited_failed", err=str(exc)[:120], requeued=requeued)
+        return requeued
+    return requeued
+
+
 def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
@@ -517,6 +587,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
+    _requeue_rate_limited_for_daemon(cfg)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
     if account:
@@ -557,6 +628,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     log = get_logger(cfg)
     published = no_provider = no_integration_id = not_distributed = skipped_existing_id = not_live_ready = 0
     skipped_not_active = len(parked_not_active)
+    tripped: set[tuple[str, str]] = set()
     for post in due:
         provider = _post_provider(cfg, accounts, post)
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
@@ -574,10 +646,17 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
                 account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
             continue                                   # phantom-published row. A live-flip re-derives this each pass.
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
+        key = (provider, (acct_id or post.account_id or "").strip() or "_")
+        if key in tripped:
+            log("publish", post.id, "skip_rate_limited_circuit",
+                account=post.account, platform=post.platform.value)
+            continue
         tally: dict = {}
         if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,
                         _tally=tally, due_cutoff=cutoff) == PostState.published.value:
             published += 1
+        if tally.get("rate_limited"):
+            tripped.add(key)
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
         not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued

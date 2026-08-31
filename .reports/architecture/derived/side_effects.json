@@ -135,23 +135,27 @@
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 242
+        "line": 260
       },
       {
         "call": "Ledger.transaction",
-        "line": 288
+        "line": 306
       },
       {
         "call": "Ledger.transaction",
-        "line": 425
+        "line": 446
       },
       {
         "call": "Ledger.transaction",
-        "line": 463
+        "line": 484
       },
       {
         "call": "Ledger.transaction",
-        "line": 487
+        "line": 508
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 557
       }
     ],
     "fanops.recaption": [
@@ -255,35 +259,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1105
+        "line": 1131
       },
       {
         "call": "Ledger.transaction",
-        "line": 1136
+        "line": 1164
       },
       {
         "call": "Ledger.transaction",
-        "line": 1169
+        "line": 1199
       },
       {
         "call": "Ledger.transaction",
-        "line": 1204
+        "line": 1246
       },
       {
         "call": "Ledger.transaction",
-        "line": 1251
+        "line": 1257
       },
       {
         "call": "Ledger.transaction",
-        "line": 1262
+        "line": 1268
       },
       {
         "call": "Ledger.transaction",
-        "line": 1273
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1299
+        "line": 1294
       }
     ],
     "fanops.studio.actions_approve": [
@@ -529,23 +529,23 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 199
+        "line": 210
       },
       {
         "call": "requests.post",
-        "line": 229
+        "line": 240
       },
       {
         "call": "requests.post",
-        "line": 298
+        "line": 309
       },
       {
         "call": "requests.get",
-        "line": 322
+        "line": 333
       },
       {
         "call": "requests.post",
-        "line": 463
+        "line": 474
       }
     ],
     "fanops.post.zernio": [

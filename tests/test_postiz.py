@@ -570,6 +570,18 @@ def test_rewrite_media_base_rewrites_loopback_upload_path(tmp_path, monkeypatch)
         "https://media.example.com/clips/media/render_x.9x16.mp4"
 
 
+def test_media_host_postiz_can_fetch_allows_r2_and_postiz(tmp_path, monkeypatch):
+    from fanops.post.postiz import media_host_postiz_can_fetch
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://cdn.example/clips")
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api")
+    cfg = Config(root=tmp_path)
+    assert media_host_postiz_can_fetch("https://cdn.example/clips/x.mp4", cfg) is True
+    assert media_host_postiz_can_fetch("https://uploads.postiz.com/a.mp4", cfg) is True
+    assert media_host_postiz_can_fetch("id|https://localhost/uploads/a.mp4", cfg) is True
+    assert media_host_postiz_can_fetch(
+        "f3f8e0b0|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/x.mp4", cfg) is False
+
+
 def test_rewrite_media_base_passthrough_foreign_https(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://media.example.com")
     cfg = Config(root=tmp_path)

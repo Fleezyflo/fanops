@@ -1,7 +1,7 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Clip, Moment, PostState, ClipState, MomentState, Platform
+from fanops.models import ErrorKind, Post, Clip, Moment, PostState, ClipState, MomentState, Platform
 from fanops.post.run import publish_due
 
 # publish-out-of-lock: publish_due(cfg, *, now) self-loads the ledger and publishes each due post via a
@@ -843,6 +843,68 @@ def test_publish_post_planned_does_not_claim(tmp_path, monkeypatch, mocker):
     assert p.state is PostState.queued and p.submission_started_at is None
     assert "skip_account_not_active" in cfg.log_path.read_text()
     poster.assert_not_called()
+
+
+def test_publish_due_stops_claiming_an_integration_after_429(tmp_path, monkeypatch, mocker):
+    """First 429 fails that post; the next due post on the SAME account_id stays queued."""
+    _live(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _queued(led, cfg, pid="a1", cid="c_a1", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="a2", cid="c_a2", when="2020-01-01T00:00:01Z")
+    _queued(led, cfg, pid="b1", cid="c_b1", when="2020-01-01T00:00:02Z")
+    led.posts["b1"].account_id = "other_ig"
+    _http_media(led, "a1", "a2", "b1")
+    seen: list[str] = []
+
+    class _RateThenOk:
+        def __init__(self):
+            self._hit_98432 = False
+
+        def publish(self, led_, post_id):
+            seen.append(post_id)
+            if led_.posts[post_id].account_id == "98432" and not self._hit_98432:
+                self._hit_98432 = True
+                led_.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.rate_limit,
+                                    error_reason="postiz 429 (body withheld)")
+                return led_
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
+            led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id].public_url = _LIVE_PERMALINK
+            return led_
+
+    mocker.patch("fanops.post.run.get_poster", return_value=_RateThenOk())
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    after = Ledger.load(cfg).posts
+    same = ("a1", "a2")
+    failed = [pid for pid in same if after[pid].state is PostState.failed]
+    queued = [pid for pid in same if after[pid].state is PostState.queued]
+    assert failed == [seen[0]] and len(queued) == 1
+    assert after[failed[0]].error_kind is ErrorKind.rate_limit
+    assert after[queued[0]].error_kind is None
+    assert after["b1"].state is PostState.published
+    assert queued[0] not in seen
+
+
+def test_ensure_media_reuploads_foreign_https(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://cdn.example/clips")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _queued(led, cfg, pid="m1", cid="c_m1", when="2020-01-01T00:00:00Z")
+    led.posts["m1"].media_urls = [
+        "f3f8e0b0-cc86-4cb0-b15c-67088db01581|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/x.mp4"]
+    led.save()
+    mocker.patch("fanops.post.run.get_media_uploader",
+                 return_value=lambda *a, **k: "new|https://uploads.postiz.com/x.mp4")
+    from fanops.post.run import _ensure_media
+    led = Ledger.load(cfg)
+    _ensure_media(led, cfg, led.posts["m1"], "postiz")
+    assert "tail72be94" not in led.posts["m1"].media_urls[0]
+    assert "uploads.postiz.com" in led.posts["m1"].media_urls[0]
 
 
 def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, mocker):

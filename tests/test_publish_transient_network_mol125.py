@@ -4,7 +4,10 @@ import requests as _rq
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, Clip, PostState, ClipState, Platform
-from fanops.post.run import _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon
+from fanops.post.run import (
+    _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon,
+    _requeue_rate_limited_for_daemon,
+)
 from fanops.studio.views_common import is_transient_failure
 from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
 
@@ -155,6 +158,51 @@ def test_recover_posts_retries_transient_failed(tmp_path):
     res = recover_posts(cfg, ["dns"], action="retry", reason="studio_retry_transient")
     assert res.ok and res.detail["retried"] == 1
     assert Ledger.load(cfg).posts["dns"].state is PostState.queued
+
+
+def _rate_fail(cfg, pid, *, account_id="ig1", sub=None, retry=0):
+    from fanops.models import Moment, MomentState, Source
+    f = cfg.clips / f"{pid}.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        if "src_1" not in led.sources:
+            led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+        if "mom_1" not in led.moments:
+            led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                                  reason="r", state=MomentState.clipped))
+        if pid not in led.clips:
+            led.add_clip(Clip(id=pid, parent_id="mom_1", path=str(f), state=ClipState.captioned))
+        led.add_post(Post(id=pid, parent_id=pid, account="a", account_id=account_id,
+                          platform=Platform.instagram, caption="c", state=PostState.failed,
+                          error_kind=ErrorKind.rate_limit, error_reason="postiz 429 (body withheld)",
+                          submission_id=sub, daemon_transient_retry=retry,
+                          scheduled_time="2026-08-31T07:00:00Z"))
+
+
+def test_requeue_rate_limit_one_per_account_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "r1", account_id="ig1")
+    _rate_fail(cfg, "r2", account_id="ig1")
+    assert _requeue_rate_limited_for_daemon(cfg) == 1
+    led = Ledger.load(cfg)
+    queued = [p.id for p in led.posts.values() if p.state is PostState.queued]
+    failed = [p.id for p in led.posts.values() if p.state is PostState.failed]
+    assert len(queued) == 1 and len(failed) == 1
+    assert led.posts[queued[0]].error_kind is None
+    assert led.posts[failed[0]].error_kind is ErrorKind.rate_limit
+
+
+def test_requeue_rate_limit_skips_real_submission_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "real", account_id="ig1", sub="cmtgxb3ma000ep87wxbmawjms")
+    assert _requeue_rate_limited_for_daemon(cfg) == 0
+    assert Ledger.load(cfg).posts["real"].state is PostState.failed
 
 
 # submission_id idempotency is owned by
