@@ -57,8 +57,8 @@ def _media_cache_hit(url: str, backend: str) -> bool:
     if backend == "postiz":
         if "|" not in url:
             return False
-        from fanops.post.postiz import media_host_postiz_can_fetch  # lazy: avoid postiz <-> media cycle
-        return media_host_postiz_can_fetch(url, None)  # type: ignore[arg-type]
+        from fanops.post.postiz import media_host_postiz_can_fetch
+        return media_host_postiz_can_fetch(url)
     return url.startswith("http")
 
 def _uploader_kwargs(backend: str, account_id: str | None) -> dict:

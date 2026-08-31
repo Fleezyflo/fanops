@@ -228,7 +228,7 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
                                                             **_uploader_kwargs(backend, aid)))
             elif backend == "postiz":
                 from fanops.post.postiz import media_host_postiz_can_fetch
-                if media_host_postiz_can_fetch(u, cfg):
+                if media_host_postiz_can_fetch(u):
                     new.append(u)
                     continue
                 clip = led.clips.get(post.parent_id)

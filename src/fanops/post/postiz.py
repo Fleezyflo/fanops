@@ -38,7 +38,7 @@ _POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouT
 _REELS_MEDIA_EXT = ".mp4"                # the extension the vendor's single-media REELS branch keys on (see _is_video_media)
 
 
-def media_host_postiz_can_fetch(url: str, cfg: Config) -> bool:
+def media_host_postiz_can_fetch(url: str) -> bool:
     """False when the media host is Tailscale MagicDNS — Postiz-in-Docker cannot resolve it."""
     raw = (url or "").strip()
     if "|" in raw:
@@ -303,23 +303,28 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
 def postiz_upload_media(cfg: Config, path: Path, **kw) -> str:
     """Upload a local file to Postiz. When R2 mirroring is configured, mirror bytes to the public CDN
     first then POST /upload-from-url (Postiz SSRF-blocks localhost; IG needs internet-reachable URLs).
-    Otherwise multipart POST /upload -> "id|path". 401 -> typed PostizAuthError (halt)."""
+    Otherwise multipart POST /upload -> "id|path". 401 -> typed PostizAuthError (halt).
+    Refuses a minted host Postiz-in-Docker cannot fetch (Tailscale MagicDNS)."""
     if _r2_configured(cfg):
-        return _postiz_upload_from_url(cfg, _mirror_media_to_r2(cfg, path))
-    headers = {"Authorization": _key(cfg)}
-    with open(path, "rb") as fh:
-        resp = requests.post(f"{_base(cfg)}{_PUBLIC}/upload", headers=headers,
-                             files={"file": (Path(path).name, fh)}, timeout=120)
-    if resp.status_code == 401:
-        raise PostizAuthError("Postiz 401 on media upload — check POSTIZ_API_KEY (response body withheld)")
-    if resp.status_code >= 300:
-        raise RuntimeError(f"Postiz upload failed ({resp.status_code}) — body withheld")   # body may echo the auth header (reaches error_reason via _submit_one)
-    body = resp.json()
-    media_id = body.get("id") if isinstance(body, dict) else None
-    media_path = body.get("path") if isinstance(body, dict) else None
-    if not (media_id and media_path):
-        raise RuntimeError(f"Postiz upload response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
-    return f"{media_id}|{rewrite_media_base(media_path, cfg)}"
+        out = _postiz_upload_from_url(cfg, _mirror_media_to_r2(cfg, path))
+    else:
+        headers = {"Authorization": _key(cfg)}
+        with open(path, "rb") as fh:
+            resp = requests.post(f"{_base(cfg)}{_PUBLIC}/upload", headers=headers,
+                                 files={"file": (Path(path).name, fh)}, timeout=120)
+        if resp.status_code == 401:
+            raise PostizAuthError("Postiz 401 on media upload — check POSTIZ_API_KEY (response body withheld)")
+        if resp.status_code >= 300:
+            raise RuntimeError(f"Postiz upload failed ({resp.status_code}) — body withheld")   # body may echo the auth header (reaches error_reason via _submit_one)
+        body = resp.json()
+        media_id = body.get("id") if isinstance(body, dict) else None
+        media_path = body.get("path") if isinstance(body, dict) else None
+        if not (media_id and media_path):
+            raise RuntimeError(f"Postiz upload response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
+        out = f"{media_id}|{rewrite_media_base(media_path, cfg)}"
+    if not media_host_postiz_can_fetch(out):
+        raise RuntimeError("Postiz media mint returned an unfetchable host Postiz-in-Docker cannot fetch")
+    return out
 
 
 def postiz_list_integrations(cfg: Config) -> list[PostizIntegration]:
