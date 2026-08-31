@@ -82,7 +82,9 @@ def test_produce_lock_caps_twelve_in_shortlist_order(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == [f"#t{i}" for i in range(12)]
     assert rec["lock"] == [f"#t{i}" for i in range(12)]
-    assert rec.get("quality_pass") is True
+    assert rec.get("catalog") == [f"#t{i}" for i in range(12)]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert "#t15" not in rec["lock"]
 
 
@@ -100,7 +102,9 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["lock"] == ["#low", "#high"]
-    assert rec.get("quality_pass") is True
+    assert rec.get("catalog") == ["#low", "#high"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
 
 
 def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
@@ -140,14 +144,18 @@ def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
     assert called["n"] == 0
 
 
-def test_slogan_pile_without_quality_pass_is_reshortlisted(tmp_path):
+def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
     cfg = _cfg(tmp_path)
     source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     source_tag_locks_path(cfg).write_text(json.dumps({
         "src_1": {
             "pile": ["#whichwayamifacing", "#dontlookweirdbro"],
-            "verified": ["#whichwayamifacing"],
-            "remaining": ["#dontlookweirdbro"],
+            "verified": ["#whichwayamifacing", "#dontlookweirdbro"],
+            "measurements": {
+                "#whichwayamifacing": {"play_count": 8.0},
+                "#dontlookweirdbro": {"play_count": 8.0},
+            },
+            "remaining": ["#whichwayamifacing", "#dontlookweirdbro"],
             "lock": [],
         }
     }))
@@ -169,11 +177,13 @@ def test_slogan_pile_without_quality_pass_is_reshortlisted(tmp_path):
     assert calls["n"] == 1
     assert rec["pile"] == ["#rickross", "#hiphop"]
     assert rec["lock"] == ["#rickross", "#hiphop"]
-    assert rec.get("quality_pass") is True
+    assert rec.get("catalog") == ["#rickross", "#hiphop"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert rec["researched_at"]
 
 
-def test_quality_pass_unfinished_does_not_reshortlist(tmp_path):
+def test_unfinished_with_catalog_does_not_reshortlist(tmp_path):
     cfg = _cfg(tmp_path)
     source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     source_tag_locks_path(cfg).write_text(json.dumps({
@@ -182,7 +192,8 @@ def test_quality_pass_unfinished_does_not_reshortlist(tmp_path):
             "verified": ["#rickross"],
             "remaining": ["#hiphop"],
             "lock": [],
-            "quality_pass": True,
+            "catalog": ["#rickross", "#hiphop"],
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
             "measurements": {"#rickross": {"play_count": 8.0}},
         }
     }))
@@ -201,6 +212,62 @@ def test_quality_pass_unfinished_does_not_reshortlist(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == ["#rickross", "#hiphop"]
     assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec.get("catalog") == ["#rickross", "#hiphop"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
+
+
+def test_researched_without_catalog_rejudges(tmp_path):
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing"],
+            "lock": ["#whichwayamifacing"],
+            "researched_at": "2026-08-19T00:00:00Z",
+        }
+    }))
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["rickross"]
+
+    client = _SearchClient(
+        {"rickross": [_Hit("rickross")]},
+        media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec["lock"] == ["#rickross"]
+    assert rec["pile"] == ["#rickross"]
+    assert rec.get("catalog") == ["#rickross"]
+    assert rec.get("catalog_at")
+    assert rec["researched_at"]
+    assert "quality_pass" not in rec
+
+
+def test_catalog_search_feeds_judge(tmp_path, mocker):
+    def fake_claude(*_a, **_k):
+        return {"keep": ["#rickross"],
+                "reject": ["#fyp", "#whichwayamifacing"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    cfg = _cfg(tmp_path)
+    client = _SearchClient(
+        {"rick ross": [_Hit("rickross"), _Hit("fyp"), _Hit("whichwayamifacing")]},
+        media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+    )
+    ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["lock"] == ["#rickross"]
+    assert "#fyp" not in rec["lock"]
+    assert rec.get("catalog") == ["#rickross", "#fyp", "#whichwayamifacing"]
+    assert rec.get("catalog_at")
+    assert rec["researched_at"]
+    assert "quality_pass" not in rec
+    assert client.search_calls == ["rick ross"]
 
 
 def test_like_only_and_graph_only_out_of_lock(tmp_path):
@@ -234,6 +301,9 @@ def test_second_call_is_noop_when_researched_at_present(tmp_path):
 
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     first = json.loads(source_tag_locks_path(cfg).read_text())
+    assert first["src_1"].get("catalog") == ["#music"]
+    assert first["src_1"].get("catalog_at")
+    assert "quality_pass" not in first["src_1"]
     client.search_calls.clear()
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     assert calls["n"] == 1
@@ -941,6 +1011,8 @@ def _leftover_quota_sidecar(cfg, sid="src_1", names=("#a", "#b"), measured=None)
             "remaining": names,
             "lock": [],
             "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+            "catalog": list(names),
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
         }
     }))
 
@@ -966,6 +1038,9 @@ def test_leftover_quota_row_stamps_without_safari_or_graph(tmp_path, monkeypatch
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#a", "#b"]
+    assert rec.get("catalog") == ["#a", "#b"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert "quota_exhausted_at" not in rec
     assert seen == []
 
@@ -1019,6 +1094,8 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
     table = load_source_tag_locks(cfg)
     assert table["src_a"]["researched_at"]
     assert table["src_a"]["lock"] == ["#a"]
+    assert table["src_a"].get("catalog") == ["#a"]
+    assert "quality_pass" not in table["src_a"]
     assert "src_b" not in table
     assert attempted == []
 
@@ -1054,6 +1131,8 @@ def test_lock_ready_skips_unfinished_leftover_to_stamp_complete(tmp_path, monkey
             "remaining": ["#b"],
             "lock": [],
             "quota_exhausted_at": "2026-08-19T13:15:49.118016Z",
+            "catalog": ["#b"],
+            "catalog_at": "2026-08-19T13:15:49.118016Z",
         },
     }))
     seen = []
@@ -1305,12 +1384,10 @@ def test_hydrate_merges_used_into_completed_lock(tmp_path):
     }))
     hydrate_locks_from_known(cfg, led)
     rec = load_source_tag_locks(cfg)["src_1"]
-    lock = rec["lock"]
-    assert lock[0] == "#hiphop"
-    assert "#jussiesmollett" in lock
+    assert rec["lock"] == ["#jussiesmollett"]
     assert rec["researched_at"] == "2026-08-19T00:00:00Z"
-    assert rec["hydrated_at"]
-    assert len(lock) <= 12
+    assert not rec.get("hydrated_at")
+    assert "#hiphop" not in rec["lock"]
 
 
 def test_known_lock_caps_at_twelve(tmp_path):
@@ -1327,7 +1404,8 @@ def test_pile_cache_hit_stamps_without_safari(tmp_path):
     cfg = _cfg(tmp_path)
     source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
     source_tag_locks_path(cfg).write_text(json.dumps({
-        "src_1": {"pile": ["#music"], "verified": [], "remaining": ["#music"], "lock": []},
+        "src_1": {"pile": ["#music"], "verified": [], "remaining": ["#music"], "lock": [],
+                  "catalog": ["#music"], "catalog_at": "2026-08-19T13:15:49.118016Z"},
     }))
     _write_meas(cfg, {"#music": 8.0})
     seen = []
@@ -1341,6 +1419,9 @@ def test_pile_cache_hit_stamps_without_safari(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["researched_at"]
     assert rec["lock"] == ["#music"]
+    assert rec.get("catalog") == ["#music"]
+    assert rec.get("catalog_at")
+    assert "quality_pass" not in rec
     assert seen == []
 
 
