@@ -156,10 +156,6 @@
       {
         "call": "Ledger.transaction",
         "line": 557
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 649
       }
     ],
     "fanops.recaption": [
@@ -813,7 +809,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 83,
+    "ledger_transaction_sites": 82,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,

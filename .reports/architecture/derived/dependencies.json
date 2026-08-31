@@ -1169,7 +1169,8 @@
         "fanops.ledger"
       ],
       "lazy": [
-        "fanops.post"
+        "fanops.post",
+        "fanops.post.postiz"
       ],
       "optional": [],
       "typing": []
@@ -1237,7 +1238,6 @@
         "fanops.post.compress",
         "fanops.post.dryrun",
         "fanops.post.media",
-        "fanops.post.metrics",
         "fanops.post.postiz",
         "fanops.postiz_lifecycle",
         "fanops.studio.views_common",
@@ -2192,7 +2192,6 @@
       "socket",
       "sqlite3",
       "subprocess",
-      "sys",
       "tempfile",
       "time",
       "urllib",
@@ -2777,12 +2776,12 @@
       "to_level": 3
     },
     {
-      "from": "fanops.post.run",
-      "from_level": 4,
+      "from": "fanops.post.media",
+      "from_level": 3,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.post.metrics",
-      "to_level": 4
+      "to": "fanops.post.postiz",
+      "to_level": 3
     },
     {
       "from": "fanops.produce",
