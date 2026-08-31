@@ -114,7 +114,7 @@ def test_moment_pick_prompt_has_no_hook_craft():
     assert "retention" not in p                   # the muted/first-3s craft is hook-pass only
     assert "curiosity gap" not in p
     assert "hooks_by_persona" not in p            # per-account hooks are authored in the hook pass
-    assert "select the hook by reading" not in p  # the _hook_decision process moved out
+    assert "select the hook by reading" not in p  # engagement brief is hook-pass only
 
 def test_moment_pick_prompt_target_is_a_ceiling_but_forbids_zero_on_content():
     # Real spoken/musical content still MUST yield >=1 clip (an empty list is allowed ONLY for
@@ -326,43 +326,34 @@ def test_moment_hook_prompt_demands_retention_hook_not_a_transcript_quote():
     p = moment_hook_prompt(_hook_payload())
     low = p.lower()
     assert "`hook`" in p and "watching" in low                  # asks for a hook that retains
-    assert "not a caption" in low and "not a quote" in low      # forbids transcribing the audio
     assert "signal peaks" in low                                # leans on transcription-independent signal
 
-def test_moment_hook_prompt_teaches_the_four_triggers():
-    # v2 (craft): the hook is a RETENTION mechanic that fires proven psychological TRIGGERS, taught
-    # explicitly. Muted/first-seconds framing + the four triggers, framed about the VIEWER, never the artist.
+def test_moment_hook_prompt_asks_what_would_keep_the_viewer_watching():
+    # The brief is the question. Listing banned formulas (sound on / rewind / dare) re-teaches them.
     p = moment_hook_prompt(_hook_payload())
     low = p.lower()
-    assert "muted" in low                       # ~70% watch sound-off -> on-screen text carries the hook
-    assert "retention" in low                   # the hook's stated job
-    assert "curiosity gap" in low or "open loop" in low   # trigger 1
-    assert "pattern interrupt" in low           # trigger 2
-    assert "self-relevance" in low              # trigger 3 (2026's highest-scoring)
-    assert "emotional arousal" in low           # trigger 4
-    assert "viewer" in low                      # framed about the viewer, never the artist
-    assert "specific" in low                    # specificity multiplier
+    assert "keep the viewer watching" in low
+    assert "hook: null" not in low
+    assert "talk to the scroller" not in low
+    assert "watch instruction" not in low
+    assert "sound on" not in low
+    assert "wait for the last line" not in low
+    assert "rewind" not in low
+    assert "muted" not in low
+    assert "curiosity gap" not in low
+    assert "peer-challenge" not in low
+    assert "pattern interrupt" not in low
 
-def test_moment_hook_prompt_teaches_multipliers_and_bans_slop():
-    p = moment_hook_prompt(_hook_payload(guidance=""))
-    low = p.lower()
-    assert "throat" in low                        # zero throat-clearing
-    assert "stack" in low                          # stack two triggers
-    assert "generic" in low                        # bans generic filler
-    assert "editing" in low or "scene-cut" in low  # never hook on the cuts
-    assert "hype" in low or "praise" in low        # no artist hype
-
-def test_moment_hook_prompt_bans_narration_and_embeds_fewshot_priors():
-    # MOL-173: universal floor bans narration; persona demos are supplied separately (fenced).
+def test_moment_hook_prompt_does_not_prime_persona_demos():
+    # Few-shot demos are the same attractor as the formula list. Owner voice still reaches.
     demos = ["an origin-story moment -> 'maybe your favorite artist copied too'",
              "a refrain that loops -> 'the line you'll send to one person'"]
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x", "demos": demos}]))
     low = p.lower()
-    assert "narrat" in low or "third-person" in low
-    assert "viewer" in low
-    assert "maybe your favorite artist copied too" in low
-    assert "the line you'll send to one person" in low
-    assert "<source_data>" in p
+    assert "keep the viewer watching" in low
+    assert "maybe your favorite artist copied too" not in low
+    assert "the line you'll send to one person" not in low
+    assert "x" in p
 
 def test_hook_spec_carries_no_third_person_demonstrations():
     # RF5 (viewer-POV at the source): the generator must never be SHOWN third person. Every third-person
@@ -378,25 +369,18 @@ def test_hook_spec_carries_no_third_person_demonstrations():
 def test_moment_hook_prompt_teaches_viewer_specificity_not_clip_description():
     p = moment_hook_prompt(_hook_payload())
     low = p.lower()
-    assert "viewer" in low
-    assert "not the clip" in low or "not a caption" in low
+    assert "keep the viewer watching" in low
 
-def test_moment_hook_prompt_runs_the_d1_decision_process():
-    # D1's input-dependent SELECTION reaches the hook author: read the clip's VISUAL energy (frames) and
-    # REGISTER, THEN select the mechanism. Ordering is the fidelity signal — "read, then choose".
+def test_moment_hook_prompt_has_no_mechanism_taxonomy():
     p = moment_hook_prompt(_hook_payload()).lower()
-    assert "select the hook by reading this clip" in p     # the decision header
-    assert "register" in p                                  # the dialect/register read (D1 step 3)
-    assert p.index("attached frames") < p.index("select the mechanism that fits")   # read -> choose
-
-def test_moment_hook_prompt_hierarchy_is_selective():
-    # D1's A/B/C selection hierarchy reaches the author (low-energy / high-energy / dense-Arabic), but the
-    # prompt stays SELECTIVE: the doc-only mechanisms must NOT leak into the generator.
-    p = moment_hook_prompt(_hook_payload()).lower()
-    assert "atmospheric pov" in p and "result-first" in p and "peer-challenge" in p   # fan-relevant set
-    assert "low-energy" in p and "high-energy" in p          # the A/B branches
-    assert "warning" not in p and "negativity" not in p      # doc-only mechanism, not instructed
-    assert "concrete number" not in p                        # doc-only mechanism, not instructed
+    assert "select the hook by reading this clip" not in p
+    assert "atmospheric pov" not in p
+    assert "result-first" not in p
+    assert "peer-challenge" not in p
+    assert "self-relevance" not in p
+    assert "emotional arousal" not in p
+    assert "fomo" not in p
+    assert "low-energy" not in p and "high-energy" not in p
 
 def test_moment_hook_prompt_owner_voice_when_personas():
     # P6: the frame-seeing author writes ONE hook for the moment's owner, grounded in the picked-window frames.
@@ -409,25 +393,24 @@ def test_moment_hook_prompt_no_persona_block_when_absent():
     p = moment_hook_prompt(_hook_payload())              # no personas key -> shared hook (persona-blind)
     assert "hooks_by_persona" not in p
 
-def test_hook_prompt_reads_structured_directive():
-    # P6/A2: the owner's structured hook Directive (mechanism_lean, register, fenced demos) reaches the author.
+def test_hook_prompt_reads_owner_voice_not_mechanism_lean_or_demos():
+    # Owner voice reaches the author. mechanism_lean and few-shot demos do not.
     demos = ["a punchline moment -> 'the line you'll send to one person'"]
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a",
                                                     "persona": "underground raw fan voice",
                                                     "mechanism_lean": "dare or challenge the viewer",
                                                     "demos": demos}]))
     assert "hooks_by_persona" not in p
-    assert "dare or challenge" in p.lower()
+    assert "dare or challenge" not in p.lower()
     assert "underground raw fan voice" in p
-    assert "the line you'll send to one person" in p
-    assert "<source_data>" in p
+    assert "the line you'll send to one person" not in p
 
-def test_moment_hook_prompt_renders_learned_hint_and_byte_identical_without():
+def test_moment_hook_prompt_ignores_learned_hooks():
+    # Old winning dares must not re-prime the next draft. Presence of the key is a no-op.
     base = _hook_payload()
     assert "WIN HOOK" not in moment_hook_prompt(base)
-    p = moment_hook_prompt(_hook_payload(learned_hooks=["WIN HOOK"]))
-    assert "WIN HOOK" in p and ("verbatim" in p.lower() or "copy" in p.lower())
-    # additive: empty list / None == absent (no stray block)
+    assert "WIN HOOK" not in moment_hook_prompt(_hook_payload(learned_hooks=["WIN HOOK"]))
+    assert moment_hook_prompt(_hook_payload(learned_hooks=["WIN HOOK"])) == moment_hook_prompt(base)
     assert moment_hook_prompt(_hook_payload(learned_hooks=[])) == moment_hook_prompt(base)
     assert moment_hook_prompt(_hook_payload(learned_hooks=None)) == moment_hook_prompt(base)
 
@@ -649,12 +632,9 @@ def test_brief_fence_renders_none_provided_when_guidance_empty():
     seg = p[p.index("<brand_brief>"):p.index("</brand_brief>")]
     assert "(none provided)" in seg
 
-# --- Evidence-rewrite: the D1 decision process reaches the HOOK author only -------------------------
-# The hook research (D1 selection spec / D2 13-mechanism taxonomy / D3 retention psychology) is baked
-# into the hook generator: the input-dependent SELECTION logic (read frames + signal + register, THEN
-# pick a mechanism) lives in `_hook_decision`; the mechanism CRAFT lives in `_hook_spec`. The caption
-# author (CaptionRequest has NO frames/signal) and the pick author must never be ordered to read inputs
-# they lack.
+# --- Hook craft stays on the hook author only -------------------------------------------------------
+# The engagement brief lives in `_hook_spec`. The caption author (CaptionRequest has NO frames/signal)
+# and the pick author must never be ordered to read inputs they lack.
 
 def test_caption_prompt_has_no_genre_recipe():
     p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
@@ -668,13 +648,13 @@ def test_caption_prompt_has_no_genre_recipe():
 def test_caption_prompt_has_no_decision_pollution():
     # FIREWALL: the hook-only decision process (read the attached frames + signal peaks + register, then
     # select) must NOT reach the caption author. CaptionRequest carries no frames/signal, so instructing
-    # it to read them is a hallucination prompt. _hook_decision is wired into moment_hook_prompt ONLY.
+    # it to read them is a hallucination prompt. The engagement brief is wired into moment_hook_prompt ONLY.
     p = caption_prompt({"clip_id": "c1", "language": "en", "guidance": "",
                         "transcript_excerpt": "x",
                         "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]}).lower()
     assert "attached frames" not in p                # the visual read is hook-only
-    assert "select the hook by reading" not in p     # the decision header is hook-only
-    assert "msa" not in p                            # the register/dialect read is hook-only
+    assert "select the hook by reading" not in p
+    assert "keep the viewer watching" not in p       # engagement brief is hook-only
 
 
 # ---- AGENT-2: the pick prompt renders an M-of-N truncation marker when the transcript was budget-trimmed ----
@@ -752,27 +732,26 @@ def test_pick_prompt_universal_craft_intact():
 def test_hook_spec_universal_floor_intact():
     p = moment_hook_prompt(_hook_payload())
     low = p.lower()
-    assert "curiosity gap" in low or "open loop" in low
-    assert "pattern interrupt" in low
-    assert "self-relevance" in low
-    assert "emotional arousal" in low
-    assert "result-first" in low or "atmospheric pov" in low
+    assert "keep the viewer watching" in low
+    assert "hook: null" not in low
 
-def test_hook_demos_are_persona_supplied_and_fenced():
+def test_hook_demos_are_not_injected():
     demos = ["an origin-story moment -> 'maybe your favorite artist copied too'"]
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x", "demos": demos}]))
-    assert "maybe your favorite artist copied too" in p
-    assert "<source_data>" in p
-    assert moment_hook_prompt(_hook_payload()) != p  # absent without persona demos
+    assert "maybe your favorite artist copied too" not in p
+    assert moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x"}])) == p
 
 def test_hook_no_hardcoded_rapper_banlist():
     p = moment_hook_prompt(_hook_payload()).lower()
     assert "goat" not in p and "artist praise" not in p
 
-def test_hook_decision_content_selects_persona_biases():
+def test_hook_prompt_does_not_inject_mechanism_lean():
     p = moment_hook_prompt(_hook_payload(personas=[{"handle": "@a", "persona": "x",
                                                     "mechanism_lean": "dare or challenge the viewer"}]))
-    assert "persona bias" in p.lower() or "mechanism lean" in p.lower()
+    assert "persona bias" not in p.lower()
+    assert "mechanism lean" not in p.lower()
+    assert "dare or challenge" not in p.lower()
+    assert "x" in p  # owner voice still present
 
 # ---- MOL-478 (T5): pick prompt persona-count ceiling + within-owner overlap + supercut mandate ----
 def test_pick_prompt_ceiling_scales_with_persona_count():

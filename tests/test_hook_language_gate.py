@@ -120,13 +120,10 @@ def test_source_no_language_hook_kept(tmp_path):
 # --- Path C prompt does NOT mandate ENGLISH ---------------------------------------------------
 
 def test_path_c_no_english_mandate():
-    """_hook_decision Path C must no longer mandate an ENGLISH hook for Arabic sources."""
+    """Arabic sources must not be told to write an ENGLISH hook."""
     from fanops.prompts import moment_hook_prompt
     payload = {"start": 10.0, "end": 28.0, "reason": "r", "transcript_excerpt": "",
                "language": "ar", "guidance": "", "frames": [], "signal_peaks": [],
                "personas": [{"handle": "test", "persona": "craft angle"}]}
     out = moment_hook_prompt(payload)
-    # Path C must still appear (Curiosity/Tension mechanism for dense Arabic), but the
-    # "ENGLISH hook" mandate must be gone.
-    assert "ENGLISH hook" not in out, "Path C must not mandate ENGLISH for Arabic sources"
-    assert "Curiosity" in out or "Tension" in out, "Path C mechanism must still be present"
+    assert "ENGLISH hook" not in out, "must not mandate ENGLISH for Arabic sources"

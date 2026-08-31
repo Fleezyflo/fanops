@@ -1,5 +1,5 @@
 """Drift guard: the fanops-hook-hashtag SKILL.md is DOCUMENTATION; the source of truth is the code
-(ship_from_lock for caption ship; prompts._hook_spec for hooks)."""
+(ship_from_lock for caption ship; prompts._hook_spec engagement brief for hooks)."""
 import re
 from pathlib import Path
 from fanops.hashtags import (
@@ -11,12 +11,9 @@ from fanops.prompts import _hook_spec
 
 _SKILL = Path(__file__).resolve().parents[1] / ".claude" / "skills" / "fanops-hook-hashtag" / "SKILL.md"
 
-# The proven hook MECHANISMS named in _hook_spec; the doc must not drop or rename one. The original 4
-# psychological TRIGGERS (which replaced the old 6 inert labels) plus the 5 evidence-rewrite mechanisms
-# (result-first / atmospheric pov / peer-challenge / social proof / fomo) — each carries its craft +
-# fail-condition in _hook_spec. One canonical lowercased form (space vs hyphen is the only drift risk).
-_PATTERNS = ["curiosity gap", "pattern interrupt", "self-relevance", "emotional arousal",
-             "result-first", "atmospheric pov", "peer-challenge", "social proof", "fomo"]
+# Load-bearing phrases of prompts._hook_spec. The skill DRIFT-GUARD:patterns
+# block must list exactly these, and each must appear lowercased in _hook_spec.
+_PATTERNS = ["keep the viewer watching"]
 
 _COMPOSITION = {
     "MEGA_MEDIA_FLOOR": int(MEGA_MEDIA_FLOOR),
