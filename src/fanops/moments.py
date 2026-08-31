@@ -131,21 +131,19 @@ _MAX_OVERLAP_FRAC = 0.5
 _CUE_PREC = 3  # same as fanops.prompts._CUE_PREC — printed cue timestamps
 
 def _cue_edge_sets(src) -> tuple[set[float], set[float]]:
+    from fanops.prompts import _bounded_cue_span
     from fanops.transcribe import trusted_segments
     starts: set[float] = set()
     ends: set[float] = set()
     lang = getattr(src, "language", None)
     duration = getattr(src, "duration", None)
     for s in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
-        st, en = s.get("start"), s.get("end")
-        if not isinstance(st, (int, float)) or not isinstance(en, (int, float)):
+        span = _bounded_cue_span(s.get("start"), s.get("end"), duration)
+        if span is None:
             continue
-        st = max(0.0, float(st))
-        en = min(float(duration), float(en)) if duration else float(en)
-        if not (st < en):
-            continue
-        starts.add(round(st, _CUE_PREC))
-        ends.add(round(en, _CUE_PREC))
+        st, en = span
+        starts.add(st)
+        ends.add(en)
     return starts, ends
 
 def _spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:

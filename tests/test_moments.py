@@ -603,6 +603,16 @@ def test_validate_pick_admits_duration_after_asr_overshoot():
     assert validate_pick(MomentPick(start=50.0, end=60.0, reason="r"), duration=60.0, src=src) is None
 
 
+def test_validate_pick_rejects_collapsed_rounded_cue():
+    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
+                 transcript=[talk_seg("a", start=-0.05, end=3.0),
+                             talk_seg("b", start=59.9996, end=60.05)])
+    assert validate_pick(MomentPick(start=0.0, end=3.0, reason="r"), duration=60.0, src=src) is None
+    bad = validate_pick(MomentPick(start=60.0, end=60.0, reason="r"), duration=60.0, src=src)
+    assert bad is not None
+    assert "end<=start" in bad or "cue" in bad
+
+
 def test_validate_pick_skips_grid_without_trusted_cues():
     src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
                  transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}])
