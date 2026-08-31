@@ -202,7 +202,12 @@
     </header>
 
     <div class="queue-meter">
-      <span><strong>{{ status.sources }}</strong> {% if status.run_chip %}in progress{% else %}queued{% endif %}</span>
+      {% if status.run_chip %}
+      <span>Now <strong>{{ status.run_chip }}</strong></span>
+      <span><strong>{{ status.sources }}</strong> waiting</span>
+      {% else %}
+      <span><strong>{{ status.sources }}</strong> queued</span>
+      {% endif %}
       {% if status.queue_gate %}<span><strong>{{ status.get('held_pending', 0) }}</strong> held in queue</span>{% endif %}
       <span><strong>{{ status.get('sources_blocked', 0) }}</strong> blocked on decisions</span>
       <span><strong>{{ status.get('sources_recoverable', 0) }}</strong> need attention</span>
