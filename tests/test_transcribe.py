@@ -304,8 +304,10 @@ def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
+    # Quality-complete without no_speech_prob: avg_logprob + compression_ratio suffice to adopt.
+    cached = {k: v for k, v in talk_seg("cached line").items() if k != "no_speech_prob"}
     (out_dir / "src_1.json").write_text(json.dumps(
-        {"language": "en", "segments": [talk_seg("cached line")]}))
+        {"language": "en", "segments": [cached]}))
     spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
     spy.assert_not_called()                                   # warm artifact reused — no whisper, no isolation

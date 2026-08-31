@@ -76,6 +76,8 @@ def test_segment_metadata_pass_matrix():
     assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": 3.0}) is False
     partial = {k: v for k, v in GOOD_AR.items() if k != "compression_ratio"}
     assert _segment_metadata_pass(partial) is False
+    without_nsp = {k: v for k, v in GOOD_AR.items() if k != "no_speech_prob"}
+    assert _segment_metadata_pass(without_nsp) is True                     # no_speech_prob not required
     assert _segment_metadata_pass({**GOOD_AR, "no_speech_prob": 0.99}) is True
     assert _segment_metadata_pass({**GOOD_AR, "avg_logprob": _AVG_LOGPROB_MIN}) is True
     assert _segment_metadata_pass({**GOOD_AR, "compression_ratio": _COMPRESSION_RATIO_MAX}) is True

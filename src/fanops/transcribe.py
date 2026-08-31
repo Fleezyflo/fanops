@@ -106,17 +106,18 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
-# Decoder-quality floors. no_speech_prob is stored (schema v2 / cache completeness) but is NOT a
-# pass/fail input: faster-whisper copies a window-level speech-vs-music prior onto every segment in
-# the decode chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are
-# confident. VAD already dropped silence; L1 here is "did the decoder commit to this text".
+# Required for L1 / cache adopt / full trust_tier. no_speech_prob remains optional passthrough —
+# faster-whisper copies a window-level speech-vs-music prior onto every segment in the decode
+# chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are confident.
+# VAD already dropped silence; L1 here is "did the decoder commit to this text".
+_SEGMENT_REQUIRED_QUALITY_KEYS = ("avg_logprob", "compression_ratio")
 _AVG_LOGPROB_MIN = -1.0
 _COMPRESSION_RATIO_MAX = 2.4
 
 def _segment_metadata_pass(seg: dict) -> bool:
-    """L1: quality keys present, avg_logprob + compression_ratio in range. Partial keys -> False.
-    no_speech_prob is required to be present (cache completeness) and is not thresholded."""
-    if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+    """L1: required decoder-quality keys present and in range. Partial required keys -> False.
+    no_speech_prob is optional (passthrough when present) and is not thresholded."""
+    if not all(k in seg for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
         return False
     try:
         if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
@@ -147,11 +148,11 @@ def _transcript_schema(segments: list[dict]) -> int:
     return 1
 
 def _cache_is_quality_complete(data: dict) -> bool:
-    """True when every non-empty cached segment carries all ASR quality keys."""
+    """True when every non-empty cached segment carries required ASR quality keys."""
     for s in data.get("segments") or []:
         text = (s.get("text") or "").strip()
         if not text: continue
-        if not all(k in s for k in _SEGMENT_QUALITY_KEYS):
+        if not all(k in s for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
             return False
     return True
 
@@ -162,7 +163,7 @@ def _trust_tier(seg: dict, *, src_lang: str | None = None) -> str:
         return "rejected"
     if not _segment_script_coherent(text, src_lang=src_lang):
         return "rejected"
-    if all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+    if all(k in seg for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
         if not _segment_metadata_pass(seg):
             return "rejected"
         return "full"
