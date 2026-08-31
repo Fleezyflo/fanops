@@ -16,12 +16,12 @@ real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on
 (whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
 for segment_trusted / window_has_trusted_speech in production paths.
 
-ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
-(default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
-(int8 makes even large-v3 practical on CPU). Absent [asr] is SourceState.error / ToolchainMissingError.
+ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner). Default model is
+**large-v3** (`used_model = model or "large-v3"`) — never a smaller duration/timeout degrade; callers
+may pass `model=` to override. Absent [asr] is SourceState.error / ToolchainMissingError.
 There is no whisper-CLI fallback."""
 from __future__ import annotations
-import contextlib, json, logging, subprocess, sys, time
+import contextlib, json, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -30,8 +30,6 @@ from fanops.errors import ToolchainMissingError
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
-
-_log = logging.getLogger("fanops.transcribe")
 
 _DEFAULT_DEMUCS_MODEL = "htdemucs"
 
@@ -53,42 +51,6 @@ def _whisper_timeout(duration_seconds: float | None) -> float:
     if not duration_seconds:
         return _WHISPER_TIMEOUT
     return max(_WHISPER_TIMEOUT, float(duration_seconds) * _PREWARM_TIMEOUT_FACTOR)
-
-def _cached_models(cfg: Config | None = None) -> list[str]:
-    """Model names whose checkpoint is already on disk (no download needed). whisper stores
-    them as <name>.pt under WHISPER download_root (defaults to ~/.cache/whisper)."""
-    root = (cfg.whisper_cache_root if cfg else Path.home() / ".cache" / "whisper")
-    if not root.exists():
-        return []
-    return [p.stem for p in root.glob("*.pt")]
-
-def _resolve_model(model: str) -> str:
-    """Pick a runnable model. Prefer the requested one if it's a known name; but if it isn't
-    already cached AND nothing on this host can fetch it, fall back to a model whose checkpoint
-    is already present (offline / air-gapped / TLS-proxied CI — where the >1GB turbo/small
-    checkpoints can't download). Only when no checkpoint is cached do we keep the requested
-    name and let whisper attempt the download (and surface a clear error if it can't)."""
-    try:
-        import whisper
-        known = whisper.available_models()
-    except ImportError:
-        return model                                  # whisper extra not installed -> keep requested name (fail-open)
-    except Exception as exc:
-        _log.warning("_pick_model: whisper present but model list failed (%s); keeping %s", exc, model)
-        return model
-    if model not in known:
-        model = "turbo" if "turbo" in known else (known[0] if known else model)
-    cached = _cached_models()
-    if model in cached:
-        return model
-    if cached:
-        # requested model not on disk; reuse a cached one rather than trigger a download that
-        # may be impossible here. Preference order: fast-and-cached first (turbo), then the largest cached fallbacks.
-        for pref in ("turbo", "large-v3", "medium", "small", "base", "tiny"):
-            if pref in cached:
-                return pref
-        return cached[0]
-    return model                                      # nothing cached: let whisper try to fetch
 
 def real_transcript_signal(transcript: list[dict]) -> bool:
     """True iff `transcript` is proof that REAL whisper ran on REAL audio — NOT that any one
@@ -144,17 +106,18 @@ def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
             "--output_dir", out_dir, src]
 
 _SEGMENT_QUALITY_KEYS = ("avg_logprob", "no_speech_prob", "compression_ratio")
-# Decoder-quality floors. no_speech_prob is stored (schema v2 / cache completeness) but is NOT a
-# pass/fail input: faster-whisper copies a window-level speech-vs-music prior onto every segment in
-# the decode chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are
-# confident. VAD already dropped silence; L1 here is "did the decoder commit to this text".
+# Required for L1 / cache adopt / full trust_tier. no_speech_prob remains optional passthrough —
+# faster-whisper copies a window-level speech-vs-music prior onto every segment in the decode
+# chunk, so rap over a beat scores 0.8–0.9 while avg_logprob still says the lyrics are confident.
+# VAD already dropped silence; L1 here is "did the decoder commit to this text".
+_SEGMENT_REQUIRED_QUALITY_KEYS = ("avg_logprob", "compression_ratio")
 _AVG_LOGPROB_MIN = -1.0
 _COMPRESSION_RATIO_MAX = 2.4
 
 def _segment_metadata_pass(seg: dict) -> bool:
-    """L1: quality keys present, avg_logprob + compression_ratio in range. Partial keys -> False.
-    no_speech_prob is required to be present (cache completeness) and is not thresholded."""
-    if not all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+    """L1: required decoder-quality keys present and in range. Partial required keys -> False.
+    no_speech_prob is optional (passthrough when present) and is not thresholded."""
+    if not all(k in seg for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
         return False
     try:
         if float(seg["avg_logprob"]) < _AVG_LOGPROB_MIN: return False
@@ -185,11 +148,11 @@ def _transcript_schema(segments: list[dict]) -> int:
     return 1
 
 def _cache_is_quality_complete(data: dict) -> bool:
-    """True when every non-empty cached segment carries all ASR quality keys."""
+    """True when every non-empty cached segment carries required ASR quality keys."""
     for s in data.get("segments") or []:
         text = (s.get("text") or "").strip()
         if not text: continue
-        if not all(k in s for k in _SEGMENT_QUALITY_KEYS):
+        if not all(k in s for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
             return False
     return True
 
@@ -200,7 +163,7 @@ def _trust_tier(seg: dict, *, src_lang: str | None = None) -> str:
         return "rejected"
     if not _segment_script_coherent(text, src_lang=src_lang):
         return "rejected"
-    if all(k in seg for k in _SEGMENT_QUALITY_KEYS):
+    if all(k in seg for k in _SEGMENT_REQUIRED_QUALITY_KEYS):
         if not _segment_metadata_pass(seg):
             return "rejected"
         return "full"
@@ -430,9 +393,9 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     only contract change is that callers no longer pass lock_held= and the timeout is the single
     length-scaled cap — both deliberate consequences of M1's architecture collapse."""
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
-    # LYRICS, not the instrumental. FAIL-OPEN — isolate_vocals returns the RAW path if demucs is
-    # absent/fails, so this never blocks transcription. The isolated mp3 is moved next to the whisper
-    # output under the SOURCE stem so the per-source .json lookup below stays unique + unchanged.
+    # LYRICS, not the instrumental. Isolation ON + demucs/move failure -> SourceState.error (never
+    # decode the mix). Isolation OFF leaves `audio` as the source path. The isolated mp3 is moved
+    # next to the whisper output under the SOURCE stem so the per-source .json lookup stays unique.
     audio = src.source_path
     if cfg.isolate_vocals:
         stem_mp3 = out_dir / f"{Path(src.source_path).stem}.mp3"
@@ -444,18 +407,23 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         if audio == src.source_path:
             from fanops.pipeline_run import note_stage
             note_stage(cfg, "transcribe:demucs", source_id)
-            voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
-            if voc != src.source_path:
-                src.meta["vocals_isolated"] = True            # a demucs vocal stem exists -> framing.classify_window
-                                                              # reads non-speech windows as MUSIC (wider lock), not silence
-                target = out_dir / f"{Path(src.source_path).stem}.mp3"
-                # ECC fix #3: on a move failure (e.g. cross-device) fall back to the SOURCE path, NOT the
-                # vocals path. The vocals stem ("vocals") made whisper write vocals.json, which the
-                # per-source cache lookup ({source_stem}.json) never finds -> re-transcribe every run +
-                # clobbered shared vocals.json. Source-stem fallback keeps the cache deterministic (we
-                # lose vocal isolation only in this rare failure case — fail-open to the raw mix).
-                try: Path(voc).replace(target); audio = str(target)
-                except OSError: audio = src.source_path
+            try:
+                voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
+            except ToolchainMissingError as e:
+                led.set_source_state(source_id, SourceState.error,
+                                     error_reason=f"vocals isolation failed: {e}")
+                return led
+            # a demucs vocal stem exists -> framing.classify_window reads non-speech windows as MUSIC
+            target = out_dir / f"{Path(src.source_path).stem}.mp3"
+            # Move under the SOURCE stem so whisper writes {source_stem}.json (stable cache key).
+            # Move failure used to fall back to the mix — that silent degrade is gone; error instead.
+            try:
+                Path(voc).replace(target); audio = str(target)
+                src.meta["vocals_isolated"] = True
+            except OSError as e:
+                led.set_source_state(source_id, SourceState.error,
+                                     error_reason=f"vocals isolation failed: {e}")
+                return led
     # Engine: faster-whisper only. A missing [asr] extra used to fail open to Homebrew `whisper`,
     # which left no per-source JSON and stalled the source at catalogued. Refuse instead.
     if not _fw_available():
@@ -465,7 +433,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
     engine = "faster-whisper"
-    used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
+    used_model = model or "large-v3"
     cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()

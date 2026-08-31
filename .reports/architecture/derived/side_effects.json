@@ -596,11 +596,11 @@
     "fanops.transcribe": [
       {
         "call": "shutil.rmtree",
-        "line": 316
+        "line": 279
       },
       {
         "call": "shutil.rmtree",
-        "line": 318
+        "line": 281
       }
     ]
   },
@@ -797,13 +797,13 @@
     "fanops.transcribe": [
       {
         "call": "subprocess.run",
-        "line": 473
+        "line": 441
       }
     ],
     "fanops.vocals": [
       {
         "call": "subprocess.run",
-        "line": 51
+        "line": 53
       }
     ]
   },

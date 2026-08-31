@@ -2104,7 +2104,8 @@
     },
     "fanops.vocals": {
       "compile": [
-        "fanops.config"
+        "fanops.config",
+        "fanops.errors"
       ],
       "lazy": [],
       "optional": [],
@@ -2196,8 +2197,7 @@
       "time",
       "urllib",
       "urllib3",
-      "webview",
-      "whisper"
+      "webview"
     ],
     "optional": [
       "zoneinfo"
@@ -2235,7 +2235,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 40,
+    "fanops.errors": 41,
     "fanops.escalation": 4,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
@@ -2488,7 +2488,7 @@
     "fanops.variant_amplify": 8,
     "fanops.variant_learning": 1,
     "fanops.variant_transfer": 2,
-    "fanops.vocals": 1
+    "fanops.vocals": 2
   },
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
@@ -3790,7 +3790,7 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 595,
+    "compile_edges_G1": 596,
     "lazy_edges": 376,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,

@@ -77,8 +77,8 @@ def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monk
     assert led.sources["src_1"].state is SourceState.transcribed
 
 def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkeypatch):
-    # UNAWARE-CONFIG FIX: with no FANOPS_ASR_MODEL pin, transcribe_source picks the fw model from the
-    # SOURCE duration — short -> large-v3 (accuracy), long -> medium (speed/safety under the timeout).
+    # With no explicit model=, short and long sources both get large-v3 — duration no longer
+    # selects a smaller model.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")           # skip demucs; isolate the model-selection wiring
     mocker.patch("fanops.transcribe._fw_available", return_value=True)
@@ -94,7 +94,7 @@ def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkey
         return R()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "short"); transcribe_source(led, cfg, "long")
-    assert models == ["large-v3", "small"]
+    assert models == ["large-v3", "large-v3"]
 
 def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
     # FANOPS_ASR_LANGUAGE -> cfg.asr_language -> fw_cmd --language, threaded through transcribe_source
@@ -153,10 +153,8 @@ def test_transcribe_uses_isolated_vocals_when_enabled(tmp_path, mocker, monkeypa
     assert s.state is SourceState.transcribed and s.transcript[0]["text"] == "ورا الستارة"
 
 def test_transcribe_failopen_to_source_stem_when_vocal_move_fails(tmp_path, mocker, monkeypatch):
-    # ECC-review fix #3: when the isolated-vocals move raises OSError (e.g. cross-device), the OLD
-    # fallback used the vocals path (stem "vocals") so whisper wrote vocals.json — the per-source
-    # cache lookup ({source_stem}.json) then MISSED forever, re-transcribing every run and clobbering
-    # the shared vocals.json. The fallback must keep the SOURCE stem so the JSON name is deterministic.
+    # When the isolated-vocals move raises OSError (e.g. cross-device), error the source — never fall
+    # back to the mix / never call whisper.
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -164,38 +162,29 @@ def test_transcribe_failopen_to_source_stem_when_vocal_move_fails(tmp_path, mock
     voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")
     mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
     mocker.patch("pathlib.Path.replace", side_effect=OSError("cross-device link"))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
-    stem = Path(captured["cmd"][-1]).stem
-    assert stem == "src_1", f"move-failure fallback used stem {stem!r}; must stay the SOURCE stem for a stable cache"
-    assert led.sources["src_1"].state is SourceState.transcribed
+    spy.assert_not_called()
+    s = led.sources["src_1"]
+    assert s.state is SourceState.error
+    assert "vocals isolation failed:" in (s.error_reason or "")
 
 def test_transcribe_failopen_to_raw_when_isolation_unavailable(tmp_path, mocker, monkeypatch):
-    # isolation ON but demucs absent -> isolate_vocals returns the RAW path -> whisper transcribes the
-    # original source (today's behavior). Never blocks.
+    # isolation ON but demucs unavailable -> isolate_vocals raises ToolchainMissingError -> source
+    # errors; whisper must NOT decode the mix.
+    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    mocker.patch("fanops.transcribe.isolate_vocals", side_effect=lambda p, o, **k: p)   # fail-open: raw
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    mocker.patch("fanops.transcribe.isolate_vocals",
+                 side_effect=ToolchainMissingError("demucs unavailable"))
+    spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
-    assert captured["cmd"][-1].endswith("src_1.mp4")       # transcribed the RAW source, not a vocals file
-    assert led.sources["src_1"].state is SourceState.transcribed
+    spy.assert_not_called()
+    s = led.sources["src_1"]
+    assert s.state is SourceState.error
+    assert "vocals isolation failed:" in (s.error_reason or "")
 
 def test_transcribe_captures_word_timestamps_when_present(tmp_path, mocker):
     # whisper --word_timestamps adds a per-segment `words` list ([{word,start,end}]); capture it so
@@ -315,8 +304,10 @@ def test_transcribe_adopts_existing_json_and_skips_subprocess(tmp_path, mocker):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
+    # Quality-complete without no_speech_prob: avg_logprob + compression_ratio suffice to adopt.
+    cached = {k: v for k, v in talk_seg("cached line").items() if k != "no_speech_prob"}
     (out_dir / "src_1.json").write_text(json.dumps(
-        {"language": "en", "segments": [talk_seg("cached line")]}))
+        {"language": "en", "segments": [cached]}))
     spy = mocker.patch("fanops.transcribe.subprocess.run")
     led = transcribe_source(led, cfg, "src_1")
     spy.assert_not_called()                                   # warm artifact reused — no whisper, no isolation
