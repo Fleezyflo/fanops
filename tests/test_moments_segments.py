@@ -50,12 +50,12 @@ def test_hook_frames_single_window_unchanged(tmp_path, mocker):
 def test_hook_peaks_scoped_to_segments(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _src(led, cfg, dur=60.0)
-    led.add_moment(Moment(id="m1", parent_id="src_1", content_token="15.00-50.00", start=15, end=50,
-                          reason="sc", state=MomentState.picked, segments=[(15, 25), (35, 50)]))
+    led.add_moment(Moment(id="m1", parent_id="src_1", content_token="14.00-54.00", start=14, end=54,
+                          reason="sc", state=MomentState.picked, segments=[(14, 18), (40, 54)]))
     led.sources["src_1"].signal_peaks = [{"t": 18.0, "kind": "beat"}, {"t": 32.0, "kind": "gap_peak"},
                                          {"t": 40.0, "kind": "in_span"}]
     led = request_moment_hooks(led, cfg, "src_1", accounts=None)
-    req = json.loads(request_path(cfg, "moment_hooks", "src_1.15.00-50.00").read_text())
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-54.00").read_text())
     pts = {p["t"] for p in req["signal_peaks"]}
     assert 32.0 not in pts and 18.0 in pts and 40.0 in pts
 
@@ -66,8 +66,8 @@ def test_pick_prompt_offers_segments_rule():
 def test_ingest_carries_segments(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [_mp(15, 50, "supercut", segments=[(15, 25), (35, 50)])])
-    assert led.moments_of("src_1")[0].segments == [(15, 25), (35, 50)]
+    led = _ingest_picks(led, cfg, "src_1", [_mp(14, 54, "supercut", segments=[(14, 18), (40, 54)])])
+    assert led.moments_of("src_1")[0].segments == [(14, 18), (40, 54)]
 
 def test_segment_token_distinct():
     a = _token(_mp(15, 50, "a", segments=[(15, 25), (35, 50)]))

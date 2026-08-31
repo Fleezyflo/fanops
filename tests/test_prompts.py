@@ -1,6 +1,6 @@
 # tests/test_prompts.py
 import re
-from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt, _target_pick_count, _MAX_TARGET_PICKS
+from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
 
 def test_caption_prompt_includes_store_only_tag_in_menu():
@@ -102,21 +102,17 @@ def test_moment_pick_prompt_has_no_hook_craft():
     assert "select the hook by reading" not in p  # the _hook_decision process moved out
 
 def test_moment_pick_prompt_target_is_a_ceiling_but_forbids_zero_on_content():
-    # The pick count is a CEILING ("up to N", never a quota — operator decision 2026-06-22): the model
-    # returns FEWER when the source honestly lacks that many strong moments and is told NOT to pad to the
-    # number. ORTHOGONAL guard kept: real spoken/musical content still MUST yield >=1 clip (an empty list
-    # is allowed ONLY for genuinely dead footage) — the anti-zero-clip fix is independent of the cap.
+    # Real spoken/musical content still MUST yield >=1 clip (an empty list is allowed ONLY for
+    # genuinely dead footage) — the anti-zero-clip fix is independent of any pick-count quota.
     p = moment_pick_prompt({"duration": 42.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
                             "signal_peaks": [], "language": "en", "guidance": ""}).lower()
     assert "dead footage" in p                    # forbid-zero kept: the ONLY justification for an empty list
-    assert "ceiling" in p and "up to" in p        # the count is an UPPER bound, not a floor/quota
     assert "undershoot" not in p                  # the old FLOOR framing (forced quota) is gone
 
 def test_target_pick_count_is_ceiling_only():
-    assert _target_pick_count(0.0) == 0
-    assert _target_pick_count(10.0) == _MAX_TARGET_PICKS
-    assert _target_pick_count(60.0) == _MAX_TARGET_PICKS
-    assert _target_pick_count(700.0) == _MAX_TARGET_PICKS
+    from fanops import prompts as pmod
+    assert not hasattr(pmod, "_target_pick_count")
+    assert not hasattr(pmod, "_MAX_TARGET_PICKS")
 
 def test_moment_pick_prompt_has_no_duration_band():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
@@ -124,10 +120,13 @@ def test_moment_pick_prompt_has_no_duration_band():
     low = p.lower()
     assert "12-22" not in p
     assert "target " not in low
-    assert "no fixed duration" in low
-    assert "complete moment" in low
+    assert "no fixed duration" not in low
+    assert "verse" in low and "chorus" in low and "exchange" in low and "consecutive" in low
     assert "6 seconds" not in low
-    assert str(_target_pick_count(90.0)) in p
+    assert "8s" not in low and "30s" not in low
+    assert "stingy" not in low
+    assert "align with a transcript line" not in low
+    assert "up to" not in low
 
 def test_moment_pick_prompt_ignores_clip_profile_and_persona_band():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
@@ -150,7 +149,6 @@ def test_moment_pick_prompt_short_source_still_allows_picks():
 def test_moment_pick_prompt_long_source_asks_for_multiple_nonoverlapping():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
                             "language": "en", "guidance": ""})
-    assert str(_target_pick_count(90.0)) in p
     assert "overlap" in p.lower()              # prefer distinct windows; code dedups downstream
 
 def test_prompt_overlap_contract():
@@ -162,9 +160,11 @@ def test_prompt_overlap_contract():
     assert "must not overlap" not in p
 
 def test_moment_pick_prompt_unprobed_omits_target_count():
-    p = moment_pick_prompt({"duration": 0.0, "transcript": [], "signal_peaks": [],
-                            "language": "en", "guidance": ""})
-    assert "aim for" not in p.lower()          # target 0 -> no count line
+    for dur in (0.0, 90.0):
+        p = moment_pick_prompt({"duration": dur, "transcript": [], "signal_peaks": [],
+                                "language": "en", "guidance": ""}).lower()
+        assert "aim for" not in p
+        assert "up to" not in p
 
 def test_moment_pick_prompt_forbids_em_dash_in_reason():
     p = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
@@ -211,6 +211,80 @@ def test_moment_pick_prompt_has_data_not_instructions_directive():
                             "language": "en", "guidance": ""})
     low = p.lower()
     assert "transcript" in low and "data" in low and "never as instructions" in low
+
+
+def test_moment_pick_prompt_prints_cues_not_whisper_json():
+    tr = [{"start": 1.0, "end": 3.0, "text": "hello",
+           "avg_logprob": -0.3, "no_speech_prob": 0.05, "compression_ratio": 1.5,
+           "words": [{"word": "hello", "start": 1.1, "end": 2.9}]}]
+    p = moment_pick_prompt({"duration": 42.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    low = p.lower()
+    assert "cues" in low
+    assert "0  1.000-3.000" in p or "0  1.000-3.000  hello" in p
+    assert "avg_logprob" not in p
+    assert "no_speech_prob" not in p
+    assert '"words"' not in p
+    assert "TRANSCRIPT (JSON):" not in p
+    assert "vertical clips" not in low
+    assert "hello" in p
+
+
+def test_moment_pick_prompt_maps_peaks_onto_cues():
+    tr = [{"start": 10.0, "end": 14.0, "text": "a"},
+          {"start": 14.0, "end": 20.0, "text": "b"}]
+    peaks = [{"t": 15.0, "kind": "scene_cut", "score": 0.6},
+             {"t": 10.2, "kind": "speech_resume", "score": 0.8}]
+    p = moment_pick_prompt({"duration": 90.0, "transcript": tr, "signal_peaks": peaks,
+                            "language": "en", "guidance": ""})
+    assert "cue 1" in p and "scene_cut" in p
+    assert "cue 0" in p and "speech_resume" in p
+    assert '"t": 15.0' not in p and "'t': 15.0" not in p
+
+
+def test_moment_pick_prompt_cue_rule_and_no_vertical_prior():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [{"start": 1.0, "end": 3.0, "text": "x"}],
+                            "signal_peaks": [], "language": "en", "guidance": ""}).lower()
+    assert "cue" in p
+    assert "consecutive" in p
+    assert "vertical clips" not in p
+    assert "up to" not in p
+    assert "8s" not in p and "30s" not in p
+    assert "align with a transcript line" not in p
+
+
+def test_moment_pick_prompt_no_cues_allows_float_window():
+    p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [{"t": 12.0, "kind": "scene_cut", "score": 0.5}],
+                            "language": "en", "guidance": ""}).lower()
+    assert "0 <=" in p and "start" in p
+    assert "cue 0" not in p
+
+
+def test_moment_pick_prompt_clamps_negative_cue_start():
+    # ASR can overshoot 0; printed cues must sit inside [0, duration] so copy-the-cue is legal.
+    tr = [{"start": -0.05, "end": 3.0, "text": "hello"}]
+    p = moment_pick_prompt({"duration": 60.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "0  0.000-3.000" in p
+    assert "-0.050" not in p
+
+
+def test_moment_pick_prompt_clamps_cue_end_to_duration():
+    tr = [{"start": 50.0, "end": 60.05, "text": "x"}]
+    p = moment_pick_prompt({"duration": 60.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "0  50.000-60.000" in p
+    assert "60.050" not in p
+
+
+def test_moment_pick_prompt_skips_cue_that_rounds_to_zero_span():
+    # Clamp-then-round can collapse 59.9996–60.05 @ duration=60 to 60.000-60.000; skip after round.
+    tr = [{"start": -0.05, "end": 3.0, "text": "hello"},
+          {"start": 59.9996, "end": 60.05, "text": "x"}]
+    p = moment_pick_prompt({"duration": 60.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "0  0.000-3.000" in p
+    assert "60.000-60.000" not in p
 
 # --- hook prompt (pass 2: window-grounded on-screen hook) -------------------------------------------
 def _hook_payload(**over):
@@ -655,9 +729,10 @@ def test_pick_prompt_single_owner_framing():
 
 def test_pick_prompt_universal_craft_intact():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [], "language": "en", "guidance": ""})
-    assert "complete moment" in p.lower()
-    assert "frame" in p.lower()
-    assert "dead footage" in p.lower()
+    low = p.lower()
+    assert "verse" in low and "chorus" in low and "exchange" in low and "consecutive" in low
+    assert "frame" in low
+    assert "dead footage" in low
 
 def test_hook_spec_universal_floor_intact():
     p = moment_hook_prompt(_hook_payload())
@@ -686,13 +761,11 @@ def test_hook_decision_content_selects_persona_biases():
 
 # ---- MOL-478 (T5): pick prompt persona-count ceiling + within-owner overlap + supercut mandate ----
 def test_pick_prompt_ceiling_scales_with_persona_count():
-    from fanops.prompts import _target_pick_count
-    per = _target_pick_count(90.0)
     personas = [{"handle": "@a", "directive": "x"}, {"handle": "@b", "directive": "y"}]
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],
-                            "language": "en", "guidance": "", "personas": personas})
-    assert str(per * 2) in p                       # total ceiling = per-account × N personas
-    assert "per account" in p.lower()
+                            "language": "en", "guidance": "", "personas": personas}).lower()
+    assert "up to" not in p
+    assert "per account" not in p
 
 def test_pick_prompt_overlap_scoped_within_owner():
     p = moment_pick_prompt({"duration": 90.0, "transcript": [], "signal_peaks": [],

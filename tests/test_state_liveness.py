@@ -59,7 +59,7 @@ EXITS: dict[type[Enum], dict[Enum, list[ExitRef]]] = {
             ("fanops.moments", "request_moments", "signalled -> moments_requested"),
             ("fanops.responder", "LlmResponder.answer_pending", "agent gate answer loop"),
             ("fanops.responder", "_GATE_DETERMINISTIC_MAX", "3x deterministic -> SourceState.error"),
-            ("fanops.prompts", "_MAX_TARGET_PICKS", "pick ceiling on signalled only"),
+            ("fanops.prompts", "moment_pick_prompt", "pick briefing on signalled"),
         ],
         SourceState.moments_requested: [
             ("fanops.moments", "ingest_moments", "moments_requested -> picks_decided/moments_decided"),
