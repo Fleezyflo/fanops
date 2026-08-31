@@ -250,7 +250,7 @@ def _postiz_upload_from_url(cfg: Config, url: str) -> str:
     media_path = body.get("path") if isinstance(body, dict) else None
     if not (media_id and media_path):
         raise RuntimeError(f"Postiz upload-from-url response missing id/path; got keys {sorted(body) if isinstance(body, dict) else type(body)}")
-    return f"{media_id}|{rewrite_media_base(media_path, cfg)}"
+    return f"{media_id}|{pub}"
 
 
 def _youtube_tags(hashtags) -> list[dict]:
