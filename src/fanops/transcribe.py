@@ -16,9 +16,9 @@ real_transcript_signal is a SEPARATE E2E-only contract: it proves whisper ran on
 (whisper-shaped segments + ≥4 word tokens total), NOT per-segment trust. Do NOT substitute it
 for segment_trusted / window_has_trusted_speech in production paths.
 
-ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner) at FANOPS_ASR_MODEL
-(default **medium**) — strong on music/rap EN+AR; large-v3 is available as the max-accuracy opt-in
-(int8 makes even large-v3 practical on CPU). Absent [asr] is SourceState.error / ToolchainMissingError.
+ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner). Default model is
+**large-v3** (`used_model = model or "large-v3"`) — never a smaller duration/timeout degrade; callers
+may pass `model=` to override. Absent [asr] is SourceState.error / ToolchainMissingError.
 There is no whisper-CLI fallback."""
 from __future__ import annotations
 import contextlib, json, subprocess, sys, time

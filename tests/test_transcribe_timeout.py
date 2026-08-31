@@ -45,7 +45,8 @@ def test_timeout_killed_log_emitted(tmp_path, mocker, monkeypatch, capsys):
 
 
 def test_whisper_timeout_downgrades_model_on_retry(tmp_path, mocker, monkeypatch):
-    # After a timeout kill, the next attempt picks a smaller model.
+    # After a timeout kill, the next attempt still uses large-v3 (no smaller-model degrade);
+    # timeout still errors and increments whisper_timeout_attempts.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
     mocker.patch("fanops.transcribe._fw_available", return_value=True)

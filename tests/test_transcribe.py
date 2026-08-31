@@ -77,8 +77,8 @@ def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monk
     assert led.sources["src_1"].state is SourceState.transcribed
 
 def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkeypatch):
-    # UNAWARE-CONFIG FIX: with no FANOPS_ASR_MODEL pin, transcribe_source picks the fw model from the
-    # SOURCE duration — short -> large-v3 (accuracy), long -> medium (speed/safety under the timeout).
+    # With no explicit model=, short and long sources both get large-v3 — duration no longer
+    # selects a smaller model.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")           # skip demucs; isolate the model-selection wiring
     mocker.patch("fanops.transcribe._fw_available", return_value=True)
