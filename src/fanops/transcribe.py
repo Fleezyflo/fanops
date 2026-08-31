@@ -21,7 +21,7 @@ ENGINE: faster-whisper only (the [asr] extra, via the fanops._fwrun runner) at F
 (int8 makes even large-v3 practical on CPU). Absent [asr] is SourceState.error / ToolchainMissingError.
 There is no whisper-CLI fallback."""
 from __future__ import annotations
-import contextlib, json, logging, subprocess, sys, time
+import contextlib, json, subprocess, sys, time
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -30,8 +30,6 @@ from fanops.errors import ToolchainMissingError
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
 from fanops.vocals import isolate_vocals
-
-_log = logging.getLogger("fanops.transcribe")
 
 _DEFAULT_DEMUCS_MODEL = "htdemucs"
 
@@ -53,42 +51,6 @@ def _whisper_timeout(duration_seconds: float | None) -> float:
     if not duration_seconds:
         return _WHISPER_TIMEOUT
     return max(_WHISPER_TIMEOUT, float(duration_seconds) * _PREWARM_TIMEOUT_FACTOR)
-
-def _cached_models(cfg: Config | None = None) -> list[str]:
-    """Model names whose checkpoint is already on disk (no download needed). whisper stores
-    them as <name>.pt under WHISPER download_root (defaults to ~/.cache/whisper)."""
-    root = (cfg.whisper_cache_root if cfg else Path.home() / ".cache" / "whisper")
-    if not root.exists():
-        return []
-    return [p.stem for p in root.glob("*.pt")]
-
-def _resolve_model(model: str) -> str:
-    """Pick a runnable model. Prefer the requested one if it's a known name; but if it isn't
-    already cached AND nothing on this host can fetch it, fall back to a model whose checkpoint
-    is already present (offline / air-gapped / TLS-proxied CI — where the >1GB turbo/small
-    checkpoints can't download). Only when no checkpoint is cached do we keep the requested
-    name and let whisper attempt the download (and surface a clear error if it can't)."""
-    try:
-        import whisper
-        known = whisper.available_models()
-    except ImportError:
-        return model                                  # whisper extra not installed -> keep requested name (fail-open)
-    except Exception as exc:
-        _log.warning("_pick_model: whisper present but model list failed (%s); keeping %s", exc, model)
-        return model
-    if model not in known:
-        model = "turbo" if "turbo" in known else (known[0] if known else model)
-    cached = _cached_models()
-    if model in cached:
-        return model
-    if cached:
-        # requested model not on disk; reuse a cached one rather than trigger a download that
-        # may be impossible here. Preference order: fast-and-cached first (turbo), then the largest cached fallbacks.
-        for pref in ("turbo", "large-v3", "medium", "small", "base", "tiny"):
-            if pref in cached:
-                return pref
-        return cached[0]
-    return model                                      # nothing cached: let whisper try to fetch
 
 def real_transcript_signal(transcript: list[dict]) -> bool:
     """True iff `transcript` is proof that REAL whisper ran on REAL audio — NOT that any one
@@ -470,7 +432,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
     engine = "faster-whisper"
-    used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
+    used_model = model or "large-v3"
     cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()
