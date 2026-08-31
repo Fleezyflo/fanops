@@ -59,13 +59,28 @@ def _decide_hooks(led, cfg, source_id, hooks=None, accounts=None):
     return ingest_moment_hooks(led, cfg, source_id, accounts=accounts)
 
 def _src(led, cfg, dur=120.0):
+    # Cue-edge pads appended after the original five so validate_pick's grid admits
+    # historical ingest windows (14→28.5, 0→8, supercut spans, …) without retargeting picks.
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=dur, language="en",
                           transcript=[talk_seg("intro line here", start=0, end=3),
                                       talk_seg("they slept on me", start=14, end=18),
                                       talk_seg("second wave line here", start=20, end=34),
                                       talk_seg("another bar lands here", start=40, end=54),
-                                      talk_seg("late verse lands here", start=60, end=74)],
+                                      talk_seg("late verse lands here", start=60, end=74),
+                                      talk_seg("pad 5-8", start=5, end=8),
+                                      talk_seg("pad 10-24", start=10, end=24),
+                                      talk_seg("pad 12-28", start=12, end=28),
+                                      talk_seg("pad 15-25", start=15, end=25),
+                                      talk_seg("pad 30-48", start=30, end=48),
+                                      talk_seg("pad 35-50", start=35, end=50),
+                                      talk_seg("pad 9-10", start=9, end=10),
+                                      talk_seg("pad 13-14", start=13, end=14),
+                                      talk_seg("pad 19-20", start=19, end=20),
+                                      talk_seg("pad 28-28.5", start=28.0, end=28.5),
+                                      talk_seg("pad 29-30", start=29, end=30),
+                                      talk_seg("pad 35.5-36", start=35.5, end=36),
+                                      talk_seg("pad 55-58", start=55, end=58)],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
 
@@ -560,6 +575,28 @@ def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
                       transcript_excerpt="invented LLM line")
     assert validate_pick(pick, duration=60.0, src=src, cfg=cfg) is None
     assert "pick_speech_mismatch" in _run_log_outcomes(cfg)
+
+def test_validate_pick_requires_cue_edges_when_trusted_cues_exist():
+    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
+                 transcript=[talk_seg("a", start=10.0, end=14.0),
+                             talk_seg("b", start=14.0, end=20.0)])
+    ok = MomentPick(start=10.0, end=20.0, reason="r")
+    assert validate_pick(ok, duration=60.0, src=src) is None
+    mid = MomentPick(start=10.4, end=20.0, reason="r")
+    assert validate_pick(mid, duration=60.0, src=src) == "start not a cue start"
+    mid_end = MomentPick(start=10.0, end=19.5, reason="r")
+    assert validate_pick(mid_end, duration=60.0, src=src) == "end not a cue end"
+
+
+def test_validate_pick_skips_grid_without_trusted_cues():
+    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
+                 transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}])
+    pick = MomentPick(start=14.0, end=22.0, reason="visual beat")
+    assert validate_pick(pick, duration=60.0, src=src) is None
+
+
+def test_validate_pick_skips_grid_without_src():
+    assert validate_pick(MomentPick(start=10.4, end=19.5, reason="r"), duration=60.0) is None
 
 def test_request_moments_logs_speech_untrusted_dropped(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
