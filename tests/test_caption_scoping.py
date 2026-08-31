@@ -145,3 +145,31 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     # missing-caption skip. Previously the selection-deny was silent, so only @b appeared; now the swap is
     # FULLY traced, never partially silent.
     assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}
+
+
+def test_refresh_opens_caption_gate_for_rendered_clip(tmp_path):
+    from fanops.pipeline import _stage_refresh_caption_requests
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.agentstep import latest_request_id
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("a")])
+    clip_path = cfg.clips / "c.mp4"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"X")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me",
+                              state=MomentState.clipped, affinities=["a"]))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(clip_path),
+                          aspect=Fmt.r9x16, state=ClipState.rendered))
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": [], "lock": [], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    logs = []
+    _stage_refresh_caption_requests(Ledger.load(cfg), cfg, Accounts.load(cfg),
+                                    lambda *a, **k: logs.append((a, k)))
+    assert latest_request_id(cfg, "captions", "clip_1")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested

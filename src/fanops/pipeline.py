@@ -283,7 +283,7 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
     for casting-admitted surfaces (a TikTok-only ingest that already advanced to queued/captioned).
     Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost."""
     for c in list(led.clips.values()):
-        if c.state not in (ClipState.captions_requested, ClipState.captioned, ClipState.queued):
+        if c.state not in (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued):
             continue
         m = led.moments.get(c.parent_id)
         if m is None or m.state not in (MomentState.decided, MomentState.clipped):
