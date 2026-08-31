@@ -400,8 +400,8 @@ def caption_prompt(payload: dict) -> str:
     # HV1-PR3: each surface's `hashtag_store` is the source lock (same list every surface of that
     # source). Absent/empty menu -> honest empty list; sentence still ships, tag line empty.
     # MOL-636/MOL-692: when hashtag_metrics is present, annotate each menu tag with its platform
-    # numbers. Forward whatever numeric fields the sidecar carries. Choose-key is play_count, not
-    # media_count / menu position.
+    # numbers. Forward whatever numeric fields the sidecar carries. Numbers are honest meters,
+    # not the choose-key — caption picks by CLIP FIT among the lock.
     metrics = payload.get("hashtag_metrics") if isinstance(payload.get("hashtag_metrics"), dict) else {}
 
     def _menu_entry(tag: str) -> str | dict:
@@ -425,13 +425,13 @@ def caption_prompt(payload: dict) -> str:
                  "Choose ONLY from each surface's `hashtag_store` "
                  "(empty lock — ship the sentence; leave the tag line empty).")
     pick_rule = ("Pick up to 4 tags from that surface's `hashtag_store` only. "
-                 "Choose by `play_count`; break ties with `current_top_reel_play_max_7d`. "
+                 "Choose by CLIP FIT to this clip. "
                  f"{pick_body} Do NOT invent tags outside the menu. ")
     metrics_block = (
-        "  - Your job is CLIP FIT among the lock. Choose by `play_count`; "
-        "break ties with `current_top_reel_play_max_7d`. "
-        "`media_count` is how many posts carry the tag — a number on the row, not the choose-key. "
-        "These are different units — do not add or average them. "
+        "  - Your job is CLIP FIT among the lock. "
+        "`play_count` and `current_top_reel_play_max_7d` are visibility numbers on the row, "
+        "not the choose-key. `media_count` is how many posts carry the tag — a number on the row, "
+        "not the choose-key. These are different units — do not add or average them. "
         f"Platform numbers: {json.dumps(metrics, ensure_ascii=False)}\n"
         if metrics else ""
     )

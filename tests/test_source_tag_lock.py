@@ -1,6 +1,7 @@
 # tests/test_source_tag_lock.py
 """lock_from_pile is positive play_count, play_rank_key order, cap 12. ship_from_lock is picks ∩ lock."""
-from fanops.hashtags import lock_from_pile, play_rank_key, ship_from_lock, size_rank_key
+from fanops.hashtags import (lock_from_pile, lock_from_shortlist, play_rank_key,
+                             ship_from_lock, size_rank_key)
 
 # Same mid band (10k–2M) so size_rank_key is media_count DESC, not a band flip.
 BIG_FOLDER = {"media_count": 1_500_000, "play_count": 10, "current_top_reel_play_max_7d": 1,
@@ -62,6 +63,22 @@ def test_cap_twelve_highest_play_first():
     assert len(lock) == 12
     assert lock[0] == "#t12"
     assert "#t0" not in lock
+
+
+def test_lock_from_shortlist_keeps_input_order_not_play_rank():
+    names = ["#low", "#high"]
+    measurements = {
+        "#low": {"play_count": 1},
+        "#high": {"play_count": 9000},
+    }
+    assert lock_from_shortlist(names, measurements) == ["#low", "#high"]
+
+
+def test_lock_from_shortlist_drops_unmeasured_and_caps():
+    names = [f"#t{i}" for i in range(13)] + ["#zero", "#gone"]
+    measurements = {f"#t{i}": {"play_count": 1} for i in range(13)}
+    measurements["#zero"] = {"play_count": 0}
+    assert lock_from_shortlist(names, measurements, n=12) == [f"#t{i}" for i in range(12)]
 
 
 def test_incomplete_and_nondict_recs_do_not_raise():

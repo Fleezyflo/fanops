@@ -12,10 +12,11 @@ that source's lock, pick order, hard cap 4. Empty / missing lock → empty tag
 line (sentence still ships). No AR floor, no mega slot, no store ∪ corpus, no
 80-pile, no `vet_hashtags` on the posted line.
 
-Lock menu order (what the sidecar advertises as `hashtag_store`) is
-`play_count` DESC then `current_top_reel_play_max_7d`. Lock membership itself is
-produced by `source_tags.lock_from_pile` (positive `play_count` only,
-`play_rank_key`, cap 12).
+Lock membership is catalog keep ∩ positive `play_count`, order is keep order,
+cap 12 (`hashtags.lock_from_shortlist`). Caption picks up to 4 from that lock
+by CLIP FIT. `play_count` / `current_top_reel_play_max_7d` are meters on the
+row, not the choose-key. `lock_from_pile` remains for hydrate / used-tags fill
+only.
 
 Studio `/hashtags` shows source locks (full cap-12 list) and a play-ranked
 measurement cache. It does not show persona corpora as a caption menu.
@@ -27,9 +28,10 @@ stored on the tag — never an invented blended `reach`. Persisted record shape 
 
 ## Produce — per-source lock (Safari)
 
-`source_tags` owns `00_control/source_tag_locks.json`. Safari scrape
-(`ig_web_scrape`) completes the per-source lock (`researched_at` + `lock`).
-Graph may cache/confirm/rank; Graph never vetoes membership or withholds
+`source_tags` owns `00_control/source_tag_locks.json`. `shortlist_source_tags`
+is the produce LLM pass. Safari scrape (`ig_web_scrape`) admits those names
+(`researched_at` + `lock`). Graph may cache/confirm a `graph_metric`; Graph
+never vetoes membership, never reorders the lock, and never withholds
 `researched_at`. Empty `lock: []` means scrape finished with zero admits.
 
 Caption surfaces read that lock as `hashtag_store` (same list every surface of
