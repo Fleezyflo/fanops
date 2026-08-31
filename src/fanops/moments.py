@@ -128,6 +128,23 @@ _EOF_TOLERANCE_S = 0.5
 # two picks overlapping by more than this fraction of the SHORTER window are near-duplicate clips;
 # keep the first (start-ordered), drop the later. The cross-pick guard validate_pick can't do.
 _MAX_OVERLAP_FRAC = 0.5
+_CUE_PREC = 3  # same as fanops.prompts._CUE_PREC — printed cue timestamps
+
+def _cue_edge_sets(src) -> tuple[set[float], set[float]]:
+    from fanops.prompts import _bounded_cue_span
+    from fanops.transcribe import trusted_segments
+    starts: set[float] = set()
+    ends: set[float] = set()
+    lang = getattr(src, "language", None)
+    duration = getattr(src, "duration", None)
+    for s in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
+        span = _bounded_cue_span(s.get("start"), s.get("end"), duration)
+        if span is None:
+            continue
+        st, en = span
+        starts.add(st)
+        ends.add(en)
+    return starts, ends
 
 def _spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:
     overlap = min(a[1], b[1]) - max(a[0], b[0])
@@ -178,6 +195,15 @@ def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> s
         from fanops.transcribe import window_has_trusted_speech
         if not window_has_trusted_speech(src, pick.start, pick.end):
             get_logger(cfg)("moments", getattr(src, "id", "-"), "pick_speech_mismatch", warn=True)
+    if src is not None:
+        starts, ends = _cue_edge_sets(src)
+        if starts and ends:
+            spans = list(pick.segments) if pick.segments else [(pick.start, pick.end)]
+            for s, e in spans:
+                if round(float(s), _CUE_PREC) not in starts:
+                    return "start not a cue start"
+                if round(float(e), _CUE_PREC) not in ends:
+                    return "end not a cue end"
     return None
 
 # AGENT-2: the pick prompt must stay under the claude -p context ceiling. A long source's whole transcript

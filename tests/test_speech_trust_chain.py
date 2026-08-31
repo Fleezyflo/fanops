@@ -24,7 +24,7 @@ def _vf_of(cmd):
 
 
 def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker, monkeypatch):
-    """Talk source: junk boundaries are ignored for snap; transcript is not burned at render."""
+    """Talk source: render follows the pick; transcript is not burned at render."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
@@ -43,8 +43,8 @@ def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker,
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
     cmd = captured["cmd"]
-    assert float(cmd[cmd.index("-ss") + 1]) == 9.3
-    assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 17.2
+    assert float(cmd[cmd.index("-ss") + 1]) == 10.0
+    assert float(cmd[cmd.index("-to") + 1]) == 6.5          # pick, not 9.3; not ss+to == 17.2
     assert "subtitles=" not in _vf_of(cmd)
     assert not list(cfg.clips.glob("*.ass"))
 
@@ -66,11 +66,12 @@ def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeyp
     assert clip.state is ClipState.rendered
     assert "subtitles=" not in _vf_of(captured["cmd"])     # no trusted lines -> no transcript burn
     cmd = captured["cmd"]
-    assert float(cmd[cmd.index("-ss") + 1]) == 10.0        # junk start 9.6 ignored — no trusted boundaries
+    assert float(cmd[cmd.index("-ss") + 1]) == 10.0        # render follows the pick
+    assert float(cmd[cmd.index("-to") + 1]) == 12.0
     assert round(float(cmd[cmd.index("-ss") + 1]) + float(cmd[cmd.index("-to") + 1]), 1) == 22.0
     src = led.sources["src_1"]
     assert _trusted_transcript(src) == []
-    assert snap_window(10.0, 22.0, tr) == (9.6, 22.2)    # raw junk WOULD snap — proves the filter matters
+    assert snap_window(10.0, 22.0, tr) == (9.6, 21.6)    # raw junk WOULD snap start and slide end — filter matters
     assert snap_window(10.0, 22.0, _trusted_transcript(src)) == (10.0, 22.0)
 
 

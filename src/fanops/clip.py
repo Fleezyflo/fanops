@@ -34,8 +34,8 @@ def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
     if moment is not None: return moment.end - moment.start
     return None
 
-# How far (seconds) snap_window may move a cut edge to land on a transcript-line boundary. A small
-# nudge: it polishes mid-word starts / mid-phrase ends without inventing a length floor.
+# How far (seconds) snap_window may move the window start onto a transcript-line start. A small
+# nudge: it polishes mid-word starts; end follows by the same Δ (no length floor).
 _SNAP_MAX_SHIFT_S = 1.5
 
 def _nearest(value: float, candidates: list[float], max_shift: float) -> float | None:
@@ -48,22 +48,18 @@ def _trusted_transcript(src) -> list[dict]:
 
 def snap_window(start: float, end: float, transcript: list[dict] | None,
                 *, duration: float = 0.0, max_shift: float = _SNAP_MAX_SHIFT_S) -> tuple[float, float]:
-    """Nudge [start,end] onto nearby transcript-line boundaries so a clip never begins mid-word or
-    ends mid-phrase: start -> nearest line `start`, end -> nearest line `end`, each only if within
-    `max_shift` seconds (else that edge is left as-is). Returns the window UNCHANGED when there is no
-    transcript, or when snapping would invert/empty it (snapped start >= snapped end). Pure; applied
-    AFTER fit_window (EOF clamp only), then the edges land on clean cuts. Lines missing
-    a numeric start/end are skipped (semi-trusted whisper output). Re-applies fit_window's bounds
-    invariants the snap could break — a whisper line `start` can be slightly negative and a line `end`
-    can overshoot the real EOF — so the snapped start is floored at 0 and the end is clamped to
-    `duration` when probed (duration<=0 means unprobed -> no EOF clamp)."""
+    """Nudge start onto a nearby transcript-line start; end follows by the same Δ so the pick span is kept.
+    No transcript / no nearby start → identity. Lines missing a numeric start are skipped. Zero/EOF clip
+    the slid edges (duration<=0 means unprobed -> no EOF clamp); invert after clip restores the original.
+    Pure. Does not independently snap end. Unused on the render/reframe default path (pick is the cut)."""
     if not transcript:
         return start, end
     starts = [ln["start"] for ln in transcript if isinstance(ln.get("start"), (int, float))]
-    ends = [ln["end"] for ln in transcript if isinstance(ln.get("end"), (int, float))]
-    ns = _nearest(start, starts, max_shift); ne = _nearest(end, ends, max_shift)
-    s = max(0.0, ns if ns is not None else start)
-    e = ne if ne is not None else end
+    ns = _nearest(start, starts, max_shift)
+    if ns is None: return start, end
+    d = ns - start
+    s, e = ns, end + d
+    if s < 0: s = 0.0
     if duration and e > duration: e = duration
     return (s, e) if s < e else (start, end)
 
@@ -929,20 +925,13 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
             rc = getattr(r, "returncode", "?") if r is not None else "?"
             get_logger(cfg)("clip", cid, "supercut_fail_open",
                             reason=f"supercut rc={rc} — falling back to envelope cut")
-        # FAIL-OPEN: today's single-window path over the envelope (fit_window/snap/visual_start below).
+        # FAIL-OPEN: today's single-window path over the envelope (fit_window below).
         spans = None
     if not is_stitch and not spans:
         dur = src.duration or 0.0
         hi = dur if dur > 0 else float("inf")
-        cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)  # EOF clamp only — the picked moment
-        cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)  # land on clean phrase boundaries
-        # P1 T1: refine the entry onto the strongest opening frame, applied LAST (after EOF clamp + snap) so the
-        # rendered cut and the first_frame_kind provenance AGREE — snap can't silently undo a visual pick and
-        # leave the dim lying (it would poison P4, which ranks first_frame_kind). Both 1.5s shifts otherwise
-        # overlap. Runs in the lock-free pre-warm + is sidecar-cached so the in-lock commit re-probes nothing.
-        if cfg.visual_start:
-            cs, first_frame_kind = pick_visual_start(src.source_path, cs, ce,
-                                                     scene_peaks=src.signal_peaks, out_dir=cfg.clips)
+        cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
+        # pick is the cut — no snap, no visual-start
     elif is_stitch:
         pass                                                   # cs/ce already set from cut_window
     cut_seconds = round(ce - cs, 3)                            # P1 provenance (observational; length not varied)
@@ -1067,8 +1056,8 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
     Render.path file always exists (P3: the realized seconds is recorded on Render.cut_seconds). Unlike
     render_moment this writes to an ARBITRARY path with a SPECIFIC hook, mints NO Clip, and advances
     NO moment (the shared Clip owns the moment anchor — §4 of the per-account plan). Mirrors render_moment's
-    window math (fit_window + snap + visual-start) so the per-account cut opens on the same strong frame the
-    shared clip does. The hook .ass is 0-based (build_ass(clip_start=0) — the -ss output is 0-based)."""
+    window math (fit_window only) so the per-account cut is the same pick the
+    shared clip uses. The hook .ass is 0-based (build_ass(clip_start=0) — the -ss output is 0-based)."""
     # OUTSIDE the try, deliberately: the broad `except Exception -> (False, None)` fail-open below would
     # otherwise SWALLOW the migration refusal and silently fall back to burn_hook_only over a clip the
     # migration is mid-way through replacing. This guard is the one thing here that must not fail open.
@@ -1100,11 +1089,9 @@ def render_account_cut(led: Ledger, cfg: Config, moment_id: str, *, aspect: Fmt,
         else:
             dur = src.duration or 0.0
             hi = dur if dur > 0 else float("inf")
-            cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)   # EOF clamp only — the picked moment
-            cs, ce = snap_window(cs, ce, _trusted_transcript(src), duration=src.duration or 0.0)
-            if cfg.visual_start:                                  # same strong-frame entry the shared clip uses
-                cs, _ = pick_visual_start(src.source_path, cs, ce, scene_peaks=src.signal_peaks, out_dir=cfg.clips)
-            realized = ce - cs                                    # P3: the account cut's REALIZED window length (post snap+visual-start)
+            cs, ce = fit_window(m.start, m.end, dur, lo=0.0, hi=hi)
+            # pick is the cut — no snap, no visual-start
+            realized = ce - cs                                    # P3: the account cut's REALIZED window length
             focus, track, content_type = _resolve_framing(cfg, src, cs, ce)   # content-adaptive crop (fail-open -> centered)
             if (hook or "").strip() and overlay.ffmpeg_has_textfilter():
                 # hook-only .ass, 0-based over the cut output's first min(2.5, len) seconds (build_ass uses
