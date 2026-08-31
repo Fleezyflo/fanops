@@ -241,16 +241,17 @@ def _restore_meters(measurements: dict, snap) -> None:
 
 def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaining,
                        catalog, catalog_at) -> None:
+    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    lock = prior.get("lock")
     row = {
         "pile": list(pile),
         "verified": list(verified),
         "measurements": _snapshot_meters(measurements, list(verified) or list(pile)),
         "remaining": list(remaining),
-        "lock": [],
+        "lock": list(lock) if isinstance(lock, list) else [],
         "catalog": list(catalog),
         "catalog_at": catalog_at,
     }
-    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
     at = prior.get("researched_at")
     if isinstance(at, str) and at.strip():
         row["researched_at"] = at
@@ -382,6 +383,10 @@ def _has_catalog(rec) -> bool:
     if not isinstance(at, str) or not at.strip():
         return False
     return isinstance(rec.get("catalog"), list)
+
+
+def _in_progress(rec) -> bool:
+    return isinstance(rec, dict) and isinstance(rec.get("remaining"), list)
 
 
 def _call_opener(opener, cfg, user=None):
@@ -721,7 +726,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     table = load_source_tag_locks(cfg)
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
-    if _researched(table, sid) and _has_catalog(prior):
+    if _researched(table, sid) and _has_catalog(prior) and not _in_progress(prior):
         return False
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
@@ -819,8 +824,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             tags_this_walk += 1
             catalog_search_this_tick = True
             if not catalog:
-                _stamp_source(cfg, table, sid, [], [], measurements,
-                              catalog=catalog, catalog_at=catalog_at)
+                log("source_tags", sid, "research_fail", level="error", err="catalog_empty")
                 return True
             llm_names = shortlist_source_tags(source, _prose(source, excerpt), catalog)
             verified = list(llm_names)
@@ -926,7 +930,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 continue
             sid = str(getattr(source, "id", "") or "")
             rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
-            if not sid or (_researched(table, sid) and _has_catalog(rec)):
+            if not sid or (_researched(table, sid) and _has_catalog(rec) and not _in_progress(rec)):
                 continue
             jp = _transcript_json_path(cfg, source)
             has_json = bool(jp and jp.exists())
@@ -947,7 +951,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 return
             table = load_source_tag_locks(cfg)
             rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
-            if walked or (_researched(table, sid) and _has_catalog(rec)):
+            if walked or (_researched(table, sid) and _has_catalog(rec) and not _in_progress(rec)):
                 return
             opener = _closed
     except Exception as exc:

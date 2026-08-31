@@ -270,6 +270,66 @@ def test_catalog_search_feeds_judge(tmp_path, mocker):
     assert client.search_calls == ["rick ross"]
 
 
+def test_unattended_researched_without_catalog_resumes(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    mocker.patch("fanops.llm.claude_json_meta", lambda *_a, **_k: (
+        {"keep": ["#rickross"], "reject": ["#fyp"]}, "m", False))
+    cfg = _cfg(tmp_path)
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": ["#whichwayamifacing"],
+            "lock": ["#whichwayamifacing"],
+            "researched_at": "2026-08-19T00:00:00Z",
+        }
+    }))
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        cli = _SearchClient(
+            {"rick ross": [_Hit("rickross"), _Hit("fyp")]},
+            media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
+        )
+        cli._fanops_scrape_user = user
+        return cli
+
+    ensure_source_lock(cfg, _src(title="Rick Ross"), open_client_fn=opener, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("catalog") == ["#rickross", "#fyp"]
+    assert rec.get("catalog_at")
+    assert isinstance(rec.get("remaining"), list)
+    assert rec["lock"] == ["#whichwayamifacing"]
+    assert rec["researched_at"] == "2026-08-19T00:00:00Z"
+    assert seen == ["u"]
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()
+    ensure_source_lock(cfg, _src(title="Rick Ross"), open_client_fn=opener, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert rec2["lock"] == ["#rickross"]
+    assert rec2["researched_at"]
+    assert rec2["researched_at"] != "2026-08-19T00:00:00Z"
+    assert "remaining" not in rec2
+    assert rec2.get("catalog") == ["#rickross", "#fyp"]
+    assert "quality_pass" not in rec2
+
+
+def test_empty_title_search_does_not_stamp(tmp_path, mocker):
+    called = {"n": 0}
+
+    def fake_claude(*_a, **_k):
+        called["n"] += 1
+        return {"keep": ["#rickross"]}, "m", False
+
+    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"rick ross": []})
+    ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
+    assert not source_tag_locks_path(cfg).exists()
+    assert called["n"] == 0
+    assert client.search_calls == ["rick ross"]
+
+
 def test_like_only_and_graph_only_out_of_lock(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
