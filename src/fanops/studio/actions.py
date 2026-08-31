@@ -1100,7 +1100,7 @@ def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate
     skipped_retired = [pid for pid, p in led.posts.items()
                        if p.state in (PostState.failed, PostState.error)
                        and classify_failure(p) == "rate_limit"
-                       and not led.can_promote(p)]
+                       and _refuse_retired(cfg, led, p)]
     candidates = [pid for pid, p in led.posts.items()
                   if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
     try:

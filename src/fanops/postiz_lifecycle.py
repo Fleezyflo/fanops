@@ -16,9 +16,11 @@ Any failure is swallowed-then-returned (fail-open): a still-down Postiz then sur
 the normal connection error in the poster, exactly as before this module existed.
 """
 import logging
-import sys
+import re
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 _log = logging.getLogger("fanops.postiz_lifecycle")
@@ -71,3 +73,48 @@ def ensure_up(cfg) -> None:
     except Exception as e:  # fail-open: publishing proceeds; a down stack surfaces normally
         _log.warning("ensure_up skipped (%s): %s", type(e).__name__, e)
         sys.stderr.write(f"[postiz_lifecycle] ensure_up skipped ({type(e).__name__}): {e}\n")
+
+
+_SAFE_POSTIZ_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def local_postiz_errors(cfg, ids: list[str], *, lookup=None) -> dict[str, str]:
+    """Map Postiz row id -> Post.error. Empty unless local stack or an injected lookup.
+    Never shells docker under pytest (same guard as ensure_up). Fail-open."""
+    if lookup is not None:
+        try:
+            return dict(lookup(ids) or {})
+        except Exception as exc:
+            _log.warning("local_postiz_errors lookup skipped (%s): %s", type(exc).__name__, exc)
+            return {}
+    if "pytest" in sys.modules:
+        return {}
+    if not _is_local(getattr(cfg, "postiz_url", "") or ""):
+        return {}
+    safe = [i for i in ids if isinstance(i, str) and _SAFE_POSTIZ_ID.match(i)]
+    if not safe:
+        return {}
+    try:
+        return _docker_post_errors(safe)
+    except Exception as exc:
+        _log.warning("local_postiz_errors skipped (%s): %s", type(exc).__name__, exc)
+        return {}
+
+
+def _docker_post_errors(ids: list[str]) -> dict[str, str]:
+    in_list = ",".join("'" + i + "'" for i in ids)
+    sql = ('SELECT id, error FROM "Post" WHERE id IN (' + in_list +
+           ") AND error IS NOT NULL AND error <> ''")
+    cmd = ["docker", "exec", "-i", "postiz-postgres", "sh", "-c",
+           "psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -t -A -F '\t' -c " + shlex.quote(sql)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "psql failed")[-200:])
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        sid, err = line.split("\t", 1)
+        if sid and err.strip():
+            out[sid] = err.strip()
+    return out

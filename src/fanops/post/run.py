@@ -579,6 +579,99 @@ def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
     return requeued
 
 
+def _proven_dead_row(row: dict | None) -> bool:
+    """True when a Postiz window row is ERROR with no releaseURL and no releaseId (never went live)."""
+    if not isinstance(row, dict):
+        return False
+    if str(row.get("state") or "").upper() != "ERROR":
+        return False
+    url = row.get("releaseURL")
+    if isinstance(url, str) and url.strip():
+        return False
+    rid = row.get("releaseId")
+    if isinstance(rid, str) and rid.strip():
+        return False
+    return True
+
+
+def _requeue_proven_dead_for_daemon(cfg: Config, *, postiz_rows: dict | None = None) -> int:
+    """Re-arm failed real-id Postiz ERROR that never went live, after media is fetchable. One per account_id."""
+    import sys
+    from fanops.post.postiz import media_host_postiz_can_fetch
+    requeued = 0
+    led = Ledger.load(cfg)
+    if postiz_rows is None:
+        if "pytest" in sys.modules:
+            return 0
+        try:
+            from fanops.post.metrics import PostizStatusClient
+            postiz_rows = PostizStatusClient(cfg).list_all()
+        except Exception as exc:
+            get_logger(cfg)("publish", "-", "proven_dead_rows_failed", err=str(exc)[:120])
+            return 0
+    by_acct: dict[str, Post] = {}
+    for p in led.posts_in_state(PostState.failed):
+        if not is_real_submission_id(p.submission_id):
+            continue
+        if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
+            continue
+        if not led.can_promote(p):
+            continue
+        if not _proven_dead_row(postiz_rows.get(p.submission_id)):
+            continue
+        aid = (p.account_id or p.account or "").strip() or "_"
+        prev = by_acct.get(aid)
+        if prev is None or (p.scheduled_time or "") < (prev.scheduled_time or ""):
+            by_acct[aid] = p
+    if not by_acct:
+        return 0
+    now = datetime.now(timezone.utc)
+    per_min = cfg.postiz_publish_per_min
+    gap = timedelta(seconds=(60.0 / per_min) if per_min > 0 else 0)
+    prepared: list[tuple[str, list]] = []
+    for p in by_acct.values():
+        try:
+            snap = Ledger.load(cfg)
+            cur = snap.posts.get(p.id)
+            if cur is None or cur.state is not PostState.failed:
+                continue
+            _ensure_media(snap, cfg, cur, "postiz", account_id=cur.account_id)
+            urls = list(cur.media_urls or [])
+            if not urls or not all(media_host_postiz_can_fetch(u, cfg) for u in urls):
+                continue
+            prepared.append((p.id, urls))
+        except Exception as exc:
+            get_logger(cfg)("publish", p.id, "proven_dead_media_skip", err=str(exc)[:120])
+            continue
+    if not prepared:
+        return 0
+    try:
+        with Ledger.transaction(cfg) as lg:
+            for pid, urls in prepared:
+                cur = lg.posts.get(pid)
+                if cur is None or cur.state is not PostState.failed:
+                    continue
+                if not is_real_submission_id(cur.submission_id):
+                    continue
+                if not _proven_dead_row(postiz_rows.get(cur.submission_id)):
+                    continue
+                if not lg.can_promote(cur):
+                    continue
+                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
+                if n > _DAEMON_TRANSIENT_MAX:
+                    continue
+                cur.media_urls = urls
+                cur.submission_id = None
+                cur.scheduled_time = iso_z(now + gap)
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
+                                  daemon_transient_retry=n)
+                requeued += 1
+    except Exception as exc:
+        get_logger(cfg)("publish", "-", "requeue_proven_dead_failed", err=str(exc)[:120], requeued=requeued)
+        return requeued
+    return requeued
+
+
 def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
@@ -588,6 +681,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
     _requeue_rate_limited_for_daemon(cfg)
+    _requeue_proven_dead_for_daemon(cfg)
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
     if account:

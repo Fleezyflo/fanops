@@ -380,9 +380,11 @@ def test_reconcile_published_post_is_archived(tmp_path):
 # ---- WS-R1 XC-1/XC-2/XC-6: bounded escalation out of submit/reconcile limbo ----------------------
 
 def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tmp_path):
-    # XC-1: a `submitting` post crash-stranded >24h past schedule on a never-real fanops_ token escalates to
-    # needs_reconcile (the digest reconcile column owns it). State CHANGES; never to a re-queueable `failed`.
+    # I5: a `submitting` post crash-stranded >24h on a never-real fanops_ token cannot be polled.
+    # It leaves inflight as failed/unknown — never needs_reconcile (would stay inflight forever)
+    # and never transient (daemon would auto-retry a fanops_ id). Never GET.
     from datetime import datetime, timezone, timedelta
+    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
@@ -391,8 +393,10 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
     p = led.posts["ps"]
     assert polled == []                                          # age ladder must not depend on a GET
-    assert p.state is PostState.needs_reconcile
-    assert "escalated" in (p.error_reason or "")
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 def test_submitting_not_escalated_when_fresh(tmp_path):
@@ -425,20 +429,23 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
 
 
 def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
-    # THE INVERSION. There used to be an age (72h past schedule) at which reconcile declared a post lost —
-    # a verdict about a backend it had not heard from, written into error_reason. Waiting is not failing:
-    # a post 80h past schedule whose status is still unknown comes out of the pass byte-identical. Nothing
-    # in this module now converts elapsed time into a claim about a publication.
+    # I5 exception to "waiting is not failing": a fanops_ birth token cannot be polled, so past 24h
+    # (here 80h) it leaves inflight as failed/unknown. A real backend id at this age is still
+    # untouched (test_a_real_token_past_the_old_horizon_is_also_untouched). Never GET.
     from datetime import datetime, timezone, timedelta
+    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
-    before = led.posts["pg"].model_dump()
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
+    p = led.posts["pg"]
     assert polled == []
-    assert led.posts["pg"].model_dump() == before
+    assert p.state is PostState.failed
+    assert p.state is not PostState.needs_reconcile
+    assert p.error_kind is ErrorKind.unknown
+    assert "unpollable" in (p.error_reason or "")
 
 
 @pytest.mark.parametrize("legacy", [
@@ -517,9 +524,11 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if token.startswith("fanops_"):
         assert polled == []                                 # birth token is not a GET key
-        assert p.model_dump() == before                     # age ladder only — no observation
-        assert p.state is PostState.needs_reconcile
-        assert p.state is not PostState.failed
+        assert p.state is PostState.failed                  # I5: unpollable past 24h leaves inflight
+        assert p.state is not PostState.needs_reconcile
+        from fanops.models import ErrorKind
+        assert p.error_kind is ErrorKind.unknown            # never transient — daemon must not auto-retry
+        assert "unpollable" in (p.error_reason or "")
     elif poll == "published":
         assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
