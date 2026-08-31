@@ -851,8 +851,7 @@
         "fanops.config",
         "fanops.moments",
         "fanops.persona_levers",
-        "fanops.personas",
-        "fanops.prompts"
+        "fanops.personas"
       ],
       "lazy": [
         "fanops.log"
@@ -942,6 +941,7 @@
         "fanops.ids",
         "fanops.persona_directives",
         "fanops.personas",
+        "fanops.prompts",
         "fanops.signals",
         "fanops.text",
         "fanops.transcribe"
@@ -2294,7 +2294,7 @@
     "fanops.post.zernio_outcome": 1,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 1,
-    "fanops.prompts": 2,
+    "fanops.prompts": 1,
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
     "fanops.reframe": 2,
@@ -2404,7 +2404,7 @@
     "fanops.ledger_bridge": 5,
     "fanops.ledger_sqlite": 2,
     "fanops.ledger_wipe": 3,
-    "fanops.lever_docs": 6,
+    "fanops.lever_docs": 5,
     "fanops.llm": 1,
     "fanops.log": 1,
     "fanops.meta_graph": 4,
@@ -2493,7 +2493,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 254,
+  "lazy_downward_count": 255,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3790,8 +3790,8 @@
     "G2_largest_scc_size": 72,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 596,
-    "lazy_edges": 375,
+    "compile_edges_G1": 595,
+    "lazy_edges": 376,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 71,
     "lazy_edges_to_equal_or_higher_level": 121,
