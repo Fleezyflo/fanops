@@ -285,7 +285,7 @@ def moment_pick_prompt(payload: dict) -> str:
         "en-dashes (–); use a comma or period.\n"
         "  - `source_title`: REQUIRED, a neutral, descriptive title of what this footage IS (≤8 words). "
         "Not a hook, no hashtags, no persona voice, no em-dashes.\n"
-        "  - FRAMES: a few stills sampled evenly across the whole source may be ATTACHED as images — "
+        "  - FRAMES: a few stills sampled evenly across the footage may be ATTACHED as images — "
         "SEE them to judge who/where, lighting, motion. They are a survey, not timestamps. "
         "Timestamps come from CUES. Do NOT describe or narrate the frames in your answer; "
         "your answer is the JSON picks alone.\n"
