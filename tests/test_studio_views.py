@@ -1039,6 +1039,20 @@ def test_error_kind_ignores_digits_in_error_reason():
     assert operator_error(p.error_reason, kind=classify_failure(p)) == "Network blip"
 
 
+def test_operator_error_submitted_awaiting_is_not_published_waiting():
+    from fanops.studio.views_results import operator_error
+    parked = ("submitted_awaiting_permalink: backend accepted without a public URL — "
+              "reconcile will back-fill")
+    assert operator_error(parked) == "Accepted — waiting for Postiz."
+    assert "Published" not in operator_error(parked)
+    old_lie = "publish_missing_url: backend returned submitted without a permalink — reconcile will back-fill"
+    # the old reason must not keep mapping to Published once we stop writing it; pin the new path
+    assert "no permalink" in old_lie.lower()  # tripwire that made operator_error lie as Published
+    at_reconcile = ("publish_missing_url_at_reconcile: backend reports published but no valid "
+                    "https url captured")
+    assert operator_error(at_reconcile) == "Published — waiting for link."
+
+
 def test_posted_library_failure_kind_filter(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)

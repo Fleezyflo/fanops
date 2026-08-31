@@ -267,6 +267,9 @@ def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeyp
     assert not p.published_at, (
         f"published_at MUST NOT be stamped without a permalink — the Posted tub's day-anchor "
         f"would lie; got published_at={p.published_at!r}")
+    assert (p.error_reason or "").startswith("submitted_awaiting_permalink:")
+    low = (p.error_reason or "").lower()
+    assert "no permalink" not in low and "no_url" not in low and "published_no_url" not in low
 
 
 # ───────────────────────────────────────────────────────────────────────────

@@ -384,7 +384,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                     post = led.posts[post_id]
                 else:
                     led.set_post_state(post_id, PostState.needs_reconcile, error_reason=(
-                        "publish_missing_url: backend returned submitted without a permalink — "
+                        "submitted_awaiting_permalink: backend accepted without a public URL — "
                         "reconcile will back-fill on next pass (R1/D2 gate)"))
                     post = led.posts[post_id]
                     get_logger(cfg)("publish", post_id, "publish_missing_url",
