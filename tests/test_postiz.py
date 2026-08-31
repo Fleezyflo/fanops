@@ -264,6 +264,21 @@ def test_publish_undeclared_product_type_raises_before_any_network(tmp_path, mon
     cap["mock"].assert_not_called()
 
 
+def test_publisher_refuses_youtube_undeclared_is_none():
+    from fanops.post.postiz import publisher_refuses
+    p = Post(id="p1", parent_id="c1", account="a", account_id="yt", platform=Platform.youtube,
+             caption="c", state=PostState.failed, post_type=None,
+             media_urls=["https://uploads.postiz.com/x.mp4"], error_kind=ErrorKind.bad_payload)
+    assert publisher_refuses(p) is None
+
+
+def test_publisher_refuses_instagram_undeclared():
+    from fanops.post.postiz import publisher_refuses
+    p = _post(); p.post_type = None
+    reason = publisher_refuses(p)
+    assert reason and "undeclared post_type" in reason
+
+
 def test_publish_declared_story_sends_story(tmp_path, monkeypatch, mocker):
     # The declaration — not a hardcoded literal — reaches the vendor.
     cfg = _cfg(tmp_path, monkeypatch); post = _post(); post.post_type = "story"

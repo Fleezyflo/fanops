@@ -3,7 +3,7 @@
 import requests as _rq
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, Clip, PostState, ClipState, Platform
+from fanops.models import ErrorKind, Post, Clip, ClipState, Moment, MomentState, PostState, Platform
 from fanops.post.run import _publish_one, _is_transient_publish_error, _requeue_transient_failed_for_daemon
 from fanops.studio.views_common import is_transient_failure
 from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
@@ -155,6 +155,56 @@ def test_recover_posts_retries_transient_failed(tmp_path):
     res = recover_posts(cfg, ["dns"], action="retry", reason="studio_retry_transient")
     assert res.ok and res.detail["retried"] == 1
     assert Ledger.load(cfg).posts["dns"].state is PostState.queued
+
+
+def test_heal_obsolete_youtube_bad_payload_rearms(tmp_path, monkeypatch):
+    from fanops.post.run import _heal_obsolete_failed_for_daemon
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        # can_promote fails CLOSED on a missing clip (is_suppressed). Seed the named parent so
+        # the heal write can fire; publisher_refuses / bad_payload / no-real-id stay the dual.
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path="/c1.mp4", state=ClipState.captioned))
+        led.add_post(Post(id="yt", parent_id="c1", account="a", account_id="yt",
+                          platform=Platform.youtube, caption="c", state=PostState.failed,
+                          post_type=None, media_urls=["https://x/m.mp4"],
+                          error_kind=ErrorKind.bad_payload,
+                          error_reason="publish failed: youtube post yt reached publish with undeclared post_type",
+                          scheduled_time="2026-08-31T07:00:00Z"))
+    assert _heal_obsolete_failed_for_daemon(cfg) == 1
+    p = Ledger.load(cfg).posts["yt"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None and p.error_reason is None
+    assert p.submission_id is None
+    assert p.daemon_transient_retry == 1
+
+
+def test_heal_obsolete_skips_ig_undeclared_and_real_id(tmp_path, monkeypatch):
+    from fanops.post.run import _heal_obsolete_failed_for_daemon
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="ig", parent_id="c1", account="a", account_id="ig",
+                          platform=Platform.instagram, caption="c", state=PostState.failed,
+                          post_type=None, media_urls=["https://x/m.mp4"],
+                          error_kind=ErrorKind.bad_payload,
+                          error_reason="undeclared post_type"))
+        led.add_post(Post(id="real", parent_id="c1", account="a", account_id="ig",
+                          platform=Platform.youtube, caption="c", state=PostState.failed,
+                          post_type=None, media_urls=["https://x/m.mp4"],
+                          error_kind=ErrorKind.bad_payload,
+                          submission_id="cmtgxb4az000fp87wu0i5layu",
+                          error_reason="old"))
+    assert _heal_obsolete_failed_for_daemon(cfg) == 0
+    led = Ledger.load(cfg)
+    assert led.posts["ig"].state is PostState.failed
+    assert led.posts["real"].state is PostState.failed
 
 
 # submission_id idempotency is owned by

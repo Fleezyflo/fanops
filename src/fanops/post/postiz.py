@@ -146,6 +146,20 @@ def _validate_ledger_media(post, post_type: str, media_urls: list[str]) -> None:
                          f"Postiz maps post_type 'post' to REELS only for exactly one .mp4")
 
 
+def publisher_refuses(post) -> str | None:
+    """Pre-network refuse reason for this post, or None if publish would send. Dual of heal."""
+    declared = (post.post_type or "").strip()
+    if post.platform is not Platform.youtube and not declared:
+        return (f"{post.platform.value} post {post.id} reached publish with undeclared post_type "
+                f"— refusing to guess post|story")
+    try:
+        media_urls = list(post.media_urls or [])
+        _validate_ledger_media(post, declared, media_urls)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
 def rewrite_media_base(url: str, cfg: Config) -> str:
     """Rewrite loopback / private Postiz upload paths to FANOPS_MEDIA_PUBLIC_BASE so hosted backends
     (Postiz upload-from-url, Instagram pull-from-URL) can fetch the asset. Foreign https URLs and unset
@@ -443,12 +457,9 @@ class PostizPoster:
         # lands it `failed` with ErrorKind.bad_payload (MOL-781). YoutubeSettingsDto has no post_type
         # (mint leaves None); the IG refuse does not apply to YouTube — do not invent "post".
         declared = (post.post_type or "").strip()
-        if post.platform is not Platform.youtube and not declared:
-            raise ValueError(
-                f"{post.platform.value} post {post.id} reached publish with undeclared post_type "
-                f"— refusing to guess post|story"
-            )
-        _validate_ledger_media(post, declared, media_urls)
+        reason = publisher_refuses(post)
+        if reason:
+            raise ValueError(reason)
         # IG/TT: compose sentence + lock tags at send. YouTube keeps the sentence as description
         # and ships tags via settings.tags (`_youtube_tags`) — never dump the IG composed string.
         from fanops.caption import posted_text_for

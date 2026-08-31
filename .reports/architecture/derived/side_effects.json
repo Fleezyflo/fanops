@@ -152,6 +152,10 @@
       {
         "call": "Ledger.transaction",
         "line": 487
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 526
       }
     ],
     "fanops.recaption": [
@@ -529,23 +533,23 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 199
+        "line": 213
       },
       {
         "call": "requests.post",
-        "line": 229
+        "line": 243
       },
       {
         "call": "requests.post",
-        "line": 298
+        "line": 312
       },
       {
         "call": "requests.get",
-        "line": 322
+        "line": 336
       },
       {
         "call": "requests.post",
-        "line": 463
+        "line": 474
       }
     ],
     "fanops.post.zernio": [
@@ -809,7 +813,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 82,
+    "ledger_transaction_sites": 83,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
