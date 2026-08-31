@@ -30,7 +30,7 @@
 {% if sib.installed and not sib.loaded %}
 <div class="banner warn" data-daemon-warn="{{ sib.verdict }}" role="alert">
   {{ sib.short }} agent {{ sib.verdict }} (StartInterval {{ sib.poll_interval_s }}s poll-timer — stays cron-style by design).
-  Reload <code>~/Library/LaunchAgents/{{ sib.label }}.plist</code> or check <code>launchctl list {{ sib.label }}</code>.
+  Reload <code>~/Library/LaunchAgents/{{ sib.label }}.plist</code> or check <code>launchctl print gui/$(id -u)/{{ sib.label }}</code>.
 </div>
 {% endif %}
 {% endfor %}

@@ -88,6 +88,7 @@ _IDEMPOTENCY_WINDOW_S = 300.0
 # time.monotonic() (immune to a wall-clock step / NTP correction / DST), per publish call, and checked
 # BEFORE each sleep so the next SEND — not the sleep — lands inside the deadline.
 _RETRY_DEADLINE_S = 240.0
+_CREATE_TIMEOUT = (30, 300)  # connect, read — read matches media PUT
 # PERMANENT constants. Changing either silently re-opens the double-post hole for every in-flight post
 # (a retry would derive a DIFFERENT x-request-id than the send it is retrying, so Zernio would create a
 # second post instead of replaying the first). Chosen once, 2026-07-17. Never regenerate, never "clean up".
@@ -491,7 +492,7 @@ class ZernioPoster:
         delay, sent_any = 1.0, False
         for attempt in range(_MAX_RETRIES):
             try:
-                resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=30)
+                resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=_CREATE_TIMEOUT)
             except requests.exceptions.RequestException as exc:
                 if isinstance(exc, requests.exceptions.ConnectTimeout):
                     # The connection was never established, so THIS attempt sent nothing. Retry inside the
@@ -505,9 +506,18 @@ class ZernioPoster:
                     return ReconciliationRequired("connect_timeout_after_send",
                                                   f"an earlier attempt reached Zernio and this one could not re-check "
                                                   f"within {_RETRY_DEADLINE_S:.0f}s — may be live")
-                # The body may have landed (the response, not the request, was lost) — ambiguous. Park; do
-                # NOT re-POST. The retry that WOULD be safe is the in-deadline loop above; this exception
-                # class is no evidence that a fresh send lands inside the window.
+                if isinstance(exc, requests.exceptions.ReadTimeout):
+                    # The request left this host (same x-request-id). Retry is a REPLAY, not a second
+                    # create, as long as it lands inside the idempotency window. Immediate park was
+                    # the 176h-stuck TikTok: GET /posts/fanops_* 400s and never recovers.
+                    sent_any = True
+                    wait = delay + random.uniform(0, delay)
+                    if attempt < _MAX_RETRIES - 1 and _fits_deadline(started, wait):
+                        time.sleep(wait); delay *= 2; continue
+                    return ReconciliationRequired("network_error_may_be_live",
+                                                  f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}")
+                # Other transport (connection reset after send): the body may have landed. Park; do
+                # NOT re-POST. A retry here is not proven to be the same in-window replay.
                 sent_any = True
                 return ReconciliationRequired("network_error_may_be_live",
                                               f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=160)}")

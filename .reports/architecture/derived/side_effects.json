@@ -167,11 +167,11 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 490
+        "line": 491
       },
       {
         "call": "Ledger.transaction",
-        "line": 615
+        "line": 619
       }
     ],
     "fanops.responder": [
@@ -505,7 +505,7 @@
     "fanops.health_model": [
       {
         "call": "requests.get",
-        "line": 385
+        "line": 392
       }
     ],
     "fanops.post.metrics": [
@@ -545,25 +545,25 @@
       },
       {
         "call": "requests.post",
-        "line": 462
+        "line": 463
       }
     ],
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 366
+        "line": 367
       },
       {
         "call": "requests.post",
-        "line": 396
+        "line": 397
       },
       {
         "call": "requests.get",
-        "line": 427
+        "line": 428
       },
       {
         "call": "requests.post",
-        "line": 494
+        "line": 495
       }
     ]
   },
@@ -643,35 +643,35 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 203
+        "line": 215
       },
       {
         "call": "subprocess.run",
-        "line": 274
+        "line": 286
       },
       {
         "call": "subprocess.run",
-        "line": 279
+        "line": 291
       },
       {
         "call": "subprocess.run",
-        "line": 937
+        "line": 974
       },
       {
         "call": "subprocess.run",
-        "line": 963
+        "line": 1000
       },
       {
         "call": "subprocess.run",
-        "line": 968
+        "line": 1005
       },
       {
         "call": "subprocess.run",
-        "line": 996
+        "line": 1033
       },
       {
         "call": "subprocess.run",
-        "line": 1069
+        "line": 1106
       }
     ],
     "fanops.discover": [
@@ -693,7 +693,7 @@
     "fanops.health_model": [
       {
         "call": "subprocess.run",
-        "line": 345
+        "line": 352
       }
     ],
     "fanops.ig_hashtag_scrape": [

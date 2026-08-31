@@ -73,7 +73,7 @@ def test_project_strip_health_shares_half_live_with_golive():
     assert project_strip_health(rep)["half_live_hint"] == project_golive_readiness(rep)["half_live_hint"]
 
 
-def test_project_daemon_strip_overlays_heartbeat():
+def test_project_daemon_strip_fresh_heartbeat_is_alive():
     snap = {"loaded": True, "installed": True, "interval": 600, "verdict": "stale-seed"}
     out = project_daemon_strip(snap, age=12.0, stale=False, pending_gates=2, run_line="run=idle")
     assert out["verdict"] == "alive"
@@ -81,9 +81,30 @@ def test_project_daemon_strip_overlays_heartbeat():
     assert out["pending_gates"] == 2
     assert "run_line" not in out
 
-    stale = project_daemon_strip(snap, age=9999.0, stale=True, pending_gates=None, run_line="run=stage")
-    assert "stale" in stale["verdict"]
-    assert stale["run_line"] == "run=stage"
+
+def test_project_daemon_strip_live_activity_wins_stale_heartbeat():
+    snap = {"loaded": True, "installed": True, "interval": 600, "verdict": "stale-seed"}
+    mid = project_daemon_strip(
+        snap, age=9999.0, stale=True, pending_gates=None,
+        run_line="run=1600 stage=transcribe", alive_mid=True,
+    )
+    assert mid["verdict"] == "alive"
+    assert mid["run_line"] == "run=1600 stage=transcribe"
+    assert mid["heartbeat_age_s"] == 9999.0
+    empty = project_daemon_strip({}, age=9999.0, stale=True, run_line="run=1 stage=x", alive_mid=True)
+    assert empty["loaded"] is True and empty["verdict"] == "alive"
+
+
+def test_project_daemon_strip_ignores_frozen_snapshot_verdict():
+    snap = {"loaded": True, "installed": True, "interval": 600, "verdict": "alive"}
+    dead = project_daemon_strip(snap, age=9999.0, stale=True, run_line=None, alive_mid=False)
+    assert "stale" in dead["verdict"]
+
+
+def test_project_daemon_strip_stale_without_activity():
+    snap = {"loaded": True, "installed": True, "interval": 600, "verdict": "stale-seed"}
+    dead = project_daemon_strip(snap, age=9999.0, stale=True, pending_gates=None, run_line=None)
+    assert "stale" in dead["verdict"]
 
 
 def test_project_daemon_slice_from_report():

@@ -12,8 +12,8 @@ from fanops.post.postiz import build_postiz_payload, PostizPoster
 
 
 def _yt_post(**kw):
-    # product_type declared even for YouTube: MOL-822 refuses undeclared rows at PostizPoster.publish
-    # (YouTube settings ignore the token; the declaration is still required on the publish path).
+    # YoutubeSettingsDto has no post_type; mint leaves None. Publish skips the IG post|story refuse
+    # for YouTube. Explicit post_type="post" here is still valid (builder ignores it).
     base = dict(id="p1", parent_id="clip_1", account="a", account_id="yt_intg",
                 platform=Platform.youtube, caption="full description here",
                 post_type="post", media_urls=["m1|http://x/m.mp4"])
@@ -106,6 +106,19 @@ def test_publish_youtube_title_falls_back_to_artist(tmp_path, monkeypatch, mocke
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p1")
     assert cap["json"]["posts"][0]["settings"]["title"] == "Moh Flow"
+
+
+def test_youtube_undeclared_post_type_still_publishes(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007/api"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _yt_lineage(led, hook="hook line")
+    led.add_post(_yt_post(post_type=None))
+    cap = _mock_post_ok(mocker)
+    PostizPoster(cfg).publish(led, "p1")
+    assert cap.get("json"), "undeclared YouTube must still POST"
+    settings = cap["json"]["posts"][0]["settings"]
+    assert settings["__type"] == "youtube"
+    assert "post_type" not in settings
 
 def test_publish_youtube_title_floor_when_artist_too_short(tmp_path, monkeypatch, mocker):
     # CRITICAL guard: a 1-char FANOPS_ARTIST_NAME + no hook must NOT emit a title Postiz's @MinLength(2)
