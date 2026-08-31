@@ -135,12 +135,17 @@ def _cue_edge_sets(src) -> tuple[set[float], set[float]]:
     starts: set[float] = set()
     ends: set[float] = set()
     lang = getattr(src, "language", None)
+    duration = getattr(src, "duration", None)
     for s in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
         st, en = s.get("start"), s.get("end")
-        if not isinstance(st, (int, float)) or not isinstance(en, (int, float)) or not (st < en):
+        if not isinstance(st, (int, float)) or not isinstance(en, (int, float)):
             continue
-        starts.add(round(float(st), _CUE_PREC))
-        ends.add(round(float(en), _CUE_PREC))
+        st = max(0.0, float(st))
+        en = min(float(duration), float(en)) if duration else float(en)
+        if not (st < en):
+            continue
+        starts.add(round(st, _CUE_PREC))
+        ends.add(round(en, _CUE_PREC))
     return starts, ends
 
 def _spans_overlap(a: tuple[float, float], b: tuple[float, float]) -> bool:

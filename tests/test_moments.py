@@ -588,6 +588,21 @@ def test_validate_pick_requires_cue_edges_when_trusted_cues_exist():
     assert validate_pick(mid_end, duration=60.0, src=src) == "end not a cue end"
 
 
+def test_validate_pick_admits_zero_after_asr_overshoot():
+    # Printed/grid cue start is clamped to 0; copying the raw negative still fails start<0.
+    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
+                 transcript=[talk_seg("a", start=-0.05, end=3.0)])
+    assert validate_pick(MomentPick(start=0.0, end=3.0, reason="r"), duration=60.0, src=src) is None
+    assert "start<0" in (validate_pick(MomentPick(start=-0.05, end=3.0, reason="r"),
+                                       duration=60.0, src=src) or "")
+
+
+def test_validate_pick_admits_duration_after_asr_overshoot():
+    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
+                 transcript=[talk_seg("a", start=50.0, end=60.05)])
+    assert validate_pick(MomentPick(start=50.0, end=60.0, reason="r"), duration=60.0, src=src) is None
+
+
 def test_validate_pick_skips_grid_without_trusted_cues():
     src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
                  transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}])

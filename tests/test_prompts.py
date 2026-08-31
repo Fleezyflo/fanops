@@ -259,6 +259,23 @@ def test_moment_pick_prompt_no_cues_allows_float_window():
     assert "0 <=" in p and "start" in p
     assert "cue 0" not in p
 
+
+def test_moment_pick_prompt_clamps_negative_cue_start():
+    # ASR can overshoot 0; printed cues must sit inside [0, duration] so copy-the-cue is legal.
+    tr = [{"start": -0.05, "end": 3.0, "text": "hello"}]
+    p = moment_pick_prompt({"duration": 60.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "0  0.000-3.000" in p
+    assert "-0.050" not in p
+
+
+def test_moment_pick_prompt_clamps_cue_end_to_duration():
+    tr = [{"start": 50.0, "end": 60.05, "text": "x"}]
+    p = moment_pick_prompt({"duration": 60.0, "transcript": tr, "signal_peaks": [],
+                            "language": "en", "guidance": ""})
+    assert "0  50.000-60.000" in p
+    assert "60.050" not in p
+
 # --- hook prompt (pass 2: window-grounded on-screen hook) -------------------------------------------
 def _hook_payload(**over):
     base = {"source_id": "s1", "moment_id": "m1", "token": "14.00-21.00",
