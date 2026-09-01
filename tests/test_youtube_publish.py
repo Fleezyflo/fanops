@@ -8,7 +8,7 @@ import fanops.config as cfgmod
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Platform, Fmt, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Post, Source, Moment, Clip, ClipState, MomentState
-from fanops.post.postiz import build_postiz_payload, PostizPoster
+from fanops.post.postiz import build_postiz_payload, PostizPoster, PostizIntegration
 
 
 def _yt_post(**kw):
@@ -28,6 +28,10 @@ def _mock_post_ok(mocker):
     def fake(url, headers=None, json=None, timeout=None):
         cap["json"] = json; return R()
     mocker.patch("fanops.post.postiz.requests.post", side_effect=fake)
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=[
+        PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
+        PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
+    ])
     return cap
 
 
@@ -144,7 +148,7 @@ def test_publish_instagram_still_stub(tmp_path, monkeypatch, mocker):
     led.add_post(_yt_post(id="p2", platform=Platform.instagram, account_id="ig1"))
     cap = _mock_post_ok(mocker)
     PostizPoster(cfg).publish(led, "p2")
-    assert cap["json"]["posts"][0]["settings"] == {"__type": "instagram", "post_type": "post"}
+    assert cap["json"]["posts"][0]["settings"] == {"__type": "instagram-standalone", "post_type": "post"}
 
 
 def test_youtube_still_uses_settings_tags_not_ig_compose(tmp_path, monkeypatch, mocker):

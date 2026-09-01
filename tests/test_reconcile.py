@@ -120,9 +120,13 @@ def test_reconcile_ignores_terminal_and_queued_posts(tmp_path):
     assert led.posts["pub"].state is PostState.published
 
 
-def test_reconcile_does_not_poll_a_client_token_post(tmp_path):
+def test_reconcile_does_not_poll_a_client_token_post(tmp_path, monkeypatch):
     # fanops_ is a birth idempotency token, not a Zernio/Postiz row id.
     # GET /posts/fanops_* 400s (Invalid post ID) and can never resolve the row.
+    # A leftover Postiz cuid on a Zernio TikTok channel is the same miss:
+    # GET /posts/cm… 400s Invalid post ID format — do not poll it.
+    from fanops.accounts import add_account, set_backend
+    from fanops.reconcile import _reconcile_reads
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "pt", PostState.needs_reconcile, sub="fanops_deadbeefcafe")
     polled = []
@@ -132,6 +136,17 @@ def test_reconcile_does_not_poll_a_client_token_post(tmp_path):
     led = reconcile_posts(led, cfg, get_status=get_status)
     assert polled == []
     assert led.posts["pt"].state is PostState.needs_reconcile
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    led.add_post(Post(id="pz", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x",
+                      state=PostState.needs_reconcile,
+                      submission_id="cmqeb1uuv0001o579bjcdj7my"))
+    _mirrored, _token_only, zpolled = _reconcile_reads(cfg, led, lambda *a, **k: None)
+    assert zpolled == []
+    assert led.posts["pz"].state is PostState.needs_reconcile
 
 def test_reconcile_durable_across_save(tmp_path):
     # R1: a malformed publicUrl ("u") fails safe_public_url AND triggers the published_no_url_parked
