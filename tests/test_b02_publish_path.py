@@ -9,10 +9,13 @@ from fanops.timeutil import schedule_utc
 
 
 def _live_postiz(monkeypatch):
+    from fanops.post.postiz import PostizIntegration
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setattr("fanops.post.postiz.postiz_list_integrations",
+                        lambda cfg: [PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
 
 
 def _live_zernio(monkeypatch):

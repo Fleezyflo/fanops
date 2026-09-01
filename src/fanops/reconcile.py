@@ -40,6 +40,7 @@ failure is a log line and nothing else: a failed bulk fetch mirrors nobody this 
 Zernio poll leaves its post byte-identical. `fanops resolve <id> published --url` stays the manual
 route for a post the backend never surfaces. dryrun never reaches here (gated upstream)."""
 from __future__ import annotations
+import re
 from typing import Callable, Optional
 from fanops.config import Config
 from fanops.errors import AuthError
@@ -61,6 +62,8 @@ from datetime import datetime, timezone, timedelta
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
 # Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
+# Postiz cuid2 (this deployment): leftover on a Zernio channel. GET /posts/{id} 400s Invalid post ID format.
+_POSTIZ_CUID = re.compile(r"^c[a-z0-9]{24}$")
 
 
 def _parked_age(post, now: datetime):
@@ -543,6 +546,9 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
         if backend != "postiz":
             if not resting:
                 if is_real_submission_id(p.submission_id):
+                    if _POSTIZ_CUID.match(p.submission_id):
+                        log("reconcile", p.id, "skipped: postiz id on zernio channel")
+                        continue
                     polled.append(p)                     # Zernio: per-post GET of a real backend id
                 else:
                     token_only.append(p)                 # fanops_ birth token is not a GET key (I4)

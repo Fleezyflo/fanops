@@ -139,6 +139,9 @@ def test_postiz_publish_persists_releaseurl_from_body_not_invented(tmp_path, mon
         status_code = 201
         def json(self):
             return {"id": "postiz_1", "releaseURL": real_url}
+    from fanops.post.postiz import PostizIntegration
+    mocker.patch("fanops.post.postiz.postiz_list_integrations",
+                 return_value=[PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R())
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].public_url == real_url
@@ -163,6 +166,9 @@ def test_postiz_publish_ignores_dashboard_url_field(tmp_path, monkeypatch, mocke
         def json(self):
             return {"id": "postiz_1", "url": dashboard_url}
 
+    from fanops.post.postiz import PostizIntegration
+    mocker.patch("fanops.post.postiz.postiz_list_integrations",
+                 return_value=[PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R())
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].public_url is None

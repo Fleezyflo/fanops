@@ -65,7 +65,7 @@ tests `tests/test_zernio_idempotency.py`.
 `zernio_outcome.py`'s types are **private to the Zernio backend** — they must never cross the `Poster`
 protocol (`publish(led, post_id) -> Ledger`). `postiz.py` / `dryrun.py` do not import them, by design.
 
-## Two traps that look like bugs but are by design
+## Traps that look like bugs but are by design
 
 - **`_postiz_permalink` (`postiz.py:73`) ALWAYS returns `None`** — Postiz returns no URL at publish time. So
   `_publish_one` CANNOT promote `submitted→published` on its own for a fresh Postiz publish; it parks the post in
@@ -75,6 +75,7 @@ protocol (`publish(led, post_id) -> Ledger`). `postiz.py` / `dryrun.py` do not i
 - **`_publish_throttle_last` (`run.py:83`) is a module-level dict** — the one piece of true global mutable state,
   enforcing `postiz_publish_per_min`. In-process ONLY by design; it would need rework only if `fanops` ran as
   multiple concurrent processes. `reset_publish_throttle` (`:88`) is test-only.
+- **Postiz `Refresh channel needed` / `refresh_token` with an empty identifier on a channel that already PUBLISHED is addressing, not expired auth.** Wrong `settings.__type` (FanOps `instagram` vs connected `instagram-standalone`) or an unfetchable media host (`*.ts.net`) makes Postiz take a refresh path. Do not reconnect; fix the payload or host.
 
 ## Dryrun/live gates + the false-dead-code source
 

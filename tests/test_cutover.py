@@ -77,7 +77,7 @@ def _postiz_env(monkeypatch):
 
 def _integrations():
     from fanops.post.postiz import PostizIntegration
-    return [PostizIntegration(id="ig_1", name="throwaway", platform="instagram")]
+    return [PostizIntegration(id="ig_1", name="throwaway", platform="instagram-standalone")]
 
 # Task 1 — dispatch by backend
 def test_cutover_metrics_dispatches_postiz(tmp_path, monkeypatch):
@@ -129,7 +129,7 @@ def test_postiz_post_fires_and_saves_when_confirmed(tmp_path, monkeypatch, mocke
     out = cutover.cutover_post(cfg, "ig_1", confirmed=True, post=fake_post)
     assert out["submission_id"] == "pz_LIVE_1"
     assert captured["json"]["date"] == "2099-01-01T00:00:00Z"                        # 2099 schedule, never near-now
-    assert captured["json"]["posts"][0]["settings"]["__type"] == "instagram"          # platform DERIVED, not hardcoded
+    assert captured["json"]["posts"][0]["settings"]["__type"] == "instagram-standalone"  # platform DERIVED, not hardcoded
     state = json.loads(cfg.cutover_path.read_text())
     assert state["submission_id"] == "pz_LIVE_1" and state["backend"] == "postiz"
     assert not cfg.ledger_path.exists()                                               # ISOLATION: never the ledger

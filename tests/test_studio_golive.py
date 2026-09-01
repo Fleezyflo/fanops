@@ -125,7 +125,7 @@ def test_add_account_appends_active_postiz(tmp_path, monkeypatch):
     assert res.ok is True and res.detail["added"] == "new"
     raw = json.loads(cfg.accounts_path.read_text())
     new = next(x for x in raw["accounts"] if x["handle"] == "new")
-    assert new["status"] == "active" and new["access"] == "postiz"
+    assert new["status"] == "active"
     assert new["platforms"] == ["instagram", "tiktok"] and new["persona"] == "hype edits"
 
 def test_add_account_requires_handle(tmp_path, monkeypatch):

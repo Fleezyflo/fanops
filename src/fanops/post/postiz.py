@@ -171,9 +171,10 @@ def _validate_ledger_media(post, post_type: str, media_urls: list[str]) -> None:
 def rewrite_media_base(url: str, cfg: Config) -> str:
     """Rewrite loopback / private Postiz upload paths to FANOPS_MEDIA_PUBLIC_BASE so hosted backends
     (Postiz upload-from-url, Instagram pull-from-URL) can fetch the asset. Foreign https URLs and unset
-    public base pass through unchanged."""
+    public base pass through unchanged. A public base Postiz-in-Docker cannot fetch (Tailscale MagicDNS)
+    is treated as unset — rewriting loopback onto `*.ts.net` is the ENOTFOUND hole."""
     base = cfg.media_public_base
-    if not base or not url:
+    if not base or not url or not media_host_postiz_can_fetch(base):
         return url
     if url.startswith(base + "/") or url == base:
         return url
@@ -465,6 +466,10 @@ class PostizPoster:
         from fanops.timeutil import iso_z
         sched = post.scheduled_time or iso_z(datetime.now(timezone.utc))
         media_urls = [rewrite_media_base(u, self.cfg) for u in (post.media_urls or [])]
+        if any(not media_host_postiz_can_fetch(u) for u in media_urls):
+            raise ValueError(
+                f"post {post.id} media host is unfetchable by Postiz-in-Docker — refusing to POST"
+            )
         # The payload's post_type is RENDERED from the post's own declaration — never guessed here.
         # An undeclared IG row (post_type None/blank) is refused BEFORE any network; `_publish_one`
         # lands it `failed` with ErrorKind.bad_payload (MOL-781). YoutubeSettingsDto has no post_type
@@ -480,7 +485,14 @@ class PostizPoster:
         # and ships tags via settings.tags (`_youtube_tags`) — never dump the IG composed string.
         from fanops.caption import posted_text_for
         content = post.caption if post.platform is Platform.youtube else posted_text_for(self.cfg, led, post)
-        payload = build_postiz_payload(integration_id=post.account_id, platform=post.platform.value,
+        # settings.__type is the Postiz integration identifier (instagram-standalone, youtube, …),
+        # not FanOps Platform.value. Cutover already derives it this way; live publish must too.
+        integration = next((i for i in postiz_list_integrations(self.cfg) if i.id == post.account_id), None)
+        if integration is None or not (integration.platform or "").strip():
+            raise ValueError(
+                f"postiz integration {post.account_id!r} missing from GET /integrations or has empty identifier"
+            )
+        payload = build_postiz_payload(integration_id=post.account_id, platform=integration.platform,
                                        content=content, media_urls=media_urls,
                                        scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)

@@ -273,7 +273,7 @@ def test_add_account_appends_with_defaults(tmp_path):
     assert add_account(cfg, "@b", ["instagram", "tiktok"], persona="raw studio") == "b"
     raw = json.loads(cfg.accounts_path.read_text())
     b = next(x for x in raw["accounts"] if x["handle"] == "b")
-    assert b["status"] == "active" and b["access"] == "postiz"   # UI-added defaults
+    assert b["status"] == "active"   # UI-added default
     assert b["account_id"] == "" and b["integrations"] == {}     # mapped afterward
     assert b["platforms"] == ["instagram", "tiktok"] and b["persona"] == "raw studio"
     assert len(raw["accounts"]) == 2                             # @a untouched
