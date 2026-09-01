@@ -81,6 +81,25 @@ def test_safari_logged_in_does_not_hit_tags_api(monkeypatch):
     assert iws.safari_logged_in("markmakmouly") is False
 
 
+def test_safari_xhr_sends_www_claim(monkeypatch):
+    """IG web /api/v1/tags needs X-IG-WWW-Claim from sessionStorage www-claim-v2.
+    Missing claim is login_required on a live feed."""
+    import fanops.ig_hashtag_scrape as igs
+    import fanops.ig_web_scrape as iws
+    seen = []
+
+    def ev(expr, user=None):
+        seen.append(expr)
+        return '{"status":200,"url":"","text":"{}"}'
+
+    monkeypatch.setattr(igs, "safari_eval", ev)
+    iws._safari_xhr("GET", "https://www.instagram.com/api/v1/tags/music/info/", user="u")
+    assert seen
+    expr = seen[0]
+    assert "www-claim-v2" in expr
+    assert "X-IG-WWW-Claim" in expr
+
+
 def test_ensure_scrape_safari_unattended_does_not_navigate(tmp_path, monkeypatch):
     """Unattended tick must not activate Safari or reload instagram.com."""
     import fanops.ig_hashtag_scrape as igs
