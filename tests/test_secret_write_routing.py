@@ -60,7 +60,7 @@ def test_set_postiz_config_routes_api_key_to_keyring(tmp_path, monkeypatch):
     res = golive.set_postiz_config(cfg, "https://postiz.example.com", "SECRETKEY")
     assert res.ok is True
     env = (tmp_path / ".env").read_text()
-    assert "POSTIZ_URL=https://postiz.example.com" in env
+    assert "POSTIZ_URL=https://postiz.example.com/api" in env
     assert "POSTIZ_API_KEY" not in env
     assert "SECRETKEY" not in env
     assert MemKeyring.get_password("fanops", "POSTIZ_API_KEY") == "SECRETKEY"

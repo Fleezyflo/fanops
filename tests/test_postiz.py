@@ -145,8 +145,9 @@ def test_media_uploader_dispatches_to_postiz(tmp_path, monkeypatch):
 # ---- publish state machine (mirrors the Blotato poster's safety) ----
 def test_publish_submitted_on_2xx_with_id(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_1"}))
     led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_args[0][0] == "https://postiz.example.com/api/public/v1/posts"
     assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "postiz_1"
 
 def test_publish_401_is_typed_auth_redacted(tmp_path, monkeypatch, mocker):

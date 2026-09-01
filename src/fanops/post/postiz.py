@@ -63,8 +63,17 @@ class PostizIntegration(NamedTuple):
 def _base(cfg: Config) -> str:
     url = cfg.postiz_url
     if not url:
-        raise RuntimeError("POSTIZ_URL missing — set it to your Postiz instance (e.g. https://api.postiz.com).")
-    return url.rstrip("/")
+        raise RuntimeError(
+            "POSTIZ_URL missing — set it to your Postiz backend "
+            "(self-hosted {MAIN_URL}/api, e.g. http://localhost:4007/api)."
+        )
+    url = url.rstrip("/")
+    host = (urlparse(url).hostname or "").lower()
+    if host == "api.postiz.com":
+        return url
+    if url.endswith("/api"):
+        return url
+    return url + "/api"
 
 def _key(cfg: Config) -> str:
     k = cfg.postiz_api_key

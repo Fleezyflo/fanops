@@ -105,6 +105,10 @@ def set_postiz_config(cfg: Config, url: str, key: str = "") -> ActionResult:
     err = _dual_write(cfg, "POSTIZ_URL", url)
     if err:
         return ActionResult(ok=False, error=err)
+    url = postiz._base(cfg)
+    err = _dual_write(cfg, "POSTIZ_URL", url)
+    if err:
+        return ActionResult(ok=False, error=err)
     key = (key or "").strip()
     if key:
         err = _dual_write(cfg, "POSTIZ_API_KEY", key)    # write-only: stored, never echoed back

@@ -429,9 +429,9 @@ class Config:
 
     @property
     def postiz_url(self) -> str | None:
-        # Base URL of a self-hosted (or hosted) Postiz instance, e.g. https://postiz.example.com or
-        # https://api.postiz.com. The free, self-hosted poster backend (FANOPS_POSTER=postiz) posts
-        # to {postiz_url}/public/v1/... . Trailing slash trimmed by the poster.
+        # Backend URL ({MAIN_URL}/api self-hosted, https://api.postiz.com hosted). _base appends
+        # /api when the operator pastes MAIN_URL. The free, self-hosted poster backend
+        # (FANOPS_POSTER=postiz) posts to {postiz_url}/public/v1/... .
         v = os.getenv("POSTIZ_URL")
         return v.strip() if v and v.strip() else None
 
