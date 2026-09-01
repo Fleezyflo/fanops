@@ -343,6 +343,8 @@ def _safari_xhr(method: str, url: str, body: str | None = None, user: str | None
         "xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');",
         "var m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);",
         "if (m) xhr.setRequestHeader('X-CSRFToken', m[1]);",
+        "var c = sessionStorage.getItem('www-claim-v2');",
+        "xhr.setRequestHeader('X-IG-WWW-Claim', c || '0');",
     ]
     if method == "POST":
         headers.append("xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');")
