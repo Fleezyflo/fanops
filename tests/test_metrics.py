@@ -216,7 +216,7 @@ def test_postiz_list_all_hits_exactly_one_endpoint(tmp_path, monkeypatch, mocker
     g = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": _ROWS}))
     assert PostizStatusClient(cfg).list_all()["p1"]["status"] == "published"
     assert g.call_count == 1
-    assert g.call_args.args[0] == f"{cfg.postiz_url.rstrip('/')}/public/v1/posts"
+    assert g.call_args.args[0] == "https://postiz.example.com/api/public/v1/posts"
 
 def test_postiz_fetch_posts_first_row_wins_on_a_duplicate_id(tmp_path, monkeypatch, mocker):
     # setdefault keeps the FIRST match; the id-keyed index must not silently flip that to last-wins.
