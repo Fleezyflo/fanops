@@ -110,7 +110,7 @@ def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeyp
     mocker.patch("fanops.reconcile._default_get_status", return_value=poll)
     mocker.patch("fanops.meta_graph.credentialed_ig_handles", return_value=["@cred"])
 
-    def fake_ig_verdict(cfg, post, media_id, cred_ig, confirm, graph_get):
+    def fake_ig_verdict(cfg, post, media_id, cred_ig, confirm, graph_get, **_kw):
         if post.id == "ig_rest":
             return _GATE_REST
         if post.id == "ig_park":
