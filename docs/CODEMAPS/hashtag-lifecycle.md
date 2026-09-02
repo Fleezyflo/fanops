@@ -30,7 +30,8 @@ stored on the tag — never an invented blended `reach`. Persisted record shape 
 ## Produce — per-source lock (Safari)
 
 `source_tags` owns `00_control/source_tag_locks.json`. `shortlist_source_tags`
-is the produce LLM pass. Safari scrape (`ig_web_scrape`) admits those names
+is the produce LLM pass (live: `research_fn` on `lock_ready_sources`). Safari
+scrape (`ig_web_scrape`) admits those names
 (`researched_at` + `lock`). Graph may cache/confirm a `graph_metric`; Graph
 never vetoes membership, never reorders the lock, and never withholds
 `researched_at`. Empty `lock: []` means scrape finished with zero admits.
