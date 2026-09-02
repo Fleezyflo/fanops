@@ -32,7 +32,7 @@ from fanops.responder import _SCHEMA as _RESPONDER_SCHEMA   # the answerable-gat
 from fanops.timeutil import _aware_utc
 from fanops import produce
 from fanops.pipeline_run import note_stage
-from fanops.source_tags import lock_ready_sources
+from fanops.source_tags import lock_ready_sources, shortlist_source_tags
 
 def _aspects_for(accts: Accounts) -> set[Fmt]:
     return {PLATFORM_ASPECT.get(s.platform, Fmt.r9x16) for s in accts.surfaces()} or {Fmt.r9x16}
@@ -517,7 +517,7 @@ def advance(cfg: Config, *, base_time: str) -> RunSummary:
     # Lock-free; saves nothing; fail-open per source. Results carry missing-transcript errors
     # the reduce transaction stamps onto the real ledger.
     produce_results = produce.run_all(cfg, aspects, log)
-    lock_ready_sources(cfg)
+    lock_ready_sources(cfg, research_fn=lambda s, e: shortlist_source_tags(s, e, []))
 
     # AUDIT B4: the load-mutate-save COMMIT runs inside ONE ledger transaction — the lock is acquired
     # BEFORE load and the single save happens on clean exit. This closes the lost-update window the
