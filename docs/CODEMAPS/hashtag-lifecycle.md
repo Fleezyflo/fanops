@@ -9,8 +9,9 @@ one place only: the **source lock**, shipped by `hashtags.ship_from_lock`.
 
 **Ship path = `ship_from_lock`.** Caption ingest / compose takes model picks ∩
 that source's lock, pick order, hard cap 4. Empty / missing lock → empty tag
-line (sentence still ships). No AR floor, no mega slot, no store ∪ corpus, no
-80-pile, no `vet_hashtags` on the posted line.
+line. A tags-only stored `Post.caption` **survives** on the IG/TT wire via
+`compose_posted_caption` — `src/fanops/post/CLAUDE.md`. No AR floor, no mega
+slot, no store ∪ corpus, no 80-pile, no `vet_hashtags` on the posted line.
 
 Lock membership is catalog keep ∩ positive `play_count`, order is keep order,
 cap 12 (`hashtags.lock_from_shortlist`). Caption picks up to 4 from that lock

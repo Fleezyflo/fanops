@@ -13,6 +13,36 @@ post or break the reconcile handshake.
 - A post is unpublishable unless `state is queued`, and only `Ledger.approve_post` promotes it there. No approval
   → no POST, even live. (Verdict HOLDS, C6.)
 
+## What goes on the wire (`content` / `mediaItems`)
+
+Two facts, not one missing sentence. Neither is a reconcile / reauth / 400-parser job.
+
+**Caption — the string on `Post.caption` is the caption.** Live queued TikToks store the hashtag line there
+(`#beatmaking #songwriting …`). Lock tags, if any, append. Call sites (symbols, re-find):
+
+| Backend | Vendor field | Source |
+|---|---|---|
+| Postiz YouTube | `content` / description | `post.caption` raw |
+| Postiz IG / TikTok | `content` | `posted_text_for` |
+| Zernio | `content` | `posted_text_for` |
+| dryrun / Studio review | preview text | `posted_text_for` |
+
+`posted_text_for` → `compose_posted_caption(post.caption, ship_from_lock(picks, source lock))`. When lock
+tags are present, compose strips `#` tokens then appends the intersection. Empty lock returns the original
+caption, hashes included (`test_compose_posted_caption_empty_lock_is_sentence_only`). YouTube does not
+compose.
+
+Measured (live ledger `/Users/molhamhomsi/FanOps`, pre-fix): 443/443 queued TikToks stored `Post.caption`
+as the hashtag line; 410 had no lock row. That is why the empty-lock return keeps the stored string.
+
+No new function. No recaption from `moment.hook`. No HOLD of already-minted rows (`ingest_captions`
+tags-only HOLD is ingest, not send).
+
+**Media — Zernio `mediaItems`.** `build_zernio_payload` raises `ValueError` matching `no media` when
+`media_urls` is empty (`test_payload_omits_media_when_none`). Queued rows are `media_urls=[]` until
+`_ensure_media`. `_publish_one` maps that `ValueError` to `failed`/`bad_payload`. A 400 is already
+`TerminalFailure` — leave `reconcile.py`, nested `tiktokSettings`, and `ZERNIO_API_URL` alone.
+
 ## Publish handshake (`_publish_one`, `run.py:227`)
 
 `_publish_one` is the SOLE network-POST caller. Every publish entry point (`publish_due`, `publish_now`) funnels

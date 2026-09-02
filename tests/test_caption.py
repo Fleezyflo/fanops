@@ -690,7 +690,9 @@ def test_compose_posted_caption_strips_hashes_from_sentence():
 
 def test_compose_posted_caption_empty_lock_is_sentence_only():
     assert compose_posted_caption("hello there", []) == "hello there"
-    assert compose_posted_caption("hello #keep", []) == "hello"
+    assert compose_posted_caption("hello #keep", []) == "hello #keep"
+    assert compose_posted_caption("#beatmaking #songwriting #music #musicblog", []) == (
+        "#beatmaking #songwriting #music #musicblog")
     assert compose_posted_caption("hello there", None) == "hello there"
 
 

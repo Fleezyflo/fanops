@@ -65,5 +65,5 @@
 - Module→cluster split and the safety-verdict table: `docs/CODEMAPS/full-trace-index.md` (its module COUNTS are a
   frozen snapshot and have drifted — `git ls-files 'src/fanops/**/*.py'` is the live number).
 - Any env-var question (default, effect, Studio-settable vs shell-only): `docs/CONFIG.md`.
-- Publish / schedule / reconcile internals: `post/CLAUDE.md`. Studio routes/actions/views: `studio/CLAUDE.md`.
-  Test traps: `tests/CLAUDE.md`.
+- Publish / schedule / reconcile internals, and the vendor wire (`posted_text_for` vs `Post.caption`):
+  `post/CLAUDE.md`. Studio routes/actions/views: `studio/CLAUDE.md`. Test traps: `tests/CLAUDE.md`.

@@ -307,8 +307,9 @@ def build_zernio_payload(*, account_id: str, platform: str, content: str,
         plat["platformSpecificData"] = {"tiktokSettings": _tiktok_settings()}
     payload: dict = {"content": content, "publishNow": True, "platforms": [plat]}
     media = [_zernio_media_url(u) for u in (media_urls or []) if u]
-    if media:
-        payload["mediaItems"] = [{"type": "video", "url": u} for u in media]
+    if not media:
+        raise ValueError("zernio tiktok post has no media — refusing to POST")
+    payload["mediaItems"] = [{"type": "video", "url": u} for u in media]
     return payload
 
 

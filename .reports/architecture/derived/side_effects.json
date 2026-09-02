@@ -551,19 +551,19 @@
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 367
+        "line": 368
       },
       {
         "call": "requests.post",
-        "line": 397
+        "line": 398
       },
       {
         "call": "requests.get",
-        "line": 428
+        "line": 429
       },
       {
         "call": "requests.post",
-        "line": 495
+        "line": 496
       }
     ]
   },
