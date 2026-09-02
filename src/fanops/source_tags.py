@@ -7,7 +7,8 @@ researched_at after scrape finished. Empty lock = scrape finished with zero
 admits. Caption waits on researched_at.
 
 `shortlist_source_tags` keeps a subset of a closed catalog (off-catalog dies).
-Search verifies the exact name (no siblings on the pile). Lock is keep ∩
+Empty catalog: names the pile from the video. Search verifies the exact name
+(no siblings on the pile). Lock is keep ∩
 positive play_count admits in keep order, cap 12. Optional
 `hydrate_locks_from_known` may write `hydrated_at` + lock from already-used
 tags (zero network) but must never write `researched_at` or open the caption
@@ -326,43 +327,53 @@ def _transcript_file_prose(cfg, source) -> str:
 
 
 def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
-    """One LLM pass: keep a subset of a closed catalog. Off-catalog names die."""
+    """One LLM pass. Non-empty catalog: keep ∩ catalog. Empty catalog: name the pile."""
     from fanops.llm import claude_json_meta
-    from fanops.models import source_display_title
     allowed = _dedupe_norm(catalog)[:_CATALOG_CAP]
-    if not allowed:
-        return []
     raw_title = getattr(source, "title", None)
-    if isinstance(raw_title, str) and raw_title.strip():
-        title = raw_title.strip()
-    else:
-        title = source_display_title(source)
+    title = raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else ""
+    title_line = f"title: {title}\n" if title else ""
     language = getattr(source, "language", None) or ""
-    listed = ", ".join(allowed)
-    prompt = (
-        "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
-        "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
-        "(artist/subject that actually appear, genre, format, topic).\n"
-        "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
-        "Do not invent a name that is not in the catalog.\n"
-        f"title: {title}\n"
-        f"language: {language}\n"
-        f"transcript: {excerpt or ''}\n"
-        f"catalog: {listed}\n"
-        "Return at most 12 keep names, catalog order unless a clearer fit comes first."
-    )
+    if allowed:
+        prompt = (
+            "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
+            "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
+            "(artist/subject that actually appear, genre, format, topic).\n"
+            "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
+            "Do not invent a name that is not in the catalog.\n"
+            f"{title_line}"
+            f"language: {language}\n"
+            f"transcript: {excerpt or ''}\n"
+            f"catalog: {', '.join(allowed)}\n"
+            "Return at most 12 keep names, catalog order unless a clearer fit comes first."
+        )
+    else:
+        prompt = (
+            "You name Instagram hashtags for THIS video for a fan account that reposts it.\n"
+            "keep = real hashtag names a person would search to find THIS clip "
+            "(artist/subject that actually appear, genre, format, topic).\n"
+            "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding, #fyp.\n"
+            "Do not invent a glued slogan. Names must be plausible Instagram hashtags.\n"
+            f"{title_line}"
+            f"language: {language}\n"
+            f"transcript: {excerpt or ''}\n"
+            "Return at most 12 keep names."
+        )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
     keep = data.get("keep") if isinstance(data, dict) else None
     if not isinstance(keep, list):
         return []
-    allow = set(allowed)
+    allow = set(allowed) if allowed else None
     out: list[str] = []
     for raw in keep:
         if not isinstance(raw, str):
             continue
         n = _norm(raw)
-        if n and n in allow and n not in out:
-            out.append(n)
+        if not n or n in out:
+            continue
+        if allow is not None and n not in allow:
+            continue
+        out.append(n)
         if len(out) >= _RESEARCH_CAP:
             break
     return out
@@ -712,7 +723,7 @@ def _graph_attach_then_stamp(cfg, table, sid, pile, verified, measurements, *,
 
 def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=None,
                        open_client_fn=None, resolve_fn=None, measure_fn=None) -> bool:
-    """Catalog search, LLM keep, Safari scrape completes lock. Graph may attach; death still stamps.
+    """LLM names, Safari scrape completes lock. Graph may attach; death still stamps.
 
     Charge + rotate via try_cap. A tick with no injected client does one tag
     (instagrapi: delay_range on each XHR, spread work). All peers at cap / dead /
@@ -726,7 +737,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     table = load_source_tag_locks(cfg)
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
-    if _researched(table, sid) and _has_catalog(prior) and not _in_progress(prior):
+    if _researched(table, sid) and not _in_progress(prior):
         return False
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
@@ -785,55 +796,24 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     current = first
     stagger = client is None
     tags_this_walk = 0
-    catalog_search_this_tick = False
     if not _has_catalog(prior):
-        if research_fn is not None:
-            try:
-                raw_names = research_fn(source, _prose(source, excerpt))
-            except Exception as exc:
-                log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
-                return True
-            llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
-            catalog = list(llm_names)
-            catalog_at = iso_z(datetime.now(timezone.utc))
-            if not llm_names:
-                log("source_tags", sid, "research_fail", level="error", err="research_empty")
-                return True
-            verified = []
-            pending = list(llm_names)
-            search_needed = True
-        else:
-            from fanops.models import source_display_title
-            raw_title = getattr(source, "title", None)
-            if isinstance(raw_title, str) and raw_title.strip():
-                title = raw_title.strip()
-            else:
-                title = source_display_title(source)
-            try:
-                hits = search_hashtags_scrape(current, title)
-            except Exception as exc:
-                if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
-                    log("source_tags", sid, "stop_dead", err=type(exc).__name__,
-                        user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
-                    _remember_dead_dump(cfg, current, exc)
-                    return True
-                raise
-            catalog = _dedupe_norm(
-                h.get("name") if isinstance(h, dict) else "" for h in hits)[:_CATALOG_CAP]
-            catalog_at = iso_z(datetime.now(timezone.utc))
-            tags_this_walk += 1
-            catalog_search_this_tick = True
-            if not catalog:
-                log("source_tags", sid, "research_fail", level="error", err="catalog_empty")
-                return True
-            llm_names = shortlist_source_tags(source, _prose(source, excerpt), catalog)
-            verified = list(llm_names)
-            pending = list(llm_names)
-            search_needed = False
-            if not pending:
-                _stamp_source(cfg, table, sid, llm_names, [], measurements,
-                              catalog=catalog, catalog_at=catalog_at)
-                return True
+        if research_fn is None:
+            log("source_tags", sid, "research_fail", level="error", err="research_empty")
+            return True
+        try:
+            raw_names = research_fn(source, _prose(source, excerpt))
+        except Exception as exc:
+            log("source_tags", sid, "research_fail", level="error", err=type(exc).__name__)
+            return True
+        llm_names = _dedupe_norm(raw_names if isinstance(raw_names, list) else [])[:_RESEARCH_CAP]
+        catalog = list(llm_names)
+        catalog_at = iso_z(datetime.now(timezone.utc))
+        if not llm_names:
+            log("source_tags", sid, "research_fail", level="error", err="research_empty")
+            return True
+        verified = []
+        pending = list(llm_names)
+        search_needed = True
     while pending:
         if len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
             break
@@ -886,7 +866,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     scrape_done = (not pending) or len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
-        if verified or catalog_search_this_tick:
+        if verified:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending,
                                catalog=catalog, catalog_at=catalog_at)
@@ -934,7 +914,7 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
                 continue
             sid = str(getattr(source, "id", "") or "")
             rec = table.get(sid) if isinstance(table.get(sid), dict) else {}
-            if not sid or (_researched(table, sid) and _has_catalog(rec) and not _in_progress(rec)):
+            if not sid or (_researched(table, sid) and not _in_progress(rec)):
                 continue
             jp = _transcript_json_path(cfg, source)
             has_json = bool(jp and jp.exists())

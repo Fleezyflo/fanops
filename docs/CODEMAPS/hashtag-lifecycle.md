@@ -9,8 +9,9 @@ one place only: the **source lock**, shipped by `hashtags.ship_from_lock`.
 
 **Ship path = `ship_from_lock`.** Caption ingest / compose takes model picks ∩
 that source's lock, pick order, hard cap 4. Empty / missing lock → empty tag
-line (sentence still ships). No AR floor, no mega slot, no store ∪ corpus, no
-80-pile, no `vet_hashtags` on the posted line.
+line. A tags-only stored `Post.caption` **survives** on the IG/TT wire via
+`compose_posted_caption` — `src/fanops/post/CLAUDE.md`. No AR floor, no mega
+slot, no store ∪ corpus, no 80-pile, no `vet_hashtags` on the posted line.
 
 Lock membership is catalog keep ∩ positive `play_count`, order is keep order,
 cap 12 (`hashtags.lock_from_shortlist`). Caption picks up to 4 from that lock
@@ -29,7 +30,8 @@ stored on the tag — never an invented blended `reach`. Persisted record shape 
 ## Produce — per-source lock (Safari)
 
 `source_tags` owns `00_control/source_tag_locks.json`. `shortlist_source_tags`
-is the produce LLM pass. Safari scrape (`ig_web_scrape`) admits those names
+is the produce LLM pass (live: `research_fn` on `lock_ready_sources`). Safari
+scrape (`ig_web_scrape`) admits those names
 (`researched_at` + `lock`). Graph may cache/confirm a `graph_metric`; Graph
 never vetoes membership, never reorders the lock, and never withholds
 `researched_at`. Empty `lock: []` means scrape finished with zero admits.

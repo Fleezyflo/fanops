@@ -217,11 +217,11 @@ def _source_lock_tags(cfg: Config, src) -> list[str]:
 
 
 def compose_posted_caption(sentence, tags) -> str:
-    """Ship/display caption: sentence + lock tags. Stored Post.caption stays the sentence.
+    """Ship/display caption: sentence + lock tags. IG/TT send this; YouTube sends Post.caption raw.
 
     Strips `CAPTION_TAG_RE` matches and leftover `#` tokens from `sentence` so a previously
-    composed string is idempotent. If tags: `sentence + "\\n" + " ".join(tags[:4])`; else sentence.
-    Empty/missing tags → sentence only.
+    composed string is idempotent. If tags: `sentence + "\\n" + " ".join(tags[:4])`.
+    Empty/missing tags → original `sentence` (hashes included), not the hash-stripped remainder.
     """
     text = sentence or ""
     text = CAPTION_TAG_RE.sub("", text)
@@ -239,11 +239,15 @@ def compose_posted_caption(sentence, tags) -> str:
             break
     if line:
         return f"{text}\n{' '.join(line)}" if text else " ".join(line)
-    return text
+    return (sentence or "").strip()
 
 
 def posted_text_for(cfg: Config, led: Ledger, post) -> str:
-    """The string IG/TT actually ship: sentence + (picks ∩ source lock, cap 4). Empty/missing lock → sentence only."""
+    """IG/TT vendor content: compose_posted_caption(post.caption, picks ∩ source lock).
+
+    Empty/missing lock → original post.caption (hashes included).
+    YouTube does not call this. Wire contract: src/fanops/post/CLAUDE.md.
+    """
     sentence = (getattr(post, "caption", None) or "") if post is not None else ""
     src = None
     if led is not None and post is not None:

@@ -63,7 +63,6 @@ class Account(BaseModel):
                                            # the FALLBACK when a platform has no per-platform id below
     platforms: list[Platform] = Field(default_factory=list)
     status: AccountStatus = AccountStatus.planned
-    access: str = "postiz"                 # METHOD, never a credential
     persona: Optional[str] = None
     persona_id: Optional[str] = None       # A1: link to a first-class Persona (personas.json). When set AND it
                                            # resolves, the linked persona's voice/corpus/levers HYDRATE this
@@ -480,13 +479,13 @@ def set_backend(cfg: Config, handle: str, platform: str, backend: str) -> str:
 
 
 def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
-                status: str = "active", access: str = "postiz",
+                status: str = "active",
                 clip_profile: str = "", framing: str = "") -> str:
     """Onboard a BRAND-NEW account into accounts.json atomically — so the Go-Live tab adds an account
     WITHOUT the operator hand-editing JSON. Validates at this control-file boundary: a non-blank handle and
     every platform a known Platform value (never write an account that won't reload). Rejects a duplicate
-    handle. New accounts default to status=active (so they appear in the mapping list at once) and
-    access=postiz; account_id stays empty — the per-platform ids are set afterward via write_integration /
+    handle. New accounts default to status=active (so they appear in the mapping list at once);
+    account_id stays empty — the per-platform ids are set afterward via write_integration /
     the mapping UI. Returns the handle; raises ValueError on bad input. (M3: tag_lean retired — a linked
     Posted hashtags are the source lock, not persona hashtag_corpus.)"""
     handle = validate_account_handle(handle)
@@ -508,7 +507,7 @@ def add_account(cfg: Config, handle: str, platforms: list, persona: str = "",
         if any(isinstance(a, dict) and a.get("handle") == handle for a in accounts):
             raise ValueError(f"duplicate handle {handle} (already exists)")
         accounts.append({"handle": handle, "account_id": "", "platforms": plats,
-                         "status": str(status), "access": str(access),
+                         "status": str(status),
                          "persona": persona or "",
                          "clip_profile": prof or None, "framing": fr or None, "integrations": {}})
         write_json_atomic(p, raw)
@@ -546,7 +545,7 @@ def ensure_channel(cfg: Config, handle: str, platform: str, persona: str = "") -
                     plats.append(platform); a["platforms"] = plats; changed = True
         if not found:
             accounts.append({"handle": handle, "account_id": "", "platforms": [platform],
-                             "status": "active", "access": "postiz",
+                             "status": "active",
                              "persona": (persona or "").strip(), "integrations": {}})
             changed = True
         if changed:

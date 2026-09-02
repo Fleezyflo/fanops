@@ -101,9 +101,11 @@ def test_skill_part2_is_ship_from_lock_not_banded_composition():
 
 def test_skill_caption_is_sentence_plus_tags_not_tag_line():
     text = _skill_text()
-    assert "hashtag caption" not in text.lower()
-    assert re.search(r"one\s+(?:non-hashtag\s+)?(?:hook\s+)?sentence", text, re.I)
+    assert "posted_text_for" in text
+    assert "compose_posted_caption" in text
     assert re.search(r"3\s*[–-]\s*4\s+tags", text, re.I)
+    assert re.search(r"moment\.hook", text, re.I)
+    assert "empty lock" in text.lower()
 
 
 def test_skill_operator_rule2_cites_ship_from_lock():

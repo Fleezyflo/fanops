@@ -1,6 +1,6 @@
 ---
 name: fanops-hook-hashtag
-description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips. The hook is one short line: what would you say to keep the viewer watching? The posted caption is one hook sentence; 3–4 tags live in the hashtags array (hard cap 4), chosen via ship_from_lock from the source lock only — never words the model invents, never the 80-pile / store∪corpus, never AR floor / mega composition. Evidence-backed; sources cited inline.
+description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOps clips, or when IG/TT vendor content, posted_text_for, compose_posted_caption, empty Zernio caption, or recaptioning already-minted rows is in play. The hook is one short line: what would you say to keep the viewer watching? Tags via ship_from_lock from the source lock only (3–4 tags, hard cap 4) — never invented words, never the 80-pile / store∪corpus, never AR floor / mega composition.
 ---
 
 # FanOps Hooks & Hashtags — researched, platform-measured
@@ -10,13 +10,13 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 > no mega slot, no store ∪ corpus. `tests/test_skill_drift.py` keeps hook patterns
 > and ship rules honest. Caption membership is the source lock only. Lock is
 > catalog keep ∩ positive play_count (`shortlist_source_tags`, keep order, cap 12);
-> caption picks ≤4 by CLIP FIT among the lock.
+> caption picks ≤4 by CLIP FIT among the lock. IG/TT vendor `content` is
+> `posted_text_for` → `compose_posted_caption` — `src/fanops/post/CLAUDE.md`.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
-(big text in a clip's first ~2s) and the **posted caption** — one hook sentence
-plus 3–4 tags in the `hashtags` array. The hook author is `prompts._hook_spec`
-(what would you say to keep the viewer watching). Caption tags are
-lock membership.
+(big text in a clip's first ~2s) and the **posted tags** (lock membership, 3–4
+tags). The hook author is `prompts._hook_spec` (what would you say to keep the
+viewer watching). Already-minted `Post.caption` is the IG/TT wire string.
 
 ## Drift guards (machine-readable; mirror-tested against the code)
 
@@ -40,7 +40,9 @@ INT32_MEDIA_COUNT=2_147_483_647
 2. **Max 4 hashtags. Hard.** More than 4 is forbidden. Enforced in code
    ([hashtags.py](../../../src/fanops/hashtags.py) `ship_from_lock`), not by asking
    the model nicely. General guides say "use 20–30" — ignored; the operator rule wins.
-   The posted `caption` is one hook sentence; the 3–4 tags live in `hashtags`.
+   IG/TT vendor `content` is `posted_text_for` → `compose_posted_caption` (stored
+   `Post.caption`; empty lock keeps hashes). 3–4 tags from the lock append when
+   present. Do not invent a sentence from `moment.hook` for already-minted rows.
 3. **Hashtags come from the source lock via `ship_from_lock`** — never words the
    model invents, never the 80-pile / store ∪ corpus. Membership is the lock
    (`hashtag_store` on every surface of that source). The lock is catalog keep ∩
@@ -67,19 +69,21 @@ HOOK placement is Alignment 5 (middle-centre), MarginV 0, `\fad(0,200)` in
 
 ### Posted caption
 
-The posted `caption` is **one non-hashtag hook sentence**. The same 3–4 tags live
-in the `hashtags` array (hard cap 4). The caption is not the tag line. Tags-only
-or missing language HOLDs (`caption_tags_only` / `caption_missing_language`) —
-the engine does not manufacture `caption = " ".join(tags)`.
+Ingest may HOLD tags-only (`caption_tags_only`) — that is ingest, not send.
+Already-minted `Post.caption` is what IG/TT ship via `posted_text_for` →
+`compose_posted_caption`. Empty lock keeps the stored caption, hashes included.
+When lock tags are present, hashes still strip from the sentence and the 3–4 tags
+append. YouTube sends `Post.caption` raw.
 
 On-screen hook stays the moment gate (`m.hook`). Do not add a caption-item `hook`
-field.
+field. Do not recaption the queue from `moment.hook`.
 
 ### Membership and rank
 
 Membership = **the source lock**. Same list on every surface of that source.
 Invented tags die. Off-lock tags die. Empty lock / missing sidecar → empty tag
-line (sentence still ships). **Never** the persona 80-pile
+line from `ship_from_lock`; stored caption still ships on the IG/TT wire.
+**Never** the persona 80-pile
 (`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus — those are
 not the caption menu.
 

@@ -50,8 +50,8 @@ def test_set_postiz_config_dual_writes_and_tests_auth(tmp_path, monkeypatch):
     res = golive.set_postiz_config(cfg, "https://postiz.example.com", "SECRETKEY")
     assert res.ok is True
     env = (tmp_path / ".env").read_text()                # durable (URL only — secret is keyring)
-    assert "POSTIZ_URL=https://postiz.example.com" in env and "POSTIZ_API_KEY" not in env
-    assert os.environ["POSTIZ_URL"] == "https://postiz.example.com"     # in-process (no restart needed)
+    assert "POSTIZ_URL=https://postiz.example.com/api" in env and "POSTIZ_API_KEY" not in env
+    assert os.environ["POSTIZ_URL"] == "https://postiz.example.com/api"     # in-process (no restart needed)
     assert os.environ["POSTIZ_API_KEY"] == "SECRETKEY"
     assert "SECRETKEY" not in repr(res)                  # the key must NEVER appear in a result
 
@@ -125,7 +125,7 @@ def test_add_account_appends_active_postiz(tmp_path, monkeypatch):
     assert res.ok is True and res.detail["added"] == "new"
     raw = json.loads(cfg.accounts_path.read_text())
     new = next(x for x in raw["accounts"] if x["handle"] == "new")
-    assert new["status"] == "active" and new["access"] == "postiz"
+    assert new["status"] == "active"
     assert new["platforms"] == ["instagram", "tiktok"] and new["persona"] == "hype edits"
 
 def test_add_account_requires_handle(tmp_path, monkeypatch):
@@ -381,7 +381,7 @@ def test_post_golive_config_route_no_key_echo(tmp_path, monkeypatch):
     r = _client(cfg).post("/golive/config", data={"url": "https://p.example.com", "key": "SECRETKEY"})
     assert r.status_code == 200
     assert b"SECRETKEY" not in r.data                 # key never rendered back
-    assert cfg.postiz_url == "https://p.example.com"
+    assert cfg.postiz_url == "https://p.example.com/api"
 
 def test_post_golive_refresh_route_lists_integrations(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

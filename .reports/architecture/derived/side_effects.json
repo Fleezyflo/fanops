@@ -171,11 +171,15 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 501
+        "line": 564
       },
       {
         "call": "Ledger.transaction",
-        "line": 629
+        "line": 688
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 744
       }
     ],
     "fanops.responder": [
@@ -379,7 +383,7 @@
     "fanops.accounts": [
       {
         "call": "_file_lock",
-        "line": 412
+        "line": 411
       }
     ],
     "fanops.fanops_hashtags": [
@@ -529,41 +533,41 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 212
+        "line": 222
       },
       {
         "call": "requests.post",
-        "line": 242
+        "line": 252
       },
       {
         "call": "requests.post",
-        "line": 313
+        "line": 323
       },
       {
         "call": "requests.get",
-        "line": 340
+        "line": 350
       },
       {
         "call": "requests.post",
-        "line": 481
+        "line": 502
       }
     ],
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 367
+        "line": 368
       },
       {
         "call": "requests.post",
-        "line": 397
+        "line": 398
       },
       {
         "call": "requests.get",
-        "line": 428
+        "line": 429
       },
       {
         "call": "requests.post",
-        "line": 495
+        "line": 496
       }
     ]
   },
@@ -809,7 +813,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 82,
+    "ledger_transaction_sites": 83,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
