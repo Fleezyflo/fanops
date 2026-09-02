@@ -102,6 +102,10 @@ protocol (`publish(led, post_id) -> Ledger`). `postiz.py` / `dryrun.py` do not i
   `needs_reconcile` (never `failed`), and `reconcile.py` backfills `public_url` later. This two-phase dependency
   is intentional — do not "fix" `_postiz_permalink` to fabricate a URL, and do not downgrade a `needs_reconcile`
   post to `failed`.
+- **`failed`/`queued` with a real sid is still mirrored (`_MIRROR_HELD`, MOL-991).** `_RECONCILABLE` stays
+  pending-only (QUEUE on a pending post is "not yet resolved"). A `failed` row whose Postiz id is now QUEUE
+  must return to `queued` with the sid kept (`skip_resubmit`). Dropping `failed` from observation is how Studio
+  kept showing errors after the vendor recovered. Resting `published` still must not be written `failed`.
 - **`_publish_throttle_last` (`run.py:83`) is a module-level dict** — the one piece of true global mutable state,
   enforcing `postiz_publish_per_min`. In-process ONLY by design; it would need rework only if `fanops` ran as
   multiple concurrent processes. `reset_publish_throttle` (`:88`) is test-only.

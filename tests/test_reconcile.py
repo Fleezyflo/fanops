@@ -6,9 +6,11 @@ GET /v2/posts/{postSubmissionId} (verified: returns status in-progress|failed|pu
 that HAVE a submission_id; posts without one cannot be looked up via the API and stay parked for
 human reconcile (the digest surfaces them). reconcile_posts:
   - status 'published'   -> PostState.published (+ public_url), so track can later measure it
-  - status 'failed'      -> PostState.failed (definitely not live -> safe to re-queue)
-  - 'in-progress'/'scheduled' -> leave as-is (not yet resolved)
+  - status 'failed'      -> PostState.failed (definitely not live -> safe to re-queue) on PENDING posts
+  - 'in-progress'/'scheduled' -> leave pending as-is (not yet resolved)
   - no submission_id      -> skipped (cannot poll; human reconcile)
+  - failed/queued + real sid -> still observed (MOL-991): QUEUE recovers failed to queued; PUBLISHED
+    promotes; vendor absent rejects failed; resting published never reopens failed
 """
 import itertools
 
@@ -16,7 +18,7 @@ import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
-from fanops.models import Post, PostState, Platform
+from fanops.models import ErrorKind, Post, PostState, Platform
 from fanops.reconcile import reconcile_due, reconcile_posts
 
 
@@ -104,20 +106,161 @@ def test_reconcile_skips_posts_without_submission_id(tmp_path):
     assert led.posts["p4"].state is PostState.needs_reconcile   # still parked
 
 
-def test_reconcile_ignores_terminal_and_queued_posts(tmp_path):
-    # Only submitting/submitted/needs_reconcile are reconcilable. queued/published/analyzed/failed
-    # must not be polled or changed.
+def test_reconcile_does_not_redecide_resting_posts_via_get_status(tmp_path):
+    # published/analyzed stay mirror-only: a get_status published observation must not move them,
+    # and must not even be consulted (resting writes are postiz_state from `mirror` only).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    for pid, st in [("q", PostState.queued), ("pub", PostState.published),
-                    ("an", PostState.analyzed), ("f", PostState.failed)]:
+    for pid, st in [("pub", PostState.published), ("an", PostState.analyzed)]:
         _post(led, pid, st, sub=f"sub_{pid}")
     calls = []
     def get_status(sid):
         calls.append(sid); return {"status": "published"}
     led = reconcile_posts(led, cfg, get_status=get_status)
     assert calls == []
-    assert led.posts["q"].state is PostState.queued
     assert led.posts["pub"].state is PostState.published
+    assert led.posts["an"].state is PostState.analyzed
+
+
+def test_failed_with_real_sid_queue_observation_returns_to_queued(tmp_path):
+    # Vendor recovered (QUEUE / scheduled). failed is not _RECONCILABLE, but a real sid is still
+    # observed: promote OUT of failed to queued, keep the sid (skip_resubmit), clear the stamp.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (Refresh channel needed)"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled", "postiz_state": "QUEUE"})
+    p = led.posts["f"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "postiz_1"
+    assert p.error_reason is None
+    assert p.error_kind is None
+
+
+def test_failed_with_real_sid_published_observation_promotes(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (Refresh channel needed)"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "postSubmissionId": sid, "status": "published", "publicUrl": "https://ig.com/p/1"})
+    p = led.posts["f"]
+    assert p.state is PostState.published
+    assert p.public_url == "https://ig.com/p/1"
+    assert p.error_reason is None
+
+
+def test_failed_with_real_sid_error_observation_stays_failed(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (x)"))
+    before = led.posts["f"].model_dump()
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "failed", "errorMessage": "still blocked", "postiz_state": "ERROR"})
+    p = led.posts["f"]
+    assert p.state is PostState.failed
+    assert p.submission_id == "postiz_1"
+    # error stamp may refresh; must not become queued/published
+    assert p.state is not PostState.queued
+    assert before["submission_id"] == p.submission_id
+
+
+def test_failed_with_real_sid_absent_observation_rejects(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="token expired"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown", "postiz_state": "absent"})
+    assert led.posts["f"].state is PostState.rejected
+    assert led.posts["f"].submission_id == "postiz_1"
+
+
+def test_failed_with_real_sid_unknown_observation_is_byte_identical(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (x)"))
+    before = led.posts["f"].model_dump()
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
+    assert led.posts["f"].model_dump() == before
+
+
+def test_failed_with_real_sid_raising_poll_is_byte_identical(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="f", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.failed, submission_id="postiz_1",
+                      error_kind=ErrorKind.unknown, error_reason="reconciled: poster reports failed (x)"))
+    before = led.posts["f"].model_dump()
+    def boom(sid):
+        raise RuntimeError("transport")
+    led = reconcile_posts(led, cfg, get_status=boom)
+    assert led.posts["f"].model_dump() == before
+
+
+def test_queued_with_real_sid_published_observation_promotes(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="q", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, submission_id="postiz_1"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "postSubmissionId": sid, "status": "published", "publicUrl": "https://ig.com/p/1"})
+    p = led.posts["q"]
+    assert p.state is PostState.published
+    assert p.public_url == "https://ig.com/p/1"
+    assert p.submission_id == "postiz_1"
+
+
+def test_queued_with_real_sid_queue_observation_stays_queued(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="q", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.queued, submission_id="postiz_1"))
+    before = led.posts["q"].model_dump()
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "scheduled", "postiz_state": "QUEUE"})
+    p = led.posts["q"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "postiz_1"
+    # postiz_state may land; state must not leave queued
+    assert p.state is PostState.queued
+    assert before["state"] == "queued"
+
+
+def test_failed_no_sid_retry_capped_with_published_sibling_is_rejected(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="husk", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.failed,
+                      submission_id=None, error_kind=ErrorKind.rate_limit,
+                      error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
+    led.add_post(Post(id="live", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.published,
+                      submission_id="postiz_live", public_url="https://ig.com/p/1"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published"})
+    assert led.posts["husk"].state is PostState.rejected
+    assert led.posts["live"].state is PostState.published
+
+
+def test_failed_no_sid_retry_capped_on_retired_account_is_rejected(tmp_path):
+    from fanops.accounts import add_account
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@gone", [Platform.youtube], status="retired")
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="husk", parent_id="clip_1", account="gone", account_id="1",
+                      platform=Platform.youtube, caption="x", state=PostState.failed,
+                      submission_id=None, error_kind=ErrorKind.rate_limit,
+                      error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
+    assert led.posts["husk"].state is PostState.rejected
+
+
+def test_failed_no_sid_retry_capped_without_sibling_on_active_account_stays_failed(tmp_path):
+    from fanops.accounts import add_account
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@a", [Platform.instagram], status="active")
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="husk", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.failed,
+                      submission_id=None, error_kind=ErrorKind.rate_limit,
+                      error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "unknown"})
+    assert led.posts["husk"].state is PostState.failed
 
 
 def test_reconcile_does_not_poll_a_client_token_post(tmp_path, monkeypatch):
@@ -830,6 +973,59 @@ def test_an_error_row_on_a_published_post_is_recorded_never_failed(tmp_path, mon
     assert p.postiz_state == "ERROR"
     assert p.state is PostState.published                     # NOT failed, NOT needs_reconcile
     assert p.error_reason is None
+
+
+def test_mirror_promotes_failed_row_when_postiz_is_queue(tmp_path, monkeypatch, mocker):
+    # THE STUDIO-79 ROUTE: failed + real sid was invisible to the mirror, so QUEUE in Postiz left
+    # Studio failed forever. One window row with state QUEUE must return the ledger post to queued
+    # without reminting (sid kept).
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "ff", PostState.failed, "postiz_1", error_reason="reconciled: poster reports failed (Refresh channel needed)")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "QUEUE", "releaseURL": None, "releaseId": None}])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["ff"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "postiz_1"
+    assert p.error_reason is None
+    assert p.postiz_state == "QUEUE"
+
+
+def test_mirror_promotes_failed_row_when_postiz_is_published(tmp_path, monkeypatch, mocker):
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "ff", PostState.failed, "postiz_1", error_reason="reconciled: poster reports failed (Refresh channel needed)")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED",
+                            "releaseURL": _IG_URL, "releaseId": _IG_RID}])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["ff"]
+    assert p.state is PostState.published
+    assert p.public_url == _IG_URL
+    assert p.submission_id == "postiz_1"
+
+
+def test_mirror_rejects_failed_row_when_postiz_row_is_absent(tmp_path, monkeypatch, mocker):
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "ff", PostState.failed, "postiz_1", error_reason="Token expired")
+    _serve_window(mocker, [])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["ff"]
+    assert p.state is PostState.rejected
+    assert p.submission_id == "postiz_1"
+    assert p.postiz_state == "absent"
+
+
+def test_mirror_promotes_queued_with_real_sid_when_postiz_is_published(tmp_path, monkeypatch, mocker):
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "qq", PostState.queued, "postiz_1")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED",
+                            "releaseURL": _IG_URL, "releaseId": _IG_RID}])
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["qq"]
+    assert p.state is PostState.published
+    assert p.public_url == _IG_URL
 
 
 def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monkeypatch, mocker):
