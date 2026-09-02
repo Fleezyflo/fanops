@@ -171,11 +171,15 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 557
+        "line": 564
       },
       {
         "call": "Ledger.transaction",
-        "line": 723
+        "line": 688
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 744
       }
     ],
     "fanops.responder": [
@@ -809,7 +813,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 82,
+    "ledger_transaction_sites": 83,
     "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
