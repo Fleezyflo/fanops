@@ -329,13 +329,10 @@ def _transcript_file_prose(cfg, source) -> str:
 def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
     """One LLM pass. Non-empty catalog: keep ∩ catalog. Empty catalog: name the pile."""
     from fanops.llm import claude_json_meta
-    from fanops.models import source_display_title
     allowed = _dedupe_norm(catalog)[:_CATALOG_CAP]
     raw_title = getattr(source, "title", None)
-    if isinstance(raw_title, str) and raw_title.strip():
-        title = raw_title.strip()
-    else:
-        title = source_display_title(source)
+    title = raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else ""
+    title_line = f"title: {title}\n" if title else ""
     language = getattr(source, "language", None) or ""
     if allowed:
         prompt = (
@@ -344,7 +341,7 @@ def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
             "(artist/subject that actually appear, genre, format, topic).\n"
             "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
             "Do not invent a name that is not in the catalog.\n"
-            f"title: {title}\n"
+            f"{title_line}"
             f"language: {language}\n"
             f"transcript: {excerpt or ''}\n"
             f"catalog: {', '.join(allowed)}\n"
@@ -357,7 +354,7 @@ def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
             "(artist/subject that actually appear, genre, format, topic).\n"
             "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding, #fyp.\n"
             "Do not invent a glued slogan. Names must be plausible Instagram hashtags.\n"
-            f"title: {title}\n"
+            f"{title_line}"
             f"language: {language}\n"
             f"transcript: {excerpt or ''}\n"
             "Return at most 12 keep names."

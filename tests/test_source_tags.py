@@ -144,6 +144,9 @@ def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
     assert names == ["#rickross", "#hiphop"]
     assert "Choose ONLY from the catalog" not in captured["prompt"]
     assert "title: Rick Ross talks tiers" in captured["prompt"]
+    shortlist_source_tags(_src(title=None, sid="src_0492c4e71071"), "he says nobody left to fight", [])
+    assert "src_0492c4e71071" not in captured["prompt"]
+    assert "title:" not in captured["prompt"]
 
 
 def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
