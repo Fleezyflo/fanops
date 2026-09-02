@@ -5,22 +5,26 @@ status in-progress|failed|published|scheduled + publicUrl) and is polled one rea
 time (`is_real_submission_id`; a `fanops_` birth token 400s). Postiz has no per-post endpoint at
 all, so it is MIRRORED: ONE bulk read of GET /public/v1/posts over the widest window
 (PostizStatusClient.list_all) is projected onto every Postiz-backed post carrying a REAL
-submission id — the pending ones AND the ones already resting published/analyzed. Either shape
-REQUIRES the submission id.
+submission id — pending, resting published/analyzed, AND held (`failed`/`error`/`queued` with a
+real sid). Either shape REQUIRES the submission id.
 
 The mirror is STATELESS: Postiz's row is the single truth, and a pass over unchanged rows writes
 ZERO ledger bytes. The row's `state` token is kept VERBATIM on `Post.postiz_state` (observability
 only, MOL-784) and written only when the token CHANGED. What an observation may DO is bounded:
 
-  PUBLISHED, first observation on a pending post -> promote (public_url <- releaseURL, media_id <-
-                                                    releaseId, published_at, publish buckets),
-                                                    behind the unchanged IG/TikTok liveness gates
+  PUBLISHED, first observation on a pending OR held post -> promote (public_url <- releaseURL,
+                                                    media_id <- releaseId, published_at, publish
+                                                    buckets), behind the IG/TikTok liveness gates
   ERROR, on a pending post                       -> the failed branch (incl. the candidate hold)
-  QUEUE / absent / anything else                 -> nothing but the postiz_state mirror
+  ERROR, on a held `queued` post                 -> leave queued (sid kept; never reopen failed)
+  QUEUE, on a held `failed` post                 -> queued, sid kept, errors cleared (vendor recovered)
+  absent, on a held `failed` post                -> rejected (vendor row gone; Studio discard)
+  QUEUE / absent / anything else on pending      -> nothing but the postiz_state mirror
   ANY later change on an ALREADY-published post  -> nothing but the postiz_state mirror
 
-No mirrored observation EVER moves a post into a re-queueable state — `failed` is re-queueable, so a
-mirror able to write it is a double-post vector; that call belongs to the operator. A post the
+No mirrored observation EVER moves a RESTING post into a re-queueable state — `failed` is
+re-queueable, so a mirror able to write it from published is a double-post vector. Promoting OUT
+of `failed` when the vendor is QUEUE/PUBLISHED is the inverse: it stops Studio lying. A post the
 backend stops resolving is LATE, not failed, and lateness is DERIVED from the row and the schedule
 at read time by the digest — never stamped into `error_reason`, because a stamp is a decision and
 this module makes none.
@@ -186,7 +190,8 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
 _GATE_REST, _GATE_PARK, _GATE_FAILOPEN = "rest", "park", "fail_open"
 
 
-def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm, graph_get) -> str:
+def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm, graph_get,
+                     ig_usernames: Optional[dict] = None) -> str:
     """MOL-117 — the CONDITIONAL IG rest-gate. `post.account` is the intended IG handle; `media_id` is the
     Postiz releaseId (the IG object id) just captured this pass; `credentialed_handles` is
     meta_graph.credentialed_ig_handles(cfg) (handles with their OWN ig_user_id). `confirm` is the MOL-113
@@ -224,17 +229,55 @@ def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm,
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "ig_confirm_seam_error", err=str(exc)[:120])
         return _GATE_FAILOPEN                                # an erroring seam is NOT a verdict -> retry next tick
-    if res.get("confirmed") and _owner_matches(res.get("owner"), handle):
-        return _GATE_REST                                    # platform-confirmed AND owned by the intended handle
+    cache = ig_usernames if ig_usernames is not None else {}
+    key = handle.lstrip("@").lower()
+    if key not in cache:
+        cache[key] = _ig_username_for_handle(cfg, handle, graph_get)
+    if res.get("confirmed") and _owner_matches(res.get("owner"), handle, cache.get(key)):
+        return _GATE_REST                                    # platform-confirmed AND owned by this account's IG user
     if probe["transport_failed"]:
         return _GATE_FAILOPEN                                # confirmed=False rode a transport hiccup -> fail OPEN
     return _GATE_PARK                                        # DEFINITIVE: object absent or owner mismatch -> fail CLOSED
 
 
-def _owner_matches(owner, handle) -> bool:
-    """The Graph-reported owner username == the intended IG handle, compared case-insensitively and
-    '@'-insensitively (the handle is canonicalized to a leading '@'; the Graph username carries none)."""
-    return bool(owner) and owner.strip().lstrip("@").lower() == handle.lstrip("@").lower()
+def _owner_matches(owner, handle, *aliases) -> bool:
+    """The Graph-reported owner username == the intended IG identity.
+
+    Compared case-insensitively and '@'-insensitively against the FanOps handle AND any extra aliases
+    (the Graph username of this account's `ig_user_id`). The handle is an internal alias and is often
+    not the IG username; matching only the handle parks every live reel on those accounts forever."""
+    if not owner:
+        return False
+    got = owner.strip().lstrip("@").lower()
+    names = (handle,) + aliases
+    return any(got == (n or "").strip().lstrip("@").lower() for n in names if n)
+
+
+def _ig_username_for_handle(cfg: Config, handle: str, graph_get) -> Optional[str]:
+    """Graph username of this FanOps handle's own ig_user_id, or None.
+
+    None on missing creds / missing ig_user_id / transport — the caller then matches the handle only
+    (existing tests without META_GRAPH_TOKEN stay handle-only and never hit the network)."""
+    h = (handle or "").strip().lstrip("@").lower()
+    if not h:
+        return None
+    from fanops.accounts import load_accounts_safe
+    from fanops.meta_graph import _graph_get, resolve_meta_creds
+    accts, err = load_accounts_safe(cfg)
+    if err:
+        return None
+    row = next((a for a in accts.accounts if (a.handle or "").lstrip("@").lower() == h), None)
+    uid = (getattr(row, "ig_user_id", None) or "").strip() if row is not None else ""
+    if not uid:
+        return None
+    creds = resolve_meta_creds(cfg, handle=row.handle)
+    if not creds.token:
+        return None
+    body = _graph_get(cfg, uid, {"fields": "username"}, get=graph_get, token=creds.token)
+    if not isinstance(body, dict):
+        return None
+    name = body.get("username")
+    return name.strip() if isinstance(name, str) and name.strip() else None
 
 
 def _requests_get():
@@ -270,7 +313,8 @@ def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, s
     return captured_url, reported_username, new_sub, _rid
 
 
-def _enrich_poll_liveness(cfg: Config, post, info: dict, *, cred_ig, confirm, graph_get) -> None:
+def _enrich_poll_liveness(cfg: Config, post, info: dict, *, cred_ig, confirm, graph_get,
+                          ig_usernames: Optional[dict] = None) -> None:
     """M04: pre-compute liveness verdicts during the lock-free poll (network allowed). Mutates `info`
     with a `liveness` dict the apply path reads without further network I/O. Enrichment order mirrors
     apply: TikTok analytics fallback BEFORE oEmbed/IG confirm."""
@@ -294,7 +338,8 @@ def _enrich_poll_liveness(cfg: Config, post, info: dict, *, cred_ig, confirm, gr
     if post.platform is _Plat.tiktok:
         liv["tiktok_ok"] = _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username)
     elif post.platform is _Plat.instagram:
-        liv["ig_verdict"] = _ig_rest_verdict(cfg, post, _rid, cred_ig, confirm, graph_get)
+        liv["ig_verdict"] = _ig_rest_verdict(cfg, post, _rid, cred_ig, confirm, graph_get,
+                                              ig_usernames=ig_usernames)
     info["liveness"] = liv
 
 
@@ -365,6 +410,14 @@ _RECONCILABLE = (PostState.submitting, PostState.submitted, PostState.needs_reco
 # the only place a later platform-side change is visible at all, and a mirror that stops looking the moment a
 # post succeeds can only ever report the moment of success.
 _MIRROR_RESTING = (PostState.published, PostState.analyzed)
+# Posts that already have a real vendor id but are NOT pending and NOT resting. Observation is still owed:
+# `failed` was written from an ERROR row, then Postiz moved (QUEUE / PUBLISHED / deleted) and Studio kept
+# showing the stamp because this set used to be invisible. `queued` with a real sid is skip_resubmit — the
+# daemon will not POST again — so when Postiz later PUBLISHES, only the mirror can promote it.
+# Do NOT dump these into _RECONCILABLE: QUEUE maps to status `scheduled`, and the pending else-branch
+# leaves the row unchanged (a failed+QUEUE post would stay failed). Promote-out rules live in
+# `_apply_held_observation`.
+_MIRROR_HELD = (PostState.failed, PostState.error, PostState.queued)
 # The Post.postiz_state sentinel (MOL-784 vocabulary) for "the mirrored window held NO row for this post's
 # submission id". Written ONLY for a post whose id is a real backend id — an id that COULD have matched.
 _MIRROR_ABSENT = "absent"
@@ -531,11 +584,13 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
 
     A post whose channel resolves to no live provider is skipped; that is logged for a pending post
     (it is work not done) and silent for a resting one (there is nothing it was owed)."""
-    routing = _reconcilable_routing(cfg, snapshot, states=_RECONCILABLE + _MIRROR_RESTING)
+    routing = _reconcilable_routing(
+        cfg, snapshot, states=_RECONCILABLE + _MIRROR_RESTING + _MIRROR_HELD)
     mirrored, token_only, polled = [], [], []
     for p in snapshot.posts.values():
         resting = p.state in _MIRROR_RESTING
-        if not (resting or p.state in _RECONCILABLE) or not p.submission_id:
+        held = p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)
+        if not (resting or held or p.state in _RECONCILABLE) or not p.submission_id:
             continue
         try:
             backend = _poll_backend_for_sid(cfg, routing, p.submission_id)
@@ -544,6 +599,8 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
                 log("reconcile", p.id, "skipped: no live provider")
             continue
         if backend != "postiz":
+            if held:
+                continue                                 # held observation is Postiz-mirror only (no remint path)
             if not resting:
                 if is_real_submission_id(p.submission_id):
                     if _POSTIZ_CUID.match(p.submission_id):
@@ -554,9 +611,38 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
                     token_only.append(p)                 # fanops_ birth token is not a GET key (I4)
         elif is_real_submission_id(p.submission_id):
             mirrored.append(p)
-        elif not resting:
+        elif not resting and not held:
             token_only.append(p)                         # a client token names no row -> age ladder only
     return mirrored, token_only, polled
+
+
+def _reject_exhausted_husks(led: Ledger, cfg: Config, log) -> None:
+    """Drop failed rows that will never remint: retry cap exhausted AND (a sibling of the same clip
+    already holds a real vendor id, OR the account is no longer active). Does not remint."""
+    from fanops.accounts import AccountStatus, load_accounts_safe
+    from fanops.post.run import _DAEMON_TRANSIENT_MAX
+    accts, err = load_accounts_safe(cfg)
+    by_handle = {} if err else {(a.handle or "").lstrip("@").lower(): a for a in accts.accounts}
+    shipped: set[tuple] = set()
+    for p in led.posts.values():
+        if is_real_submission_id(p.submission_id) and p.state in (
+                PostState.queued, PostState.submitted, PostState.needs_reconcile,
+                PostState.published, PostState.analyzed):
+            shipped.add((p.parent_id, p.account, p.platform))
+    for p in list(led.posts.values()):
+        if p.state is not PostState.failed:
+            continue
+        if is_real_submission_id(p.submission_id):
+            continue
+        if int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX:
+            continue
+        row = by_handle.get((p.account or "").lstrip("@").lower())
+        inactive = row is not None and row.status is not AccountStatus.active
+        sibling = (p.parent_id, p.account, p.platform) in shipped
+        if not (inactive or sibling):
+            continue
+        led.set_post_state(p.id, PostState.rejected, error_reason=None, error_kind=None)
+        log("reconcile", p.id, "rejected: exhausted husk")
 
 
 def reconcile_due(cfg: Config) -> dict[str, int]:
@@ -592,8 +678,9 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
     # apply writes nothing on its behalf. A successful window overwrites that with the real observation. A
     # failed window therefore degrades to exactly this: visited, un-mirrored, un-written.
+    _ig_names: dict[str, Optional[str]] = {}
     for p in mirrored + token_only:
-        if p.state in _RECONCILABLE:
+        if p.state in _RECONCILABLE or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)):
             mirror[p.submission_id] = {"status": "unknown"}
             polled_as[p.id] = p.submission_id
     if mirrored:
@@ -608,9 +695,10 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         if window is not None:
             for p in mirrored:
                 info = _mirror_info(window.get(p.submission_id))
-                if info["status"] == "published" and p.state in _RECONCILABLE:
+                if info["status"] == "published" and (
+                        p.state in _RECONCILABLE or p.state in _MIRROR_HELD):
                     _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
-                                          graph_get=None)
+                                          graph_get=None, ig_usernames=_ig_names)
                 mirror[p.submission_id] = info
             log("reconcile", "-", "mirror_window", rows=len(window), posts=len(mirrored))
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
@@ -622,7 +710,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                 info = poll(p.submission_id) or {}       # network, NO lock held
                 if (info.get("status") or "").lower() == "published":
                     _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
-                                          graph_get=None)
+                                          graph_get=None, ig_usernames=_ig_names)
                 results[p.submission_id] = info
             except AuthError:
                 raise                                    # bad key (Zernio): every poll fails -> halt
@@ -658,6 +746,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         from fanops.meta_graph import confirm_post_live as confirm
     from fanops.meta_graph import credentialed_ig_handles
     _cred_ig = credentialed_ig_handles(cfg)
+    _ig_names: dict[str, Optional[str]] = {}
+    _reject_exhausted_husks(led, cfg, log)
     # RESTING posts (published/analyzed) the caller mirrored. The ONLY thing that may happen to one of them
     # here is the postiz_state snapshot: a row that changed, or vanished, is RECORDED and nothing more. It
     # is deliberately not a re-decision — `failed` is re-queueable, so a mirror allowed to move a live post
@@ -668,7 +758,9 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if upd:
             led.posts[post.id] = post.model_copy(update=upd)
             log("reconcile", post.id, "mirrored", postiz_state=upd["postiz_state"], resting=post.state.value)
-    for post in [p for p in led.posts.values() if p.state in _RECONCILABLE]:
+    for post in [p for p in led.posts.values()
+                 if p.state in _RECONCILABLE
+                 or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id))]:
         if not post.submission_id:
             log("reconcile", post.id, "skipped: no submission_id")
             continue                       # no id -> cannot be looked up at all -> human reconcile
@@ -780,7 +872,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
                         _reason = _UNVERIFIED_TIKTOK
                 elif post.platform is Platform.instagram:
-                    _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get)
+                    _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get,
+                                                ig_usernames=_ig_names)
                     if _verdict == _GATE_PARK:
                         _reason = _UNVERIFIED_IG
                     elif _verdict == _GATE_FAILOPEN:
@@ -824,6 +917,13 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 get_logger(cfg)("reconcile", post.id, "archive_error", err=str(exc)[:120])   # fail-open: never block a recovered publish
             log("reconcile", post.id, "published")
         elif status == "failed":
+            if post.state is PostState.queued:
+                # A real sid already at the vendor: ERROR must not reopen `failed` (daemon remint).
+                log("reconcile", post.id, "left: queued holds real sid on vendor ERROR")
+                continue
+            if post.state in (PostState.failed, PostState.error):
+                log("reconcile", post.id, "left: still failed")
+                continue
             # Report 11 §5 (I-7): a `failed` poll of THIS row's OWN submission_id does NOT disprove a
             # reconcile_candidate_id. They name DIFFERENT objects — the candidate is the record Zernio said
             # it already holds when it rejected us as a duplicate (409), and we never polled it (deliberately:
@@ -845,12 +945,23 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"))
             log("reconcile", post.id, "failed")
         else:
-            # QUEUE / in-progress / scheduled / unknown / absent -> the observation did not RESOLVE the
-            # post, which is not the same as the post being lost. The only write left here is the (state,
-            # age) escalation out of the in-flight-submit lane; the mirror snapshot has already landed
-            # above. Nothing stamps lateness: the digest DERIVES it from this row and the schedule on
-            # every read, so it is always current, whereas a stamped "stuck 9h" is wrong an hour later
-            # and was the do-not-look-again latch that made a strand silent in the first place.
+            # QUEUE / in-progress / scheduled / unknown / absent.
+            if post.state in (PostState.failed, PostState.error):
+                raw = (info.get("postiz_state") or "")
+                if raw == _MIRROR_ABSENT:
+                    led.set_post_state(post.id, PostState.rejected, error_reason=None, error_kind=None)
+                    log("reconcile", post.id, "rejected: vendor row absent")
+                    continue
+                if status == "scheduled" or raw == "QUEUE":
+                    led.set_post_state(post.id, PostState.queued, error_reason=None, error_kind=None)
+                    log("reconcile", post.id, "requeued: vendor recovered to QUEUE")
+                    continue
+                log("reconcile", post.id, f"left: {status or 'unknown'}")
+                continue
+            if post.state is PostState.queued:
+                log("reconcile", post.id, f"left: {status or 'unknown'}")
+                continue
+            # Pending: the observation did not RESOLVE the post. Age-escalate submitting only.
             term = _apply_age_terminal(post, now)
             if term is not None:
                 led.posts[post.id] = post.model_copy(update=term["update"])
