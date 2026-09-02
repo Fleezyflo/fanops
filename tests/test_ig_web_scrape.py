@@ -100,19 +100,69 @@ def test_safari_xhr_sends_www_claim(monkeypatch):
     assert "X-IG-WWW-Claim" in expr
 
 
-def test_ensure_scrape_safari_unattended_does_not_navigate(tmp_path, monkeypatch):
-    """Unattended tick must not activate Safari or reload instagram.com."""
+def test_ensure_scrape_safari_unattended_restores_profile_window(tmp_path, monkeypatch):
+    """Closed Safari windows are the unattended failure. Restore them; do not wait for scrape-login."""
     import fanops.ig_hashtag_scrape as igs
     opened = []
+    n = {"i": 0}
+
+    def ev(*_a, **_k):
+        n["i"] += 1
+        if n["i"] == 1:
+            raise RuntimeError("no instagram tab")
+        return "2"
+
     monkeypatch.setattr(igs, "_enable_safari_apple_events", lambda: None)
     monkeypatch.setattr(igs, "stop_scrape_chrome", lambda *_a, **_k: None)
     monkeypatch.setattr(igs, "scrape_users", lambda _cfg: ["u"])
-    monkeypatch.setattr(igs, "safari_eval",
-                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("no instagram tab")))
+    monkeypatch.setattr(igs, "safari_eval", ev)
     monkeypatch.setattr(igs, "safari_open_instagram", lambda u: opened.append(u))
     cfg = Config(root=tmp_path)
-    assert igs.ensure_scrape_safari(cfg, "u", navigate=False) is False
-    assert opened == []
+    assert igs.ensure_scrape_safari(cfg, "u", navigate=False) is True
+    assert opened == ["u"]
+
+
+def test_safari_open_instagram_does_not_reload_live_tab(monkeypatch):
+    """Reloading a tab that already has instagram.com is the session-kill."""
+    import fanops.ig_hashtag_scrape as igs
+    scripts = []
+    monkeypatch.setattr(igs, "safari_eval", lambda *_a, **_k: "2")
+    monkeypatch.setattr(igs, "_safari_osascript",
+                        lambda script, *args: scripts.append(script) or "ok")
+    igs.safari_open_instagram("markmakmouly")
+    assert scripts == []
+
+
+def test_safari_open_profile_window_script_does_not_set_url(monkeypatch):
+    import fanops.ig_hashtag_scrape as igs
+    scripts = []
+
+    def osa(script, *args):
+        scripts.append(script)
+        if "return \"yes\"" in script:
+            return "no"
+        return "opened"
+
+    monkeypatch.setattr(igs, "_safari_osascript", osa)
+    igs.safari_open_profile_window("markmakmouly")
+    assert scripts
+    assert all("set URL" not in s for s in scripts)
+    assert any("New \" & prefix & \" Window" in s for s in scripts)
+
+
+def test_safari_set_instagram_skips_existing_tab(monkeypatch):
+    import fanops.ig_hashtag_scrape as igs
+    seen = []
+
+    def osa(script, *args):
+        seen.append(script)
+        return "have"
+
+    monkeypatch.setattr(igs, "_safari_osascript", osa)
+    igs._safari_set_instagram_if_missing("markmakmouly")
+    assert seen
+    assert "return \"have\"" in seen[0]
+    assert "set URL of current tab of w" in seen[0]
 
 
 def test_open_web_session_refuses_without_safari(tmp_path, monkeypatch):

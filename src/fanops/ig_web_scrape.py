@@ -182,7 +182,7 @@ def _looks_like_media(d: dict) -> bool:
 
 
 def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgWebSession:
-    """Open a web scrape session. Tick uses an existing Instagram tab. Never Chrome."""
+    """Open a web scrape session. Restores a missing Safari profile window. Never Chrome."""
     from fanops.ig_hashtag_scrape import ensure_scrape_safari, scrape_users
     users = scrape_users(cfg)
     if not users:
