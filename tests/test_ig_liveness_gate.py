@@ -93,6 +93,26 @@ def test_credentialed_owner_matches_ig_username_not_fanops_handle(tmp_path, monk
     assert led.posts["p1"].public_url == _URL
 
 
+def test_credentialed_username_lookup_transport_is_fail_open_not_unverified(tmp_path, monkeypatch):
+    # Same alias fixture. Graph username GET hiccups (non-200); confirm already has owner wahedbared.
+    # Hiccup is not a verdict — fail OPEN, never park unverified.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok-global")
+    _write_accounts(cfg, [{"handle": "@cisumwolfhom", "account_id": "1", "platforms": ["instagram"],
+                           "status": "active", "ig_user_id": "ig-wolf-99"}])
+    _ig_post(led, account="@cisumwolfhom")
+    def confirm(cfg_, post, *, get=None):
+        return {"confirmed": True, "owner": "wahedbared"}
+    class _R:
+        status_code = 503
+        def json(self):
+            return {"error": "temporarily unavailable"}
+    led = reconcile_posts(led, cfg, get_status=_poll_published, confirm=confirm,
+                          graph_get=lambda url, params=None, timeout=None: _R())
+    assert led.posts["p1"].state is PostState.needs_reconcile
+    assert "unverified" not in (led.posts["p1"].error_reason or "").lower()
+
+
 def test_credentialed_owner_mismatch_parks_needs_reconcile(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _write_accounts(cfg, [{"handle": "@markmakmouly", "account_id": "1", "platforms": ["instagram"],

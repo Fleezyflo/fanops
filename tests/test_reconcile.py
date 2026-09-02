@@ -250,6 +250,23 @@ def test_failed_no_sid_retry_capped_on_retired_account_is_rejected(tmp_path):
     assert led.posts["husk"].state is PostState.rejected
 
 
+def test_failed_no_sid_retry_capped_on_retired_account_is_rejected_via_reconcile_due(tmp_path, mocker):
+    # Empty fetch (no sids) still visits: husk reject is local-only. No ensure_up, no Graph.
+    from fanops.accounts import add_account
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@gone", [Platform.youtube], status="retired")
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="husk", parent_id="clip_1", account="gone", account_id="1",
+                      platform=Platform.youtube, caption="x", state=PostState.failed,
+                      submission_id=None, error_kind=ErrorKind.rate_limit,
+                      error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
+    led.save()
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    reconcile_due(cfg)
+    assert Ledger.load(cfg).posts["husk"].state is PostState.rejected
+    ensure.assert_not_called()
+
+
 def test_failed_no_sid_retry_capped_without_sibling_on_active_account_stays_failed(tmp_path):
     from fanops.accounts import add_account
     cfg = Config(root=tmp_path)
@@ -289,7 +306,39 @@ def test_reconcile_does_not_poll_a_client_token_post(tmp_path, monkeypatch):
                       submission_id="cmqeb1uuv0001o579bjcdj7my"))
     _mirrored, _token_only, zpolled = _reconcile_reads(cfg, led, lambda *a, **k: None)
     assert zpolled == []
+    assert "pz" in [p.id for p in _token_only]
     assert led.posts["pz"].state is PostState.needs_reconcile
+
+
+def test_reconcile_due_zernio_leftover_cuid_escalates_submitting_without_get(tmp_path, monkeypatch, mocker):
+    # Leftover Postiz cuid on a Zernio channel is unpollable (GET 400s) but still visited.
+    # Real-id submitting past 24h -> needs_reconcile; do not auto-failed. GET never called.
+    from datetime import datetime, timezone, timedelta
+    from fanops.accounts import add_account, set_backend
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    seen = []
+    def _get(url, **kw):
+        seen.append(url)
+        raise AssertionError(f"must not GET leftover cuid: {url}")
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="pz", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x",
+                      state=PostState.submitting,
+                      submission_id="cmqeb1uuv0001o579bjcdj7my",
+                      scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()))
+    led.save()
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["pz"]
+    assert p.state is PostState.needs_reconcile
+    assert p.state is not PostState.failed
+    assert seen == []
+
 
 def test_reconcile_durable_across_save(tmp_path):
     # R1: a malformed publicUrl ("u") fails safe_public_url AND triggers the published_no_url_parked

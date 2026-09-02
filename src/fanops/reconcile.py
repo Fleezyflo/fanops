@@ -202,10 +202,11 @@ def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm,
         called here.
       • CREDENTIALED account: FAIL-CLOSED platform identity gate. Ask the platform (confirm_post_live over
         the captured media_id, scoped to this handle's creds) and REST only when it resolves AND its owner
-        username == the intended handle. A DEFINITIVE non-confirmation (object absent) or an owner MISMATCH
-        -> _GATE_PARK (never rest on Postiz's word). A TRANSPORT failure during the confirm (the injected
-        probe saw the getter raise) -> _GATE_FAILOPEN: the confirmed=False is a network hiccup, NOT a verdict,
-        so don't strand the post — retry next tick. Mirrors TikTok's posture: fail-closed on a real identity
+        username == the intended handle (or this account's Graph username). A DEFINITIVE non-confirmation
+        (object absent) or an owner MISMATCH -> _GATE_PARK (never rest on Postiz's word). A TRANSPORT
+        failure during the confirm (the injected probe saw the getter raise) OR a Graph username lookup
+        hiccup after a token is present -> _GATE_FAILOPEN: a network miss is NOT a verdict, so don't
+        strand the post — retry next tick. Mirrors TikTok's posture: fail-closed on a real identity
         mismatch, fail-open on a network hiccup."""
     handle = (post.account or "").strip()
     if handle.lstrip("@").lower() not in {h.lstrip("@").lower() for h in credentialed_handles}:
@@ -233,9 +234,10 @@ def _ig_rest_verdict(cfg: Config, post, media_id, credentialed_handles, confirm,
     key = handle.lstrip("@").lower()
     if key not in cache:
         cache[key] = _ig_username_for_handle(cfg, handle, graph_get)
-    if res.get("confirmed") and _owner_matches(res.get("owner"), handle, cache.get(key)):
+    name, kind = cache[key] if isinstance(cache.get(key), tuple) else (cache.get(key), "no_creds")
+    if res.get("confirmed") and _owner_matches(res.get("owner"), handle, name if kind == "ok" else None):
         return _GATE_REST                                    # platform-confirmed AND owned by this account's IG user
-    if probe["transport_failed"]:
+    if probe["transport_failed"] or kind == "transport":
         return _GATE_FAILOPEN                                # confirmed=False rode a transport hiccup -> fail OPEN
     return _GATE_PARK                                        # DEFINITIVE: object absent or owner mismatch -> fail CLOSED
 
@@ -253,31 +255,36 @@ def _owner_matches(owner, handle, *aliases) -> bool:
     return any(got == (n or "").strip().lstrip("@").lower() for n in names if n)
 
 
-def _ig_username_for_handle(cfg: Config, handle: str, graph_get) -> Optional[str]:
-    """Graph username of this FanOps handle's own ig_user_id, or None.
+def _ig_username_for_handle(cfg: Config, handle: str, graph_get) -> tuple[Optional[str], str]:
+    """Graph username of this FanOps handle's own ig_user_id, as `(name, kind)`.
 
-    None on missing creds / missing ig_user_id / transport — the caller then matches the handle only
-    (existing tests without META_GRAPH_TOKEN stay handle-only and never hit the network)."""
+    kind is `"ok"` | `"no_creds"` | `"transport"`. No handle / registry error / no ig_user_id / no
+    token -> `(None, "no_creds")` so the caller matches the handle only (existing tests without
+    META_GRAPH_TOKEN stay handle-only and never hit the network). Token present but Graph miss
+    (non-dict body / empty username) -> `(None, "transport")` — a hiccup, not "this handle has no
+    alias." Do not cache a bare None."""
     h = (handle or "").strip().lstrip("@").lower()
     if not h:
-        return None
+        return None, "no_creds"
     from fanops.accounts import load_accounts_safe
     from fanops.meta_graph import _graph_get, resolve_meta_creds
     accts, err = load_accounts_safe(cfg)
     if err:
-        return None
+        return None, "no_creds"
     row = next((a for a in accts.accounts if (a.handle or "").lstrip("@").lower() == h), None)
     uid = (getattr(row, "ig_user_id", None) or "").strip() if row is not None else ""
     if not uid:
-        return None
+        return None, "no_creds"
     creds = resolve_meta_creds(cfg, handle=row.handle)
     if not creds.token:
-        return None
+        return None, "no_creds"
     body = _graph_get(cfg, uid, {"fields": "username"}, get=graph_get, token=creds.token)
     if not isinstance(body, dict):
-        return None
+        return None, "transport"
     name = body.get("username")
-    return name.strip() if isinstance(name, str) and name.strip() else None
+    if isinstance(name, str) and name.strip():
+        return name.strip(), "ok"
+    return None, "transport"
 
 
 def _requests_get():
@@ -416,7 +423,7 @@ _MIRROR_RESTING = (PostState.published, PostState.analyzed)
 # daemon will not POST again — so when Postiz later PUBLISHES, only the mirror can promote it.
 # Do NOT dump these into _RECONCILABLE: QUEUE maps to status `scheduled`, and the pending else-branch
 # leaves the row unchanged (a failed+QUEUE post would stay failed). Promote-out rules live in
-# `_apply_held_observation`.
+# reconcile_posts.
 _MIRROR_HELD = (PostState.failed, PostState.error, PostState.queued)
 # The Post.postiz_state sentinel (MOL-784 vocabulary) for "the mirrored window held NO row for this post's
 # submission id". Written ONLY for a post whose id is a real backend id — an id that COULD have matched.
@@ -571,16 +578,22 @@ def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> 
 
 def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, list]:
     """Split the reconcile surface by RESOLVED BACKEND — the read SHAPES are not interchangeable, so the
-    split is the first thing the pass decides. Returns (mirrored, token_only, polled):
+    split is the first thing the pass decides. Returns (mirrored, token_only, polled).
+
+    Fetch = mirrored / polled. Network. Visit = token_only + local apply. No network. Age ladder
+    and husk reject run even when fetch is empty. Unpollable is not invisible: a Postiz cuid on a
+    Zernio channel is the same miss as `fanops_` — do not GET it; still visit it.
 
       mirrored   — Postiz-backed, a REAL submission id, pending OR resting. One bulk window answers all
                    of them; a resting post is here so its row keeps being observed after it succeeds.
-      token_only — pending, carrying only a `fanops_` client token (Postiz OR Zernio). NO backend
-                   row can ever carry that id, so there is nothing to mirror and nothing to poll —
-                   but the post is still VISITED, because the (state, age) escalation is what un-strands it.
-      polled     — Zernio-backed, pending, and a REAL submission id: the per-post GET /posts/{id}.
-                   Zernio is NOT mirrored, so a Zernio-backed resting post is out of the surface
-                   entirely and is never written an `absent` it was never asked about.
+      token_only — unpollable, still visited. A `fanops_` client token (Postiz OR Zernio), OR a leftover
+                   Postiz cuid on a Zernio channel. NO backend row can ever carry that id, so there is
+                   nothing to mirror and nothing to poll — but the post is still VISITED, because the
+                   (state, age) escalation is what un-strands it.
+      polled     — Zernio-backed, pending, and a REAL submission id that is not a leftover Postiz cuid:
+                   the per-post GET /posts/{id}. Zernio is NOT mirrored, so a Zernio-backed resting
+                   post is out of the surface entirely and is never written an `absent` it was never
+                   asked about.
 
     A post whose channel resolves to no live provider is skipped; that is logged for a pending post
     (it is work not done) and silent for a resting one (there is nothing it was owed)."""
@@ -605,6 +618,7 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
                 if is_real_submission_id(p.submission_id):
                     if _POSTIZ_CUID.match(p.submission_id):
                         log("reconcile", p.id, "skipped: postiz id on zernio channel")
+                        token_only.append(p)   # unpollable, still visited
                         continue
                     polled.append(p)                     # Zernio: per-post GET of a real backend id
                 else:
@@ -660,12 +674,19 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     Zernio poll error is CAPTURED and re-raised inside the apply so its per-post containment (log,
     leave the row alone) stays where the rest of the per-post logic lives.
 
-    Empty surface -> no transaction. Caller gates on backend/key. Returns the resolved counts."""
+    Fetch = mirrored / polled (network). Visit = token_only + local apply (no network). Age
+    ladder and husk reject run even when fetch is empty. Unpollable is not invisible. Graph
+    username lookup after a token is the same seam as confirm-transport: hiccup is not a verdict.
+
+    Empty fetch -> local-only transaction (husk reject); no ensure_up, no Graph. Caller gates on
+    backend/key. Returns the resolved counts."""
     snapshot = Ledger.load(cfg)
     healed = heal_stranded_submitting(cfg)
     log = get_logger(cfg)
     mirrored, token_only, polled = _reconcile_reads(cfg, snapshot, log)
     if not (mirrored or token_only or polled):
+        with Ledger.transaction(cfg) as led:
+            _reject_exhausted_husks(led, cfg, log)
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
@@ -678,7 +699,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
     # apply writes nothing on its behalf. A successful window overwrites that with the real observation. A
     # failed window therefore degrades to exactly this: visited, un-mirrored, un-written.
-    _ig_names: dict[str, Optional[str]] = {}
+    _ig_names: dict[str, tuple[Optional[str], str]] = {}
     for p in mirrored + token_only:
         if p.state in _RECONCILABLE or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)):
             mirror[p.submission_id] = {"status": "unknown"}
@@ -746,7 +767,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         from fanops.meta_graph import confirm_post_live as confirm
     from fanops.meta_graph import credentialed_ig_handles
     _cred_ig = credentialed_ig_handles(cfg)
-    _ig_names: dict[str, Optional[str]] = {}
+    _ig_names: dict[str, tuple[Optional[str], str]] = {}
     _reject_exhausted_husks(led, cfg, log)
     # RESTING posts (published/analyzed) the caller mirrored. The ONLY thing that may happen to one of them
     # here is the postiz_state snapshot: a row that changed, or vanished, is RECORDED and nothing more. It
