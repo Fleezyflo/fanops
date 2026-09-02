@@ -97,6 +97,11 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
 
 ## Lens 2 — Hashtags: derivation, persistence, presentation to the LLMs
 
+> Live ship is `docs/CODEMAPS/hashtag-lifecycle.md` (`ship_from_lock`). Live vendor
+> `content` is `src/fanops/post/CLAUDE.md` (`posted_text_for` / `compose_posted_caption`).
+> `vet_hashtags` / `derive_corpus` are deleted (`tests/test_hashtag_layer_b_tombstone.py`).
+> §§2.1–2.5 below are the 2026-07 snapshot of that deleted path, not current send.
+
 ### 2.1 Sources a tag can enter from (end-to-end)
 
 1. **Composition floors** — `_ARABIC` only (`hashtags.py`). FORMAT, not a reach claim: one region tag on
@@ -188,13 +193,10 @@ empty line. Recorded in `meta_captions[surface].tag_sources`.
   carries NO hashtag dimension; the store is ranked by the tag's OWN live Graph reach, never a post that used
   it (`fanops_hashtags.py:2-4`). Pinned by `tests/test_hashtag_attribution_severance.py`
   (`test_lift_weights_carry_no_hashtag_dimension`, `test_no_learning_module_attributes_a_post_outcome_to_hashtags`).
-- **A shipped caption is composed of: hashtags ONLY.** `_caption_entry` sets `caption = " ".join(tags)`
-  (`caption.py:276`); the prompt forbids prose/@mentions/emoji (`prompts.py:420-421`). The ONE non-hashtag
-  addendum is the artist tag `ARTIST_HANDLE` appended on its own line by `decide_tag` at crosspost
-  (`crosspost.py:231-232`) — subject to `decide_tag`'s non-synchronized gate. This holds for BOTH account
-  types (fan accounts and the main handle route through the same caption pipeline); the third-person
-  fan-voice is a prompt instruction (`prompts.py:400-404`), not a caption-content difference. The on-screen
-  HOOK is a SEPARATE burned layer authored by the moment gate (`moments.py`), not caption content.
+- **IG/TT vendor `content` is `posted_text_for` → `compose_posted_caption`.** Empty lock keeps stored
+  `Post.caption` (hashes included); lock tags append when present. YouTube sends `Post.caption` raw.
+  On-screen hook stays the moment gate. `_caption_entry` / `vet_hashtags` (`caption = " ".join(tags)`)
+  are the deleted ingest snapshot, not the send path.
 
 ### 2.7 Tests pinning hashtag behavior
 
