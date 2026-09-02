@@ -241,13 +241,12 @@ def test_researched_without_catalog_rejudges(tmp_path):
     )
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
-    assert calls["n"] == 1
-    assert rec["lock"] == ["#rickross"]
-    assert rec["pile"] == ["#rickross"]
-    assert rec.get("catalog") == ["#rickross"]
-    assert rec.get("catalog_at")
-    assert rec["researched_at"]
-    assert "quality_pass" not in rec
+    assert calls["n"] == 0
+    assert rec["lock"] == ["#whichwayamifacing"]
+    assert rec["pile"] == ["#whichwayamifacing"]
+    assert rec["researched_at"] == "2026-08-19T00:00:00Z"
+    assert "catalog" not in rec
+    assert client.search_calls == []
 
 
 def test_catalog_search_feeds_judge(tmp_path, mocker):
