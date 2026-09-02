@@ -700,10 +700,13 @@ def test_lock_ready_sources_no_whisper_errors_no_stamp(tmp_path):
     from fanops.models import Source, SourceState
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
+    # Newest-first: visit no-whisper src_1 first so no_transcript logs, then lock src_2.
     led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_2", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "b")
     lock_ready_sources(cfg, client=_SearchClient({"music": [_Hit("music")]},
@@ -769,9 +772,11 @@ def test_lock_ready_sources_at_most_one(tmp_path):
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.add_source(Source(id="src_2", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "a")
     _write_whisper(cfg, "b")
@@ -779,11 +784,37 @@ def test_lock_ready_sources_at_most_one(tmp_path):
                            media_by_tag={"#music": [_Media(1, "", play_count=8)]})
     lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
     table = load_source_tag_locks(cfg)
-    assert set(table) == {"src_1"}
-    assert table["src_1"]["researched_at"]
+    assert set(table) == {"src_2"}
+    assert table["src_2"]["researched_at"]
     lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
     table = load_source_tag_locks(cfg)
     assert set(table) == {"src_1", "src_2"}
+
+
+def test_lock_ready_sources_newest_created_at_first(tmp_path):
+    """Unlocked-with-json walk is newest created_at first (same comparator as produce_source_ids).
+
+    Insert-order FIFO left a 2026-09-01 tape behind 25 older unlocked sources; one Safari
+    attempt per tick meant it never got a seat."""
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_old", source_path=str(tmp_path / "old.mp4"),
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
+    led.add_source(Source(id="src_new", source_path=str(tmp_path / "new.mp4"),
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
+    led.save()
+    _write_whisper(cfg, "old")
+    _write_whisper(cfg, "new")
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
+    table = load_source_tag_locks(cfg)
+    assert set(table) == {"src_new"}
+    assert table["src_new"]["researched_at"]
 
 
 def test_lock_ready_sources_skips_pending_without_error_loop(tmp_path):
@@ -938,9 +969,11 @@ def test_lock_ready_after_quota_on_a_tries_b(tmp_path):
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "a")
     _write_whisper(cfg, "b")
@@ -1122,9 +1155,11 @@ def test_lock_ready_stamps_leftover_quota_row_before_next_source(tmp_path):
     cfg = _cfg(tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_a", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
     led.add_source(Source(id="src_b", source_path=str(tmp_path / "b.mp4"),
-                          state=SourceState.catalogued))
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
     led.save()
     _write_whisper(cfg, "a")
     _write_whisper(cfg, "b")
