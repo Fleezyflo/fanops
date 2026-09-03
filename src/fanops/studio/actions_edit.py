@@ -12,7 +12,7 @@ from fanops.models import CaptionSet, ClipState, Post, PostState
 from fanops.log import get_logger
 from fanops.timeutil import iso_z
 from fanops.studio.views import _imminent
-from fanops.studio.actions_common import ActionResult, _now, _inherit_captions
+from fanops.studio.actions_common import ActionResult, _inherit_captions
 
 def _guard_editable_post(led: Ledger, post_id: str, now: datetime) -> tuple[Optional[Post], Optional[str]]:
     """Return (post, None) if the post is editable: an awaiting_approval post (the Review worklist — gated,
@@ -136,7 +136,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     with Ledger.transaction(cfg) as led2:               # re-guard + write INSIDE a short transaction
         # fresh now: the model call may have taken ~180s, during which the post could have become
         # imminent/due — re-check against real wall-clock (fail-safe), not the stale entry-time now.
-        p2, err2 = _guard_editable_post(led2, post_id, _now(None))
+        p2, err2 = _guard_editable_post(led2, post_id, _actions._now(None))
         if err2:
             return ActionResult(ok=False, error=err2)
         p2.caption = new_caption
@@ -173,7 +173,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
     hook_burned = not rc.hook_burn_failed
     try:
         with Ledger.transaction(cfg) as led2:
-            p2, err2 = _guard_editable_post(led2, post_id, _now(None))
+            p2, err2 = _guard_editable_post(led2, post_id, _actions._now(None))
             if err2:
                 return ActionResult(ok=False, error=err2)
             m2 = led2.moments.get(mom_id)
