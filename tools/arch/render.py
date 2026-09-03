@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .common import REPO
+from .common import REPO, write_text
 
 
 def expected(repo: Path | None = None) -> dict[Path, str]:
@@ -32,14 +32,5 @@ def expected(repo: Path | None = None) -> dict[Path, str]:
 def render_all() -> list[tuple[str, bool]]:
     out: list[tuple[str, bool]] = []
     for p, text in expected().items():
-        out.append((p.relative_to(REPO).as_posix(), _write_text(p, text)))
+        out.append((p.relative_to(REPO).as_posix(), write_text(p, text)))
     return out
-
-
-def _write_text(path: Path, text: str) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    old = path.read_text(encoding="utf-8") if path.exists() else None
-    if old == text:
-        return False
-    path.write_text(text, encoding="utf-8")
-    return True

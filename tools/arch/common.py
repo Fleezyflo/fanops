@@ -53,6 +53,16 @@ def write(path: Path, obj: object) -> bool:
     return True
 
 
+def write_text(path: Path, text: str) -> bool:
+    """Write raw text. Returns True if the bytes changed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = path.read_text(encoding="utf-8") if path.exists() else None
+    if old == text:
+        return False
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def load(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
