@@ -33,6 +33,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/cutover_postiz.py": ("tests/test_cutover.py",),
     "src/fanops/daemon_studio.py": ("tests/test_daemon_studio.py", "tests/test_studio_lifecycle.py",
                                          "tests/test_studio_lifecycle_e2e.py"),
+    "src/fanops/daemon_siblings.py": ("tests/test_daemon_keeper.py", "tests/test_daemon_sibling_readiness.py"),
     "src/fanops/daemon.py": ("tests/test_daemon_plist.py", "tests/test_daemon_keeper.py",
                              "tests/test_daemon_sibling_readiness.py", "tests/test_self_adopt.py",
                              "tests/test_daemon_readiness.py", "tests/test_daemon_studio.py"),
