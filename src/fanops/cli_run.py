@@ -14,10 +14,6 @@ from fanops.errors import AuthError, fail_open
 from fanops.escalation import EscalationPosture, decide
 from fanops.ledger import Ledger
 from fanops.models import PostState
-from fanops.pipeline import advance
-from fanops.responder import get_responder
-from fanops.track import pull_metrics, _default_list_posts
-from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
 from fanops.timing_bias import apply_timing_bias
@@ -43,6 +39,7 @@ def gates_blocked_note(s) -> str | None:
 
 
 def learn_pass(cfg: Config, *, window: str = "30d") -> None:
+    from fanops import cli
     # E1 post-loop learning pass, extracted from cmd_run for testability AND to close the same
     # lost-update window cmd_track closes (ECC-review fix #1): the metrics FETCH (up to ~30s network)
     # runs OUTSIDE the ledger lock; only classify/amplify/retire run inside a tight transaction.
@@ -53,10 +50,10 @@ def learn_pass(cfg: Config, *, window: str = "30d") -> None:
     led0 = Ledger.load(cfg)
     pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
                       if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
+    rows = list(cli._default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
     with Ledger.transaction(cfg) as led:
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
-        r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
+        led = cli.pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
+        r = cli.classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
         # BOTH learn-pass actuators carry an operator-INTENT flag, default OFF, and both leave a
         # breadcrumb whichever way they go. AMPLIFY MINTS NEW WORK — a winner re-opens a moment
         # request on its source, producing new moments -> clips -> posts. RETIRE DESTROYS — a loser's
@@ -69,13 +66,13 @@ def learn_pass(cfg: Config, *, window: str = "30d") -> None:
         # read-only: pull metrics, classify, log the counts, write nothing.
         if cfg.learn_amplify:
             before = {sid: int(s.meta.get("amplify_count", 0)) for sid, s in led.sources.items()}
-            led = amplify(led, cfg, r["winners"])
+            led = cli.amplify(led, cfg, r["winners"])
             fired = [sid for sid, s in led.sources.items() if int(s.meta.get("amplify_count", 0)) > before.get(sid, 0)]
             get_logger(cfg)("learn", "-", "amplified", sources=len(fired), winners=len(r["winners"]))
         else:
             get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]))
         if cfg.learn_retire:
-            led = retire(led, r["losers"])
+            led = cli.retire(led, r["losers"])
             get_logger(cfg)("learn", "-", "retired", losers=len(r["losers"]))
         else:
             get_logger(cfg)("learn", "-", "retire_skipped", losers=len(r["losers"]))
@@ -97,6 +94,7 @@ class _CmdRunPassOutcome:
 
 def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     """One respond+advance converge-then-learn pass. status=None with halt_stderr = halted."""
+    from fanops import cli
     from fanops.fanops_hashtags import reset_safari_tick_slot
     from fanops.pipeline_run import paused, run_lease
     reset_safari_tick_slot()
@@ -120,8 +118,8 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     with run_lease(cfg):
         for _ in range(10):
             try:
-                get_responder(cfg).answer_pending(cfg)
-                s = advance(cfg, base_time=base_time)
+                cli.get_responder(cfg).answer_pending(cfg)
+                s = cli.advance(cfg, base_time=base_time)
             except Exception as e:
                 # Progress spine: converge fault → NONZERO (None → cmd_run exit 1; loop skips tick).
                 get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])

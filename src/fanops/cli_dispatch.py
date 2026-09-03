@@ -1,85 +1,40 @@
 """CLI verb dispatch router (extracted from cli.py, SA-C8-5).
 
 Public callers should continue to import handlers from ``fanops.cli``; this module is the routing home
-for ``fanops`` subcommand dispatch after argparse.
+for ``fanops`` subcommand dispatch after argparse. Handlers are resolved through ``fanops.cli`` at call
+time so tests can monkeypatch ``fanops.cli.<handler>`` and have ``main()`` observe the stub.
 """
 from __future__ import annotations
 
 from fanops.config import Config
 
-from fanops.cli import (
-    cmd_advance,
-    cmd_adjust,
-    cmd_amplify_variants,
-    cmd_audit,
-    cmd_autopilot,
-    cmd_bulk_send_to_review,
-    cmd_canary,
-    cmd_compose,
-    cmd_config,
-    cmd_cutover,
-    cmd_daemon,
-    cmd_digest,
-    cmd_discover,
-    cmd_doctor,
-    cmd_gc,
-    cmd_health,
-    cmd_init,
-    cmd_ingest,
-    cmd_intake,
-    cmd_map_media,
-    cmd_overlay_reburn,
-    cmd_p4_bias,
-    cmd_pause,
-    cmd_promote_source,
-    cmd_publish_queue,
-    cmd_pull,
-    cmd_purge,
-    cmd_recover_audit,
-    cmd_reconcile,
-    cmd_reframe,
-    cmd_resolve,
-    cmd_respond,
-    cmd_restore,
-    cmd_retire_source,
-    cmd_retry_metrics,
-    cmd_retry_source,
-    cmd_run,
-    cmd_status,
-    cmd_studio,
-    cmd_track,
-    cmd_unhold,
-    cmd_up,
-    cmd_verify_live,
-    cmd_wipe,
-)
-
 
 def dispatch(args, cfg: Config) -> int:
-    if args.cmd == "reframe":  return cmd_reframe(cfg, args)
-    if args.cmd == "overlay-reburn": return cmd_overlay_reburn(cfg, args)
-    if args.cmd == "status":   return cmd_status(cfg)
-    if args.cmd == "pause":    return cmd_pause(cfg, on=True)
-    if args.cmd == "resume":   return cmd_pause(cfg, on=False)
+    from fanops import cli
+    if args.cmd == "reframe":  return cli.cmd_reframe(cfg, args)
+    if args.cmd == "overlay-reburn": return cli.cmd_overlay_reburn(cfg, args)
+    if args.cmd == "status":   return cli.cmd_status(cfg)
+    if args.cmd == "pause":    return cli.cmd_pause(cfg, on=True)
+    if args.cmd == "resume":   return cli.cmd_pause(cfg, on=False)
     if args.cmd == "recover":
-        if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
+        if args.recover_cmd == "audit": return cli.cmd_recover_audit(cfg)
         return 2
-    if args.cmd == "ingest":     return cmd_ingest(cfg)
-    if args.cmd == "pull":       return cmd_pull(cfg, args)
-    if args.cmd == "respond":    return cmd_respond(cfg)
-    if args.cmd == "digest":     return cmd_digest(cfg)
-    if args.cmd == "advance":    return cmd_advance(cfg, args)
-    if args.cmd == "track":    return cmd_track(cfg, args.window)
-    if args.cmd == "map-media": return cmd_map_media(cfg)
-    if args.cmd == "verify-live": return cmd_verify_live(cfg)
-    if args.cmd == "reconcile": return cmd_reconcile(cfg, report_terminals=getattr(args, "report_terminals", False))
-    if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
-    if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
-    if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
-    if args.cmd == "cutover":  return cmd_cutover(cfg, args)
-    if args.cmd == "wipe":     return cmd_wipe(cfg, args)
-    if args.cmd == "purge":    return cmd_purge(cfg, args)
-    if args.cmd == "restore":  return cmd_restore(cfg, args)
+    if args.cmd == "ingest":     return cli.cmd_ingest(cfg)
+    if args.cmd == "pull":       return cli.cmd_pull(cfg, args)
+    if args.cmd == "respond":    return cli.cmd_respond(cfg)
+    if args.cmd == "digest":     return cli.cmd_digest(cfg)
+    if args.cmd == "advance":    return cli.cmd_advance(cfg, args)
+    if args.cmd == "track":    return cli.cmd_track(cfg, args.window)
+    if args.cmd == "map-media": return cli.cmd_map_media(cfg)
+    if args.cmd == "verify-live": return cli.cmd_verify_live(cfg)
+    if args.cmd == "reconcile": return cli.cmd_reconcile(cfg, report_terminals=getattr(args, "report_terminals", False))
+    if args.cmd == "adjust":   return cli.cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
+    if args.cmd == "amplify-variants": return cli.cmd_amplify_variants(cfg)
+    if args.cmd == "p4-bias": return cli.cmd_p4_bias(cfg)
+    if args.cmd == "cutover":  return cli.cmd_cutover(cfg, args)
+    if args.cmd == "wipe":     return cli.cmd_wipe(cfg, args)
+    if args.cmd == "purge":    return cli.cmd_purge(cfg, args)
+    if args.cmd == "restore":  return cli.cmd_restore(cfg, args)
     if args.cmd == "paths-rebase":
         from fanops.paths_rebase import cmd_paths_rebase
         return cmd_paths_rebase(cfg, args)
@@ -104,11 +59,11 @@ def dispatch(args, cfg: Config) -> int:
             from fanops.lever_docs import cmd_lever_docs
             return cmd_lever_docs(cfg)
         return 2
-    if args.cmd == "init":     return cmd_init(cfg, args)
-    if args.cmd == "health":   return cmd_health(cfg, args)
-    if args.cmd == "config":   return cmd_config(cfg)
-    if args.cmd == "doctor":   return cmd_doctor(cfg, args)
-    if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
+    if args.cmd == "init":     return cli.cmd_init(cfg, args)
+    if args.cmd == "health":   return cli.cmd_health(cfg, args)
+    if args.cmd == "config":   return cli.cmd_config(cfg)
+    if args.cmd == "doctor":   return cli.cmd_doctor(cfg, args)
+    if args.cmd == "publish-queue": return cli.cmd_publish_queue(cfg)
     if args.cmd == "posts":
         if args.posts_cmd == "recaption":
             from fanops.recaption import cmd_posts_recaption   # lazy, matching the hashtags-verb precedent
@@ -116,26 +71,26 @@ def dispatch(args, cfg: Config) -> int:
         if args.posts_cmd == "census-retired":
             from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
             return cmd_posts_reconcile_retired(cfg, args)
-    if args.cmd == "daemon":   return cmd_daemon(cfg, args)
-    if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
-    if args.cmd == "up":       return cmd_up(cfg, args)
-    if args.cmd == "canary":   return cmd_canary(cfg, args)
-    if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
-    if args.cmd == "compose":  return cmd_compose(cfg, args)
+    if args.cmd == "daemon":   return cli.cmd_daemon(cfg, args)
+    if args.cmd == "autopilot": return cli.cmd_autopilot(cfg, args)
+    if args.cmd == "up":       return cli.cmd_up(cfg, args)
+    if args.cmd == "canary":   return cli.cmd_canary(cfg, args)
+    if args.cmd == "gc":       return cli.cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
+    if args.cmd == "compose":  return cli.cmd_compose(cfg, args)
     if args.cmd == "resolve":
-        return cmd_resolve(cfg, args)
+        return cli.cmd_resolve(cfg, args)
     if args.cmd == "audit":
-        return cmd_audit(cfg, args)
+        return cli.cmd_audit(cfg, args)
     if args.cmd == "bulk-send-to-review":
-        return cmd_bulk_send_to_review(cfg, args)
-    if args.cmd == "unhold":     return cmd_unhold(cfg, args)
-    if args.cmd == "retry-source": return cmd_retry_source(cfg, args)
-    if args.cmd == "retire-source": return cmd_retire_source(cfg, args)
-    if args.cmd == "promote-source": return cmd_promote_source(cfg, args)
-    if args.cmd == "retry-metrics": return cmd_retry_metrics(cfg, args)
-    if args.cmd == "discover":   return cmd_discover(cfg, args)
-    if args.cmd == "intake":     return cmd_intake(cfg)
-    if args.cmd == "studio":    return cmd_studio(cfg, args)
+        return cli.cmd_bulk_send_to_review(cfg, args)
+    if args.cmd == "unhold":     return cli.cmd_unhold(cfg, args)
+    if args.cmd == "retry-source": return cli.cmd_retry_source(cfg, args)
+    if args.cmd == "retire-source": return cli.cmd_retire_source(cfg, args)
+    if args.cmd == "promote-source": return cli.cmd_promote_source(cfg, args)
+    if args.cmd == "retry-metrics": return cli.cmd_retry_metrics(cfg, args)
+    if args.cmd == "discover":   return cli.cmd_discover(cfg, args)
+    if args.cmd == "intake":     return cli.cmd_intake(cfg)
+    if args.cmd == "studio":    return cli.cmd_studio(cfg, args)
     if args.cmd == "run":
-        return cmd_run(cfg, args)
+        return cli.cmd_run(cfg, args)
     return 1

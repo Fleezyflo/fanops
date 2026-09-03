@@ -83,6 +83,7 @@ CANARY_RUN_ID_VERSION = _canary_identity.CANARY_RUN_ID_VERSION
 CANARY_RUN_NAMESPACE = _canary_identity.CANARY_RUN_NAMESPACE
 _HEX64_RE = _canary_identity._HEX64_RE
 _parse_canonical_name = _canary_identity._parse_canonical_name
+_canon = _canary_identity._canon
 BASELINE_FORMAT_VERSION = _canary_baseline.BASELINE_FORMAT_VERSION
 capture_canary_baseline = _canary_baseline.capture_canary_baseline
 compare_canary_baseline = _canary_baseline.compare_canary_baseline

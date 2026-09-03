@@ -923,7 +923,8 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
         return False
     
     if not wait:
-        return _studio_port_answers()
+        import fanops.daemon as _daemon
+        return _daemon._studio_port_answers()
         
     # Freshness verification: SHA on disk must match serving code.
     # PID replacement: serving PID must differ from old_pid.
@@ -936,7 +937,8 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
         pl = plistlib.loads(studio_plist_path().read_bytes())
         expect_gen = pl.get("EnvironmentVariables", {}).get("FANOPS_STUDIO_GENERATION")
     
-    return _studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
+    import fanops.daemon as _daemon
+    return _daemon._studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
 
 
 def _kickstart_studio_if_present(cfg: Config) -> None:
@@ -956,13 +958,14 @@ def _plane_studio(cfg: Config) -> dict:
     ONCE there: nothing was restarted) and print the exact launch command
     (in .claude/launch.json). Either way Studio never blocks `up`'s READY (report-only gate posture
     unchanged) — the difference is `fanops up` now cycles Studio instead of just printing a command."""
+    import fanops.daemon as _daemon
     if studio_plist_path().exists():
         if _redeploy_studio(cfg, wait=True):
             return {"plane": "studio", "ok": True, "report_only": True,
                     "detail": f"cycled onto current code; answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
         return {"plane": "studio", "ok": False, "report_only": True,
                 "detail": f"restarted but not answering on {STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT} after {int(_STUDIO_PORT_TRIES * _STUDIO_PORT_STEP)}s — check 07_reports/studio.err"}
-    if _studio_port_answers():
+    if _daemon._studio_port_answers():
         return {"plane": "studio", "ok": True, "report_only": True,
                 "detail": f"answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
     return {"plane": "studio", "ok": False, "report_only": True,

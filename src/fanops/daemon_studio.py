@@ -10,7 +10,6 @@ import plistlib
 import secrets
 import socket
 import sys
-import time
 from pathlib import Path
 
 from fanops.config import Config
@@ -131,7 +130,8 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     # `studio_loaded` means what it says: launchd accepted the job. `verdict` is None to say so, rather
     # than reporting an unproven True.
     if wait:
-        loaded = _studio_port_answers_within(host, port, expect_gen=generation, old_pid=old_pid)
+        from fanops import daemon
+        loaded = daemon._studio_port_answers_within(host, port, expect_gen=generation, old_pid=old_pid)
 
     return {
         "studio_loaded": loaded,
@@ -186,17 +186,18 @@ def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STU
 
     An unreachable endpoint is absence of evidence, not evidence of stale code — it does NOT fail here.
     A REACHABLE endpoint that disagrees is evidence, and it does."""
+    from fanops import daemon
     for _ in range(max(1, tries)):
-        if _studio_port_answers(host, port):
+        if daemon._studio_port_answers(host, port):
             break
-        time.sleep(step)
+        daemon.time.sleep(step)
     else:
         return False                             # never came back inside the budget
     if expect_sha is None and expect_gen is None and old_pid is None:
         return True                              # nothing was claimed, so nothing to disprove
     # ONE read, no retry loop: kickstart -k SIGKILLs the old resident, so whatever is accepting on the
     # port is already the new process, and create_app registers every route before app.run binds.
-    fp = _studio_get_fingerprint(host, port)
+    fp = daemon._studio_get_fingerprint(host, port)
     if fp is None:
         return True                              # unreachable -> unproven, NOT failed
     return ((expect_sha is None or fp.get("sha") == expect_sha)
