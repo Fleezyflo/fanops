@@ -107,7 +107,7 @@
     "fanops.overlay_reburn": [
       {
         "call": "Ledger.transaction",
-        "line": 358
+        "line": 363
       }
     ],
     "fanops.paths_rebase": [
@@ -467,11 +467,11 @@
     "fanops.reframe_apply": [
       {
         "call": "fcntl.flock",
-        "line": 169
+        "line": 170
       },
       {
         "call": "fcntl.flock",
-        "line": 182
+        "line": 183
       }
     ],
     "fanops.stage_lock": [
@@ -594,7 +594,7 @@
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
-        "line": 939
+        "line": 940
       }
     ],
     "fanops.transcribe": [
@@ -777,17 +777,17 @@
     "fanops.reframe": [
       {
         "call": "subprocess.run",
-        "line": 541
+        "line": 547
       }
     ],
     "fanops.reframe_apply": [
       {
         "call": "subprocess.run",
-        "line": 220
+        "line": 221
       },
       {
         "call": "subprocess.run",
-        "line": 313
+        "line": 314
       }
     ],
     "fanops.signals": [

@@ -265,7 +265,7 @@
     ],
     "fanops.reframe": [
       {
-        "line": 60,
+        "line": 66,
         "members": [
           "ALREADY_REFRAMED",
           "DRIFT",

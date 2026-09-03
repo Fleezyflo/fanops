@@ -106,6 +106,10 @@
     "fanops.settings",
     "fanops.signals",
     "fanops.source_tags",
+    "fanops.source_tags_scrape",
+    "fanops.source_tags_shortlist",
+    "fanops.source_tags_sidecar",
+    "fanops.source_tags_walk",
     "fanops.stage_lock",
     "fanops.stitch_render",
     "fanops.stranded_posts",
@@ -257,6 +261,10 @@
     "fanops.settings": "S02_configuration",
     "fanops.signals": "S06_media_analysis",
     "fanops.source_tags": "S10_caption_hashtag",
+    "fanops.source_tags_scrape": null,
+    "fanops.source_tags_shortlist": null,
+    "fanops.source_tags_sidecar": null,
+    "fanops.source_tags_walk": null,
     "fanops.stage_lock": "S01_foundation",
     "fanops.stitch_render": "S09_render",
     "fanops.stranded_posts": "S19_maintenance",
@@ -303,11 +311,15 @@
   "totals": {
     "assigned": 140,
     "ghosts": 0,
-    "modules": 142,
-    "unassigned": 2
+    "modules": 146,
+    "unassigned": 6
   },
   "unassigned_modules": [
     "fanops.ingest_shard",
-    "fanops.media_probe"
+    "fanops.media_probe",
+    "fanops.source_tags_scrape",
+    "fanops.source_tags_shortlist",
+    "fanops.source_tags_sidecar",
+    "fanops.source_tags_walk"
   ]
 }
