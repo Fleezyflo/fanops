@@ -55,6 +55,8 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
                                         "tests/test_fanops_hashtags.py"),
     "src/fanops/paths_rebase.py": ("tests/test_media_path_integrity.py",),
     "src/fanops/persona_research.py": ("tests/test_hashtag_layer_b_tombstone.py", "tests/test_persona_corpus.py"),
+    "src/fanops/prompts_caption.py": ("tests/test_prompts.py", "tests/test_variations_gate.py",
+                                      "tests/test_persona_corpus.py", "tests/test_no_ghosts.py"),
     "src/fanops/hashtags.py": ("tests/test_hashtags.py", "tests/test_source_tag_lock.py",
                               "tests/test_hashtag_layer_b_tombstone.py"),
     "src/fanops/fanops_hashtags.py": ("tests/test_fanops_hashtags.py",
