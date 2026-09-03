@@ -1,18 +1,18 @@
-"""Unit tests for scripts/ci_timing_report.py — pytest stdout parser + JSON merge."""
+"""Unit tests for scripts/ci/timing_report.py — pytest stdout parser + JSON merge."""
 from __future__ import annotations
+import importlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "ci_timing_report.py"
+SCRIPT = ROOT / "scripts" / "ci" / "timing_report.py"
 
 
 def _import():
     sys.path.insert(0, str(ROOT / "scripts"))
-    import ci_timing_report as m  # noqa: PLC0415
-    return m
+    return importlib.import_module("ci.timing_report")
 
 
 def test_parse_passed_only():

@@ -2,12 +2,20 @@
 """Blocking CI SLO gate — compare pytest wall-clock to CI_UNIT_PYTEST_BUDGET_S. Stdlib-only."""
 from __future__ import annotations
 import argparse
+import importlib.util
 import os
 import sys
 from pathlib import Path
 from typing import IO, Union
 
-from ci_timing_report import parse_pytest_summary
+_tr_spec = importlib.util.spec_from_file_location(
+    "timing_report",
+    Path(__file__).with_name("timing_report.py"),
+)
+_timing_report = importlib.util.module_from_spec(_tr_spec)
+assert _tr_spec.loader is not None
+_tr_spec.loader.exec_module(_timing_report)
+parse_pytest_summary = _timing_report.parse_pytest_summary
 
 LogSource = Union[Path, IO[str]]
 

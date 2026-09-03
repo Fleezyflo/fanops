@@ -110,7 +110,7 @@ jobs:
         if: always() && (steps.e2e-integration.outcome == 'success' || steps.e2e-integration.outcome == 'failure')
         continue-on-error: true
         run: |
-          python scripts/ci_timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
+          python scripts/ci/timing_report.py --step e2e_integration --log pytest-e2e-integration.log \
             --sha "${{ github.sha }}" --json-out ci-timing.partial.json
       # Two things live here: the cross-cutting closed-loop regressions, AND
       # test_negative_control_is_detected — the only BLOCKING-path run of the arch negative
@@ -127,5 +127,5 @@ jobs:
         if: always() && (steps.e2e-slow.outcome == 'success' || steps.e2e-slow.outcome == 'failure')
         continue-on-error: true
         run: |
-          python scripts/ci_timing_report.py --step e2e_slow --log pytest-e2e-slow.log \
+          python scripts/ci/timing_report.py --step e2e_slow --log pytest-e2e-slow.log \
             --sha "${{ github.sha }}" --json-out ci-timing.partial.json --merge-in
