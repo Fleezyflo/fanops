@@ -1,7 +1,7 @@
 # src/fanops/persona_research.py
 """Persona niche terms. Caption hashtags are the source lock (`ship_from_lock`), not a derived corpus."""
 from __future__ import annotations
-from fanops.hashtag_hygiene import is_curatable
+from fanops.hashtags import is_curatable
 
 
 def _seed_token(raw) -> str | None:

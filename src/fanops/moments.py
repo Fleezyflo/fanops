@@ -758,7 +758,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
     # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
     # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
-    from fanops.caption import _lang_base, brand_risk_flag    # function-local: avoids module cycle; _lang_base for lang gate
+    from fanops.caption_ingest import _lang_base, brand_risk_flag    # function-local: avoids module cycle; _lang_base for lang gate
     src_lang = _lang_base((led.sources[source_id].language if source_id in led.sources else None))
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.parent_id != source_id}

@@ -1,13 +1,29 @@
-"""Tests for fanops.text — the AI-tell sanitizer. The guarantee: no em/en-dash, curly quote,
-or invisible character survives sanitize_generated_text, regardless of position or count, and
-Arabic / hashtag text is untouched. This is the HARD guarantee behind the prompt instructions.
-Special characters are written as \\u escapes so the intent is unambiguous in source."""
+"""Tests for fanops.text — safe_public_url (https permalink guard) and the AI-tell sanitizer.
+sanitize_generated_text guarantee: no em/en-dash, curly quote, or invisible character survives,
+regardless of position or count, and Arabic / hashtag text is untouched. This is the HARD guarantee
+behind the prompt instructions. Special characters are written as \\u escapes so the intent is
+unambiguous in source."""
 import pytest
-from fanops.text import sanitize_generated_text, _ZEROWIDTH
+from fanops.text import safe_public_url, sanitize_generated_text, _ZEROWIDTH
 
 # The four invisible code points _ZEROWIDTH must strip, written as \u escapes so the intent is
 # unambiguous in source: zero-width space, zero-width non-joiner, zero-width joiner, BOM/ZWNBSP.
 _ZW_CODEPOINTS = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
+
+
+def test_safe_public_url_accepts_only_well_formed_https():
+    assert safe_public_url("https://www.instagram.com/p/abc/") == "https://www.instagram.com/p/abc/"
+    assert safe_public_url("  https://x.com/p  ") == "https://x.com/p"   # trimmed
+    assert safe_public_url("http://x.com/p") is None        # http rejected (public permalinks are https)
+    assert safe_public_url("javascript:alert(1)") is None   # non-web scheme
+    assert safe_public_url("ftp://x.com/p") is None
+    assert safe_public_url("not-a-url") is None
+    assert safe_public_url("https://") is None              # scheme but no host
+    assert safe_public_url("https://evil\n.com/p") is None   # embedded newline -> malformed/injected
+    assert safe_public_url("https://x.com/a b") is None      # internal whitespace
+    assert safe_public_url("") is None
+    assert safe_public_url(None) is None
+
 
 def test_em_dash_becomes_comma_space():
     assert sanitize_generated_text("Hometown hero just snapped — Moh Flow") == "Hometown hero just snapped, Moh Flow"

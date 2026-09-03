@@ -23,106 +23,28 @@ is the accepted cost of riding the existing login instead of an API key. The cro
 therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
 Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
-import json, logging, random, re, subprocess, time
+import json, logging, random, subprocess, time
 from fanops.errors import ToolchainMissingError
+from fanops.llm_errors import (
+    LlmContextLimitError,
+    LlmFramesUnreadError,
+    LlmRateLimitError,
+    LlmSchemaError,
+    LlmTimeoutError,
+    LlmToolchainError,
+    _is_context_limit,
+    _is_toolchain_error,
+)
+from fanops.llm_json import _extract_json_object
+from fanops.llm_json import _json_candidates  # noqa: F401 — re-export for test_llm
 
 logger = logging.getLogger("fanops.llm")
 _sleep = time.sleep                                  # indirection so tests can stub the backoff wait
 
-_JSON_FENCE_RE = re.compile(r'```json\s*\n(.*?)\n\s*```', re.DOTALL)
-
-def _json_candidates(text: str) -> list[str]:
-    """Return candidate JSON-object strings extracted from `text`, in priority order:
-    1. Content of ```json … ``` fenced blocks (the lang tag must be present).
-    2. Balanced-brace substrings found by scanning (outermost `{…}` objects only).
-    Only object-shaped (brace-delimited) substrings are returned — arrays/scalars
-    are not included. String literals inside braces are handled so `{` / `}` inside
-    a JSON string value don't confuse the depth counter."""
-    if not text:
-        return []
-    candidates: list[str] = []
-    for m in _JSON_FENCE_RE.finditer(text):
-        candidates.append(m.group(1))
-    # Balanced-brace scan for outermost objects, respecting string escaping.
-    i, n = 0, len(text)
-    while i < n:
-        if text[i] != '{':
-            i += 1; continue
-        depth = in_str = esc = 0
-        for j in range(i, n):
-            c = text[j]
-            if esc:
-                esc = 0
-            elif c == '\\' and in_str:
-                esc = 1
-            elif c == '"':
-                in_str ^= 1
-            elif not in_str:
-                if c == '{': depth += 1
-                elif c == '}':
-                    depth -= 1
-                    if depth == 0:
-                        candidates.append(text[i:j + 1]); i = j + 1; break
-        else:
-            i += 1
-    return candidates
-
-def _extract_json_object(text: str) -> dict | None:
-    """Return the first valid JSON object parsed from `text`, or None.
-    Iterates `_json_candidates` in order; returns the first that parses as a
-    JSON dict. Arrays, scalars, and parse errors are skipped."""
-    for cand in _json_candidates(text):
-        try:
-            obj = json.loads(cand)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(obj, dict):
-            return obj
-    return None
-
-class LlmTimeoutError(RuntimeError):
-    """`claude -p` exceeded its time budget. Distinct from a generic RuntimeError so the responder
-    can RETRY it (a timeout is usually transient) rather than treating it like a hard failure."""
-
-class LlmRateLimitError(RuntimeError):
-    """`claude -p` stayed rate-limited (api_error_status 429/503/529) across all backoff retries.
-    Typed so the responder fails LOUDLY on a sustained rate limit instead of silently producing
-    nothing (the asymmetry the publishers' backoff already fixed; the creative path lacked it)."""
-
-class LlmContextLimitError(RuntimeError):
-    """`claude -p` rejected the request as too large for the model context. Typed (AGENT-2) so the responder
-    turns a payload-too-big failure into a VISIBLE degraded gate state instead of an infinite-pending wedge."""
-
-class LlmSchemaError(RuntimeError):
-    """`claude -p` returned output that could not be parsed/validated into the requested JSON
-    schema (unparseable envelope, non-object envelope, non-JSON `result`, or no structured
-    payload). Typed so the responder can stamp a VISIBLE degraded gate state on a schema failure
-    instead of letting it fall through as a generic RuntimeError. Subclass of RuntimeError so
-    every existing `raises(RuntimeError)` assertion (e.g. test_llm.py) stays green."""
-
-class LlmFramesUnreadError(RuntimeError):
-    """Attached frames were never opened (`num_turns<=1` after re-asks). A reason-only hook is
-    not a completion — the responder leaves the gate pending so the next tick re-runs."""
-
-class LlmToolchainError(RuntimeError):
-    """`claude -p` exited nonzero with a CLI/toolchain usage error (unknown option, usage banner, etc.).
-    Typed so the responder treats a broken/outdated claude install as deterministic — enrichment gates
-    fail-open at the ceiling, the moments gate still terminates the source."""
-
-_CONTEXT_LIMIT_MARKERS = ("prompt is too long", "context length", "exceeds the maximum", "too many tokens",
-                          "maximum context")
-_TOOLCHAIN_MARKERS = ("unknown option", "unrecognized option", "unknown argument", "unknown command", "usage:",
-                      "unknown flag", "invalid option", "invalid flag")
 # T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
 _CURSOR_SUPPORTS_VISION = False
 _CURSOR_MODEL_ALIASES: dict[str, str] = {}
 _CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
-def _is_context_limit(text: str) -> bool:
-    t = (text or "").lower()
-    return any(m in t for m in _CONTEXT_LIMIT_MARKERS)
-def _is_toolchain_error(text: str) -> bool:
-    t = (text or "").lower()
-    return any(m in t for m in _TOOLCHAIN_MARKERS)
 
 # HTTP statuses claude -p surfaces (in the stdout envelope's api_error_status) when the request is
 # rejected pre-processing and is therefore SAFE to retry. A 429 is the common one (usage spike).

@@ -94,7 +94,7 @@ def _stamp_edited(led: Ledger, post_id: str, now: datetime) -> None:
 
 
 def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datetime] = None) -> ActionResult:
-    from fanops.caption import brand_risk_flag       # function-local: the ONE off-brand guardrail captions use (no module cycle)
+    from fanops.caption_ingest import brand_risk_flag       # function-local: the ONE off-brand guardrail captions use (no module cycle)
     now = _now(now)
     flag = brand_risk_flag(caption, cfg)             # MOL-86: SAME guard as regenerate_caption / ingest_captions — no bypass
     if flag:
@@ -123,7 +123,8 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     `claude -p` the llm responder uses. Bounded to ONE model call per click (PRD cost mitigation).
     Does NOT publish — safe on any backend, so no confirm gate."""
     from fanops.prompts import caption_prompt
-    from fanops.caption import brand_risk_flag, _hashtag_metrics_for, _source_lock_tags
+    from fanops.caption_compose import _hashtag_metrics_for, _source_lock_tags
+    from fanops.caption_ingest import brand_risk_flag
     from fanops.hashtags import load_measurements
     now = _now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
@@ -182,7 +183,7 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     if flag:
         return ActionResult(ok=False, error=f"regenerated caption rejected — {flag}. "
                             "Edit it by hand or regenerate again.")
-    from fanops.caption import _tags_in, is_tags_only_caption
+    from fanops.caption_ingest import _tags_in, is_tags_only_caption
     if is_tags_only_caption(item.caption):
         return ActionResult(ok=False, error="regenerated caption rejected — caption_tags_only. "
                             "Edit it by hand or regenerate again.")

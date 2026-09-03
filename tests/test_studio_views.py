@@ -910,7 +910,7 @@ def test_review_surface_length_label_absent_when_no_profile(tmp_path):
 
 
 def test_review_surface_caption_is_posted_text_for(tmp_path):
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     from fanops.source_tags import source_tag_locks_path
     from fanops.studio.views_review import _surface
     cfg = Config(root=tmp_path)

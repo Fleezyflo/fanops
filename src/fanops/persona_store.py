@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
-from fanops.hashtags import _norm
+from fanops.hashtags import norm_tag, tag_defect
 from fanops.controlio import control_file_txn, load_raw_list, write_json_atomic   # shared atomic control-file IO
 from fanops.persona_levers import vocab as _lever_vocab
 CUT_POLICY = _lever_vocab("cut_policy")
@@ -109,10 +109,9 @@ def _norm_policy(cut_policy) -> list[str]:
 
 def _norm_niche(niche) -> list[str]:
     """Normalize + validate the DECLARED niche terms: stripped, lowercased, deduped, order preserved. A
-    None/non-list -> []. Each entry must clear hashtag_hygiene.tag_defect as a tag body — the SAME structural
-    gate a derived corpus tag passes, so a declared term can actually be searched — and the first defect raises
-    carrying its reason. A leading '#' is normalized off (the operator types the tag form)."""
-    from fanops.hashtag_hygiene import tag_defect
+    None/non-list -> []. Each entry must clear tag_defect as a tag body — the SAME structural gate a derived
+    corpus tag passes, so a declared term can actually be searched — and the first defect raises carrying its
+    reason. A leading '#' is normalized off (the operator types the tag form)."""
     seq = niche if isinstance(niche, (list, tuple)) else []
     out: list[str] = []; seen: set[str] = set()
     for n in seq:
@@ -234,12 +233,12 @@ def apply_auto_corpus(cfg: Config, pid: str, *, tags: list[str], meta: dict[str,
             if not (isinstance(d, dict) and d.get("id") == pid): continue
             out: list[str] = []; seen: set[str] = set()
             for t in list(tags):
-                n = _norm(t) if isinstance(t, str) else ""
+                n = norm_tag(t) if isinstance(t, str) else ""
                 if n and n not in seen: seen.add(n); out.append(n)
             if len(out) > _CORPUS_CAP: out = out[:_CORPUS_CAP]
             clean: dict[str, dict] = {}
             for k, v in (meta or {}).items():
-                nk = _norm(k) if isinstance(k, str) else ""
+                nk = norm_tag(k) if isinstance(k, str) else ""
                 if nk and isinstance(v, dict): clean[nk] = v
             d["hashtag_corpus"] = out
             d["hashtag_corpus_meta"] = {t: clean[t] for t in out if t in clean}
@@ -310,7 +309,6 @@ def migrate_from_accounts(cfg: Config) -> dict:
             # A-13: every persona needs a declared niche. Seed tag-safe from the persona id (alphanumeric /
             # underscore only, lowercased); fall back to "account" if empty or tag_defect.
             seed = "".join(c for c in pid if c.isalnum() or c == "_").lower() or "account"
-            from fanops.hashtag_hygiene import tag_defect
             if tag_defect("#" + seed):
                 seed = "account"
             add_persona(cfg, name=a.handle, voice=voice, id=pid, niche=[seed])   # M3: tag_lean retired; corpus is curated separately

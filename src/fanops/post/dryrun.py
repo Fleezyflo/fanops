@@ -17,7 +17,7 @@ def write_preview(cfg: Config, post, led: Ledger | None = None) -> None:
     """Write the would-send sidecar `<scheduled>/<post_id>.json` (0o600). Backend-neutral — a flat
     record of what a real poster WOULD send; the only consumer is the sidecar EXISTENCE check
     (dryrun-origin marker), never the internal shape, so a neutral summary is honest + sufficient."""
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     if led is None:
         led = Ledger.load(cfg)
     payload = {"account": post.account, "account_id": post.account_id,

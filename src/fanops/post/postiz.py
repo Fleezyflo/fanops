@@ -483,7 +483,7 @@ class PostizPoster:
         _validate_ledger_media(post, declared, media_urls)
         # IG/TT: compose sentence + lock tags at send. YouTube keeps the sentence as description
         # and ships tags via settings.tags (`_youtube_tags`) — never dump the IG composed string.
-        from fanops.caption import posted_text_for
+        from fanops.caption_compose import posted_text_for
         content = post.caption if post.platform is Platform.youtube else posted_text_for(self.cfg, led, post)
         # settings.__type is the Postiz integration identifier (instagram-standalone, youtube, …),
         # not FanOps Platform.value. Cutover already derives it this way; live publish must too.
