@@ -2,6 +2,13 @@
 from __future__ import annotations
 
 
+def format_top_bias_value(winning_value: str, *, with_framing_suffix: bool = False) -> str:
+    """Render a top_bias aggregate winning_value string as human-readable framing text."""
+    if winning_value == "True":
+        return "top-anchored framing" if with_framing_suffix else "top-anchored"
+    return "centered framing" if with_framing_suffix else "centered"
+
+
 def comparative_reach_leader(agg: dict, min_gap: float) -> tuple[str, dict] | None:
     """Return (leader_value, leader_row) when agg has >=2 values and the reach leader beats the
     runner-up by at least min_gap. None on any doubt (thin, tie, or insufficient gap)."""

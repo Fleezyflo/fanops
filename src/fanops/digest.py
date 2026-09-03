@@ -274,6 +274,7 @@ def _culmination(led: Ledger, cfg: Config) -> list[str]:
     # qualifies, so a fresh/degraded ledger reads exactly as before.
     try:
         from fanops.p4_dim_bias import dim_bias_candidates
+        from fanops.reach_ranking import format_top_bias_value
         from fanops.timing_bias import timing_bias_winner
         lines: list[str] = []
         # framing / length / first-frame: p4_dim_bias's candidates, keyed by dim. Kill switch: cfg.p4_dim_bias.
@@ -286,7 +287,7 @@ def _culmination(led: Ledger, cfg: Config) -> list[str]:
                 continue
             val = cand["winning_value"]
             if dim == "top_bias":                                    # render the bool naturally
-                val = "top-anchored" if val == "True" else "centered"
+                val = format_top_bias_value(val)
             state = "ACTIVE (biasing)" if cfg.p4_dim_bias else "winner found (bias OFF)"
             lines.append(f"- {label}: {val} -> {state}")
         # timing: timing_bias's winner (reach-by-hour). Kill switch: cfg.timing_bias.

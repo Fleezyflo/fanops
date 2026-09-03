@@ -19,7 +19,7 @@ from fanops.adjust import amplify          # AMPLIFY-ONLY: import amplify, NEVER
 from fanops.digest import aggregate_by_dim
 from fanops.log import get_logger
 from fanops.models import PostState
-from fanops.reach_ranking import comparative_reach_leader
+from fanops.reach_ranking import comparative_reach_leader, format_top_bias_value
 from fanops.validation_gate import learning_validated, p4_unlocked
 
 # The creative dims P4 ranks by reach. Stamped at crosspost (first_frame_kind, clip_profile, top_bias). NOT
@@ -79,8 +79,7 @@ def apply_p4_dim_bias(led: Ledger, cfg: Config) -> Ledger:
             # framing is a bool dim; render it as a natural phrase ("top-anchored"/"centered") instead of
             # the raw "top bias = 'True'". Other dims keep the generic "<dim> = '<value>'" wording.
             if cand["dim"] == "top_bias":
-                choice = "top-anchored framing" if cand["winning_value"] == "True" else "centered framing"
-                what = choice
+                what = format_top_bias_value(cand["winning_value"], with_framing_suffix=True)
             else:
                 what = f"{cand['dim'].replace('_', ' ')} = '{cand['winning_value']}'"
             hint = (f"Reach data favors {what} for this artist (highest mean reach across accounts). "

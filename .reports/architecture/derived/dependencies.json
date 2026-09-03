@@ -522,6 +522,7 @@
       "lazy": [
         "fanops.accounts",
         "fanops.p4_dim_bias",
+        "fanops.reach_ranking",
         "fanops.reconcile",
         "fanops.timing_bias",
         "fanops.validation_gate",
@@ -2826,7 +2827,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 255,
+  "lazy_downward_count": 256,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -4284,7 +4285,7 @@
     "G2_module_sccs_total": 97,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 685,
-    "lazy_edges": 389,
+    "lazy_edges": 390,
     "lazy_edges_lateral": 51,
     "lazy_edges_strictly_upward": 83,
     "lazy_edges_to_equal_or_higher_level": 134,
