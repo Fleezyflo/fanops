@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from fanops.config import Config
 from fanops.errors import AuthError, reason
 from fanops.ledger import Ledger
-from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, PostState)
+from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, PostState, _REVIEW_REVERT_BLOCKED)  # noqa: F401
 from fanops.audit import write_audit
 from fanops.log import get_logger
 from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401

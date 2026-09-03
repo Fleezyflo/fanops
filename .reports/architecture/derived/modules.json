@@ -190,7 +190,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -329,21 +329,21 @@
     "fanops.studio.actions_approve": "S16_studio",
     "fanops.studio.actions_casting": "S16_studio",
     "fanops.studio.actions_common": "S16_studio",
-    "fanops.studio.actions_crosspost": null,
-    "fanops.studio.actions_edit": null,
-    "fanops.studio.actions_publish": null,
-    "fanops.studio.actions_recover": null,
+    "fanops.studio.actions_crosspost": "S16_studio",
+    "fanops.studio.actions_edit": "S16_studio",
+    "fanops.studio.actions_publish": "S16_studio",
+    "fanops.studio.actions_recover": "S16_studio",
     "fanops.studio.actions_run": "S16_studio",
-    "fanops.studio.actions_schedule": null,
+    "fanops.studio.actions_schedule": "S16_studio",
     "fanops.studio.actions_segments": "S16_studio",
     "fanops.studio.actions_wipe": "S16_studio",
     "fanops.studio.app": "S16_studio",
-    "fanops.studio.app_request": null,
+    "fanops.studio.app_request": "S16_studio",
     "fanops.studio.app_routes_golive": "S16_studio",
     "fanops.studio.app_routes_hashtags": "S16_studio",
-    "fanops.studio.app_routes_home": null,
+    "fanops.studio.app_routes_home": "S16_studio",
     "fanops.studio.app_routes_live": "S16_studio",
-    "fanops.studio.app_routes_media": null,
+    "fanops.studio.app_routes_media": "S16_studio",
     "fanops.studio.app_routes_personas": "S16_studio",
     "fanops.studio.app_routes_review": "S16_studio",
     "fanops.studio.app_routes_run": "S16_studio",
@@ -381,19 +381,10 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 174,
+    "assigned": 182,
     "ghosts": 0,
     "modules": 182,
-    "unassigned": 8
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.studio.actions_crosspost",
-    "fanops.studio.actions_edit",
-    "fanops.studio.actions_publish",
-    "fanops.studio.actions_recover",
-    "fanops.studio.actions_schedule",
-    "fanops.studio.app_request",
-    "fanops.studio.app_routes_home",
-    "fanops.studio.app_routes_media"
-  ]
+  "unassigned_modules": []
 }

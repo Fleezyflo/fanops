@@ -134,8 +134,9 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
         return ActionResult(ok=False, error=f"no active surface {target_account}/{platform} — onboard it in Go Live first")
     skey = surface_key(surf.account, surf.platform.value)
     aspect = PLATFORM_ASPECT.get(plat, Fmt.r9x16)
+    from fanops.studio import actions as _actions_facade
     pre = Ledger.load(cfg).clips.get(clip_id)                                  # #4: lock-free read of the moment id...
-    if pre is not None: _warm_target_aspect(cfg, pre.parent_id, aspect)        # ...so the target aspect renders OUTSIDE the flock
+    if pre is not None: _actions_facade._warm_target_aspect(cfg, pre.parent_id, aspect)  # ...so the target aspect renders OUTSIDE the flock
     try:
         with Ledger.transaction(cfg) as led:
             clip = led.clips.get(clip_id)

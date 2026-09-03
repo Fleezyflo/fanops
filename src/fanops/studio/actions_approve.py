@@ -286,8 +286,9 @@ def approve_moment(cfg: Config, moment_id: str, *, now: Optional[datetime] = Non
 def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: str,
                        now: Optional[datetime] = None) -> ActionResult:
     """U6: composite approve — persist caption/hook edits when dirty, then promote ONE awaiting post."""
+    from fanops.studio import actions as _actions
     from fanops.studio.actions_edit import edit_caption, reburn_hook, _guard_editable_post
-    now = _now(now)
+    now = _actions._now(now)
     led = Ledger.load(cfg)
     p, err = _guard_editable_post(led, post_id, now)
     if err:

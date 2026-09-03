@@ -36,7 +36,8 @@ def _stamp_edited(led: Ledger, post_id: str, now: datetime) -> None:
 
 def edit_caption(cfg: Config, post_id: str, caption: str, *, now: Optional[datetime] = None) -> ActionResult:
     from fanops.caption_ingest import brand_risk_flag       # function-local: the ONE off-brand guardrail captions use (no module cycle)
-    now = _now(now)
+    from fanops.studio import actions as _actions
+    now = _actions._now(now)
     flag = brand_risk_flag(caption, cfg)             # MOL-86: SAME guard as regenerate_caption / ingest_captions — no bypass
     if flag:
         return ActionResult(ok=False, error=f"caption rejected — {flag}. Edit it to stay on-brand.")
@@ -67,7 +68,8 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
     from fanops.caption_compose import _hashtag_metrics_for, _source_lock_tags
     from fanops.caption_ingest import brand_risk_flag
     from fanops.hashtags import load_measurements
-    now = _now(now)
+    from fanops.studio import actions as _actions
+    now = _actions._now(now)
     led = Ledger.load(cfg)                              # lock-free read: reject early, build context
     p, err = _guard_editable_post(led, post_id, now)
     if err:
@@ -139,14 +141,15 @@ def regenerate_caption(cfg: Config, post_id: str, guidance: str = "", *,
             return ActionResult(ok=False, error=err2)
         p2.caption = new_caption
         p2.hashtags = new_tags
-        _stamp_edited(led2, post_id, _now(None))
+        _stamp_edited(led2, post_id, now)
     return ActionResult(ok=True, detail={"post_id": post_id, "caption": new_caption, "hashtags": new_tags})
 
 
 def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime] = None) -> ActionResult:
     """P9: re-burn the owner-moment hook — updates m.hook and re-renders the shared clip (no per-post variant)."""
     from fanops.clip import render_moment
-    now = _now(now)
+    from fanops.studio import actions as _actions
+    now = _actions._now(now)
     led = Ledger.load(cfg)
     p, err = _guard_editable_post(led, post_id, now)
     if err:
@@ -183,7 +186,7 @@ def reburn_hook(cfg: Config, post_id: str, hook: str, *, now: Optional[datetime]
                 led2.set_clip_state(rc.id, orig.state)
             else:
                 led2.clips[rc.id] = rc
-            _stamp_edited(led2, post_id, _now(None))
+            _stamp_edited(led2, post_id, now)
     except Exception as exc:
         get_logger(cfg)("reburn", post_id, "reburn_write_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"re-burn failed: {str(exc)[:160]}")

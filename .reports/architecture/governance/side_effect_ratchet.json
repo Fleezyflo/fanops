@@ -22,7 +22,12 @@
       "fanops.studio.actions",
       "fanops.studio.actions_approve",
       "fanops.studio.actions_casting",
+      "fanops.studio.actions_crosspost",
+      "fanops.studio.actions_edit",
+      "fanops.studio.actions_publish",
+      "fanops.studio.actions_recover",
       "fanops.studio.actions_run",
+      "fanops.studio.actions_schedule",
       "fanops.studio.actions_segments"
     ],
     "mkdtemp_sites": [
@@ -76,7 +81,7 @@
   },
   "ceilings": {
     "env_write_sites": 2,
-    "ledger_transaction_sites": 84,
+    "ledger_transaction_sites": 89,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 16,
     "rmtree_sites": 7,

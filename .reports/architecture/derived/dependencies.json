@@ -73,6 +73,13 @@
       "fanops.studio.views_run"
     ],
     [
+      "fanops.studio.actions",
+      "fanops.studio.actions_approve",
+      "fanops.studio.actions_crosspost",
+      "fanops.studio.actions_edit",
+      "fanops.studio.actions_schedule"
+    ],
+    [
       "fanops.artifacts",
       "fanops.signals",
       "fanops.transcribe",
@@ -1851,6 +1858,8 @@
       ],
       "lazy": [
         "fanops.clip",
+        "fanops.studio",
+        "fanops.studio.actions",
         "fanops.studio.actions_edit"
       ],
       "optional": [],
@@ -1888,6 +1897,8 @@
         "fanops.accounts",
         "fanops.crosspost",
         "fanops.models",
+        "fanops.studio",
+        "fanops.studio.actions",
         "fanops.studio.actions_approve"
       ],
       "optional": [],
@@ -1912,7 +1923,9 @@
         "fanops.hashtags",
         "fanops.llm",
         "fanops.personas",
-        "fanops.prompts"
+        "fanops.prompts",
+        "fanops.studio",
+        "fanops.studio.actions"
       ],
       "optional": [],
       "typing": []
@@ -3125,7 +3138,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 278,
+  "lazy_downward_count": 281,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3610,6 +3623,14 @@
       "to_level": 8
     },
     {
+      "from": "fanops.studio.actions_crosspost",
+      "from_level": 3,
+      "jump": 8,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 11
+    },
+    {
       "from": "fanops.digest",
       "from_level": 4,
       "jump": 7,
@@ -3800,6 +3821,22 @@
       "same_scc": false,
       "to": "fanops.crosspost",
       "to_level": 9
+    },
+    {
+      "from": "fanops.studio.actions_approve",
+      "from_level": 8,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.studio.actions_edit",
+      "from_level": 8,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 11
     },
     {
       "from": "fanops.studio.actions_publish",
@@ -4766,13 +4803,13 @@
     "G1_sccs_total": 182,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
-    "G2_module_sccs_total": 111,
-    "G2_non_trivial_sccs": 7,
+    "G2_module_sccs_total": 107,
+    "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 773,
-    "lazy_edges": 431,
+    "lazy_edges": 437,
     "lazy_edges_lateral": 59,
-    "lazy_edges_strictly_upward": 94,
-    "lazy_edges_to_equal_or_higher_level": 153,
+    "lazy_edges_strictly_upward": 97,
+    "lazy_edges_to_equal_or_higher_level": 156,
     "modules": 182,
     "optional_edges": 0,
     "typing_only_edges": 8
