@@ -59,7 +59,6 @@ def test_hydration_stamps_cut_spec(tmp_path):
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.cut_policy == ["storytelling", "emotional"]
     assert acc.clip_profile is None and acc.framing == "top"
-    assert acc.persona_owns_profile is False
 
 def test_unlinked_account_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg, [_acct()])
@@ -83,4 +82,3 @@ def test_voice_match_hydrates_levers_and_cut_spec(tmp_path):
     acc = next(a for a in Accounts.load(cfg).accounts if a.handle == "a")
     assert acc.persona_id is None and acc.cut_policy == ["storytelling", "emotional"]
     assert acc.clip_profile is None and acc.framing == "top"
-    assert acc.persona_owns_profile is False

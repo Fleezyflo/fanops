@@ -110,7 +110,7 @@ def test_hydrate_levers_onto_linked_account(tmp_path):
     a = next(x for x in Accounts.load(cfg).accounts if x.handle == "a")
     assert a.persona == "tasteful" and a.cut_policy == ["storytelling"] and a.selection_scope == "open"
     assert a.hook_angle == "emotional"
-    assert a.clip_profile is None and a.framing == "top" and a.persona_owns_profile is False
+    assert a.clip_profile is None and a.framing == "top"
 
 def test_unlinked_account_levers_stay_empty(tmp_path):
     cfg = Config(root=tmp_path)

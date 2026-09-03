@@ -380,10 +380,10 @@
     ]
   },
   "locks": {
-    "fanops.accounts": [
+    "fanops.controlio": [
       {
         "call": "_file_lock",
-        "line": 411
+        "line": 30
       }
     ],
     "fanops.fanops_hashtags": [
@@ -430,12 +430,6 @@
       {
         "call": "tmp_store.lock",
         "line": 83
-      }
-    ],
-    "fanops.persona_store": [
-      {
-        "call": "_file_lock",
-        "line": 150
       }
     ],
     "fanops.pipeline_run": [
@@ -814,7 +808,7 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 83,
-    "lock_sites": 22,
+    "lock_sites": 21,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,

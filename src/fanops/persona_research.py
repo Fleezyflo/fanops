@@ -31,8 +31,3 @@ def persona_terms(per, cfg=None) -> list[str]:
     Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
     they are NOT Instagram search roots (MOL-637)."""
     return niche_terms(per)
-
-
-def relatedness_terms(per, cfg=None) -> list[str]:
-    """Declared niche bodies. Same set as `persona_terms`."""
-    return niche_terms(per)

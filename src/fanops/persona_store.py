@@ -5,23 +5,14 @@ read-modify-write (no lost update from two concurrent Studio writers) and an ato
 never leaves a torn file. The validators are the WRITE boundary — a typo'd lever raises BEFORE the lock
 so the file never lands a record that won't reload. All names are re-exported from fanops.personas."""
 from __future__ import annotations
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm
-from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
-# NOT `from fanops.personas import ...`: personas.py is the FACADE that re-exports this module, so a
-# module-level edge back to it is a compile-time cycle (the tree's only one, ARCH-004). The lever
-# vocabularies are PROJECTIONS of the one registry, so they come straight from it; `Personas`/`_slug`
-# are deferred into the four functions that need them (the `_file_lock` idiom already used below).
-from fanops.persona_levers import vocab as _lever_vocab
-
-# MOL-523: content_focus is now free text; cut_policy owns the multi-select tokens.
-CUT_POLICY = _lever_vocab("cut_policy")
-SELECTION_SCOPE_LEVELS = _lever_vocab("selection_scope")
-HOOK_ANGLES = _lever_vocab("hook_angle")
-INTENSITY = _lever_vocab("intensity")
+from fanops.controlio import control_file_txn, load_raw_list, write_json_atomic   # shared atomic control-file IO
+# NOT `from fanops.personas import Persona/_slug`: personas.py is the FACADE that re-exports this module (ARCH-004).
+# CUT_POLICY/INTENSITY are bound on personas before persona_store is imported back — safe module-level import.
+from fanops.personas import CUT_POLICY, INTENSITY
 
 _CORPUS_CAP = 80                # must cover FANOPS_CORPUS_TARGET default (80); was 40 and silently truncated
 _BAKED_FILE = "baked_personas.json"
@@ -140,15 +131,9 @@ def _load_raw(p) -> tuple[dict, list]:
     return load_raw_list(p, "personas")
 
 
-@contextmanager
 def _personas_txn(cfg: Config):
-    """Serialize a mutator's read-modify-write under cfg.personas_lock_path (reuses the proven ledger
-    flock; lazy import avoids a module-load cycle). mkdir the control dir first so a first-ever write on
-    a fresh root can open the lock file."""
-    from fanops.ledger import _file_lock
-    cfg.personas_lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with _file_lock(cfg.personas_lock_path):
-        yield
+    """Serialize a mutator's read-modify-write under cfg.personas_lock_path."""
+    return control_file_txn(cfg.personas_lock_path, mkdir_parent=True)
 
 
 _UNSET = object()

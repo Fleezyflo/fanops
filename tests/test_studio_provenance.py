@@ -68,15 +68,14 @@ def test_provenance_helper_never_raises():
     assert views.provenance_chips(Weird()) == []                       # fail-open: a list, never an exception
 
 
-def test_surface_stamps_attribution_via_persona(tmp_path):
-    # a persona-linked account whose PERSONA supplies the profile (persona_owns_profile, stamped at hydration):
-    # length_cause names the PERSONA; framing_cause + cast_cause name the account
+def test_surface_stamps_length_cause_via_account_pin(tmp_path):
+    # persona-linked account with an account clip_profile pin: length_cause names the account (M3 persona-blind).
     cfg = Config(root=tmp_path)
     from fanops.ledger import Ledger
     from fanops.accounts import Account
     from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long", framing="center", persona_owns_profile=True)
+    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long", framing="center")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["a"]))
@@ -84,7 +83,7 @@ def test_surface_stamps_attribution_via_persona(tmp_path):
         led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=["a"])
-    assert sp.length_cause == "persona long" and sp.framing_cause == "a center" and sp.cast_cause == "picked for a"
+    assert sp.length_cause == "a long" and sp.framing_cause == "a center" and sp.cast_cause == "picked for a"
 
 
 def _seed_for_cast(cfg, *, affinities):
@@ -120,16 +119,14 @@ def test_surface_cast_cause_empty_affinities_fans_to_all(tmp_path):
     assert sp.cast_cause is None
 
 
-def test_surface_persona_link_without_owned_profile_names_account(tmp_path):
-    # the audit's MEDIUM-1: a persona-LINKED account whose persona supplies NO profile (persona_owns_profile
-    # False) but the ACCOUNT has its own pin -> the profile came from the account pin, NOT the persona. The
-    # chip must name the account ("@a long"), never falsely claim "persona long".
+def test_surface_persona_link_names_account_pin(tmp_path):
+    # persona-LINKED account with its own clip_profile pin -> length_cause names the account, not persona.
     cfg = Config(root=tmp_path)
     from fanops.ledger import Ledger
     from fanops.accounts import Account
     from fanops.models import Source, Clip, Post, Platform, PostState, ClipState, Fmt
     cfg.clips.mkdir(parents=True, exist_ok=True); base = cfg.clips / "b.mp4"; base.write_bytes(b"\x00ftypmp42")
-    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long")   # linked, but persona didn't own the cut
+    acct = Account(handle="a", account_id="1", persona_id="hype", clip_profile="long")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))

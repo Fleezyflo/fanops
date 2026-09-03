@@ -19,6 +19,18 @@ from fanops.errors import ControlFileError, reason as _reason
 M = TypeVar("M", bound=BaseModel)
 
 
+@contextlib.contextmanager
+def control_file_txn(lock_path: Path, *, mkdir_parent: bool = False):
+    """Serialize a control-file mutator's read-modify-write under `lock_path` (fcntl flock via ledger).
+    Lazy import avoids a module-load cycle with accounts/persona_store. `mkdir_parent` for personas lock
+  on a fresh root."""
+    if mkdir_parent:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    from fanops.ledger import _file_lock
+    with _file_lock(lock_path):
+        yield
+
+
 def write_json_atomic(p: Path, raw: object) -> None:
     """Persist any JSON-serializable value via temp file + os.replace, so a crash mid-write never leaves a
     torn file. A UNIQUE temp (mkstemp, same dir so os.replace stays atomic) — a fixed <name>.tmp lets two
