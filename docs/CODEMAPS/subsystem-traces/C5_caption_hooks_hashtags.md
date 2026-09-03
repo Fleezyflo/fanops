@@ -147,7 +147,9 @@ hookscore.narration_signature / hook_quality / log_hook_quality  — READ-ONLY S
 - `_tag_source(...) -> str` — provenance `content > corpus > region > graph-reach` (`hashtags.py:~236-245`).
 - `vet_hashtags_traced(...) -> tuple[list[str], dict[str, str]]` — same selection + per-tag sources. Called by `caption.ingest_captions`.
 
-### `fanops_hashtags.py` — Layer A measurement pass (CLI/daemon-tick; not part of the caption request/response path)
+### `fanops_hashtags.py` — thin facade (SA-A1–A4); scrape logic in sibling modules
+
+Implementation split (see `docs/CODEMAPS/hashtag-lifecycle.md`): `hashtag_refresh.py` (refresh/remesure), `hashtag_scrape_policy.py` (cooldown/budget/freeze), `ig_safari_shell.py` (Safari XHR + tick slot). `fanops_hashtags.py` re-exports and hosts `cmd_hashtags_discover` only.
 
 - `_MAX_AGE_DAYS = 90` / `_posting_persona_ids` / `_posting_personas` / `_fresh` — retention + active-account persona narrowing (dormant personas cannot steer discovery).
 - `refresh_store(cfg, *, scrape_client=None, now=None) -> dict` — **the only writer of the measurement cache** (instagrapi Layer A; Graph hashtag deferred). Per posting persona: `persona_terms(per)` → declared niche → `#term` anchors → `resolve_hashtag_scrape` + `measure_and_harvest_scrape` (verbatim `like_count` + co-tags from anchors only). Queue = anchors, then known (stalest first), then novel co-tags. Writes `00_control/hashtags.json` as `{tag: {graph_id, like_count, measured_at, from}}` — MEASURED ONLY; prunes >90d. Corrupt `personas.json` → ABORT without write (`{"written": False, "aborted": "corrupt_personas", ...}`). Throttle → end pass, still write accrued evidence. Called by `cmd_hashtags_refresh`, `refresh_store_if_due`.
