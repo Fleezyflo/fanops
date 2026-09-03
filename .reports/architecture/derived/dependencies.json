@@ -1851,6 +1851,7 @@
         "fanops.postiz_lifecycle",
         "fanops.prompts",
         "fanops.reconcile",
+        "fanops.studio.actions_approve",
         "fanops.studio.actions_run",
         "fanops.studio.views_common",
         "fanops.studio.views_results",
@@ -2981,7 +2982,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 273,
+  "lazy_downward_count": 274,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -4497,7 +4498,7 @@
     "G2_module_sccs_total": 100,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 722,
-    "lazy_edges": 412,
+    "lazy_edges": 413,
     "lazy_edges_lateral": 51,
     "lazy_edges_strictly_upward": 88,
     "lazy_edges_to_equal_or_higher_level": 139,

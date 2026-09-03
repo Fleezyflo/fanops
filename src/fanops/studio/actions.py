@@ -393,17 +393,11 @@ def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
 
 def accept_suggested_account(cfg: Config, handle: str, *, now: Optional[datetime] = None) -> ActionResult:
     """Apply batch spread suggestions to every queued post on one account."""
-    from fanops.studio.views_common import suggest_times_for_batch
-    now = _now(now); moved = 0
+    from fanops.studio.actions_approve import _apply_schedule_for_account
+    now = _now(now)
     try:
         with Ledger.transaction(cfg) as led:
-            posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
-            sched = suggest_times_for_batch(cfg, posts, now=now)
-            for pid, t in sched.items():
-                p = led.posts[pid]
-                if p.scheduled_time != t:
-                    p.scheduled_time = t
-                    moved += 1
+            moved = _apply_schedule_for_account(led, cfg, handle, now=now)
     except Exception as exc:
         get_logger(cfg)("schedule", handle, "accept_suggestions_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"accept suggestions failed: {str(exc)[:160]}")
@@ -660,7 +654,7 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
     created_at is wall-clock birth (NOT part of the pid). Enters the standard approval gate, scheduled_time=None.
     One transaction, never a 500."""
     from fanops.accounts import Accounts
-    from fanops.models import Platform, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Fmt
+    from fanops.models import Platform, PLATFORM_ASPECT, Fmt
     from fanops.crosspost import _clip_for_aspect
     now = _now(now)
     try: plat = Platform(platform)
@@ -687,10 +681,10 @@ def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platfor
             src_batch = source.batch_id if source is not None else None   # AUDIT M2: inherit the clip's ingest-batch
             # lineage (like repost_post) so the reuse post groups + approves with its batched siblings — a None-batch
             # post showed in the ?batch= drill-in (card derives bid from a sibling) but approve_account silently skipped it.
-            from fanops.clip import realized_clip_seconds
-            clip_dur = realized_clip_seconds(clip, m)
-            max_secs = PLATFORM_MAX_SECONDS.get(plat)
-            if max_secs is not None and clip_dur is not None and clip_dur > 0 and clip_dur > max_secs:
+            from fanops.studio.actions_approve import _clip_over_cap
+            over = _clip_over_cap(cfg, led, clip, plat)
+            if over is not None:
+                clip_dur, max_secs = over
                 return ActionResult(ok=False, error=f"clip duration {clip_dur:.0f}s exceeds {platform} cap {max_secs}s")
             target_clip = _clip_for_aspect(led, cfg, clip.parent_id, aspect)   # the RIGHT-aspect render (H7); warm -> fingerprint-skip
             pid = child_id("post", target_clip.id, skey)
