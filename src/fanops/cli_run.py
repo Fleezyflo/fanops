@@ -14,9 +14,6 @@ from fanops.errors import AuthError, fail_open
 from fanops.escalation import EscalationPosture, decide
 from fanops.ledger import Ledger
 from fanops.models import PostState
-from fanops.variant_amplify import apply_variant_amplify
-from fanops.p4_dim_bias import apply_p4_dim_bias
-from fanops.timing_bias import apply_timing_bias
 from fanops import daemon
 from fanops.log import get_logger
 
@@ -162,7 +159,7 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     if cfg.variant_amplify and cfg.is_live_backend:
         try:
             with Ledger.transaction(cfg) as led:
-                led = apply_variant_amplify(led, cfg)
+                led = cli.apply_variant_amplify(led, cfg)
         except Exception:
             with fail_open("cli._run_once variant_amplify degrade:"):
                 raise
@@ -175,7 +172,7 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     if cfg.p4_dim_bias and cfg.is_live_backend:
         try:
             with Ledger.transaction(cfg) as led:
-                led = apply_p4_dim_bias(led, cfg)
+                led = cli.apply_p4_dim_bias(led, cfg)
         except Exception:
             with fail_open("cli._run_once p4_dim_bias degrade:"):
                 raise
@@ -187,7 +184,7 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     if cfg.timing_bias and cfg.is_live_backend:
         try:
             with Ledger.transaction(cfg) as led:
-                led = apply_timing_bias(led, cfg)
+                led = cli.apply_timing_bias(led, cfg)
         except Exception:
             with fail_open("cli._run_once timing_bias degrade:"):
                 raise
@@ -199,8 +196,7 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     # raises. Non-fresh skips log (MOL-525): a missing scrape session must not look identical to a
     # correctly-throttled tick.
     try:
-        from fanops.fanops_hashtags import refresh_store_if_due
-        r = refresh_store_if_due(cfg)
+        r = cli.refresh_store_if_due(cfg)
         if r.get("aborted"):     # no_scrape / freeze / busy: report the abort LOUDLY, never a false
                                  # store_refreshed (a skipped remesure is not a refresh)
             get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
@@ -242,6 +238,7 @@ def running_code_sha(cfg: Config) -> str | None:
 
 def heartbeat_dict(cfg: Config, s: dict) -> dict:
     """Build the heartbeat JSON payload (stdout print stays in cli.py for the print-count ratchet)."""
+    from fanops import cli
     return {
         "heartbeat": datetime.now(timezone.utc).isoformat(),
         "fanops_version": fanops.__version__,
@@ -250,7 +247,7 @@ def heartbeat_dict(cfg: Config, s: dict) -> dict:
         # line — a key present only when true makes its absence ambiguous between "not paused" and "old code".
         "paused": bool(s.get("paused", False)),
         "last_published_age_hours": s.get("last_published_age_hours"),
-        "code": running_code_sha(cfg),   # SHA this PROCESS loaded (snapshot at start); the keeper compares it to disk to adopt new code
+        "code": cli._running_code_sha(cfg),   # patch surface: tests stub fanops.cli._running_code_sha
     }
 
 
