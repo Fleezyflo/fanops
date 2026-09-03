@@ -20,7 +20,7 @@ from fanops.studio.views_results import (ScheduleRow, ScheduleLanes, LiftRow, pu
 from fanops.studio.views_live import (LiveMediaRow, live_library, live_library_scope)  # noqa: F401  # MOL-27: the "viewed there, not authored here" Live library read-model (imported_media only, disjoint from Posted)
 from fanops.studio.views_library import (STAGES, library_catalog, source_pipeline_map, source_progress)  # noqa: F401
 from fanops.studio.views_home import (HomeStatus, HomeBatch, SpineStage, WorkflowSpine, home_status, home_batches, home_accounts_panel, home_source_gallery, home_week_calendar, account_work_counts, review_handoff, review_nav_params, zero_post_clips, metrics_stale_hint, build_spine, load_account_stats)  # noqa: F401
-from fanops.studio.views_golive import (GoLiveChannel, ChannelReadiness, GoLiveAccount, GoLiveStatus, AccountOnboardingCard, golive_accounts, golive_demoted_accounts, golive_status, channel_readiness, onboarding_account_cards)  # noqa: F401
+from fanops.studio.views_golive import (GoLiveChannel, ChannelReadiness, GoLiveAccount, GoLiveStatus, AccountOnboardingCard, golive_accounts, golive_demoted_accounts, golive_status, channel_readiness, onboarding_account_cards, _blocker_priority)  # noqa: F401
 from fanops.studio.views_run import (pipeline_status, errored_sources, run_next_step, asset_catalog, pending_stitches, pending_stitch_drafts, review_candidates, publish_queue, gate_rows)  # noqa: F401
 
 

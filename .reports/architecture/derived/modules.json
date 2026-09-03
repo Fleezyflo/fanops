@@ -182,7 +182,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -338,16 +338,16 @@
     "fanops.studio.thumb_media": "S16_studio",
     "fanops.studio.views": "S16_studio",
     "fanops.studio.views_common": "S16_studio",
-    "fanops.studio.views_golive": null,
+    "fanops.studio.views_golive": "S16_studio",
     "fanops.studio.views_hashtags": "S16_studio",
-    "fanops.studio.views_home": null,
+    "fanops.studio.views_home": "S16_studio",
     "fanops.studio.views_library": "S16_studio",
     "fanops.studio.views_live": "S16_studio",
-    "fanops.studio.views_posted": null,
+    "fanops.studio.views_posted": "S16_studio",
     "fanops.studio.views_results": "S16_studio",
     "fanops.studio.views_review": "S16_studio",
-    "fanops.studio.views_run": null,
-    "fanops.studio.views_schedule": null,
+    "fanops.studio.views_run": "S16_studio",
+    "fanops.studio.views_schedule": "S16_studio",
     "fanops.studio_desktop": "S16_studio",
     "fanops.tagging": "S10_caption_hashtag",
     "fanops.text": "S01_foundation",
@@ -365,16 +365,10 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 169,
+    "assigned": 174,
     "ghosts": 0,
     "modules": 174,
-    "unassigned": 5
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.studio.views_golive",
-    "fanops.studio.views_home",
-    "fanops.studio.views_posted",
-    "fanops.studio.views_run",
-    "fanops.studio.views_schedule"
-  ]
+  "unassigned_modules": []
 }
