@@ -48,6 +48,7 @@
       "fanops.field_shape",
       "fanops.health",
       "fanops.health_model",
+      "fanops.health_probes",
       "fanops.p4_dim_bias",
       "fanops.pipeline",
       "fanops.pipeline_status",
@@ -723,23 +724,56 @@
     },
     "fanops.health_model": {
       "compile": [
-        "fanops.config"
+        "fanops.config",
+        "fanops.health_probes",
+        "fanops.health_projectors",
+        "fanops.health_types"
+      ],
+      "lazy": [
+        "fanops.doctor",
+        "fanops.ledger",
+        "fanops.models",
+        "fanops.studio.views_review"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.health_probes": {
+      "compile": [
+        "fanops.config",
+        "fanops.health_projectors",
+        "fanops.health_types"
       ],
       "lazy": [
         "fanops",
         "fanops.daemon",
         "fanops.doctor",
         "fanops.errors",
-        "fanops.escalation",
         "fanops.field_shape",
         "fanops.health",
         "fanops.ledger",
         "fanops.meta_graph",
         "fanops.models",
         "fanops.pipeline_run",
-        "fanops.post.postiz",
-        "fanops.studio.views_review"
+        "fanops.post.postiz"
       ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.health_projectors": {
+      "compile": [
+        "fanops.config",
+        "fanops.health_types"
+      ],
+      "lazy": [
+        "fanops.escalation"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.health_types": {
+      "compile": [],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -2523,7 +2557,7 @@
     "fanops.clip": 7,
     "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 101,
+    "fanops.config": 103,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 14,
@@ -2548,6 +2582,9 @@
     "fanops.hashtags": 13,
     "fanops.health": 0,
     "fanops.health_model": 1,
+    "fanops.health_probes": 1,
+    "fanops.health_projectors": 2,
+    "fanops.health_types": 3,
     "fanops.hookcheck": 1,
     "fanops.hookscore": 2,
     "fanops.ids": 13,
@@ -2715,7 +2752,10 @@
     "fanops.hashtag_scrape_policy": 2,
     "fanops.hashtags": 0,
     "fanops.health": 2,
-    "fanops.health_model": 1,
+    "fanops.health_model": 4,
+    "fanops.health_probes": 3,
+    "fanops.health_projectors": 2,
+    "fanops.health_types": 0,
     "fanops.hookcheck": 0,
     "fanops.hookscore": 2,
     "fanops.ids": 0,
@@ -2840,7 +2880,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 256,
+  "lazy_downward_count": 261,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -2923,14 +2963,6 @@
       "to_level": 1
     },
     {
-      "from": "fanops.daemon",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.health_model",
-      "to_level": 1
-    },
-    {
       "from": "fanops.digest",
       "from_level": 4,
       "jump": 0,
@@ -2971,7 +3003,7 @@
       "to_level": 2
     },
     {
-      "from": "fanops.health",
+      "from": "fanops.health_probes",
       "from_level": 2,
       "jump": 0,
       "same_scc": false,
@@ -2979,20 +3011,20 @@
       "to_level": 2
     },
     {
-      "from": "fanops.health_model",
-      "from_level": 1,
+      "from": "fanops.health_probes",
+      "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.daemon",
-      "to_level": 1
+      "to": "fanops.meta_graph",
+      "to_level": 2
     },
     {
-      "from": "fanops.health_model",
-      "from_level": 1,
+      "from": "fanops.health_probes",
+      "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.models",
-      "to_level": 1
+      "to": "fanops.pipeline_run",
+      "to_level": 2
     },
     {
       "from": "fanops.keyframes",
@@ -3253,14 +3285,6 @@
   ],
   "lazy_upward": [
     {
-      "from": "fanops.health",
-      "from_level": 2,
-      "jump": 9,
-      "same_scc": false,
-      "to": "fanops.pipeline_status",
-      "to_level": 11
-    },
-    {
       "from": "fanops.compose",
       "from_level": 0,
       "jump": 8,
@@ -3286,6 +3310,14 @@
     },
     {
       "from": "fanops.doctor",
+      "from_level": 4,
+      "jump": 7,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.health",
       "from_level": 4,
       "jump": 7,
       "same_scc": false,
@@ -3437,30 +3469,6 @@
       "to_level": 7
     },
     {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.doctor",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.field_shape",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.studio.views_review",
-      "to_level": 4
-    },
-    {
       "from": "fanops.ig_hashtag_scrape",
       "from_level": 2,
       "jump": 3,
@@ -3525,6 +3533,14 @@
       "to_level": 2
     },
     {
+      "from": "fanops.daemon",
+      "from_level": 1,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.health_model",
+      "to_level": 3
+    },
+    {
       "from": "fanops.fanops_hashtags",
       "from_level": 5,
       "jump": 2,
@@ -3533,19 +3549,35 @@
       "to_level": 7
     },
     {
-      "from": "fanops.health_model",
+      "from": "fanops.health_probes",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.doctor",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_probes",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.field_shape",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_probes",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.health",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_projectors",
       "from_level": 1,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.escalation",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.post.postiz",
       "to_level": 3
     },
     {
@@ -3717,44 +3749,28 @@
       "to_level": 5
     },
     {
-      "from": "fanops.health",
+      "from": "fanops.health_model",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.doctor",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_model",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.views_review",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.health_probes",
       "from_level": 2,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.post.postiz",
       "to_level": 3
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.health",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.ledger",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.health_model",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.pipeline_run",
-      "to_level": 2
     },
     {
       "from": "fanops.ig_hashtag_scrape",
@@ -3881,6 +3897,14 @@
       "from_level": 3,
       "jump": 1,
       "same_scc": false,
+      "to": "fanops.health",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_common",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
       "to": "fanops.studio.views_results",
       "to_level": 4
     },
@@ -3962,8 +3986,11 @@
     "fanops.hashtag_refresh": 4,
     "fanops.hashtag_scrape_policy": 2,
     "fanops.hashtags": 0,
-    "fanops.health": 2,
-    "fanops.health_model": 1,
+    "fanops.health": 4,
+    "fanops.health_model": 3,
+    "fanops.health_probes": 2,
+    "fanops.health_projectors": 1,
+    "fanops.health_types": 0,
     "fanops.hookcheck": 0,
     "fanops.hookscore": 2,
     "fanops.ids": 0,
@@ -4099,6 +4126,7 @@
       "fanops.framing_outcomes",
       "fanops.gate_keys",
       "fanops.hashtags",
+      "fanops.health_types",
       "fanops.hookcheck",
       "fanops.ids",
       "fanops.llm_errors",
@@ -4126,7 +4154,7 @@
       "fanops.control",
       "fanops.controlio",
       "fanops.daemon",
-      "fanops.health_model",
+      "fanops.health_projectors",
       "fanops.keyframes",
       "fanops.ledger_sqlite",
       "fanops.llm",
@@ -4176,7 +4204,7 @@
       "fanops.batches",
       "fanops.config_introspect",
       "fanops.hashtag_scrape_policy",
-      "fanops.health",
+      "fanops.health_probes",
       "fanops.hookscore",
       "fanops.ig_hashtag_scrape",
       "fanops.impact_cut",
@@ -4199,6 +4227,7 @@
       "fanops.caption_ingest",
       "fanops.escalation",
       "fanops.fanops_account_stats",
+      "fanops.health_model",
       "fanops.ig_safari_shell",
       "fanops.ingest",
       "fanops.intro_match",
@@ -4234,6 +4263,7 @@
       "fanops.doctor",
       "fanops.field_shape",
       "fanops.hashtag_refresh",
+      "fanops.health",
       "fanops.ig_web_scrape",
       "fanops.paths_rebase",
       "fanops.post.metrics",
@@ -4294,17 +4324,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 166,
+    "G1_sccs_total": 169,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
-    "G2_module_sccs_total": 98,
+    "G2_module_sccs_total": 100,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 688,
-    "lazy_edges": 390,
-    "lazy_edges_lateral": 51,
-    "lazy_edges_strictly_upward": 83,
-    "lazy_edges_to_equal_or_higher_level": 134,
-    "modules": 166,
+    "compile_edges_G1": 696,
+    "lazy_edges": 393,
+    "lazy_edges_lateral": 50,
+    "lazy_edges_strictly_upward": 82,
+    "lazy_edges_to_equal_or_higher_level": 132,
+    "modules": 169,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

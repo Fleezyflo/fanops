@@ -52,6 +52,9 @@
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
+    "fanops.health_probes",
+    "fanops.health_projectors",
+    "fanops.health_types",
     "fanops.hookcheck",
     "fanops.hookscore",
     "fanops.ids",
@@ -174,7 +177,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -227,6 +230,9 @@
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
+    "fanops.health_probes": null,
+    "fanops.health_projectors": null,
+    "fanops.health_types": null,
     "fanops.hookcheck": "S08_selection",
     "fanops.hookscore": "S08_selection",
     "fanops.ids": "S01_foundation",
@@ -351,8 +357,12 @@
   "totals": {
     "assigned": 166,
     "ghosts": 0,
-    "modules": 166,
-    "unassigned": 0
+    "modules": 169,
+    "unassigned": 3
   },
-  "unassigned_modules": []
+  "unassigned_modules": [
+    "fanops.health_probes",
+    "fanops.health_projectors",
+    "fanops.health_types"
+  ]
 }

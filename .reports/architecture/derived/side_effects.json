@@ -502,10 +502,10 @@
         "line": 232
       }
     ],
-    "fanops.health_model": [
+    "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 392
+        "line": 63
       }
     ],
     "fanops.post.metrics": [
@@ -682,10 +682,10 @@
         "line": 40
       }
     ],
-    "fanops.health_model": [
+    "fanops.health_probes": [
       {
         "call": "subprocess.run",
-        "line": 352
+        "line": 25
       }
     ],
     "fanops.ig_hashtag_scrape": [
