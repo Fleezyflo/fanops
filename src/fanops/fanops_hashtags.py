@@ -55,6 +55,8 @@ from fanops.hashtag_scrape_policy import (  # noqa: F401
     _scrub_expired_accounts,
     _utc_day,
 )
+from fanops.ig_safari_shell import mark_safari_tick_slot, safari_tick_slot_claimed
+from fanops.ig_safari_shell import reset_safari_tick_slot  # noqa: F401 — re-export for cli/tests
 
 _MAX_AGE_DAYS = 90            # a measurement older than this is history, not evidence — pruned on write
 _VOLUME_MAX_AGE_DAYS = 30     # `media_count` re-resolve age (aligned with remesure; MOL-855). Volume moves
@@ -70,26 +72,6 @@ _EXACT_NAME_WINDOW_DAYS = 7
 # local governor (~40 request-units/day). Due-tiered queue (MOL-855) means the cap need not clear every
 # cached tag each pass — only unmeasured anchors + aged volume + ≥30d remesure + co-tag headroom.
 # FANOPS_HASHTAG_SCRAPE_PARALLEL read retained via cfg; fetch sequential (MOL-855/912).
-
-_SAFARI_TICK_SLOT: str | None = None   # HT5: one Safari opener per daemon tick (lock OR remesure)
-
-
-def reset_safari_tick_slot() -> None:
-    """Clear the per-tick Safari slot. `_cmd_run_pass` calls this at tick start."""
-    global _SAFARI_TICK_SLOT
-    _SAFARI_TICK_SLOT = None
-
-
-def mark_safari_tick_slot(consumer: str) -> None:
-    """Record which path opened Safari this tick (`lock` or `remesure`)."""
-    global _SAFARI_TICK_SLOT
-    _SAFARI_TICK_SLOT = consumer
-
-
-def safari_tick_slot_claimed() -> str | None:
-    """Return the tick's Safari consumer, or None if the slot is still free."""
-    return _SAFARI_TICK_SLOT
-
 
 def _scrape_parallel() -> int:
     return Config().hashtag_scrape_parallel

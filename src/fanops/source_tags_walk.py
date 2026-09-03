@@ -37,7 +37,7 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     if client is not None:
         yield client
         return
-    from fanops.fanops_hashtags import mark_safari_tick_slot, safari_tick_slot_claimed
+    from fanops.ig_safari_shell import mark_safari_tick_slot, safari_tick_slot_claimed
     if safari_tick_slot_claimed():
         return
     opener = open_client_fn or open_web_session
