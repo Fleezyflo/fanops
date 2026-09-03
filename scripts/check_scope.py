@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Modules with no tests/test_<stem>.py — pick the most focused existing test file.
 _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/_fwrun.py": ("tests/test_fwrun.py",),
+    "src/fanops/audit.py": ("tests/test_audit_trail.py",),
     "src/fanops/apply_common.py": ("tests/test_reframe_apply.py", "tests/test_overlay_reburn.py"),
     "src/fanops/clip_ffmpeg.py": ("tests/test_clip.py", "tests/test_smart_framing.py",
                                    "tests/test_impact_render.py", "tests/test_stitch_render.py"),

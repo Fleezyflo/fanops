@@ -180,7 +180,8 @@ def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | 
         # subprocess.run below NEVER executes in the second producer.
         if not force and cached.exists() and _adopt_cached_transcript(led, source_id, cached, cfg=cfg):
             return led
-        return _produce_transcript(led, cfg, source_id, src, out_dir, model)
+        import fanops.transcribe as facade
+        return facade._produce_transcript(led, cfg, source_id, src, out_dir, model)
 
 
 def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: Path,

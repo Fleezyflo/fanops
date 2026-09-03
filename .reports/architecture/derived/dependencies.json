@@ -13,6 +13,7 @@
       "fanops.compose",
       "fanops.config",
       "fanops.control",
+      "fanops.controlio",
       "fanops.crosspost",
       "fanops.cutover",
       "fanops.cutover_postiz",
@@ -68,6 +69,7 @@
       "fanops.source_tags",
       "fanops.source_tags_scrape",
       "fanops.source_tags_shortlist",
+      "fanops.source_tags_sidecar",
       "fanops.source_tags_walk",
       "fanops.stage_lock",
       "fanops.stitch_render",
@@ -128,7 +130,6 @@
       ],
       "lazy": [
         "fanops.errors",
-        "fanops.ledger",
         "fanops.personas"
       ],
       "optional": [],
@@ -422,7 +423,9 @@
       "compile": [
         "fanops.errors"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.ledger"
+      ],
       "optional": [],
       "typing": []
     },
@@ -1091,7 +1094,6 @@
       "lazy": [
         "fanops.accounts",
         "fanops.hashtag_hygiene",
-        "fanops.ledger",
         "fanops.personas"
       ],
       "optional": [],
@@ -2184,12 +2186,12 @@
         "fanops.log",
         "fanops.models",
         "fanops.speech_trust",
-        "fanops.stage_lock",
-        "fanops.vocals"
+        "fanops.stage_lock"
       ],
       "lazy": [
         "fanops.artifacts",
-        "fanops.pipeline_run"
+        "fanops.pipeline_run",
+        "fanops.transcribe"
       ],
       "optional": [],
       "typing": []
@@ -2512,7 +2514,7 @@
     "fanops.variant_learning": 6,
     "fanops.variant_transfer": 2,
     "fanops.visual_start": 1,
-    "fanops.vocals": 2,
+    "fanops.vocals": 1,
     "fanops.window_math": 1
   },
   "fan_out_compile": {
@@ -2662,7 +2664,7 @@
     "fanops.timing_bias": 5,
     "fanops.track": 6,
     "fanops.transcribe": 3,
-    "fanops.transcribe_engine": 8,
+    "fanops.transcribe_engine": 7,
     "fanops.validation_gate": 1,
     "fanops.variant_amplify": 8,
     "fanops.variant_learning": 1,
@@ -2676,14 +2678,6 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "lazy_downward_count": 249,
   "lazy_lateral": [
-    {
-      "from": "fanops.accounts",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.ledger",
-      "to_level": 2
-    },
     {
       "from": "fanops.artifacts",
       "from_level": 3,
@@ -2898,14 +2892,6 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.accounts",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.persona_store",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.ledger",
       "to_level": 2
     },
     {
@@ -3455,6 +3441,14 @@
       "to_level": 1
     },
     {
+      "from": "fanops.controlio",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
       "from": "fanops.daemon",
       "from_level": 1,
       "jump": 1,
@@ -3708,6 +3702,14 @@
       "jump": 1,
       "same_scc": false,
       "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.transcribe_engine",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.transcribe",
       "to_level": 4
     }
   ],
@@ -4066,13 +4068,13 @@
     "G1_non_trivial_sccs": 0,
     "G1_sccs_total": 154,
     "G1c_levels": 14,
-    "G2_largest_scc_size": 80,
-    "G2_module_sccs_total": 67,
+    "G2_largest_scc_size": 82,
+    "G2_module_sccs_total": 65,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 641,
+    "compile_edges_G1": 640,
     "lazy_edges": 378,
-    "lazy_edges_lateral": 49,
-    "lazy_edges_strictly_upward": 80,
+    "lazy_edges_lateral": 47,
+    "lazy_edges_strictly_upward": 82,
     "lazy_edges_to_equal_or_higher_level": 129,
     "modules": 154,
     "optional_edges": 0,

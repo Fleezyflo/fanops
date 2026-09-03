@@ -380,10 +380,10 @@
     ]
   },
   "locks": {
-    "fanops.accounts": [
+    "fanops.controlio": [
       {
         "call": "_file_lock",
-        "line": 411
+        "line": 28
       }
     ],
     "fanops.fanops_hashtags": [
@@ -430,12 +430,6 @@
       {
         "call": "tmp_store.lock",
         "line": 83
-      }
-    ],
-    "fanops.persona_store": [
-      {
-        "call": "_file_lock",
-        "line": 150
       }
     ],
     "fanops.pipeline_run": [
@@ -600,11 +594,11 @@
     "fanops.transcribe_engine": [
       {
         "call": "shutil.rmtree",
-        "line": 85
+        "line": 79
       },
       {
         "call": "shutil.rmtree",
-        "line": 87
+        "line": 81
       }
     ]
   },
@@ -794,12 +788,6 @@
         "line": 41
       }
     ],
-    "fanops.transcribe_engine": [
-      {
-        "call": "subprocess.run",
-        "line": 247
-      }
-    ],
     "fanops.visual_start": [
       {
         "call": "subprocess.run",
@@ -820,10 +808,10 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 83,
-    "lock_sites": 22,
+    "lock_sites": 21,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 39
   }
 }
