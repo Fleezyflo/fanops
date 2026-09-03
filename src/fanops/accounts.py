@@ -5,7 +5,6 @@ maps a handle to its hosted-backend id (FIX F06: v1 passed the handle straight t
 from __future__ import annotations
 import json
 import logging
-from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Optional, NamedTuple
@@ -14,7 +13,7 @@ from fanops.config import Config, _LIVE_BACKENDS, _BACKEND_PLATFORMS, FRAMING_NA
 from fanops.errors import ControlFileError, reason as _reason
 from fanops.models import Platform, validate_account_handle
 from fanops.bands import PROFILE_NAMES                # the valid per-account clip_profile names (M2 length tier)
-from fanops.controlio import load_raw_list, write_json_atomic   # shared atomic control-file IO
+from fanops.controlio import control_file_txn, load_raw_list, write_json_atomic   # shared atomic control-file IO
 
 _log = logging.getLogger("fanops.accounts")
 
@@ -95,13 +94,6 @@ class Account(BaseModel):
     selection_scope: Optional[str] = None
     hook_angle: Optional[str] = None
     intensity: Optional[str] = None
-    # M3e: the 3 per-dimension OVERRIDE carriers (casting/hook/caption_directive) were RETIRED with the Persona
-    # overrides — the structured levers always compile the directives now; the voice carries freeform register.
-    # Provenance (S2): True only when the LINKED persona actually supplied clip_profile (resolved_cut_spec
-    # returned a profile at hydration). HYDRATION-ONLY — never written back to accounts.json (set_* mutate the
-    # raw dict). Lets the Studio attribute a length to the persona vs the account's own pin truthfully; default
-    # False -> attribution falls to the account pin / global (byte-identical when unlinked or persona-cut-silent).
-    persona_owns_profile: bool = False
     # Per-platform poster ids keyed by Platform.value (e.g. {"instagram": "ig_1", "tiktok": "tk_9"}).
     # A handle's Instagram and TikTok are DIFFERENT Postiz integrations, so each (handle, platform) must
     # resolve to its OWN id. ADDITIVE: empty on a legacy account, which then resolves via account_id —
@@ -401,15 +393,9 @@ def _load_raw_accounts(p: Path) -> tuple[dict, list]:
     return load_raw_list(p, "accounts")
 
 
-@contextmanager
 def _accounts_txn(cfg: Config):
-    """Serialize a mutator's READ-modify-write under cfg.accounts_lock_path so two concurrent Studio/
-    daemon writers can't lost-update (the _load_raw_accounts MUST run INSIDE this lock — reading outside
-    it is the lost-update window). Reuses the proven fcntl flock helper; the import is LAZY so there is no
-    module-load cycle (ledger never imports accounts — verified one-way)."""
-    from fanops.ledger import _file_lock
-    with _file_lock(cfg.accounts_lock_path):
-        yield
+    """Serialize a mutator's READ-modify-write under cfg.accounts_lock_path (_load_raw_accounts INSIDE lock)."""
+    return control_file_txn(cfg.accounts_lock_path)
 
 
 def write_integration(cfg: Config, handle: str, platform: str, integration_id: str | int) -> str:

@@ -262,11 +262,9 @@ def _bounded_transcript(transcript: list, peaks: list, *, corpus=None, src_lang=
 
 def _persona_entry(cfg: Config, a) -> dict:
     """Per-account pick spec — handle + compiled lens (directive/scope). No length band."""
-    from fanops.persona_directives import casting_directive, resolved_cut_spec
+    from fanops.persona_directives import casting_directive, resolve_account_framing
     d = casting_directive(a)
-    pin_fr = (getattr(a, "framing", None) or "").strip().lower()
-    _, derived_fr = resolved_cut_spec(a)
-    framing = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(a) else "center"))
+    framing = resolve_account_framing(cfg, a)
     intensity = (getattr(a, "intensity", None) or "")
     if isinstance(intensity, str): intensity = intensity.strip().lower() or None
     else: intensity = None
@@ -413,11 +411,8 @@ def _stamp_owner_spec(cfg: Config, owner: str | None, by_handle: dict) -> tuple[
     acct = by_handle.get(owner)
     if acct is None:
         return None, None
-    from fanops.persona_directives import resolved_cut_spec
-    pin_fr = (getattr(acct, "framing", None) or "").strip().lower()
-    _, derived_fr = resolved_cut_spec(acct)
-    fr = pin_fr if pin_fr in ("top", "center") else (derived_fr or ("top" if cfg.resolve_top_bias(acct) else "center"))
-    return None, fr
+    from fanops.persona_directives import resolve_account_framing
+    return None, resolve_account_framing(cfg, acct)
 
 def _reconcile_valid_picks(led: Ledger, cfg: Config, source_id: str, deduped: list[MomentPick]) -> Ledger:
     """Upsert deduped valid picks + hook-gate sweep + picks_decided. Caller handles empty/error."""
@@ -763,7 +758,7 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
     # Cross-clip hook de-dup: seed `used` from OTHER sources' hooks (an EXACT repeat reads like a bot);
     # `cluster_used` (the opening-template scope) starts empty and accumulates within THIS atomic pass —
     # byte-identical to the old single-pass loop. Both grow as we accept hooks in pick order.
-    from fanops.caption import _lang_base, brand_risk_flag    # function-local: avoids module cycle; _lang_base for lang gate
+    from fanops.caption_ingest import _lang_base, brand_risk_flag    # function-local: avoids module cycle; _lang_base for lang gate
     src_lang = _lang_base((led.sources[source_id].language if source_id in led.sources else None))
     used = {(m.hook or "").strip().lower() for m in led.moments.values()
             if m.hook and m.parent_id != source_id}

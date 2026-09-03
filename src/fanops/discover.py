@@ -18,7 +18,8 @@ from fanops.config import Config
 from fanops.controlio import write_json_atomic
 from fanops.errors import ControlFileError, ToolchainMissingError
 from fanops.ledger import Ledger
-from fanops.ingest import scan_local, probe_dimensions, sha256_of
+from fanops.ingest import scan_local
+from fanops.media_probe import probe_dimensions, sha256_of
 
 def _load_json(path: Path, default):
     """Guarded control-file read: the 00_review JSONs are operator-adjacent files. A truncated or

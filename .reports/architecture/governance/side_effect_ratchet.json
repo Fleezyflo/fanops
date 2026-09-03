@@ -42,19 +42,23 @@
       "fanops.cli",
       "fanops.post.compress",
       "fanops.reframe_apply",
-      "fanops.transcribe"
+      "fanops.transcribe",
+      "fanops.transcribe_engine"
     ],
     "subprocess_sites": [
       "fanops.canary",
       "fanops.clip",
+      "fanops.clip_ffmpeg",
       "fanops.daemon",
       "fanops.discover",
       "fanops.health",
       "fanops.health_model",
       "fanops.ig_hashtag_scrape",
       "fanops.ingest",
+      "fanops.ingest_shard",
       "fanops.keyframes",
       "fanops.llm",
+      "fanops.media_probe",
       "fanops.overlay",
       "fanops.post.compress",
       "fanops.postiz_lifecycle",
@@ -63,6 +67,8 @@
       "fanops.signals",
       "fanops.studio.actions_run",
       "fanops.transcribe",
+      "fanops.transcribe_engine",
+      "fanops.visual_start",
       "fanops.vocals"
     ]
   },
@@ -71,8 +77,8 @@
     "ledger_transaction_sites": 84,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 16,
-    "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "rmtree_sites": 7,
+    "subprocess_sites": 44
   },
   "how_to_raise": "In the same PR that adds a site: (1) raise the matching ceiling by the number of new sites, (2) list every newly side-effecting module under approved_sites.<key>. Never copy a census total into kb/side_effects.json \u2014 ARCH-008 still forbids that restatement.",
   "purpose": "Approved ceilings and module allowlists for AST-censused side-effect sites. The census lives only in derived/side_effects.json. This file is DECLARED POLICY: raising a ceiling (and listing a new module) is a deliberate human decision visible in the PR diff. Rule ARCH-008 checks both against the derived census at CI time."

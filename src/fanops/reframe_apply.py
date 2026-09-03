@@ -45,8 +45,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fanops import apply_common as ac
 from fanops import clip as clipmod
 from fanops import framing
+from fanops.render_fingerprint import _render_fingerprint_payload, fingerprint_of_payload
 from fanops import overlay
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
@@ -80,8 +82,7 @@ class MigrationLockHeld(RuntimeError):
     clip, or overwrite a reframed clip with a centred one. Loud is the only safe behaviour."""
 
 
-class PlanStale(RuntimeError):
-    """Live state no longer matches the immutable plan. The clip is skipped, never re-planned."""
+PlanStale = ac.PlanStale
 
 
 class LedgerMutated(RuntimeError):
@@ -202,15 +203,18 @@ class MigrationLock:
 
 # ---- hashing / probing ------------------------------------------------------------------------------
 
-def sha256_file(p) -> str | None:
-    h = hashlib.sha256()
-    try:
-        with open(p, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-    except OSError:
-        return None
-    return h.hexdigest()
+sha256_file = ac.sha256_file
+stored_fp = ac.stored_fp
+_stored_fp = ac.stored_fp
+backup_clip = ac.backup_clip
+inspect_clip = ac.inspect_clip
+rollback_clip = ac.rollback_clip
+UNTOUCHED = ac.UNTOUCHED
+BACKED_UP = ac.BACKED_UP
+COMMITTED = ac.COMMITTED
+TORN = ac.TORN
+RESTORED = ac.RESTORED
+AMBIGUOUS = ac.AMBIGUOUS
 
 
 def ffprobe_json(path: str) -> dict | None:
@@ -404,15 +408,9 @@ def build_plan(manifest: dict, paths: ReframePaths, *, source_id: str | None = N
 # ---- the run directory + append-only journal --------------------------------------------------------
 
 @dataclass
-class RunDirs:
-    root: Path                       # 07_reports/reframe/<run_id>
-    backups: Path
-    staging: Path
+class RunDirs(ac.RunDirsBase):
     review: Path
-    journal: Path
-    plan: Path
     meta: Path
-    summary: Path
 
     @classmethod
     def build(cls, cfg: Config, run_id: str) -> "RunDirs":
@@ -422,8 +420,8 @@ class RunDirs:
                    summary=root / "summary.json")
 
     def mkdirs(self) -> None:
-        for d in (self.root, self.backups, self.staging, self.review):
-            d.mkdir(parents=True, exist_ok=True)
+        super().mkdirs()
+        self.review.mkdir(parents=True, exist_ok=True)
 
 
 def journal_append(dirs: RunDirs, rec: dict) -> None:
@@ -502,22 +500,6 @@ def ledger_diff(before: dict, after: dict) -> list:
 
 # ---- per-clip state, as READ FROM DISK (never assumed from the journal alone) -------------------------
 
-UNTOUCHED = "untouched"                 # production is exactly the preimage
-BACKED_UP = "backed_up"                 # backup exists and is valid; production still the preimage
-COMMITTED = "committed"                 # mp4 replaced AND sidecar carries fp_new -- coherent
-TORN = "mp4_replaced_sidecar_old"       # THE crash window: new pixels, stale fingerprint
-RESTORED = "restored"                   # production is the preimage again and a backup exists
-AMBIGUOUS = "ambiguous"                 # we cannot prove which of the above -- STOP, never guess
-
-
-def _stored_fp(sidecar: Path) -> str | None:
-    try:
-        v = json.loads(sidecar.read_text()).get("fp")
-        return v if isinstance(v, str) else None
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-
-
 def _write_sidecar_atomic(sidecar_path: str, fp: str) -> None:
     """Atomically replace a render sidecar so a crash mid-write can never tear it — it only ever appears
     complete. A thin wrapper over the repo's SHARED control-file boundary (controlio.write_json_atomic:
@@ -530,55 +512,6 @@ def _write_sidecar_atomic(sidecar_path: str, fp: str) -> None:
     keep their OWN muxer-inferable `.part` discipline (MOL-78) — this JSON boundary is deliberately separate."""
     write_json_atomic(Path(sidecar_path), {"fp": fp})
 
-
-def inspect_clip(dirs: RunDirs, row: dict) -> str:
-    """Resume's eyes. Reads ACTUAL disk state and classifies it. Ambiguity is a first-class answer: a
-    resume that guesses is worse than one that stops."""
-    mp4, side = Path(row["media_path"]), Path(row["sidecar_path"])
-    bk_mp4 = dirs.backups / f"{row['clip_id']}.mp4"
-    pre = row["preimage"]
-    cur_mp4 = sha256_file(mp4) if mp4.exists() else None
-    cur_fp = _stored_fp(side)
-    bk_ok = bk_mp4.exists() and sha256_file(bk_mp4) == pre["media_sha256"]
-
-    if cur_mp4 is None:
-        return AMBIGUOUS                                  # production media is GONE: never invent a story
-    if cur_mp4 == pre["media_sha256"] and cur_fp == row["fp_old"]:
-        return RESTORED if bk_ok else (BACKED_UP if bk_mp4.exists() else UNTOUCHED)
-    if cur_mp4 != pre["media_sha256"] and cur_fp == row["fp_new"]:
-        return COMMITTED
-    if cur_mp4 != pre["media_sha256"] and cur_fp == row["fp_old"]:
-        return TORN                                       # crashed between os.replace(mp4) and the sidecar
-    return AMBIGUOUS
-
-
-# ---- backup ------------------------------------------------------------------------------------------
-
-def backup_clip(dirs: RunDirs, row: dict) -> dict:
-    """Byte-exact, deterministic path, verified after copy, NEVER overwritten. An existing valid backup is
-    reused (resume is idempotent); an existing INVALID one is a hard error, not something to overwrite --
-    overwriting it would destroy the only copy of the original."""
-    cid = row["clip_id"]
-    out: dict = {}
-    for src, name, want in ((Path(row["media_path"]), f"{cid}.mp4", row["preimage"]["media_sha256"]),
-                            (Path(row["sidecar_path"]), f"{cid}.render.json", row["preimage"]["sidecar_sha256"])):
-        dst = dirs.backups / name
-        if dst.exists():
-            got = sha256_file(dst)
-            if got != want:
-                raise PlanStale(f"{cid}: existing backup {name} sha {got} != planned preimage {want} — "
-                                f"refusing to overwrite the only copy of the original")
-            out[name] = got
-            continue
-        shutil.copy2(src, dst)                            # copy2 preserves mtime; bytes verified below
-        got = sha256_file(dst)
-        if got != want:
-            raise PlanStale(f"{cid}: backup of {name} verified {got} != {want} — copy is not byte-exact")
-        out[name] = got
-    return out
-
-
-# ---- the one-clip mutation ---------------------------------------------------------------------------
 
 def _assert_preimage(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict) -> None:
     """Everything that must STILL be true, immediately before we touch this clip. Any failure raises
@@ -649,10 +582,10 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict, *, ru
     # THE FINGERPRINT GATE, asserted on the inputs we are ABOUT to render with -- not on the plan's copy of
     # them. If these two disagree, the sidecar we would write would attest to a render that never happened.
     ass_text = Path(row["ass_path"]).read_text(encoding="utf-8") if r["has_ass"] else ""
-    payload = clipmod._render_fingerprint_payload(r["src_path"], r["cs"], r["ce"], r["aspect"],
+    payload = _render_fingerprint_payload(r["src_path"], r["cs"], r["ce"], r["aspect"],
                                                   r["src_w"], r["src_h"], ass_text, top_bias=r["top_bias"],
                                                   focus=focus, track=track, content_type=r["content_type"])
-    fp_actual = clipmod.fingerprint_of_payload(payload)
+    fp_actual = fingerprint_of_payload(payload)
     if fp_actual != row["fp_new"]:
         return {**rec, "phase": "refuse", "status": "FINGERPRINT_DIVERGED",
                 "error": f"inputs hash to {fp_actual[:16]} but the plan proved {row['fp_new'][:16]}"}
@@ -701,29 +634,6 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict, *, ru
             "final": {"media_sha256": final_mp4, "fp": final_fp, "bytes": Path(row["media_path"]).stat().st_size}}
 
 
-# ---- rollback ----------------------------------------------------------------------------------------
-
-def rollback_clip(dirs: RunDirs, row: dict) -> dict:
-    """Restore the EXACT original bytes. Verifies the backup BEFORE trusting it, restores atomically,
-    verifies afterwards, and is idempotent (a clip already at its preimage is a no-op success)."""
-    cid = row["clip_id"]
-    bk_mp4, bk_side = dirs.backups / f"{cid}.mp4", dirs.backups / f"{cid}.render.json"
-    pre = row["preimage"]
-    if not bk_mp4.exists() or not bk_side.exists():
-        return {"clip_id": cid, "status": "ROLLBACK_NO_BACKUP"}
-    if sha256_file(bk_mp4) != pre["media_sha256"] or sha256_file(bk_side) != pre["sidecar_sha256"]:
-        return {"clip_id": cid, "status": "ROLLBACK_BACKUP_CORRUPT"}
-    if sha256_file(row["media_path"]) == pre["media_sha256"] and _stored_fp(Path(row["sidecar_path"])) == row["fp_old"]:
-        return {"clip_id": cid, "status": "ROLLBACK_NOOP"}         # idempotent
-    for bk, dst in ((bk_mp4, row["media_path"]), (bk_side, row["sidecar_path"])):
-        tmp = Path(str(dst) + ".rbpart")
-        shutil.copy2(bk, tmp)
-        os.replace(str(tmp), dst)
-    if sha256_file(row["media_path"]) != pre["media_sha256"] or sha256_file(row["sidecar_path"]) != pre["sidecar_sha256"]:
-        return {"clip_id": cid, "status": "ROLLBACK_VERIFY_FAILED"}
-    return {"clip_id": cid, "status": "ROLLED_BACK", "media_sha256": pre["media_sha256"]}
-
-
 # ---- declared-write verification ----------------------------------------------------------------------
 
 def declared_write_violations(diff: dict, prod_cfg: Config, run_id: str, planned_ids: set) -> list:
@@ -754,7 +664,7 @@ def free_bytes(p: Path) -> int:
 
 
 def new_run_id(stamp: float) -> str:
-    return "rf_" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(stamp))
+    return ac.new_run_id("rf_", stamp)
 
 
 # ---- the run ------------------------------------------------------------------------------------------

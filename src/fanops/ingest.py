@@ -4,7 +4,7 @@ CONTENT sha256 (FIX F35). Probe width/height/duration at ingest for safe reframe
 Exclude PII/legal/financial by name — necessary but NOT sufficient (FIX F46): a private file
 misnamed slips through; a human still reviews held/odd clips before posting."""
 from __future__ import annotations
-import dataclasses, hashlib, os, re, shutil, subprocess
+import dataclasses, os, shutil, subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,15 +16,11 @@ from fanops.models import Source, SourceState
 from fanops.ids import make_id
 from fanops.timeutil import iso_z
 from fanops.errors import ToolchainMissingError, DownloadError
+from fanops.media_probe import (MEDIA_EXT, is_excluded, sha256_of, probe_dimensions,
+                                 has_video_stream)
+from fanops.ingest_shard import shard_points, shard_file, _stem_is_shard_part
 
-MEDIA_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi",
-             ".jpg", ".jpeg", ".png", ".heic", ".mp3", ".wav", ".m4a"}
-_STILL_EXT = {".jpg", ".jpeg", ".png", ".heic"}
-_PII = re.compile(r"passport|\bid\b|\bvisa\b|licen[cs]e|agreement|contract|invoice|"
-                  r"\bnda\b|tax|bank|ssn|emirates.?id|national.?id", re.IGNORECASE)
-
-def is_excluded(name: str) -> bool:
-    return bool(_PII.search(name))
+_STILL_EXT = {".jpg", ".jpeg", ".png", ".heic"}   # native ingest staging only — stills skipped before catalogue
 
 _ARCHIVE_NAME = ".ingested"   # per-inbox archive subdir: a DISPOSED drop moves here so steady-state inbox is empty (ING-1)
 _PARTIAL_EXT = {".uploadpart", ".part"}   # leaked stream temps (Studio upload / yt-dlp) — sweep on ingest start (ING-10)
@@ -116,174 +112,9 @@ def _reprobe_degraded(led: Ledger, cfg: Config) -> None:
                 "width": w, "height": h, "duration": dur or None, "degraded_reason": None})
             get_logger(cfg)("ingest", sid, "reprobe_ok", width=w, height=h)
 
-def sha256_of(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-# Hard bounds (the llm.py timeout idiom). ffprobe is a sub-second metadata read — a hang means a
-# corrupt file or stuck mount, and ingest runs INSIDE advance()'s transaction with no per-unit
-# quarantine, so it must fail soft per file, fast. yt-dlp is a full network download (NO lock
-# held — see download_url) but `fanops pull` still must not hang forever on a dead CDN.
-_FFPROBE_TIMEOUT = 30.0
+# yt-dlp is a full network download (NO lock held — see download_url) but `fanops pull` still must
+# not hang forever on a dead CDN.
 _YTDLP_TIMEOUT = 600.0
-
-def _run_ffprobe(args: list[str]) -> subprocess.CompletedProcess:
-    """Run ffprobe, translating a PRE-LAUNCH FileNotFoundError/OSError (ffprobe absent from PATH)
-    into a typed, cli-catchable ToolchainMissingError. `check=False`-style: a nonzero ffprobe
-    RETURNCODE is NOT an error here (callers interpret stdout, defaulting to 0/False) — only the
-    binary being ABSENT is. This runs at ingest, OUTSIDE the pipeline's per-unit quarantine, so an
-    uncaught raise would crash `fanops advance` with a traceback; the typed error -> clean exit 2."""
-    try:
-        return subprocess.run(["ffprobe", *args], capture_output=True, text=True,
-                              timeout=_FFPROBE_TIMEOUT)
-    except (FileNotFoundError, OSError) as e:
-        raise ToolchainMissingError(
-            "ffprobe not found on PATH — install ffmpeg (it provides ffprobe) to ingest media "
-            f"({type(e).__name__})") from e
-    except subprocess.TimeoutExpired:
-        # PER-FILE hang (corrupt media, stuck mount) — NOT the binary-absent case: raising here
-        # would abort the whole ingest pass and roll back the transaction over one bad file.
-        # Fail SOFT with an empty result instead: probe_dimensions -> zeros (its documented
-        # failure shape), has_video_stream -> None — the file stays in the inbox and is retried
-        # next pass, bounded each time, never a crash or a dropped pass.
-        return subprocess.CompletedProcess(["ffprobe", *args], returncode=124,
-                                           stdout="", stderr="ffprobe timed out")
-
-_FFPROBE_TIMEOUT_RC = 124
-
-def probe_dimensions(path: Path) -> tuple[int, int, float]:
-    """(width, height, duration_seconds) via ffprobe; zeros on failure (ffprobe ABSENT raises
-    ToolchainMissingError — see _run_ffprobe — rather than masquerading as a 0×0 source)."""
-    r = _run_ffprobe(
-        ["-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)])
-    vals = [x for x in r.stdout.split() if x]
-    try:
-        w = int(float(vals[0])); h = int(float(vals[1])); dur = float(vals[2])
-        return w, h, dur
-    except (IndexError, ValueError):
-        return 0, 0, 0.0
-
-def has_video_stream(path: Path) -> bool | None:
-    """True if the file carries a decodable video stream (a still image counts — it has a
-    video-type stream). Audio-only files (.wav/.mp3/.m4a with no picture) return False. None when
-    ffprobe timed out — the caller must leave the file in the inbox for retry, not archive it as
-    audio-only. Used to keep audio-only drops out of the clip pipeline: ffmpeg's reframe -vf is
-    silently ignored on an audio-only input, so without this guard the renderer emits a *videoless*
-    'clip' (audio masquerading as a 9:16 post) — a real data-integrity bug confirmed on
-    ffmpeg 8.0.1. Audio extensions stay in MEDIA_EXT for a future audiogram path; they just
-    aren't catalogued as clip sources today. ffprobe ABSENT raises ToolchainMissingError (via
-    _run_ffprobe) — we must NOT return False on a missing binary, which would silently DROP a
-    real video as if it were audio-only."""
-    r = _run_ffprobe(
-        ["-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)])
-    if r.returncode == _FFPROBE_TIMEOUT_RC:
-        return None
-    # `csv=p=0` emits "video," (trailing empty field) on some HEVC .mov muxings — exact `== "video"`
-    # would then read it as audio-only and silently DROP a real clip. Token-match instead: True iff a
-    # "video" codec_type appears among the comma/space-separated fields; empty stdout -> still False.
-    return "video" in r.stdout.replace(",", " ").split()
-
-_SHARD_TARGET_S = 1500.0      # ~25 min segment target (internal — not env)
-_SHARD_SNAP_WINDOW_S = 90.0   # silence snap radius around nominal window end
-_SHARD_SIL_START = re.compile(r"silence_start:\s*([0-9.]+)")
-_SHARD_SIL_END = re.compile(r"silence_end:\s*([0-9.]+)")
-
-def _shard_silence_cmd(path: Path) -> list[str]:
-    return ["ffmpeg", "-hide_banner", "-vn", "-i", str(path), "-af",
-            "silencedetect=noise=-35dB:d=1.5", "-f", "null", "-"]
-
-def _run_ffmpeg(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    try:
-        return subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-    except (FileNotFoundError, OSError) as e:
-        raise ToolchainMissingError(
-            f"ffmpeg not found on PATH — install ffmpeg to shard sources ({type(e).__name__})") from e
-
-def _parse_silence_intervals(stderr: str) -> list[tuple[float, float]]:
-    starts = [float(m) for m in _SHARD_SIL_START.findall(stderr)]
-    ends = [float(m) for m in _SHARD_SIL_END.findall(stderr)]
-    return [(s, e) for s, e in zip(starts, ends) if e > s]
-
-def _shard_ffmpeg_timeout(duration: float) -> float:
-    return max(60.0, duration * 0.1 + 60.0)
-
-def shard_points(path: Path, duration: float, *, target_s: float = _SHARD_TARGET_S) -> list[float]:
-    """Interior cut timestamps for stream-copy sharding."""
-    if duration <= 0:
-        return []
-    intervals: list[tuple[float, float]] = []
-    try:
-        r = _run_ffmpeg(_shard_silence_cmd(path), timeout=_shard_ffmpeg_timeout(duration))
-        intervals = _parse_silence_intervals(r.stderr or "")
-    except (ToolchainMissingError, subprocess.TimeoutExpired):
-        intervals = []
-    def _pick_cut(nominal: float) -> float:
-        best = None; best_len = -1.0
-        for start, end in intervals:
-            mid = (start + end) / 2.0
-            if abs(mid - nominal) <= _SHARD_SNAP_WINDOW_S:
-                seg_len = end - start
-                if seg_len > best_len:
-                    best_len = seg_len; best = mid
-        return best if best is not None else min(nominal, duration - 0.001)
-    points: list[float] = []
-    if duration <= target_s:
-        cut = _pick_cut(duration / 2.0)
-        if 0 < cut < duration:
-            points.append(cut)
-        return sorted(set(points))
-    k = 0
-    while True:
-        nominal = (k + 1) * target_s
-        if nominal >= duration:
-            break
-        cut = _pick_cut(nominal)
-        if 0 < cut < duration:
-            points.append(cut)
-        k += 1
-    return sorted(set(points))
-
-def _stem_is_shard_part(stem: str) -> bool:
-    return bool(re.search(r"-p\d{2}$", stem))
-
-def shard_file(cfg: Config, f: Path, points: list[float]) -> list[Path] | None:
-    """Stream-copy `f` into inbox part files beside it. None on any segment failure (parts cleaned up)."""
-    _w, _h, dur = probe_dimensions(f)
-    duration = dur or 0.0
-    bounds = [0.0, *sorted(points), duration]
-    parts: list[Path] = []
-    temps: list[Path] = []
-    try:
-        for i in range(len(bounds) - 1):
-            start = bounds[i]; seg_len = bounds[i + 1] - start
-            if seg_len <= 0:
-                continue
-            dest = f.parent / f"{f.stem}-p{i + 1:02d}{f.suffix}"
-            tmp = dest.with_name(dest.name + ".part.mp4")
-            temps.append(tmp)
-            cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(f), "-to", f"{seg_len:.3f}",
-                   "-c", "copy", "-avoid_negative_ts", "make_zero", str(tmp)]
-            r = _run_ffmpeg(cmd, timeout=_shard_ffmpeg_timeout(duration))
-            if r.returncode != 0:
-                raise RuntimeError("segment failed")
-            os.replace(tmp, dest)
-            temps.remove(tmp)
-            parts.append(dest)
-        return parts
-    except (ToolchainMissingError, subprocess.TimeoutExpired, OSError, RuntimeError):
-        pass
-    for p in parts + temps:
-        try:
-            if p.exists(): p.unlink()
-        except OSError as e:
-            get_logger(cfg)("ingest", f.name, "shard_cleanup_failed", part=p.name, why=str(e)[:120])
-    return None
 
 def _stage_candidate(cfg: Config, f: Path, *, origin: str, origin_kind: Literal["native", "third_party"],
                      batch_id: str | None) -> StagedCandidate | None:
@@ -431,15 +262,6 @@ def ingest_staged(led: Ledger, cfg: Config, staged: StagedInbox, *, batch_id: st
         else:
             counts.added += 1
     return led, counts
-
-
-def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: str,
-                    origin_kind: Literal["native", "third_party"] = "native",
-                    batch_id: str | None = None, counts: IngestCounts | None = None) -> bool:
-    """Legacy single-call catalogue (stage+mint). Prefer stage_inbox_candidates + ingest_staged for flock safety."""
-    c = _stage_candidate(cfg, f, origin=origin, origin_kind=origin_kind, batch_id=batch_id)
-    if c is None: return False
-    return _mint_candidate(led, cfg, c, now_iso=now_iso, counts=counts)
 
 def _inbox_media(inbox: Path) -> set[Path]:
     """Resolved paths of the media files currently in `inbox` — the snapshot domain for per-file origin

@@ -258,11 +258,8 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     # attributes to the persona when the account is persona-linked, else the account's own pin, else None (global
     # inherited → value renders bare). framing names the account's pin. cast names the moment's pick for this account.
     prof = post.clip_profile
-    # length attributes to the persona ONLY when the linked persona TRULY supplied the cut (persona_owns_profile,
-    # stamped at hydration) — a persona_id alone proves nothing (the account's own pin may stand). Else name the
-    # account ONLY when its pin actually EQUALS the post's stamped profile (a drifted pin must not be miscredited).
-    if prof and getattr(acct, "persona_id", None) and getattr(acct, "persona_owns_profile", False): length_cause = f"persona {prof}"
-    elif prof and getattr(acct, "clip_profile", None) == prof: length_cause = f"{post.account} {prof}"
+    # M3: length is persona-blind — name the account ONLY when its pin equals the post's stamped profile.
+    if prof and getattr(acct, "clip_profile", None) == prof: length_cause = f"{post.account} {prof}"
     else: length_cause = None
     framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
     cast_cause = _cast_cause(led, post, affinities)
@@ -280,7 +277,7 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     _mom_hook = None
     if _mom is not None:
         _mom_hook = (_mom.hook or "").strip() or None
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=posted_text_for(cfg, led, post), hashtags=list(post.hashtags or []),

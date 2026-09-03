@@ -1,4 +1,3 @@
-# src/fanops/hookcheck.py
 """Deterministic MECHANICAL hook-hygiene floor (v2). It does not judge hook QUALITY — that is the
 vision author's job (the author writes the hook seeing the footage). This floor is the ONLY gate after
 the author; it rejects only the three things a regex can decide without reading meaning:

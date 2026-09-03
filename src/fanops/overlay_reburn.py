@@ -15,16 +15,21 @@ import json
 import os
 import shutil
 import tempfile
-import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from fanops import apply_common as ac
 from fanops import clip as clipmod
 from fanops import framing
 from fanops import overlay
 from fanops import reframe_apply as ra
-from fanops.clip import _build_ass_text, fingerprint_of_payload
+from fanops.clip import _build_ass_text
+from fanops.render_fingerprint import (
+    _render_fingerprint_payload,
+    fingerprint_of_payload,
+    fingerprint_payload_bytes,
+)
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
@@ -53,12 +58,15 @@ def _scratch_ledger(paths: ReframePaths) -> Ledger:
     return Ledger.load(paths.scratch_cfg)
 
 
-UNTOUCHED = ra.UNTOUCHED
-BACKED_UP = ra.BACKED_UP
-COMMITTED = ra.COMMITTED
-TORN = ra.TORN
-RESTORED = ra.RESTORED
-AMBIGUOUS = ra.AMBIGUOUS
+UNTOUCHED = ac.UNTOUCHED
+BACKED_UP = ac.BACKED_UP
+COMMITTED = ac.COMMITTED
+TORN = ac.TORN
+RESTORED = ac.RESTORED
+AMBIGUOUS = ac.AMBIGUOUS
+inspect_clip = ac.inspect_clip
+backup_clip = ac.backup_clip
+rollback_clip = ac.rollback_clip
 
 
 def _is_http(url) -> bool:
@@ -140,10 +148,10 @@ def prove_payload(paths: ReframePaths, cfg: Config, led: Ledger, c, fp_stored: s
         for ass, alab in ass_cands:
             for tb, tlab in _top_bias_candidates(m, cfg):
                 for (focus, track, ct), clab in crops:
-                    payload = clipmod._render_fingerprint_payload(
+                    payload = _render_fingerprint_payload(
                         src.source_path, cs, ce, c.aspect.value, src.width or 0, src.height or 0,
                         ass, top_bias=tb, focus=focus, track=track, content_type=ct)
-                    key = clipmod.fingerprint_payload_bytes(payload)
+                    key = fingerprint_payload_bytes(payload)
                     lab = f"{wlab}|{alab}|{tlab}|{clab}"
                     if key in by_bytes:
                         prev = by_bytes[key]
@@ -251,14 +259,7 @@ def _render_args(payload: dict) -> dict:
 
 
 @dataclass
-class RunDirs:
-    root: Path
-    backups: Path
-    staging: Path
-    journal: Path
-    plan: Path
-    summary: Path
-
+class RunDirs(ac.RunDirsBase):
     @classmethod
     def build(cls, cfg: Config, run_id: str) -> "RunDirs":
         root = cfg.reports / "overlay_reburn" / run_id
@@ -266,91 +267,9 @@ class RunDirs:
                    journal=root / "journal.jsonl", plan=root / "plan.json",
                    summary=root / "summary.json")
 
-    def mkdirs(self) -> None:
-        for d in (self.root, self.backups, self.staging):
-            d.mkdir(parents=True, exist_ok=True)
-
 
 def new_run_id(stamp: float | None = None) -> str:
-    return "or_" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(stamp or time.time()))
-
-
-def inspect_clip(dirs: RunDirs, row: dict) -> str:
-    """Mirror reframe inspect_clip: torn = new pixels, stale fp (healable)."""
-    mp4, side = Path(row["media_path"]), Path(row["sidecar_path"])
-    pre = row["preimage"]
-    cur_mp4 = ra.sha256_file(mp4) if mp4.exists() else None
-    cur_fp = ra._stored_fp(side)
-    bk_mp4 = dirs.backups / f"{row['clip_id']}.mp4"
-    bk_ok = bk_mp4.exists() and ra.sha256_file(bk_mp4) == pre["media_sha256"]
-    if cur_mp4 is None:
-        return AMBIGUOUS
-    if cur_mp4 == pre["media_sha256"] and cur_fp == row["fp_old"]:
-        return RESTORED if bk_ok else (BACKED_UP if bk_mp4.exists() else UNTOUCHED)
-    if cur_mp4 != pre["media_sha256"] and cur_fp == row["fp_new"]:
-        return COMMITTED
-    if cur_mp4 != pre["media_sha256"] and cur_fp == row["fp_old"]:
-        return TORN
-    return AMBIGUOUS
-
-
-def backup_clip(dirs: RunDirs, row: dict) -> dict:
-    """Byte-exact backup of mp4 + render.json + .ass. Never overwrite a divergent backup."""
-    cid = row["clip_id"]
-    items = [(Path(row["media_path"]), f"{cid}.mp4", row["preimage"]["media_sha256"]),
-             (Path(row["sidecar_path"]), f"{cid}.render.json", row["preimage"]["sidecar_sha256"])]
-    ass_sha = row["preimage"].get("ass_file_sha256")
-    ass_p = Path(row["ass_path"])
-    if ass_sha and ass_p.exists():
-        items.append((ass_p, f"{cid}.ass", ass_sha))
-    out: dict = {}
-    for src, name, want in items:
-        dst = dirs.backups / name
-        if dst.exists():
-            got = ra.sha256_file(dst)
-            if got != want:
-                raise ra.PlanStale(f"{cid}: existing backup {name} sha {got} != planned preimage {want}")
-            out[name] = got
-            continue
-        if not src.exists():
-            continue
-        shutil.copy2(src, dst)
-        got = ra.sha256_file(dst)
-        if got != want:
-            raise ra.PlanStale(f"{cid}: backup of {name} verified {got} != {want}")
-        out[name] = got
-    return out
-
-
-def rollback_clip(dirs: RunDirs, row: dict) -> dict:
-    """Restore mp4 + sidecar + .ass from backup."""
-    cid = row["clip_id"]
-    bk_mp4 = dirs.backups / f"{cid}.mp4"
-    bk_side = dirs.backups / f"{cid}.render.json"
-    bk_ass = dirs.backups / f"{cid}.ass"
-    pre = row["preimage"]
-    if not bk_mp4.exists() or not bk_side.exists():
-        return {"clip_id": cid, "status": "ROLLBACK_NO_BACKUP"}
-    if ra.sha256_file(bk_mp4) != pre["media_sha256"] or ra.sha256_file(bk_side) != pre["sidecar_sha256"]:
-        return {"clip_id": cid, "status": "ROLLBACK_BACKUP_CORRUPT"}
-    if (ra.sha256_file(row["media_path"]) == pre["media_sha256"]
-            and ra._stored_fp(Path(row["sidecar_path"])) == row["fp_old"]):
-        ass_ok = (not pre.get("ass_file_sha256")
-                  or (Path(row["ass_path"]).exists() and ra.sha256_file(row["ass_path"]) == pre["ass_file_sha256"]))
-        if ass_ok:
-            return {"clip_id": cid, "status": "ROLLBACK_NOOP"}
-    pairs = [(bk_mp4, row["media_path"]), (bk_side, row["sidecar_path"])]
-    if bk_ass.exists() and pre.get("ass_file_sha256"):
-        pairs.append((bk_ass, row["ass_path"]))
-    for bk, dst in pairs:
-        tmp = Path(str(dst) + ".rbpart")
-        shutil.copy2(bk, tmp)
-        os.replace(str(tmp), dst)
-    if ra.sha256_file(row["media_path"]) != pre["media_sha256"] or ra.sha256_file(row["sidecar_path"]) != pre["sidecar_sha256"]:
-        return {"clip_id": cid, "status": "ROLLBACK_VERIFY_FAILED"}
-    if pre.get("ass_file_sha256") and ra.sha256_file(row["ass_path"]) != pre["ass_file_sha256"]:
-        return {"clip_id": cid, "status": "ROLLBACK_VERIFY_FAILED"}
-    return {"clip_id": cid, "status": "ROLLED_BACK", "media_sha256": pre["media_sha256"]}
+    return ac.new_run_id("or_", stamp)
 
 
 def _clear_file_media_url(prod_cfg: Config, cid: str) -> None:
@@ -393,8 +312,8 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led, row: dict, *, run_id: st
             overlay.write_ass(ass_new, row["ass_path"])
         ra._write_sidecar_atomic(row["sidecar_path"], row["fp_new"])
         return {**rec, "phase": "heal", "status": "healed_sidecar",
-                "final": {"media_sha256": ra.sha256_file(row["media_path"]),
-                          "fp": ra._stored_fp(Path(row["sidecar_path"]))}}
+                "final": {"media_sha256": ac.sha256_file(row["media_path"]),
+                          "fp": ac.stored_fp(Path(row["sidecar_path"]))}}
 
     c = led.clips.get(cid) if hasattr(led, "clips") else None
     if c is not None:
@@ -413,7 +332,7 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led, row: dict, *, run_id: st
 
     ass_new = row.get("ass_new") or (row.get("payload_new") or {}).get("ass") or ""
     focus, track, ct = rargs["focus"], rargs["track"], rargs["content_type"]
-    payload_actual = clipmod._render_fingerprint_payload(
+    payload_actual = _render_fingerprint_payload(
         rargs["src_path"], rargs["cs"], rargs["ce"], rargs["aspect"],
         rargs["src_w"], rargs["src_h"], ass_new, top_bias=rargs["top_bias"],
         focus=focus, track=track, content_type=ct)
@@ -452,7 +371,7 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led, row: dict, *, run_id: st
         staged_mp4.unlink(missing_ok=True)
         return {**rec, "phase": "validate", "status": "VALIDATION_FAILED", "error": ["staged output does not decode"]}
 
-    staged_sha = ra.sha256_file(staged_mp4)
+    staged_sha = ac.sha256_file(staged_mp4)
     if staged_sha == row["preimage"]["media_sha256"]:
         staged_mp4.unlink(missing_ok=True)
         return {**rec, "phase": "commit", "status": "UNCHANGED_PIXELS", "final": {"media_sha256": staged_sha}}
@@ -470,8 +389,8 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led, row: dict, *, run_id: st
         except Exception as exc:
             get_logger(prod_cfg)("overlay_reburn", cid, "ledger_clear_failed", reason=type(exc).__name__)
     return {**rec, "phase": "commit", "status": "MIGRATED",
-            "final": {"media_sha256": ra.sha256_file(row["media_path"]),
-                      "fp": ra._stored_fp(Path(row["sidecar_path"])),
+            "final": {"media_sha256": ac.sha256_file(row["media_path"]),
+                      "fp": ac.stored_fp(Path(row["sidecar_path"])),
                       "bytes": Path(row["media_path"]).stat().st_size}}
 
 
@@ -486,8 +405,8 @@ def _plan_row(paths: ReframePaths, c, class_row: dict) -> dict:
     return {
         "clip_id": cid, "moment_id": c.parent_id, "aspect": c.aspect.value,
         "media_path": str(mp4), "sidecar_path": str(side), "ass_path": str(ass),
-        "preimage": {"media_sha256": ra.sha256_file(mp4), "sidecar_sha256": ra.sha256_file(side),
-                     "ass_file_sha256": ra.sha256_file(ass) if ass.exists() else None},
+        "preimage": {"media_sha256": ac.sha256_file(mp4), "sidecar_sha256": ac.sha256_file(side),
+                     "ass_file_sha256": ac.sha256_file(ass) if ass.exists() else None},
         "fp_old": class_row["fp_stored"], "fp_new": class_row["fp_new"],
         "payload_old": class_row["payload_old"], "payload_new": class_row["payload_new"],
         "payload_delta": class_row["payload_delta"],

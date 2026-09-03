@@ -62,6 +62,15 @@ def resolved_cut_spec(p):
     return (None, fr or None)
 
 
+def resolve_account_framing(cfg, account) -> str:
+    """Effective crop bias for a hydrated Account: pin (top/center) OVER derived OVER top-bias default."""
+    pin_fr = (getattr(account, "framing", None) or "").strip().lower()
+    if pin_fr in ("top", "center"):
+        return pin_fr
+    _, derived_fr = resolved_cut_spec(account)
+    return derived_fr or ("top" if cfg.resolve_top_bias(account) else "center")
+
+
 def _base_voice(p) -> str:
     """The persona's freeform base instruction — its voice. Duck-typed (reads .voice OR the hydrated account's
     .persona). The voice is the single freeform field; the old separate `brief` folded into it."""

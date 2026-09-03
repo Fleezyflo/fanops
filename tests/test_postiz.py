@@ -125,7 +125,7 @@ def test_get_poster_returns_postiz(tmp_path, monkeypatch):
 
 def test_postiz_instagram_content_is_posted_text_for(tmp_path, monkeypatch, mocker):
     import json
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     from fanops.models import Clip, ClipState, Moment, MomentState, Source
     from fanops.source_tags import source_tag_locks_path
     cfg = _cfg(tmp_path, monkeypatch)

@@ -41,10 +41,8 @@
   10 genuinely-dead functions enumerated in the issue register (R-028 / MOL-68) were re-verified and REMOVED
   (test-only callers removed, or converted to the live siblings — e.g. `is_due_or_past`, `download_url`).
 - **Sibling parity is where the real bugs live.** Several defects are "one function guards the input, its twin
-  doesn't." When you touch one, check its sibling: `Accounts.load` (`accounts.py:98`) has a broad `except` with
-  no per-row guard while `Personas.load` (`personas.py:66`) is defensive (MOL-79); `_catalogue_file` in
-  `ingest.py` uses `shutil.copy2` while `render_account_cut` does temp+`os.replace` (MOL-74/78). (Studio-side
-  sibling gaps — `edit_caption` vs `regenerate_caption` — are in `studio/CLAUDE.md`.)
+  doesn't." When you touch one, check its sibling — e.g. Studio `edit_caption` vs `regenerate_caption` in
+  `studio/CLAUDE.md`. (`Accounts.load` and `Personas.load` both use MOL-79 per-row leniency now.)
 - **Fail-open with a logged breadcrumb is the house norm** — a subprocess/parse failure degrades to a safe
   default AND logs first. When adding one, log first. New degradable fail-open code uses `errors.fail_open`; silent
   `except Exception` handlers fail CI via `tests/test_swallow_ratchet.py`. On the unattended progress spine

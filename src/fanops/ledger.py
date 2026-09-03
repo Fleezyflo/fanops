@@ -908,7 +908,7 @@ class Ledger:
         # WIPE-SAFETY INVARIANT (content-lifecycle Phase 1): ADDS orphans only — NEVER retires a missing-file
         # source (retire_source is the explicit operator path). A future "warn on missing file" must LOG, never
         # retire. Locked by test_rebuild_idempotent_and_keeps_missing_file_sources.
-        from fanops.ingest import MEDIA_EXT            # local import: ingest imports ledger (avoid a cycle)
+        from fanops.media_probe import MEDIA_EXT            # local import: breaks ledger↔ingest cycle
         from fanops.timeutil import iso_z              # local: keep the timeutil dep cycle-safe
         if not cfg.sources.exists():
             return

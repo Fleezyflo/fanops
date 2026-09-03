@@ -1,7 +1,7 @@
 # src/fanops/persona_research.py
 """Persona niche terms. Caption hashtags are the source lock (`ship_from_lock`), not a derived corpus."""
 from __future__ import annotations
-from fanops.hashtag_hygiene import is_curatable
+from fanops.hashtags import is_curatable
 
 
 def _seed_token(raw) -> str | None:
@@ -30,9 +30,4 @@ def persona_terms(per, cfg=None) -> list[str]:
     `cfg` is retained for call-site compatibility and is deliberately unread.
     Voice / content_focus / hook_angle / intensity stay on the persona for caption+hook directives —
     they are NOT Instagram search roots (MOL-637)."""
-    return niche_terms(per)
-
-
-def relatedness_terms(per, cfg=None) -> list[str]:
-    """Declared niche bodies. Same set as `persona_terms`."""
     return niche_terms(per)

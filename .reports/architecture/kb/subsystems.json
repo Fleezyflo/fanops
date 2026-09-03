@@ -63,7 +63,9 @@
         "artifacts",
         "batches",
         "discover",
-        "ingest"
+        "ingest",
+        "ingest_shard",
+        "media_probe"
       ]
     },
     "S06_media_analysis": {
@@ -72,7 +74,9 @@
         "framing_outcomes",
         "keyframes",
         "signals",
+        "speech_trust",
         "transcribe",
+        "transcribe_engine",
         "vocals"
       ],
       "cycle_7_assignment": "framing_outcomes (added by #634) — the framing-outcome CONTRACT: WHY a clip was framed as it was, as first-class data. Level 0, imports NOTHING, consumed by framing + keyframes + reframe. It is NOT S01_foundation: that subsystem is defined as 'contracts and primitives with NO DOMAIN KNOWLEDGE', and this module is entirely domain."
@@ -83,7 +87,10 @@
         "autopilot",
         "escalation",
         "llm",
+        "llm_errors",
+        "llm_json",
         "prompts",
+        "prompts_caption",
         "responder",
         "responder_policy"
       ]
@@ -101,20 +108,33 @@
     "S09_render": {
       "modules": [
         "clip",
+        "clip_ffmpeg",
         "compose",
         "impact_cut",
         "overlay",
         "produce",
-        "stitch_render"
+        "reframe_vf",
+        "render_fingerprint",
+        "stitch_render",
+        "visual_start",
+        "window_math"
       ]
     },
     "S10_caption_hashtag": {
       "modules": [
         "caption",
+        "caption_compose",
+        "caption_ingest",
         "fanops_hashtags",
-        "hashtag_hygiene",
+        "hashtag_refresh",
+        "hashtag_scrape_policy",
         "hashtags",
+        "ig_safari_shell",
         "source_tags",
+        "source_tags_scrape",
+        "source_tags_shortlist",
+        "source_tags_sidecar",
+        "source_tags_walk",
         "ig_hashtag_scrape",
         "ig_web_scrape",
         "meta_graph",
@@ -228,6 +248,7 @@
     },
     "S19_maintenance": {
       "modules": [
+        "apply_common",
         "ledger_wipe",
         "lever_docs",
         "overlay_reburn",

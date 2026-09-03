@@ -4,8 +4,8 @@ import pytest
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.ingest import (ingest_drops, stage_inbox_candidates, ingest_staged, _archive_staged,
-                           shard_points, _stem_is_shard_part, _shard_silence_cmd)
+from fanops.ingest import ingest_drops, stage_inbox_candidates, ingest_staged, _archive_staged
+from fanops.ingest_shard import shard_points, _stem_is_shard_part, _shard_silence_cmd
 
 def _put(p: Path, b: bytes = b"VID") -> Path:
     p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b); return p
@@ -41,13 +41,13 @@ def test_shard_points_snaps_to_silence(mocker):
 [silencedetect @ 0x] silence_end: 1520.0 | silence_duration: 40.0
 """
     cp = subprocess.CompletedProcess([], 0, stdout="", stderr=stderr)
-    mocker.patch("fanops.ingest._run_ffmpeg", return_value=cp)
+    mocker.patch("fanops.ingest_shard._run_ffmpeg", return_value=cp)
     points = shard_points(Path("/fake/long.mp4"), 3000.0, target_s=1500.0)
     assert points == [1500.0]
 
 def test_shard_points_hard_cut_when_silent_free(mocker):
     cp = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-    mocker.patch("fanops.ingest._run_ffmpeg", return_value=cp)
+    mocker.patch("fanops.ingest_shard._run_ffmpeg", return_value=cp)
     points = shard_points(Path("/fake/long.mp4"), 3000.0, target_s=1500.0)
     assert points == [1500.0]
 

@@ -38,6 +38,12 @@ from pathlib import Path
 
 from fanops import clip as clipmod
 from fanops import framing
+from fanops.render_fingerprint import (
+    _REFRAME_GEOM_V,
+    _render_fingerprint_payload,
+    fingerprint_of_payload,
+    fingerprint_payload_bytes,
+)
 from fanops.config import Config
 from fanops.framing_outcomes import (LEGITIMATE_CENTER_OUTCOMES, RESOLVED_OUTCOMES, UNRESOLVED_OUTCOMES,
                                      FramingOutcome as _FO, FramingStrategy as _FS, UnknownFramingOutcome)
@@ -228,10 +234,10 @@ def reconstruct(paths: ReframePaths, cfg: Config, led: Ledger, c, fp_stored: str
     for win, wlab in _window_candidates(paths, cfg, m, src):
         for ass, alab in ass_cands:
             for tb, tlab in _top_bias_candidates(m, cfg):
-                payload = clipmod._render_fingerprint_payload(
+                payload = _render_fingerprint_payload(
                     src.source_path, win[0], win[1], c.aspect.value, src.width or 0, src.height or 0,
                     ass, top_bias=tb, focus=None, track=None, content_type=None)
-                key = clipmod.fingerprint_payload_bytes(payload)      # dedup on the EXACT bytes we hash
+                key = fingerprint_payload_bytes(payload)      # dedup on the EXACT bytes we hash
                 if key in by_bytes:
                     prev = by_bytes[key]
                     by_bytes[key] = Candidate(prev.payload, prev.labels + (f"{wlab}|{alab}|{tlab}",))
@@ -280,7 +286,7 @@ def current_payload(paths: ReframePaths, cfg: Config, led: Ledger, c):
     ass_text, _hbf = clipmod._build_ass_text(led, cfg, c.parent_id, c.id, c.aspect,
                                              clip_start=cs, clip_end=ce)   # PURE — no write
     res = framing._resolve(cfg, src, cs, ce, capture_failures=True)        # the dry-run seam
-    payload = clipmod._render_fingerprint_payload(
+    payload = _render_fingerprint_payload(
         src.source_path, cs, ce, c.aspect.value, src.width or 0, src.height or 0, ass_text or "",
         top_bias=clipmod._moment_top_bias(m, cfg), focus=res.focus, track=res.track,
         content_type=res.content_type)
@@ -323,7 +329,7 @@ def classify_clip(paths: ReframePaths, cfg: Config, led: Ledger, c) -> dict:
 
     rec = reconstruct(paths, cfg, led, c, fp_stored)
     payload_new, res = current_payload(paths, cfg, led, c)
-    fp_new = clipmod.fingerprint_of_payload(payload_new)
+    fp_new = fingerprint_of_payload(payload_new)
 
     row.update({"fp_stored": fp_stored, "fp_new": fp_new,
                 "reconstruction_proved": rec.proved, "candidate_payloads_tried": rec.tried,
@@ -346,7 +352,7 @@ def classify_clip(paths: ReframePaths, cfg: Config, led: Ledger, c) -> dict:
                 "reason": f"no candidate of {rec.tried} reproduces fp_stored; cause unknown"}
 
     payload_old = rec.payload
-    fp_old = clipmod.fingerprint_of_payload(payload_old)
+    fp_old = fingerprint_of_payload(payload_old)
     row["payload_old"] = payload_old
     row["payload_new"] = payload_new
     row["fp_old"] = fp_old
@@ -560,7 +566,7 @@ def attribution(cfg: Config) -> dict:
                                                  "619,645:src/fanops/clip.py") or "").splitlines()[:1],
         "cv2_version": cv2_v, "numpy_version": numpy_v,
         "yunet_model_path": model.name, "yunet_model_sha256": model_sha,
-        "reframe_geom_v": clipmod._REFRAME_GEOM_V, "vstart_cache_v": clipmod._VSTART_V,
+        "reframe_geom_v": _REFRAME_GEOM_V, "vstart_cache_v": clipmod._VSTART_V,
         "detect_cache_v": framing._DETECT_V, "sidecar_v": framing._SIDECAR_V,
         # These enter the payload: a flipped flag drifts EVERY clip.
         "smart_framing": cfg.smart_framing, "aware_reframe": cfg.aware_reframe,

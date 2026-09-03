@@ -1214,16 +1214,16 @@ def _many_anchor_persona(cfg, n, *, pid="many"):
 
 def test_midpass_flush_does_not_write_persona_corpus(tmp_path, monkeypatch):
     """A 20-measure pass flushes 4 times for crash safety; corpus stays empty."""
-    import fanops.fanops_hashtags as fh
+    import fanops.hashtag_refresh as hr
     cfg = Config(root=tmp_path)
     metrics = _many_anchor_persona(cfg, 20)
     writes = {"n": 0}
-    real_write = fh.write_json_atomic
+    real_write = hr.write_json_atomic
     def counted_write(path, *a, **k):
         if getattr(path, "name", "") == "hashtags.json":
             writes["n"] += 1
         return real_write(path, *a, **k)
-    monkeypatch.setattr(fh, "write_json_atomic", counted_write)
+    monkeypatch.setattr(hr, "write_json_atomic", counted_write)
     out = refresh_store(cfg, scrape_client=_FakeClient(metrics))
     assert out["written"] is True and out["measured"] == 20
     assert writes["n"] == 5                                  # KEEP: flushes at 5/10/15/20 + the final write
