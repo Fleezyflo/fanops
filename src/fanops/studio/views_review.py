@@ -277,7 +277,7 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     _mom_hook = None
     if _mom is not None:
         _mom_hook = (_mom.hook or "").strip() or None
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
         caption=posted_text_for(cfg, led, post), hashtags=list(post.hashtags or []),

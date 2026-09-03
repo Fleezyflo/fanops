@@ -1417,7 +1417,7 @@ def _seed_source_with_tags(cfg, sid, tags, *, title="a session"):
 
 
 def test_hydrate_used_measured_writes_hydrated_at_not_researched_at(tmp_path):
-    from fanops.caption import posted_text_for, _source_lock_completed
+    from fanops.caption_compose import posted_text_for, _source_lock_completed
     from fanops.ledger import Ledger
     from fanops.source_tags import hydrate_locks_from_known
     cfg = _cfg(tmp_path)

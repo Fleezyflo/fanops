@@ -87,7 +87,10 @@
         "autopilot",
         "escalation",
         "llm",
+        "llm_errors",
+        "llm_json",
         "prompts",
+        "prompts_caption",
         "responder"
       ]
     },
@@ -119,8 +122,9 @@
     "S10_caption_hashtag": {
       "modules": [
         "caption",
+        "caption_compose",
+        "caption_ingest",
         "fanops_hashtags",
-        "hashtag_hygiene",
         "hashtag_refresh",
         "hashtag_scrape_policy",
         "hashtags",

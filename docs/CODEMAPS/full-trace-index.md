@@ -42,7 +42,7 @@ module added since is in no cluster; re-run the extractor rather than trusting t
 | C2 | Ingest & source acquisition | ingest, discover, adjust, bands, frames, audio_energy, vocals, intro_match, transcribe (9) | [C2_ingest.md](subsystem-traces/C2_ingest.md) | 180 |
 | C3 | Clip production & framing | clip, framing, keyframes, stitch_render, overlay, impact_cut, compose, produce (8) | [C3_clip_production_framing.md](subsystem-traces/C3_clip_production_framing.md) | 434 |
 | C4 | Moments, casting & personas | moments, casting, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (9) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
-| C5 | Caption, hooks & hashtags | caption, hashtags, tagging, hookcheck, hookscore, text, prompts, llm (8 caption); scrape half (SA-A1–A4): fanops_hashtags (facade), hashtag_refresh, hashtag_scrape_policy, ig_safari_shell, ig_web_scrape, ig_hashtag_scrape (6) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
+| C5 | Caption, hooks & hashtags | caption, caption_compose, caption_ingest, hashtags, tagging, hookcheck, hookscore, text, prompts, prompts_caption, llm, llm_errors, llm_json (13 caption); scrape half (SA-A1–A4): fanops_hashtags (facade), hashtag_refresh, hashtag_scrape_policy, ig_safari_shell, ig_web_scrape, ig_hashtag_scrape (6) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
 | C6 | Crosspost, publish & post | crosspost, pipeline, router, responder, signals, agentstep, autopilot, postiz_lifecycle, post/{__init__,compress,dryrun,media,metrics,postiz,providers,run,zernio} (17) | [C6_crosspost_publish_post.md](subsystem-traces/C6_crosspost_publish_post.md) | 417 |
 | C7 | Metrics, reconcile & learning | reconcile, track, meta_graph, metrics_schedule, validation_gate, learn_doctor, moment_hook_learning, variant_learning, variant_amplify, variant_transfer, p4_dim_bias, timing_bias (12) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
 | C8 | Ops, CLI & daemon | cli, daemon, doctor, cutover, cutover_postiz, health, digest, audit, timeutil, _fwrun, __init__ (11) | [C8_ops_cli_daemon.md](subsystem-traces/C8_ops_cli_daemon.md) | 320 |
@@ -103,7 +103,7 @@ callbacks). Outcome:
 
 - **Confirmed false positives** (real callers the AST tool structurally cannot see — dispatch tables,
   default-parameter injection, Jinja-filter/argparse registration, and **aliased or lazy imports**):
-  - `prompts.py`'s 3 live prompt-builders (`moment_pick_prompt`/`moment_hook_prompt`/`caption_prompt`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5). (`moment_casting_prompt` removed P11.)
+  - `prompts.py`'s moment prompt-builders + `prompts_caption.caption_prompt` (lazy via `prompts.__getattr__`) via `responder.py:_PROMPT[kind]` dict-dispatch (C5). (`moment_casting_prompt` removed P11.)
   - `compose.py`'s `_moviepy_prepend_render`/`_moviepy_render`/`_probe` — default-parameter values (C3).
   - `timeutil.to_local_display`/`to_local_input` — Jinja filter registration (C8); `cli._http_url` — argparse `type=` callback (C8).
   - `llm.claude_json` — called via `studio/actions.py:138-139` (`from fanops.llm import claude_json`) (C5).
@@ -115,7 +115,7 @@ callbacks). Outcome:
   - `accounts.py:set_channel_routing`, `set_framing` (C4) — unwired mutators removed; routing drift gated by `Accounts.validate`.
   - `ingest.py:download_source`, `ingest.py:_catalogue_file` (C2) — production path is `stage_inbox_candidates` → `ingest_staged` (`_stage_candidate` + `_mint_candidate`).
   - `learn_doctor.load_verdict`, `timing_bias.timing_prior_hour` (C7)
-  - `caption.normalize_variation_axis`, `caption.coherent_variation` (C5)
+  - `caption.normalize_variation_axis`, `caption.coherent_variation` (C5); `hashtag_hygiene.py` module (C5 SA-B1); Layer B `vet_hashtags` / `content_tag_candidates` (C5)
   - `timeutil.is_past_due` (C8) — live sibling remains `is_due_or_past`
   - `views_review.group_review_by_account_surface` (C10)
 - **Plausible-but-unconfirmed** (likely template-only Jinja consumers, not verified against
@@ -172,7 +172,7 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C2 | 9 | ~55 |
 | C3 | 8 | ~95 (incl. full reframe/render ladder) |
 | C4 | 10 | ~75 |
-| C5 | 14 | ~68 caption/hook/LLM + scrape split (SA-A1–A4: 3 modules + facade; `ig_*` unchanged) |
+| C5 | 19 | ~75 caption/hook/LLM + scrape split (SA-A1–A4: 3 modules + facade; `ig_*` unchanged) |
 | C6 | 17 | ~140 (largest single cluster by file count) |
 | C7 | 12 | ~68 |
 | C8 | 11 | ~85 (37-verb CLI inventory) |
