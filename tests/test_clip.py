@@ -725,7 +725,7 @@ def test_probe_frame_strength_returns_sharpness(mocker):
             stdout = ("lavfi.signalstats.YAVG=40\n" if "convolution" in j else
                       "lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n")
         return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    mocker.patch("fanops.visual_start.subprocess.run", side_effect=run)
     assert _probe_frame_strength("/x.mp4", 5.0) == (120.0, 210.0 - 16.0, 40.0)   # luma, contrast, sharpness
 
 def test_probe_frame_strength_sharpness_is_fail_open(mocker):
@@ -739,7 +739,7 @@ def test_probe_frame_strength_sharpness_is_fail_open(mocker):
             returncode = 0; stderr = ""
             stdout = "lavfi.signalstats.YMIN=16\nlavfi.signalstats.YAVG=120\nlavfi.signalstats.YMAX=210\n"
         return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    mocker.patch("fanops.visual_start.subprocess.run", side_effect=run)
     assert _probe_frame_strength("/x.mp4", 5.0) == (120.0, 194.0, None)
 
 def test_pick_visual_start_rejects_stale_unversioned_sidecar(tmp_path, mocker):
@@ -756,7 +756,7 @@ def test_pick_visual_start_rejects_stale_unversioned_sidecar(tmp_path, mocker):
             returncode = 0; stderr = ""
             stdout = "lavfi.signalstats.YMIN=0\nlavfi.signalstats.YAVG=3\nlavfi.signalstats.YMAX=5\n"
         return R()
-    spy = mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    spy = mocker.patch("fanops.visual_start.subprocess.run", side_effect=run)
     new_start, kind = pick_visual_start(src, start, end, scene_peaks=[], out_dir=out)
     spy.assert_called()                                  # stale sidecar rejected -> probed
     assert new_start != 99.0                             # the bogus cached start was ignored
@@ -769,7 +769,7 @@ def test_pick_visual_start_adopts_versioned_sidecar(tmp_path, mocker):
     src = f"{tmp_path}/s.mp4"; start, end = 10.0, 12.0
     key = _vstart_key(src, start, end)
     (out / f"vstart_{key}.json").write_text(json.dumps({"v": 2, "start": 11.0, "kind": "visual"}))
-    spy = mocker.patch("fanops.clip.subprocess.run")
+    spy = mocker.patch("fanops.visual_start.subprocess.run")
     new_start, kind = pick_visual_start(src, start, end, scene_peaks=[], out_dir=out)
     spy.assert_not_called()                              # v2 adopted -> no ffmpeg
     assert new_start == 11.0 and kind == "visual"

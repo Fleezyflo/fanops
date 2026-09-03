@@ -107,7 +107,7 @@
     "fanops.overlay_reburn": [
       {
         "call": "Ledger.transaction",
-        "line": 363
+        "line": 277
       }
     ],
     "fanops.paths_rebase": [
@@ -594,7 +594,7 @@
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
-        "line": 940
+        "line": 849
       }
     ],
     "fanops.transcribe_engine": [
@@ -618,30 +618,22 @@
         "line": 1363
       }
     ],
-    "fanops.clip": [
+    "fanops.clip_ffmpeg": [
       {
         "call": "subprocess.run",
-        "line": 122
+        "line": 125
       },
       {
         "call": "subprocess.run",
-        "line": 133
+        "line": 195
       },
       {
         "call": "subprocess.run",
-        "line": 533
+        "line": 203
       },
       {
         "call": "subprocess.run",
-        "line": 640
-      },
-      {
-        "call": "subprocess.run",
-        "line": 648
-      },
-      {
-        "call": "subprocess.run",
-        "line": 656
+        "line": 211
       }
     ],
     "fanops.daemon": [
@@ -783,11 +775,11 @@
     "fanops.reframe_apply": [
       {
         "call": "subprocess.run",
-        "line": 221
+        "line": 224
       },
       {
         "call": "subprocess.run",
-        "line": 314
+        "line": 317
       }
     ],
     "fanops.signals": [
@@ -806,6 +798,16 @@
       {
         "call": "subprocess.run",
         "line": 247
+      }
+    ],
+    "fanops.visual_start": [
+      {
+        "call": "subprocess.run",
+        "line": 55
+      },
+      {
+        "call": "subprocess.run",
+        "line": 67
       }
     ],
     "fanops.vocals": [

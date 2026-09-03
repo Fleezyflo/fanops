@@ -9,6 +9,7 @@
       "fanops.artifacts",
       "fanops.caption",
       "fanops.clip",
+      "fanops.clip_ffmpeg",
       "fanops.compose",
       "fanops.config",
       "fanops.control",
@@ -60,6 +61,7 @@
       "fanops.reconcile",
       "fanops.reframe",
       "fanops.reframe_apply",
+      "fanops.reframe_vf",
       "fanops.responder",
       "fanops.settings",
       "fanops.signals",
@@ -79,7 +81,8 @@
       "fanops.transcribe_engine",
       "fanops.validation_gate",
       "fanops.variant_amplify",
-      "fanops.vocals"
+      "fanops.vocals",
+      "fanops.window_math"
     ],
     [
       "fanops.cli",
@@ -153,6 +156,12 @@
       "lazy": [
         "fanops.timeutil"
       ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.apply_common": {
+      "compile": [],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -332,16 +341,19 @@
     "fanops.clip": {
       "compile": [
         "fanops",
+        "fanops.clip_ffmpeg",
         "fanops.config",
         "fanops.errors",
-        "fanops.frames",
         "fanops.framing",
         "fanops.ids",
         "fanops.ledger",
         "fanops.log",
         "fanops.models",
         "fanops.overlay",
-        "fanops.render_fingerprint"
+        "fanops.reframe_vf",
+        "fanops.render_fingerprint",
+        "fanops.visual_start",
+        "fanops.window_math"
       ],
       "lazy": [
         "fanops.artifacts",
@@ -349,8 +361,20 @@
         "fanops.impact_cut",
         "fanops.ingest",
         "fanops.reframe_apply",
-        "fanops.stage_lock",
-        "fanops.transcribe"
+        "fanops.stage_lock"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.clip_ffmpeg": {
+      "compile": [
+        "fanops",
+        "fanops.config",
+        "fanops.framing",
+        "fanops.reframe_vf"
+      ],
+      "lazy": [
+        "fanops.clip"
       ],
       "optional": [],
       "typing": []
@@ -986,6 +1010,7 @@
     "fanops.overlay_reburn": {
       "compile": [
         "fanops",
+        "fanops.apply_common",
         "fanops.clip",
         "fanops.config",
         "fanops.framing",
@@ -1393,6 +1418,7 @@
     "fanops.reframe_apply": {
       "compile": [
         "fanops",
+        "fanops.apply_common",
         "fanops.clip",
         "fanops.config",
         "fanops.controlio",
@@ -1406,6 +1432,15 @@
       "lazy": [
         "fanops.reframe"
       ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reframe_vf": {
+      "compile": [
+        "fanops",
+        "fanops.framing"
+      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -2201,12 +2236,31 @@
       "optional": [],
       "typing": []
     },
+    "fanops.visual_start": {
+      "compile": [
+        "fanops",
+        "fanops.frames"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
     "fanops.vocals": {
       "compile": [
         "fanops.config",
         "fanops.errors"
       ],
       "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.window_math": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.transcribe"
+      ],
       "optional": [],
       "typing": []
     }
@@ -2306,11 +2360,12 @@
     ]
   },
   "fan_in_compile": {
-    "fanops": 12,
+    "fanops": 15,
     "fanops._fwrun": 0,
     "fanops.accounts": 17,
     "fanops.adjust": 3,
     "fanops.agentstep": 9,
+    "fanops.apply_common": 2,
     "fanops.artifacts": 1,
     "fanops.audio_energy": 1,
     "fanops.audit": 3,
@@ -2322,8 +2377,9 @@
     "fanops.casting": 2,
     "fanops.cli": 0,
     "fanops.clip": 7,
+    "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 91,
+    "fanops.config": 92,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 12,
@@ -2339,7 +2395,7 @@
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
     "fanops.frames": 1,
-    "fanops.framing": 4,
+    "fanops.framing": 6,
     "fanops.framing_outcomes": 3,
     "fanops.gate_keys": 2,
     "fanops.hashtag_hygiene": 1,
@@ -2368,7 +2424,7 @@
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 50,
+    "fanops.models": 51,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -2400,6 +2456,7 @@
     "fanops.reconcile": 2,
     "fanops.reframe": 2,
     "fanops.reframe_apply": 1,
+    "fanops.reframe_vf": 2,
     "fanops.render_fingerprint": 4,
     "fanops.responder": 3,
     "fanops.router": 3,
@@ -2454,7 +2511,9 @@
     "fanops.variant_amplify": 1,
     "fanops.variant_learning": 6,
     "fanops.variant_transfer": 2,
-    "fanops.vocals": 2
+    "fanops.visual_start": 1,
+    "fanops.vocals": 2,
+    "fanops.window_math": 1
   },
   "fan_out_compile": {
     "fanops": 0,
@@ -2462,6 +2521,7 @@
     "fanops.accounts": 5,
     "fanops.adjust": 5,
     "fanops.agentstep": 4,
+    "fanops.apply_common": 0,
     "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
     "fanops.audit": 2,
@@ -2472,7 +2532,8 @@
     "fanops.caption": 9,
     "fanops.casting": 0,
     "fanops.cli": 21,
-    "fanops.clip": 11,
+    "fanops.clip": 14,
+    "fanops.clip_ffmpeg": 4,
     "fanops.compose": 0,
     "fanops.config": 0,
     "fanops.config_introspect": 3,
@@ -2523,7 +2584,7 @@
     "fanops.moment_hook_learning": 3,
     "fanops.moments": 14,
     "fanops.overlay": 0,
-    "fanops.overlay_reburn": 12,
+    "fanops.overlay_reburn": 13,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
     "fanops.persona_directives": 3,
@@ -2550,7 +2611,8 @@
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
     "fanops.reframe": 9,
-    "fanops.reframe_apply": 10,
+    "fanops.reframe_apply": 11,
+    "fanops.reframe_vf": 2,
     "fanops.render_fingerprint": 0,
     "fanops.responder": 10,
     "fanops.router": 1,
@@ -2605,12 +2667,14 @@
     "fanops.variant_amplify": 8,
     "fanops.variant_learning": 1,
     "fanops.variant_transfer": 2,
-    "fanops.vocals": 2
+    "fanops.visual_start": 2,
+    "fanops.vocals": 2,
+    "fanops.window_math": 1
   },
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 250,
+  "lazy_downward_count": 249,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -2646,11 +2710,11 @@
     },
     {
       "from": "fanops.cli",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.studio.app",
-      "to_level": 10
+      "to_level": 12
     },
     {
       "from": "fanops.config",
@@ -2886,11 +2950,11 @@
     },
     {
       "from": "fanops.produce",
-      "from_level": 7,
+      "from_level": 9,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.moments",
-      "to_level": 7
+      "to_level": 9
     },
     {
       "from": "fanops.recaption",
@@ -2917,14 +2981,6 @@
       "to_level": 3
     },
     {
-      "from": "fanops.studio.actions_approve",
-      "from_level": 6,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.clip",
-      "to_level": 6
-    },
-    {
       "from": "fanops.studio.actions_run",
       "from_level": 3,
       "jump": 0,
@@ -2934,27 +2990,27 @@
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.cli",
-      "to_level": 10
+      "to_level": 12
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.studio.app_routes_run",
-      "to_level": 10
+      "to_level": 12
     },
     {
       "from": "fanops.studio.app_routes_run",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.studio.app",
-      "to_level": 10
+      "to_level": 12
     },
     {
       "from": "fanops.studio.views_library",
@@ -3017,73 +3073,161 @@
     {
       "from": "fanops.health",
       "from_level": 2,
-      "jump": 7,
+      "jump": 9,
       "same_scc": false,
       "to": "fanops.pipeline_status",
-      "to_level": 9
+      "to_level": 11
     },
     {
       "from": "fanops.compose",
       "from_level": 0,
-      "jump": 6,
+      "jump": 8,
       "same_scc": false,
       "to": "fanops.clip",
-      "to_level": 6
+      "to_level": 8
     },
     {
       "from": "fanops.digest",
       "from_level": 4,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.p4_dim_bias",
-      "to_level": 9
+      "to_level": 11
     },
     {
       "from": "fanops.digest",
       "from_level": 4,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.variant_amplify",
-      "to_level": 9
+      "to_level": 11
     },
     {
       "from": "fanops.doctor",
       "from_level": 4,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.pipeline_status",
-      "to_level": 9
+      "to_level": 11
     },
     {
       "from": "fanops.init_flow",
       "from_level": 5,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.studio.golive",
-      "to_level": 10
+      "to_level": 12
     },
     {
       "from": "fanops.studio.actions_run",
       "from_level": 3,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.pipeline",
-      "to_level": 8
+      "to_level": 10
     },
     {
       "from": "fanops.studio.views_library",
       "from_level": 4,
-      "jump": 5,
+      "jump": 7,
       "same_scc": false,
       "to": "fanops.pipeline_status",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.studio.views_results",
+      "from_level": 4,
+      "jump": 7,
+      "same_scc": false,
+      "to": "fanops.variant_amplify",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.studio.actions_run",
+      "from_level": 3,
+      "jump": 6,
+      "same_scc": false,
+      "to": "fanops.moments",
       "to_level": 9
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 6,
+      "same_scc": false,
+      "to": "fanops.pipeline_status",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.studio.views_common",
+      "from_level": 3,
+      "jump": 6,
+      "same_scc": false,
+      "to": "fanops.crosspost",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.canary",
+      "from_level": 3,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.recaption",
+      "from_level": 5,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.pipeline",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.responder",
+      "from_level": 4,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.moments",
+      "to_level": 9
+    },
+    {
+      "from": "fanops.stitch_render",
+      "from_level": 3,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 8
+    },
+    {
+      "from": "fanops.studio.actions_approve",
+      "from_level": 6,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 11
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.lever_docs",
+      "to_level": 10
+    },
+    {
+      "from": "fanops.studio.views",
+      "from_level": 5,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.pipeline",
+      "to_level": 10
     },
     {
       "from": "fanops.studio.views_results",
       "from_level": 4,
       "jump": 5,
       "same_scc": false,
-      "to": "fanops.variant_amplify",
+      "to": "fanops.crosspost",
       "to_level": 9
     },
     {
@@ -3095,44 +3239,12 @@
       "to_level": 6
     },
     {
-      "from": "fanops.studio.actions_run",
-      "from_level": 3,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.moments",
-      "to_level": 7
-    },
-    {
-      "from": "fanops.studio.views",
-      "from_level": 5,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.pipeline_status",
-      "to_level": 9
-    },
-    {
-      "from": "fanops.studio.views_common",
-      "from_level": 3,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.crosspost",
-      "to_level": 7
-    },
-    {
       "from": "fanops.autopilot",
       "from_level": 1,
       "jump": 3,
       "same_scc": false,
       "to": "fanops.doctor",
       "to_level": 4
-    },
-    {
-      "from": "fanops.canary",
-      "from_level": 3,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.clip",
-      "to_level": 6
     },
     {
       "from": "fanops.health_model",
@@ -3159,62 +3271,6 @@
       "to_level": 4
     },
     {
-      "from": "fanops.recaption",
-      "from_level": 5,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.pipeline",
-      "to_level": 8
-    },
-    {
-      "from": "fanops.responder",
-      "from_level": 4,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.moments",
-      "to_level": 7
-    },
-    {
-      "from": "fanops.stitch_render",
-      "from_level": 3,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.clip",
-      "to_level": 6
-    },
-    {
-      "from": "fanops.studio.actions_approve",
-      "from_level": 6,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.studio.actions",
-      "to_level": 9
-    },
-    {
-      "from": "fanops.studio.views",
-      "from_level": 5,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.lever_docs",
-      "to_level": 8
-    },
-    {
-      "from": "fanops.studio.views",
-      "from_level": 5,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.pipeline",
-      "to_level": 8
-    },
-    {
-      "from": "fanops.studio.views_results",
-      "from_level": 4,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.crosspost",
-      "to_level": 7
-    },
-    {
       "from": "fanops.validation_gate",
       "from_level": 1,
       "jump": 3,
@@ -3232,11 +3288,11 @@
     },
     {
       "from": "fanops.clip",
-      "from_level": 6,
+      "from_level": 8,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.reframe_apply",
-      "to_level": 8
+      "to_level": 10
     },
     {
       "from": "fanops.compose",
@@ -3343,12 +3399,28 @@
       "to_level": 2
     },
     {
+      "from": "fanops.studio.actions_approve",
+      "from_level": 6,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 8
+    },
+    {
       "from": "fanops.studio.views_review",
       "from_level": 4,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.source_tags",
       "to_level": 6
+    },
+    {
+      "from": "fanops.window_math",
+      "from_level": 2,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.transcribe",
+      "to_level": 4
     },
     {
       "from": "fanops.accounts",
@@ -3365,6 +3437,14 @@
       "same_scc": false,
       "to": "fanops.transcribe",
       "to_level": 4
+    },
+    {
+      "from": "fanops.clip_ffmpeg",
+      "from_level": 7,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.clip",
+      "to_level": 8
     },
     {
       "from": "fanops.config",
@@ -3472,11 +3552,11 @@
     },
     {
       "from": "fanops.pipeline",
-      "from_level": 8,
+      "from_level": 10,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.pipeline_status",
-      "to_level": 9
+      "to_level": 11
     },
     {
       "from": "fanops.post.compress",
@@ -3560,35 +3640,35 @@
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.studio.app_routes_golive",
-      "to_level": 11
+      "to_level": 13
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.studio.app_routes_personas",
-      "to_level": 11
+      "to_level": 13
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.studio.app_routes_review",
-      "to_level": 11
+      "to_level": 13
     },
     {
       "from": "fanops.studio.app",
-      "from_level": 10,
+      "from_level": 12,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.studio.app_routes_schedule",
-      "to_level": 11
+      "to_level": 13
     },
     {
       "from": "fanops.studio.views_common",
@@ -3635,8 +3715,9 @@
     "fanops": 0,
     "fanops._fwrun": 1,
     "fanops.accounts": 2,
-    "fanops.adjust": 8,
+    "fanops.adjust": 10,
     "fanops.agentstep": 2,
+    "fanops.apply_common": 0,
     "fanops.artifacts": 3,
     "fanops.audio_energy": 0,
     "fanops.audit": 1,
@@ -3646,14 +3727,15 @@
     "fanops.canary": 3,
     "fanops.caption": 4,
     "fanops.casting": 0,
-    "fanops.cli": 10,
-    "fanops.clip": 6,
+    "fanops.cli": 12,
+    "fanops.clip": 8,
+    "fanops.clip_ffmpeg": 7,
     "fanops.compose": 0,
     "fanops.config": 0,
     "fanops.config_introspect": 2,
     "fanops.control": 1,
     "fanops.controlio": 1,
-    "fanops.crosspost": 7,
+    "fanops.crosspost": 9,
     "fanops.cutover": 4,
     "fanops.cutover_postiz": 4,
     "fanops.daemon": 1,
@@ -3688,7 +3770,7 @@
     "fanops.ledger_bridge": 3,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 3,
-    "fanops.lever_docs": 8,
+    "fanops.lever_docs": 10,
     "fanops.llm": 1,
     "fanops.log": 1,
     "fanops.media_probe": 1,
@@ -3696,19 +3778,19 @@
     "fanops.metrics_schedule": 0,
     "fanops.models": 1,
     "fanops.moment_hook_learning": 3,
-    "fanops.moments": 7,
+    "fanops.moments": 9,
     "fanops.overlay": 0,
-    "fanops.overlay_reburn": 9,
-    "fanops.p4_dim_bias": 9,
+    "fanops.overlay_reburn": 11,
+    "fanops.p4_dim_bias": 11,
     "fanops.paths_rebase": 4,
     "fanops.persona_directives": 1,
     "fanops.persona_levers": 0,
     "fanops.persona_research": 1,
     "fanops.persona_store": 2,
     "fanops.personas": 3,
-    "fanops.pipeline": 8,
+    "fanops.pipeline": 10,
     "fanops.pipeline_run": 2,
-    "fanops.pipeline_status": 9,
+    "fanops.pipeline_status": 11,
     "fanops.post": 3,
     "fanops.post.compress": 2,
     "fanops.post.dryrun": 3,
@@ -3720,12 +3802,13 @@
     "fanops.post.zernio": 3,
     "fanops.post.zernio_outcome": 0,
     "fanops.postiz_lifecycle": 0,
-    "fanops.produce": 7,
+    "fanops.produce": 9,
     "fanops.prompts": 0,
     "fanops.recaption": 5,
     "fanops.reconcile": 3,
-    "fanops.reframe": 7,
-    "fanops.reframe_apply": 8,
+    "fanops.reframe": 9,
+    "fanops.reframe_apply": 10,
+    "fanops.reframe_vf": 6,
     "fanops.render_fingerprint": 0,
     "fanops.responder": 4,
     "fanops.router": 2,
@@ -3742,23 +3825,23 @@
     "fanops.stitch_render": 3,
     "fanops.stranded_posts": 3,
     "fanops.studio": 0,
-    "fanops.studio.actions": 9,
+    "fanops.studio.actions": 11,
     "fanops.studio.actions_approve": 6,
     "fanops.studio.actions_casting": 3,
     "fanops.studio.actions_common": 0,
     "fanops.studio.actions_run": 3,
-    "fanops.studio.actions_segments": 8,
+    "fanops.studio.actions_segments": 10,
     "fanops.studio.actions_wipe": 4,
-    "fanops.studio.app": 10,
-    "fanops.studio.app_routes_golive": 11,
+    "fanops.studio.app": 12,
+    "fanops.studio.app_routes_golive": 13,
     "fanops.studio.app_routes_hashtags": 6,
     "fanops.studio.app_routes_live": 6,
-    "fanops.studio.app_routes_personas": 11,
-    "fanops.studio.app_routes_review": 11,
-    "fanops.studio.app_routes_run": 10,
-    "fanops.studio.app_routes_schedule": 11,
-    "fanops.studio.golive": 10,
-    "fanops.studio.personas": 10,
+    "fanops.studio.app_routes_personas": 13,
+    "fanops.studio.app_routes_review": 13,
+    "fanops.studio.app_routes_run": 12,
+    "fanops.studio.app_routes_schedule": 13,
+    "fanops.studio.golive": 12,
+    "fanops.studio.personas": 12,
     "fanops.studio.preview_media": 4,
     "fanops.studio.thumb_media": 5,
     "fanops.studio.views": 5,
@@ -3777,14 +3860,17 @@
     "fanops.transcribe": 4,
     "fanops.transcribe_engine": 3,
     "fanops.validation_gate": 1,
-    "fanops.variant_amplify": 9,
+    "fanops.variant_amplify": 11,
     "fanops.variant_learning": 2,
     "fanops.variant_transfer": 3,
-    "fanops.vocals": 1
+    "fanops.visual_start": 1,
+    "fanops.vocals": 1,
+    "fanops.window_math": 2
   },
   "levels_by_level": {
     "0": [
       "fanops",
+      "fanops.apply_common",
       "fanops.audio_energy",
       "fanops.bands",
       "fanops.casting",
@@ -3833,16 +3919,31 @@
       "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
+      "fanops.visual_start",
       "fanops.vocals"
     ],
     "10": [
+      "fanops.adjust",
+      "fanops.lever_docs",
+      "fanops.pipeline",
+      "fanops.reframe_apply",
+      "fanops.studio.actions_segments"
+    ],
+    "11": [
+      "fanops.overlay_reburn",
+      "fanops.p4_dim_bias",
+      "fanops.pipeline_status",
+      "fanops.studio.actions",
+      "fanops.variant_amplify"
+    ],
+    "12": [
       "fanops.cli",
       "fanops.studio.app",
       "fanops.studio.app_routes_run",
       "fanops.studio.golive",
       "fanops.studio.personas"
     ],
-    "11": [
+    "13": [
       "fanops.studio.app_routes_golive",
       "fanops.studio.app_routes_personas",
       "fanops.studio.app_routes_review",
@@ -3866,7 +3967,8 @@
       "fanops.post.compress",
       "fanops.router",
       "fanops.source_tags_sidecar",
-      "fanops.variant_learning"
+      "fanops.variant_learning",
+      "fanops.window_math"
     ],
     "3": [
       "fanops.artifacts",
@@ -3930,31 +4032,23 @@
       "fanops.timing_bias"
     ],
     "6": [
-      "fanops.clip",
+      "fanops.reframe_vf",
       "fanops.source_tags",
       "fanops.studio.actions_approve",
       "fanops.studio.app_routes_hashtags",
       "fanops.studio.app_routes_live"
     ],
     "7": [
+      "fanops.clip_ffmpeg"
+    ],
+    "8": [
+      "fanops.clip"
+    ],
+    "9": [
       "fanops.crosspost",
       "fanops.moments",
       "fanops.produce",
       "fanops.reframe"
-    ],
-    "8": [
-      "fanops.adjust",
-      "fanops.lever_docs",
-      "fanops.pipeline",
-      "fanops.reframe_apply",
-      "fanops.studio.actions_segments"
-    ],
-    "9": [
-      "fanops.overlay_reburn",
-      "fanops.p4_dim_bias",
-      "fanops.pipeline_status",
-      "fanops.studio.actions",
-      "fanops.variant_amplify"
     ]
   },
   "metric_definitions": {
@@ -3970,17 +4064,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 149,
-    "G1c_levels": 12,
-    "G2_largest_scc_size": 77,
-    "G2_module_sccs_total": 65,
+    "G1_sccs_total": 154,
+    "G1c_levels": 14,
+    "G2_largest_scc_size": 80,
+    "G2_module_sccs_total": 67,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 627,
-    "lazy_edges": 377,
-    "lazy_edges_lateral": 50,
-    "lazy_edges_strictly_upward": 77,
-    "lazy_edges_to_equal_or_higher_level": 127,
-    "modules": 149,
+    "compile_edges_G1": 641,
+    "lazy_edges": 378,
+    "lazy_edges_lateral": 49,
+    "lazy_edges_strictly_upward": 80,
+    "lazy_edges_to_equal_or_higher_level": 129,
+    "modules": 154,
     "optional_edges": 0,
     "typing_only_edges": 7
   }
