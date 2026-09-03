@@ -219,11 +219,16 @@
         "studio.thumb_media",
         "studio.views",
         "studio.views_common",
+        "studio.views_golive",
         "studio.views_hashtags",
+        "studio.views_home",
         "studio.views_library",
         "studio.views_live",
+        "studio.views_posted",
         "studio.views_results",
         "studio.views_review",
+        "studio.views_run",
+        "studio.views_schedule",
         "studio_desktop"
       ]
     },

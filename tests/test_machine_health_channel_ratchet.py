@@ -34,7 +34,7 @@ _ALLOWED_HEALTH_CONSTRUCTOR_CALLERS = frozenset({
     ("src/fanops/health_model.py", "render_prometheus_metrics"),
     ("src/fanops/init_flow.py", "run_init"),
     ("src/fanops/autopilot.py", "autopilot"),                # via doctor_report
-    ("src/fanops/studio/views.py", "golive_status"),
+    ("src/fanops/studio/views_golive.py", "golive_status"),
 })
 
 # Secondary net: files that may contain the callers above (shrink when files vanish).
@@ -45,7 +45,7 @@ _ALLOWED_HEALTH_CONSTRUCTOR_FILES = frozenset({
     "src/fanops/cli.py",            # cmd_doctor / cmd_health
     "src/fanops/init_flow.py",      # run_init
     "src/fanops/autopilot.py",      # autopilot via doctor_report
-    "src/fanops/studio/views.py",   # strip / golive projectors
+    "src/fanops/studio/views_golive.py",   # golive projectors
 })
 
 # Operator-facing surfaces (symbol inventory — may include non-callers / indirect exits).
@@ -57,7 +57,7 @@ _ALLOWED_OPERATOR_HEALTH_SURFACES = frozenset({
     ("src/fanops/init_flow.py", "run_init"),
     ("src/fanops/autopilot.py", "autopilot"),
     ("src/fanops/studio/views.py", "build_system_strip"),
-    ("src/fanops/studio/views.py", "golive_status"),
+    ("src/fanops/studio/views_golive.py", "golive_status"),
     ("src/fanops/studio/views.py", "daemon_health"),
     ("src/fanops/studio/views.py", "daemon_health_strip"),
     ("src/fanops/studio/app.py", "metrics"),      # Prometheus projection
