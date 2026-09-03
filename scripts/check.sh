@@ -98,6 +98,7 @@ if [[ ${#TESTS[@]} -eq 0 ]]; then
 fi
 echo "[check] pytest (scoped): ${#TESTS[@]} file(s)"
 printf '        %s\n' "${TESTS[@]}"
-"$PY" -m pytest -q -m "not integration and not slow" "${TESTS[@]}"
+_PYTEST_MARKER="$("$PY" -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import gate_markers; print(gate_markers.PYTEST_FAST)")"
+"$PY" -m pytest -q -m "$_PYTEST_MARKER" "${TESTS[@]}"
 
 echo "[check] OK — scoped ruff + tests green. Push freely; CI is the authoritative full gate."

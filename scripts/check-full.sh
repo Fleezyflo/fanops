@@ -26,11 +26,11 @@ fi
 echo "[check-full] ruff check . (whole tree)"
 "$PY" -m ruff check .
 
-MARKER='not integration and not slow'
 if [[ "${CHECK_FULL_SLOW:-}" == "1" ]]; then
-  MARKER='not integration'
+  MARKER="$("$PY" -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import gate_markers; print(gate_markers.PYTEST_WITH_SLOW)")"
   echo "[check-full] pytest -q -m '$MARKER' (full unit suite, CI parity — CHECK_FULL_SLOW=1)"
 else
+  MARKER="$("$PY" -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import gate_markers; print(gate_markers.PYTEST_FAST)")"
   echo "[check-full] pytest -q -m '$MARKER' (fast local — set CHECK_FULL_SLOW=1 for slow cross-face proofs)"
 fi
 FANOPS_REQUIRE_STUDIO=1 "$PY" -m pytest -q -m "$MARKER"

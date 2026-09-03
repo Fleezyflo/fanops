@@ -243,16 +243,20 @@ def test_pre_push_hook_runs_no_pytest():
 def test_check_sh_excludes_slow_marker():
     """check.sh must deselect slow cross-face proofs for fast local scoped runs."""
     check = CHECK.read_text()
-    assert 'pytest -q -m "not integration and not slow"' in check
+    markers = (REPO / "scripts" / "gate_markers.py").read_text()
+    assert "gate_markers" in check
+    assert 'PYTEST_FAST = "not integration and not slow"' in markers
 
 
 def test_check_full_default_excludes_slow():
     """Default check-full.sh skips slow; CHECK_FULL_SLOW=1 mirrors CI unit (-m 'not integration')."""
     full = (REPO / "scripts" / "check-full.sh").read_text()
+    markers = (REPO / "scripts" / "gate_markers.py").read_text()
     assert "ruff check ." in full
-    assert "not integration and not slow" in full
+    assert "gate_markers" in full
+    assert 'PYTEST_FAST = "not integration and not slow"' in markers
     assert 'CHECK_FULL_SLOW:-' in full or "CHECK_FULL_SLOW" in full
-    assert "MARKER='not integration'" in full or 'MARKER="not integration"' in full
+    assert 'PYTEST_WITH_SLOW = "not integration"' in markers
 
 
 def test_check_full_slow_env_mirrors_ci():
