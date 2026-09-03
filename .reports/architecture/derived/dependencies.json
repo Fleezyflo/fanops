@@ -23,10 +23,13 @@
       "fanops.escalation",
       "fanops.fanops_hashtags",
       "fanops.framing",
+      "fanops.hashtag_refresh",
+      "fanops.hashtag_scrape_policy",
       "fanops.health",
       "fanops.health_model",
       "fanops.hookscore",
       "fanops.ig_hashtag_scrape",
+      "fanops.ig_safari_shell",
       "fanops.ig_web_scrape",
       "fanops.ingest",
       "fanops.ingest_shard",
@@ -589,17 +592,13 @@
       "compile": [
         "fanops.config",
         "fanops.controlio",
-        "fanops.hashtags",
+        "fanops.hashtag_refresh",
+        "fanops.hashtag_scrape_policy",
+        "fanops.ig_safari_shell",
         "fanops.log"
       ],
       "lazy": [
-        "fanops.accounts",
-        "fanops.errors",
-        "fanops.ig_hashtag_scrape",
-        "fanops.ig_web_scrape",
         "fanops.ledger",
-        "fanops.persona_research",
-        "fanops.personas",
         "fanops.source_tags"
       ],
       "optional": [],
@@ -642,6 +641,38 @@
       "compile": [],
       "lazy": [
         "fanops.hashtags"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtag_refresh": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio",
+        "fanops.hashtag_scrape_policy",
+        "fanops.hashtags",
+        "fanops.ig_safari_shell",
+        "fanops.log"
+      ],
+      "lazy": [
+        "fanops.accounts",
+        "fanops.errors",
+        "fanops.ig_hashtag_scrape",
+        "fanops.ig_web_scrape",
+        "fanops.persona_research",
+        "fanops.personas",
+        "fanops.source_tags"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.hashtag_scrape_policy": {
+      "compile": [
+        "fanops.config",
+        "fanops.controlio"
+      ],
+      "lazy": [
+        "fanops.ig_hashtag_scrape"
       ],
       "optional": [],
       "typing": []
@@ -727,8 +758,21 @@
       "lazy": [
         "fanops.errors",
         "fanops.fanops_hashtags",
-        "fanops.ig_web_scrape",
+        "fanops.ig_safari_shell",
         "fanops.secret_provider"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.ig_safari_shell": {
+      "compile": [
+        "fanops.config",
+        "fanops.ig_hashtag_scrape"
+      ],
+      "lazy": [
+        "fanops.fanops_hashtags",
+        "fanops.ig_hashtag_scrape",
+        "fanops.timeutil"
       ],
       "optional": [],
       "typing": []
@@ -737,12 +781,12 @@
       "compile": [
         "fanops.config",
         "fanops.hashtags",
-        "fanops.ig_hashtag_scrape"
+        "fanops.ig_hashtag_scrape",
+        "fanops.ig_safari_shell"
       ],
       "lazy": [
         "fanops.fanops_hashtags",
-        "fanops.ig_hashtag_scrape",
-        "fanops.timeutil"
+        "fanops.ig_hashtag_scrape"
       ],
       "optional": [],
       "typing": []
@@ -1577,6 +1621,7 @@
       ],
       "lazy": [
         "fanops.fanops_hashtags",
+        "fanops.ig_safari_shell",
         "fanops.ig_web_scrape",
         "fanops.ledger",
         "fanops.source_tags_scrape"
@@ -2381,10 +2426,10 @@
     "fanops.clip": 7,
     "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 92,
+    "fanops.config": 95,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 12,
+    "fanops.controlio": 14,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -2401,13 +2446,16 @@
     "fanops.framing_outcomes": 3,
     "fanops.gate_keys": 2,
     "fanops.hashtag_hygiene": 1,
+    "fanops.hashtag_refresh": 1,
+    "fanops.hashtag_scrape_policy": 2,
     "fanops.hashtags": 10,
     "fanops.health": 0,
     "fanops.health_model": 1,
     "fanops.hookcheck": 1,
     "fanops.hookscore": 2,
     "fanops.ids": 13,
-    "fanops.ig_hashtag_scrape": 3,
+    "fanops.ig_hashtag_scrape": 4,
+    "fanops.ig_safari_shell": 3,
     "fanops.ig_web_scrape": 1,
     "fanops.impact_cut": 1,
     "fanops.ingest": 3,
@@ -2422,7 +2470,7 @@
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 45,
+    "fanops.log": 46,
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
@@ -2551,12 +2599,14 @@
     "fanops.errors": 0,
     "fanops.escalation": 2,
     "fanops.fanops_account_stats": 5,
-    "fanops.fanops_hashtags": 4,
+    "fanops.fanops_hashtags": 6,
     "fanops.frames": 0,
     "fanops.framing": 3,
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_refresh": 6,
+    "fanops.hashtag_scrape_policy": 2,
     "fanops.hashtags": 0,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -2564,7 +2614,8 @@
     "fanops.hookscore": 1,
     "fanops.ids": 0,
     "fanops.ig_hashtag_scrape": 3,
-    "fanops.ig_web_scrape": 3,
+    "fanops.ig_safari_shell": 2,
+    "fanops.ig_web_scrape": 4,
     "fanops.impact_cut": 1,
     "fanops.ingest": 9,
     "fanops.ingest_shard": 4,
@@ -2676,7 +2727,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 249,
+  "lazy_downward_count": 252,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -2775,36 +2826,28 @@
       "to_level": 4
     },
     {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.accounts",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.ig_hashtag_scrape",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.ledger",
-      "to_level": 2
-    },
-    {
       "from": "fanops.hashtag_hygiene",
       "from_level": 0,
       "jump": 0,
       "same_scc": false,
       "to": "fanops.hashtags",
       "to_level": 0
+    },
+    {
+      "from": "fanops.hashtag_refresh",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ig_web_scrape",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.hashtag_scrape_policy",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ig_hashtag_scrape",
+      "to_level": 2
     },
     {
       "from": "fanops.health",
@@ -2829,14 +2872,6 @@
       "same_scc": false,
       "to": "fanops.models",
       "to_level": 1
-    },
-    {
-      "from": "fanops.ig_hashtag_scrape",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.fanops_hashtags",
-      "to_level": 2
     },
     {
       "from": "fanops.keyframes",
@@ -2965,6 +3000,14 @@
       "same_scc": false,
       "to": "fanops.escalation",
       "to_level": 3
+    },
+    {
+      "from": "fanops.source_tags_walk",
+      "from_level": 5,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
     },
     {
       "from": "fanops.studio.actions_run",
@@ -3217,20 +3260,36 @@
       "to_level": 9
     },
     {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 6
-    },
-    {
       "from": "fanops.autopilot",
       "from_level": 1,
       "jump": 3,
       "same_scc": false,
       "to": "fanops.doctor",
       "to_level": 4
+    },
+    {
+      "from": "fanops.caption",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 7
+    },
+    {
+      "from": "fanops.hashtag_refresh",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 7
     },
     {
       "from": "fanops.health_model",
@@ -3257,20 +3316,28 @@
       "to_level": 4
     },
     {
+      "from": "fanops.ig_hashtag_scrape",
+      "from_level": 2,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
+    },
+    {
+      "from": "fanops.studio.views_review",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.source_tags",
+      "to_level": 7
+    },
+    {
       "from": "fanops.validation_gate",
       "from_level": 1,
       "jump": 3,
       "same_scc": false,
       "to": "fanops.digest",
       "to_level": 4
-    },
-    {
-      "from": "fanops.caption",
-      "from_level": 4,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 6
     },
     {
       "from": "fanops.clip",
@@ -3305,12 +3372,12 @@
       "to_level": 2
     },
     {
-      "from": "fanops.doctor",
-      "from_level": 4,
+      "from": "fanops.fanops_hashtags",
+      "from_level": 5,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.source_tags",
-      "to_level": 6
+      "to_level": 7
     },
     {
       "from": "fanops.health_model",
@@ -3327,6 +3394,14 @@
       "same_scc": false,
       "to": "fanops.post.postiz",
       "to_level": 3
+    },
+    {
+      "from": "fanops.ig_safari_shell",
+      "from_level": 3,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
     },
     {
       "from": "fanops.keyframes",
@@ -3393,12 +3468,12 @@
       "to_level": 8
     },
     {
-      "from": "fanops.studio.views_review",
-      "from_level": 4,
+      "from": "fanops.studio.views_hashtags",
+      "from_level": 5,
       "jump": 2,
       "same_scc": false,
       "to": "fanops.source_tags",
-      "to_level": 6
+      "to_level": 7
     },
     {
       "from": "fanops.window_math",
@@ -3465,20 +3540,12 @@
       "to_level": 5
     },
     {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
+      "from": "fanops.doctor",
+      "from_level": 4,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.ig_web_scrape",
-      "to_level": 3
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.personas",
-      "to_level": 3
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
     },
     {
       "from": "fanops.health",
@@ -3525,8 +3592,16 @@
       "from_level": 2,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.ig_web_scrape",
+      "to": "fanops.ig_safari_shell",
       "to_level": 3
+    },
+    {
+      "from": "fanops.ig_web_scrape",
+      "from_level": 4,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
     },
     {
       "from": "fanops.ledger",
@@ -3610,11 +3685,11 @@
     },
     {
       "from": "fanops.source_tags_walk",
-      "from_level": 4,
+      "from_level": 5,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.source_tags_scrape",
-      "to_level": 5
+      "to_level": 6
     },
     {
       "from": "fanops.studio.actions_run",
@@ -3671,14 +3746,6 @@
       "same_scc": false,
       "to": "fanops.studio.views_results",
       "to_level": 4
-    },
-    {
-      "from": "fanops.studio.views_hashtags",
-      "from_level": 5,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 6
     },
     {
       "from": "fanops.studio.views_library",
@@ -3747,12 +3814,14 @@
     "fanops.errors": 0,
     "fanops.escalation": 3,
     "fanops.fanops_account_stats": 3,
-    "fanops.fanops_hashtags": 2,
+    "fanops.fanops_hashtags": 5,
     "fanops.frames": 0,
     "fanops.framing": 5,
     "fanops.framing_outcomes": 0,
     "fanops.gate_keys": 0,
     "fanops.hashtag_hygiene": 0,
+    "fanops.hashtag_refresh": 4,
+    "fanops.hashtag_scrape_policy": 2,
     "fanops.hashtags": 0,
     "fanops.health": 2,
     "fanops.health_model": 1,
@@ -3760,7 +3829,8 @@
     "fanops.hookscore": 2,
     "fanops.ids": 0,
     "fanops.ig_hashtag_scrape": 2,
-    "fanops.ig_web_scrape": 3,
+    "fanops.ig_safari_shell": 3,
+    "fanops.ig_web_scrape": 4,
     "fanops.impact_cut": 2,
     "fanops.ingest": 3,
     "fanops.ingest_shard": 2,
@@ -3817,11 +3887,11 @@
     "fanops.secret_provider": 0,
     "fanops.settings": 1,
     "fanops.signals": 3,
-    "fanops.source_tags": 6,
-    "fanops.source_tags_scrape": 5,
+    "fanops.source_tags": 7,
+    "fanops.source_tags_scrape": 6,
     "fanops.source_tags_shortlist": 3,
     "fanops.source_tags_sidecar": 2,
-    "fanops.source_tags_walk": 4,
+    "fanops.source_tags_walk": 5,
     "fanops.speech_trust": 0,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 3,
@@ -3956,7 +4026,7 @@
       "fanops.agentstep",
       "fanops.batches",
       "fanops.config_introspect",
-      "fanops.fanops_hashtags",
+      "fanops.hashtag_scrape_policy",
       "fanops.health",
       "fanops.hookscore",
       "fanops.ig_hashtag_scrape",
@@ -3977,7 +4047,7 @@
       "fanops.canary",
       "fanops.escalation",
       "fanops.fanops_account_stats",
-      "fanops.ig_web_scrape",
+      "fanops.ig_safari_shell",
       "fanops.ingest",
       "fanops.intro_match",
       "fanops.ledger_bridge",
@@ -4010,12 +4080,13 @@
       "fanops.digest",
       "fanops.discover",
       "fanops.doctor",
+      "fanops.hashtag_refresh",
+      "fanops.ig_web_scrape",
       "fanops.learn_doctor",
       "fanops.paths_rebase",
       "fanops.post.metrics",
       "fanops.post.run",
       "fanops.responder",
-      "fanops.source_tags_walk",
       "fanops.studio.actions_wipe",
       "fanops.studio.preview_media",
       "fanops.studio.views_library",
@@ -4024,10 +4095,11 @@
       "fanops.transcribe"
     ],
     "5": [
+      "fanops.fanops_hashtags",
       "fanops.framing",
       "fanops.init_flow",
       "fanops.recaption",
-      "fanops.source_tags_scrape",
+      "fanops.source_tags_walk",
       "fanops.studio.thumb_media",
       "fanops.studio.views",
       "fanops.studio.views_hashtags",
@@ -4035,13 +4107,14 @@
     ],
     "6": [
       "fanops.reframe_vf",
-      "fanops.source_tags",
+      "fanops.source_tags_scrape",
       "fanops.studio.actions_approve",
       "fanops.studio.app_routes_hashtags",
       "fanops.studio.app_routes_live"
     ],
     "7": [
-      "fanops.clip_ffmpeg"
+      "fanops.clip_ffmpeg",
+      "fanops.source_tags"
     ],
     "8": [
       "fanops.clip"
@@ -4066,17 +4139,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 154,
+    "G1_sccs_total": 157,
     "G1c_levels": 14,
-    "G2_largest_scc_size": 82,
+    "G2_largest_scc_size": 85,
     "G2_module_sccs_total": 65,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 640,
-    "lazy_edges": 378,
-    "lazy_edges_lateral": 47,
-    "lazy_edges_strictly_upward": 82,
-    "lazy_edges_to_equal_or_higher_level": 129,
-    "modules": 154,
+    "compile_edges_G1": 653,
+    "lazy_edges": 383,
+    "lazy_edges_lateral": 46,
+    "lazy_edges_strictly_upward": 85,
+    "lazy_edges_to_equal_or_higher_level": 131,
+    "modules": 157,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

@@ -386,14 +386,14 @@
         "line": 30
       }
     ],
-    "fanops.fanops_hashtags": [
+    "fanops.hashtag_refresh": [
       {
         "call": "fcntl.flock",
-        "line": 660
+        "line": 220
       },
       {
         "call": "fcntl.flock",
-        "line": 666
+        "line": 226
       }
     ],
     "fanops.ledger": [

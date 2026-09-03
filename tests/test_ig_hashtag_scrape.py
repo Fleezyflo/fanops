@@ -459,14 +459,14 @@ def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
 
 def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeypatch):
     import fanops.ig_hashtag_scrape as igs
-    import fanops.ig_web_scrape as web
+    import fanops.ig_safari_shell as shell
     cfg = Config(root=tmp_path)
     hits = {"n": 0}
 
     def _auth(*_a, **_k):
         hits["n"] += 1
         return ("safari", "u") if hits["n"] >= 2 else None
-    monkeypatch.setattr(web, "safari_profile_auth", _auth)
+    monkeypatch.setattr(shell, "safari_profile_auth", _auth)
     slept = []
     got = igs.wait_for_scrape_profile_auth(
         cfg, "u", timeout_s=5, sleep=lambda s: slept.append(s),

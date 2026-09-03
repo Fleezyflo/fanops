@@ -45,6 +45,8 @@
     "fanops.framing_outcomes",
     "fanops.gate_keys",
     "fanops.hashtag_hygiene",
+    "fanops.hashtag_refresh",
+    "fanops.hashtag_scrape_policy",
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
@@ -52,6 +54,7 @@
     "fanops.hookscore",
     "fanops.ids",
     "fanops.ig_hashtag_scrape",
+    "fanops.ig_safari_shell",
     "fanops.ig_web_scrape",
     "fanops.impact_cut",
     "fanops.ingest",
@@ -208,6 +211,8 @@
     "fanops.framing_outcomes": "S06_media_analysis",
     "fanops.gate_keys": "S01_foundation",
     "fanops.hashtag_hygiene": "S10_caption_hashtag",
+    "fanops.hashtag_refresh": "S10_caption_hashtag",
+    "fanops.hashtag_scrape_policy": "S10_caption_hashtag",
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
@@ -215,6 +220,7 @@
     "fanops.hookscore": "S08_selection",
     "fanops.ids": "S01_foundation",
     "fanops.ig_hashtag_scrape": "S10_caption_hashtag",
+    "fanops.ig_safari_shell": "S10_caption_hashtag",
     "fanops.ig_web_scrape": "S10_caption_hashtag",
     "fanops.impact_cut": "S09_render",
     "fanops.ingest": "S05_ingestion",
@@ -325,9 +331,9 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 154,
+    "assigned": 157,
     "ghosts": 0,
-    "modules": 154,
+    "modules": 157,
     "unassigned": 0
   },
   "unassigned_modules": []
