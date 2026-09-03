@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import ast
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import ARCH, CONTRACT, DERIVED, GOVERNANCE, KB, REPO, SRC, load
@@ -1015,10 +1015,6 @@ def _apply_exceptions(findings: list[Finding]) -> list[Finding]:
                 f.severity = INFO
                 break
     return findings
-
-
-def to_dict(findings: list[Finding]) -> list[dict]:
-    return [asdict(f) for f in findings]
 
 
 def blocking(findings: list[Finding]) -> list[Finding]:

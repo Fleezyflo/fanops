@@ -72,18 +72,6 @@ def stale_artifacts(derived_dir: Path | None = None) -> list[Drift]:
     return out
 
 
-def _line_delta(have: str, want: str, limit: int = 6) -> list[str]:
-    import difflib
-    d = [ln for ln in difflib.unified_diff(have.splitlines(), want.splitlines(),
-                                           "on-disk", "regenerated", lineterm="", n=0)
-         if ln and ln[0] in "+-" and not ln.startswith(("+++", "---"))]
-    # Lead with lines that carry TEXT. A drift whose first reported line is a bare "-" (a blank
-    # line moved) reads as no evidence at all, and a finding without legible evidence is a finding
-    # nobody acts on. Whitespace-only diffs still report — they just do not get to go first.
-    d = [ln for ln in d if ln[1:].strip()] or d
-    return d[:limit] + ([f"… and {len(d) - limit} more line(s)"] if len(d) > limit else [])
-
-
 def load_str(text: str) -> dict:
     import json
     return json.loads(text)

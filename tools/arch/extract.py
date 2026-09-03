@@ -21,8 +21,6 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-GENERATOR_VERSION = "arch/1.0.0"
-
 # ── what counts as a side effect ────────────────────────────────────────────────────────────
 _SUBPROCESS_FNS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
 _REQUESTS_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options", "request"})
