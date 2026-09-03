@@ -32,7 +32,6 @@ def test_hydrate_does_not_stamp_length_from_cut_policy(tmp_path):
     a = accts.accounts[0]
     assert a.cut_policy == ["emotional"]
     assert a.clip_profile == "talk"
-    assert a.persona_owns_profile is False
     assert a.framing == "top"
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from flask import Response, send_file
 
 from fanops.discover import make_thumbnail
-from fanops.ingest import probe_dimensions
+from fanops.media_probe import probe_dimensions
 from fanops.ledger import Ledger
 
 _log = logging.getLogger("fanops.studio.thumb_media")

@@ -3,658 +3,81 @@
 Reframe is chosen from the PROBED source dimensions so vertical/odd sources don't break.
 render_aspects_for renders one clip per distinct aspect the active platforms need."""
 from __future__ import annotations
-import contextlib, hashlib, json, os, subprocess
+import json, os, subprocess
 from pathlib import Path
-from statistics import median
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, MomentState, ClipState, Fmt
 from fanops.ids import child_id
-from fanops import overlay, frames, framing
+from fanops import overlay, framing
 from fanops.log import get_logger
 from fanops.errors import ToolchainMissingError
-
-# Target render size per aspect. The subtitle .ass PlayResX/Y must match the rendered frame so
-# libass scales the caption to the clip — so render_moment reads this same table the reframe uses.
-_TARGETS = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}
-
-# Hard bound on one ffmpeg render (the llm.py timeout idiom). render_moment runs INSIDE
-# advance()'s ledger transaction, so an UNBOUNDED hang on a corrupt input held the flock against
-# every other pass and Studio write. 10min covers a multi-minute 1080p re-encode with headroom.
-_FFMPEG_TIMEOUT = 600.0
-
-# Cut length is the picked moment. No talk/song/short floor or ceiling at render — fit_window
-# defaults are EOF-clamp only. Callers pass hi=source duration (or inf if unprobed).
-# Length is pick-owned (moment start/end). This module does not apply bands.TALK/SONG/SHORT.
-
-def realized_clip_seconds(clip: Clip | None, moment) -> float | None:
-    """Playable duration for platform-cap checks: rendered cut_seconds when set, else moment envelope."""
-    if clip is None: return None
-    if clip.cut_seconds is not None: return clip.cut_seconds
-    if moment is not None: return moment.end - moment.start
-    return None
-
-# How far (seconds) snap_window may move the window start onto a transcript-line start. A small
-# nudge: it polishes mid-word starts; end follows by the same Δ (no length floor).
-_SNAP_MAX_SHIFT_S = 1.5
-
-def _nearest(value: float, candidates: list[float], max_shift: float) -> float | None:
-    in_range = [c for c in candidates if abs(c - value) <= max_shift]
-    return min(in_range, key=lambda c: abs(c - value)) if in_range else None
-
-def _trusted_transcript(src) -> list[dict]:
-    from fanops.transcribe import trusted_segments
-    return trusted_segments(src.transcript or [], src_lang=getattr(src, "language", None))
-
-def snap_window(start: float, end: float, transcript: list[dict] | None,
-                *, duration: float = 0.0, max_shift: float = _SNAP_MAX_SHIFT_S) -> tuple[float, float]:
-    """Nudge start onto a nearby transcript-line start; end follows by the same Δ so the pick span is kept.
-    No transcript / no nearby start → identity. Lines missing a numeric start are skipped. Zero/EOF clip
-    the slid edges (duration<=0 means unprobed -> no EOF clamp); invert after clip restores the original.
-    Pure. Does not independently snap end. Unused on the render/reframe default path (pick is the cut)."""
-    if not transcript:
-        return start, end
-    starts = [ln["start"] for ln in transcript if isinstance(ln.get("start"), (int, float))]
-    ns = _nearest(start, starts, max_shift)
-    if ns is None: return start, end
-    d = ns - start
-    s, e = ns, end + d
-    if s < 0: s = 0.0
-    if duration and e > duration: e = duration
-    return (s, e) if s < e else (start, end)
-
-def fit_window(start: float, end: float, duration: float,
-               *, lo: float = 0.0, hi: float = float("inf")) -> tuple[float, float]:
-    """EOF-clamp a picked [start,end]. The pick is the cut — lo/hi are ignored (no pad, no band trim).
-    Start floored at 0; end clamped to probed `duration` (duration<=0 -> unprobed, no EOF clamp)."""
-    s = max(0.0, start)
-    e = duration if duration and end > duration else end
-    return (s, e) if s < e else (start, end)
-
-# P1 T1 (strongest-frame cut start). How far the entry may shift to land on a stronger frame (a small
-# nudge, like snap_window's max_shift — never invents a length floor), how many candidate frames to probe,
-# the per-frame probe bound (keyframes.py idiom), and the minimum move to count as a real visual pick.
-_VSTART_MAX_SHIFT_S = 1.5
-_VSTART_CANDIDATES = 5
-_VSTART_PROBE_TIMEOUT = 30.0
-_VSTART_MIN_MOVE_S = 0.05
-# vstart sidecar schema version (C2/H2): Theme 3 added sharpness to the pick, so the cached DECISION
-# can change. A pre-sharpness sidecar (no/lower `v`) is a cache miss -> re-probe, never served stale.
-_VSTART_V = 2
-_SCENE_NEAR_S = 0.3          # a scene-cut peak within this of a candidate counts as "on a cut" (tiebreak)
-
-def _vstart_candidate_times(start: float, end: float) -> list[float]:
-    """Evenly-spaced candidate entry times in [start, min(start+shift, end)], INCLUDING `start` itself
-    (so 'no better frame than the current start' is always reachable -> no spurious move). Pure."""
-    hi = min(start + _VSTART_MAX_SHIFT_S, end)
-    if hi <= start:
-        return [start]
-    n = _VSTART_CANDIDATES
-    return [start + (hi - start) * i / (n - 1) for i in range(n)]
-
-def _signalstats_cmd(src: str, t: float) -> list[str]:
-    # One bounded ffmpeg per candidate: seek, decode ONE frame, print its luma stats (YAVG/YMIN/YMAX)
-    # via the signalstats+metadata filter. `-f null -` discards output (no jpg written) — we only parse
-    # the printed text. info loglevel makes metadata=print emit the lavfi.signalstats.* lines.
-    return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-ss", f"{t:.3f}", "-i", src,
-            "-frames:v", "1", "-vf", "signalstats,metadata=print", "-f", "null", "-"]
-
-def _sharpness_cmd(src: str, t: float) -> list[str]:
-    # Theme 3: a SECOND tiny pass for a relative sharpness proxy — the discrete Laplacian convolution
-    # (`0 -1 0 / -1 4 -1 / 0 -1 0`) on a gray frame, then signalstats YAVG = mean edge energy. ffmpeg-only
-    # (zero new dep). NB this is mean-of-Laplacian (relative, in-clip ranking), NOT variance-of-Laplacian.
-    return ["ffmpeg", "-hide_banner", "-loglevel", "info", "-ss", f"{t:.3f}", "-i", src,
-            "-frames:v", "1", "-vf", "format=gray,convolution=0 -1 0 -1 4 -1 0 -1 0,signalstats,metadata=print",
-            "-f", "null", "-"]
-
-def _probe_frame_sharpness(src: str, t: float):
-    """Run the Laplacian sharpness probe for ONE time and return the edge-energy proxy or None. FAIL-OPEN
-    (any ffmpeg/parse failure -> None): sharpness is an ENHANCEMENT, so it degrades to contrast-only."""
-    try:
-        r = subprocess.run(_sharpness_cmd(src, t), check=False, capture_output=True, text=True,
-                           timeout=_VSTART_PROBE_TIMEOUT)
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None
-    return frames.parse_sharpness((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
-
-def _probe_frame_strength(src: str, t: float):
-    """Probe ONE candidate time -> (luma, contrast, sharpness) or None. luma/contrast from signalstats;
-    sharpness from a second Laplacian pass (fail-open to None -> contrast-only ranking). Fail-open
-    (ffmpeg absent/hung/error -> None) exactly like keyframes.extract_keyframes — never raises."""
-    try:
-        r = subprocess.run(_signalstats_cmd(src, t), check=False, capture_output=True, text=True,
-                           timeout=_VSTART_PROBE_TIMEOUT)
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return None
-    # getattr-defensive: the probe is fail-open, so a result missing stdout/stderr -> no stats -> None
-    # (a real capture_output run always has both as strings; this also tolerates minimal test fakes).
-    lc = frames.parse_signalstats((getattr(r, "stdout", "") or "") + (getattr(r, "stderr", "") or ""))
-    if lc is None:
-        return None
-    return lc[0], lc[1], _probe_frame_sharpness(src, t)      # sharpness fail-open -> None (contrast-only)
-
-def _scene_score_near(scene_peaks, t: float) -> float:
-    # signal_peaks is loaded from an unvalidated JSON sidecar, so a non-numeric t/score must not raise
-    # out of the picker (fail-open contract) — a bad peak just contributes no tiebreak.
-    best = 0.0
-    for p in scene_peaks or []:
-        if not isinstance(p, dict) or p.get("kind") != "scene_cut":
-            continue
-        try:
-            pt = float(p.get("t", 0.0)); ps = float(p.get("score", 0.0))
-        except (ValueError, TypeError):
-            continue
-        if abs(pt - t) <= _SCENE_NEAR_S:
-            best = max(best, ps)
-    return best
-
-def pick_visual_start(src_path: str, start: float, end: float, *, scene_peaks, out_dir) -> tuple[float, str]:
-    """Refine the cut entry onto the strongest opening frame within a bounded shift. Returns
-    (new_start, kind): kind="visual" when a stronger frame moved the start, else "transcript" (the
-    snap start is kept). The decision is CACHED in a per-(source,window) sidecar so the in-lock
-    commit pass adopts it with NO ffmpeg (Phase D); the lock-free pre-warm pays the probe cost once.
-    Fail-open: any probe failure leaves the start unchanged. PURE selection lives in frames.py."""
-    out = Path(out_dir)
-    key = hashlib.sha256(f"{src_path}|{round(start, 3)}|{round(end, 3)}".encode()).hexdigest()[:16]
-    sidecar = out / f"vstart_{key}.json"
-    if sidecar.exists():
-        try:
-            d = json.loads(sidecar.read_text())
-            if d.get("v") != _VSTART_V:                    # C2/H2: stale (pre-sharpness) sidecar -> cache miss, re-probe
-                raise KeyError("stale sidecar version")
-            return float(d["start"]), str(d["kind"])      # cached -> no re-probe (commit stays lock-cheap)
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
-            pass                                            # corrupt/stale sidecar -> fall through to a real probe
-    cands = []
-    for t in _vstart_candidate_times(start, end):
-        ls = _probe_frame_strength(src_path, t)
-        if ls is not None:
-            cands.append({"t": t, "luma": ls[0], "contrast": ls[1], "sharpness": ls[2],
-                          "scene": _scene_score_near(scene_peaks, t)})
-    win = frames.pick_strongest(cands)
-    if win is not None and abs(win["t"] - start) > _VSTART_MIN_MOVE_S:
-        new_start, kind = float(win["t"]), "visual"
-    else:
-        new_start, kind = start, "transcript"
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps({"v": _VSTART_V, "start": new_start, "kind": kind}))
-    except OSError:
-        pass                                                # write failure just re-probes next time
-    return new_start, kind
-
-def _clamp(v: int, lo: int, hi: int) -> int:
-    return lo if v < lo else (hi if v > hi else v)
-
-# ---- Dynamic-reframe geometry (T5): zoom each subject to a consistent on-screen face fraction + place the
-# eye-line, and pan SMOOTHLY (linear ramp) between active speakers — vs the old full-height no-zoom hard cut.
-# ffmpeg evaluates crop x/y per-frame but w/h ONCE, so the crop box is constant per window (one zoom) and the
-# pan lives in the x/y t-expression. A focus WITHOUT a face height (a 2-tuple, or saliency) never zooms ->
-# byte-identical to the pre-zoom behaviour. ----
-_FACE_FRAC_TALK = 0.42      # target on-screen face-box height for talk: a DELIBERATE head-and-shoulders short-form
-                            # frame (the old 0.32 read as timid — output never left ~0.27). Bounded by _ZOOM_MAX.
-_FACE_FRAC_MUSIC = 0.26     # ... for music/performance: wider, keeps stage/body context (still tighter than the old 0.22)
-_EYELINE_FRAC = 0.40        # place the eyes at ~0.40 of the output height (eyes on the upper third)
-_ZOOM_MAX = 1.6             # max zoom MAGNIFICATION for the STATIC single-subject crop (bounds upscale blur)
-_ZOOM_MAX_TRACK = 1.7       # per-shot cap for a 2-shot NEAR speaker — sharp beats a big-but-blurry 2.4x upscale of
-                            # a 1080p crop; the far speaker is held wide separately via _adaptive_zoom_max
-_GENTLE_MIN_FACE_FRAC = 0.12   # an already-9:16 clip only gets a gentle zoom when the face is smaller than this
-_GENTLE_ZOOM_MAX = 1.15        # ... and that gentle zoom never exceeds this magnification
-
-def _target_frac(content_type: str | None) -> float:
-    return _FACE_FRAC_MUSIC if content_type == "music" else _FACE_FRAC_TALK
-
-def _zoom_h(src_h: int, ch0: int, fh, frac: float, zoom_max: float = _ZOOM_MAX) -> int:
-    """Crop extent in the SCALED axis: shrink the baseline ch0 so a face of normalized height fh fills `frac`
-    of the output, bounded so magnification (ch0/ch) never exceeds zoom_max (caps upscale blur). fh falsy
-    (a 2-tuple focus / saliency) -> no zoom -> ch0 (today's full extent)."""
-    if not fh or fh <= 0 or not frac:
-        return ch0
-    ch = round(src_h * fh / frac)
-    return _clamp(ch, round(ch0 / zoom_max), ch0)
-
-def _place(src_w: int, src_h: int, cw: int, ch: int, fx: float, ay: float, eyeline: float):
-    """Clamped crop ORIGIN (x,y): x centres the box on fx; y puts the vertical anchor ay (eye-line or
-    centroid) at `eyeline` of the crop. Both clamped so the window never runs off the frame."""
-    x = _clamp(round(fx * src_w - cw / 2), 0, max(0, src_w - cw))
-    y = _clamp(round(ay * src_h - eyeline * ch), 0, max(0, src_h - ch))
-    return x, y
-
-# ---- E1b safe-area: the crop must CONTAIN the full detected face box with a margin on every edge and
-# headroom above the head; when the box can't fit at the target zoom the crop WIDENS (reduce zoom), never
-# cuts the face, bounded by the source. One implementation, shared by all four crop paths (_focus_crop,
-# _track_crop, _already_aspect, _crop_box). A focus/segment with NO face height (a 2-tuple or saliency)
-# leaves size + origin exactly as _place produced them -> byte-identical to the pre-E1b behaviour. ----
-_SAFE_MARGIN_FRAC = 0.05     # min gap from the detected face box to every crop edge, as a fraction of the source dim
-
-def _safe_dims(cw: int, ch: int, ch0: int, src_w: int, src_h: int, tw: int, th: int, fh, fw):
-    """Widen the crop (reduce zoom) until the face box + a margin on every edge fits, bounded by the source
-    baseline ch0 (never wider than the blind crop) and the source dims. fh/fw falsy on an axis -> that axis
-    is unconstrained (a 2-tuple/legacy focus keeps today's size)."""
-    if not fh and not fw:
-        return cw, ch
-    need = float(ch)
-    if fh:
-        need = max(need, (fh + 2 * _SAFE_MARGIN_FRAC) * src_h)
-    if fw:
-        need = max(need, ((fw + 2 * _SAFE_MARGIN_FRAC) * src_w) * th / tw)   # width need -> implied crop height
-    ch = min(ch0, src_h, round(need))
-    cw = min(round(ch * tw / th), src_w)
-    return cw, ch
-
-def _safe_origin(src_w: int, src_h: int, cw: int, ch: int, fx: float, fy: float, fh, ey, fw, eyeline: float):
-    """Crop origin (x,y) that keeps the full face box inside with a margin (where the source allows) and
-    protects the head-top, then clamps to source bounds. Reduces to _place when there is no face box."""
-    if not fh:
-        return _place(src_w, src_h, cw, ch, fx, ey if ey is not None else fy, eyeline if ey is not None else 0.5)
-    mv, mw = _SAFE_MARGIN_FRAC * src_h, _SAFE_MARGIN_FRAC * src_w
-    x = round(fx * src_w - cw / 2)                             # centre horizontally on the face
-    if fw:                                                     # keep the face box's L/R edges inside with a margin
-        lo, hi = round((fx + fw / 2) * src_w + mw - cw), round((fx - fw / 2) * src_w - mw)
-        if lo <= hi:
-            x = _clamp(x, lo, hi)
-    x = _clamp(x, 0, max(0, src_w - cw))
-    y = round((ey if ey is not None else fy) * src_h - eyeline * ch)   # eye-line composition
-    lo = round((fy + fh / 2) * src_h + mv - ch)               # chin inside
-    hi = round((fy - fh / 2) * src_h - mv)                    # head-top inside (headroom)
-    if lo <= hi:
-        y = _clamp(y, lo, hi)
-    y = _clamp(y, 0, max(0, src_h - ch))
-    return x, y
-
-def _step_expr(bounds: list[float], vals: list[int]) -> str:
-    """A per-frame ffmpeg crop-offset expression that HARD-CUTS through `vals` at the `bounds` switch times
-    (instant reframe to the active speaker — the short-form standard, vs panning across the dead space
-    between two seats). `vals` has one more entry than `bounds` (the final value is the else branch). Commas
-    inside if() are escaped (\\,) so it survives filtergraph parsing as one option value. Single value -> the
-    constant. A cut between distant speakers reads as energetic editing; a slow pan across the gap reads as a
-    glitch (it shows the empty middle) — proven on real 2-shot footage."""
-    if len(vals) <= 1:
-        return str(vals[0]) if vals else "0"
-    expr = str(vals[-1])
-    for b, v in zip(reversed(bounds), reversed(vals[:-1])):
-        expr = f"if(lt(t\\,{round(b, 2)})\\,{v}\\,{expr})"
-    return expr
-
-def _track_crop(track: list, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float, *, axis: str) -> str:
-    """Active-speaker crop: ONE zoom for the window (from the segments' median face height) + a SMOOTH pan
-    of the crop origin between per-segment anchors. crop w/h constant (ffmpeg evals them once); x/y are the
-    t-expressions. `axis` is just documentation — both x and y are emitted; a constant axis collapses to an int."""
-    fhs = [s[4] for s in track if len(s) > 4 and s[4]]
-    fws = [s[6] for s in track if len(s) > 6 and s[6]]
-    ch = _zoom_h(src_h, ch0, median(fhs) if fhs else None, frac)
-    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    # E1b: ONE window crop that fits the WIDEST/TALLEST speaker across segments; each origin keeps ITS face safe.
-    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, max(fhs) if fhs else None, max(fws) if fws else None)
-    bounds = [round(s[1], 2) for s in track[:-1]]
-    xs, ys = [], []
-    for s in track:
-        fh = s[4] if len(s) > 4 else None
-        ey = s[5] if len(s) > 5 else s[3]
-        fw = s[6] if len(s) > 6 else None
-        x, y = _safe_origin(src_w, src_h, cw, ch, s[2], s[3], fh, ey, fw, _EYELINE_FRAC if len(s) > 5 else 0.5)
-        xs.append(x); ys.append(y)
-    xexpr = _step_expr(bounds, xs)
-    yexpr = _step_expr(bounds, ys)
-    return f"crop=w={cw}:h={ch}:x={xexpr}:y={yexpr},scale={tw}:{th},setsar=1"
-
-def _focus_crop(focus: tuple, src_w: int, src_h: int, tw: int, th: int, ch0: int, frac: float,
-                *, symbolic_w: str, symbolic_full: bool, zoom_base: float = _ZOOM_MAX) -> str:
-    """Static subject-lock crop: zoom to the target face fraction + eye-line. When a 2-tuple focus produces
-    NO zoom (full baseline extent), emit the legacy SYMBOLIC form so a pre-zoom focus clip is byte-identical
-    (no needless re-render); otherwise a numeric zoomed crop. `zoom_base` is the magnification ceiling before
-    the far-subject adaptation; it defaults to _ZOOM_MAX so every pre-S3 caller is byte-identical, and S3's
-    subject-lock passes _GENTLE_ZOOM_MAX to re-anchor a dominant host without punching in (F6/ADR-0103)."""
-    fh = focus[2] if len(focus) > 2 else None
-    ey = focus[3] if len(focus) > 3 else None
-    fw = focus[4] if len(focus) > 4 else None
-    ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, zoom_base))
-    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, fh, fw)   # E1b: widen if the face box won't fit
-    x, y = _safe_origin(src_w, src_h, cw, ch, focus[0], focus[1], fh, ey, fw, _EYELINE_FRAC)
-    if symbolic_full and ch == ch0 and cw == round(ch0 * tw / th):
-        # no zoom -> keep the exact pre-zoom string (byte-identical): width-crop "ih*tw/th:ih:x:y", height-crop "iw:iw*th/tw:x:y"
-        return symbolic_w.format(x=x, y=y) + f",scale={tw}:{th},setsar=1"
-    return f"crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1"
-
-def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = False,
-                   focus: tuple | None = None, track: list | None = None,
-                   content_type: str | None = None) -> str:
-    """A safe ffmpeg -vf for the target aspect given the source dims, content-adaptive and aspect-adaptive.
-    `focus` ((fx,fy) or (fx,fy,fh,ey)) locks + zooms a static subject; `track` (6-tuples with face height +
-    eye-line) follows the active speaker with a smooth pan; `content_type` tunes the zoom (music wider). A
-    focus with no face height never zooms -> byte-identical to before; focus=None AND track=None AND
-    top_bias=False is the exact centered crop of old. Every branch clamps in-bounds and falls open safely."""
-    if content_type == framing.RENDER_STACK_PAIR:
-        focus, content_type = None, None     # the stack renders via render_reframed's filter_complex, not here — centre defensively
-    tw, th = _TARGETS[aspect]
-    if not src_w or not src_h:
-        # unknown source: scale to fit + pad to exact target (never an impossible crop)
-        return (f"scale={tw}:{th}:force_original_aspect_ratio=decrease,"
-                f"pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1")
-    src_ar = src_w / src_h
-    tgt_ar = tw / th
-    frac = _target_frac(content_type)
-    # S3/D1-B: the subject-lock re-anchors the crop onto the ONE dominant host. Its defect is POSITIONAL, so it
-    # is capped at the GENTLE magnification — the crop moves onto the host rather than punching in on him (spec
-    # F6 "widest crop that satisfies F1-F3; zoom only to remove dead space, never for emphasis"; ADR-0103's
-    # binding minimal-zoom requirement). Any other content_type keeps _ZOOM_MAX -> byte-identical.
-    zoom_base = _GENTLE_ZOOM_MAX if content_type == framing.RENDER_SUBJECT_LOCK else _ZOOM_MAX
-    if abs(src_ar - tgt_ar) < 0.01:
-        return _already_aspect(tw, th, src_w, src_h, focus, frac)   # passthrough or a bounded gentle zoom
-    if src_ar > tgt_ar:
-        # source wider than target -> crop width (full height kept). track/focus zoom + slide onto the subject.
-        ch0 = src_h
-        if track:
-            return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="x")
-        if focus is not None:
-            return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac, zoom_base=zoom_base,
-                               symbolic_w=f"crop=ih*{tw}/{th}:ih:{{x}}:{{y}}", symbolic_full=True)
-        return f"crop=ih*{tw}/{th}:ih,scale={tw}:{th},setsar=1"
-    # source taller/narrower than target -> crop height.
-    ch0 = round(src_w * th / tw)
-    if track:
-        return _track_crop(track, src_w, src_h, tw, th, ch0, frac, axis="y")
-    if focus is not None:
-        return _focus_crop(focus, src_w, src_h, tw, th, ch0, frac, zoom_base=zoom_base,
-                           symbolic_w=f"crop=iw:iw*{th}/{tw}:{{x}}:{{y}}", symbolic_full=True)
-    if top_bias:
-        return f"crop=iw:iw*{th}/{tw}:0:(ih-iw*{th}/{tw})/4,scale={tw}:{th},setsar=1"
-    return f"crop=iw:iw*{th}/{tw},scale={tw}:{th},setsar=1"
-
-def _already_aspect(tw: int, th: int, src_w: int, src_h: int, focus: tuple | None, frac: float) -> str:
-    """Source ALREADY at the target aspect: scale-only by default (byte-identical to today). ONLY when a
-    small face is detected (fh < _GENTLE_MIN_FACE_FRAC) apply a BOUNDED gentle zoom-in (still target AR) with
-    eye-line recentre — never a destructive crop, never worse than passthrough."""
-    fh = focus[2] if (focus is not None and len(focus) > 2) else None
-    if not fh or fh >= _GENTLE_MIN_FACE_FRAC:
-        return f"scale={tw}:{th},setsar=1"
-    ey = focus[3] if len(focus) > 3 else focus[1]
-    fw = focus[4] if len(focus) > 4 else None
-    ch = _zoom_h(src_h, src_h, fh, frac, zoom_max=_GENTLE_ZOOM_MAX)
-    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    cw, ch = _safe_dims(cw, ch, src_h, src_w, src_h, tw, th, fh, fw)   # E1b (ch0 = src_h for an already-aspect source)
-    x, y = _safe_origin(src_w, src_h, cw, ch, focus[0], focus[1], fh, ey, fw, _EYELINE_FRAC)
-    return f"crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1"
-
-def ffmpeg_clip_cmd(src: str, dst: str, start: float, end: float, aspect: str,
-                    *, src_w: int = 0, src_h: int = 0, extra_vf: str | None = None,
-                    top_bias: bool = False, focus: tuple | None = None,
-                    track: list | None = None, content_type: str | None = None) -> list[str]:
-    # -ss before -i (fast seek) makes output-position -to a DURATION measured from the seek
-    # point, so it must be (end - start), not the absolute end. Verified on ffmpeg 8.0.1:
-    # `-ss 1.5 -to 6.5` yields a 6.5s clip; passing 8.0 here would yield 8.0s (the F39 bug).
-    # extra_vf (e.g. the burned-subtitles `subtitles=...` token) is chained AFTER the reframe
-    # with a comma so it operates on the already-reframed frame; default None == old behavior.
-    vf = reframe_filter(aspect, src_w, src_h, top_bias=top_bias, focus=focus, track=track, content_type=content_type)
-    if extra_vf:
-        vf = f"{vf},{extra_vf}"
-    return ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", src, "-to", f"{end - start:.3f}",
-            "-vf", vf,
-            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
-
-# ---- Per-segment active-speaker render (the fix for "random sizes" in 2-shots) ----
-# A single ffmpeg `crop` evaluates w/h ONCE per stream, so a 2-shot got ONE zoom for two speakers whose source
-# face sizes differ >2x -> one of them was always wrong-sized (the operator's "cutting to random sizes"). The
-# fix renders each active-speaker SEGMENT as its OWN correctly-sized crop and joins them with the concat filter
-# in a SINGLE pass: N seeked inputs -> per-segment crop chains -> concat (sample-accurate, no container seams)
-# -> optional subtitle burn -> one encode. Each speaker now lands at a consistent on-screen face size.
-def _crop_box(fx: float, fy: float, fh, ey, src_w: int, src_h: int, tw: int, th: int,
-              ch0: int, frac: float, zoom_max: float, fw=None):
-    """Numeric crop (cw, ch, x, y) that zooms a subject of normalized face-height fh to `frac` of the output
-    (bounded by zoom_max) and anchors its eye-line ey at _EYELINE_FRAC. Shared sizing math so the static focus
-    crop and the per-segment active-speaker crops are consistent. fh falsy -> no zoom (full ch0 extent).
-    The zoom cap is face-size-adaptive: a far/small subject is held wide (context, not a tight mic crop).
-    E1b: `fw` (face width, when known) drives the horizontal safe-area — the crop widens rather than cut it."""
-    ch = _zoom_h(src_h, ch0, fh, frac, zoom_max=_adaptive_zoom_max(fh, zoom_max))
-    cw = min(round(ch * tw / th), src_w); ch = min(ch, src_h)
-    cw, ch = _safe_dims(cw, ch, ch0, src_w, src_h, tw, th, fh, fw)
-    x, y = _safe_origin(src_w, src_h, cw, ch, fx, fy, fh, ey, fw, _EYELINE_FRAC)
-    return cw, ch, x, y
-
-def _ch0_for(aspect_value: str, src_w: int, src_h: int):
-    """Baseline crop extent in the scaled axis for source->target: full height for a wider source, full-width-
-    derived height for a taller one. None when the source is ALREADY the target aspect (segment -> scale-only)."""
-    tw, th = _TARGETS[aspect_value]
-    if not src_w or not src_h:
-        return None
-    src_ar = src_w / src_h; tgt_ar = tw / th
-    if abs(src_ar - tgt_ar) < 0.01:
-        return None
-    return src_h if src_ar > tgt_ar else round(src_w * th / tw)
-
-def _segment_chain(idx: int, seg, src_w: int, src_h: int, tw: int, th: int, ch0, frac: float) -> str:
-    """One concat input's video chain: crop the active speaker (this segment's own fx,fy,fh,ey -> own zoom +
-    eye-line) then scale to the target, labeled [v{idx}]. ch0 None (already-aspect / unknown dims) -> scale-only."""
-    if ch0 is None:
-        return f"[{idx}:v]scale={tw}:{th},setsar=1[v{idx}]"
-    fh = seg[4] if len(seg) > 4 else None
-    ey = seg[5] if len(seg) > 5 else None
-    fw = seg[6] if len(seg) > 6 else None
-    cw, ch, x, y = _crop_box(seg[2], seg[3], fh, ey, src_w, src_h, tw, th, ch0, frac, _ZOOM_MAX_TRACK, fw)
-    return f"[{idx}:v]crop={cw}:{ch}:{x}:{y},scale={tw}:{th},setsar=1[v{idx}]"
-
-def _segments_filter_complex(track: list, src_w: int, src_h: int, aspect_value: str,
-                             content_type: str | None, *, sub_token: str | None = None) -> str:
-    """The full -filter_complex: each segment's crop chain; a concat filter joining all (video+audio) in order;
-    then the optional subtitle burn -> [vout],[aout]. The .ass timeline (0..clip-dur) aligns because concat
-    rebuilds a continuous 0-based timeline from the contiguous segments."""
-    tw, th = _TARGETS[aspect_value]
-    frac = _target_frac(content_type)
-    ch0 = _ch0_for(aspect_value, src_w, src_h)
-    chains = [_segment_chain(i, seg, src_w, src_h, tw, th, ch0, frac) for i, seg in enumerate(track)]
-    concat_in = "".join(f"[v{i}][{i}:a]" for i in range(len(track)))
-    vlabel = "[vc]" if sub_token else "[vout]"
-    parts = chains + [f"{concat_in}concat=n={len(track)}:v=1:a=1{vlabel}[aout]"]
-    if sub_token:
-        parts.append(f"[vc]{sub_token}[vout]")
-    return ";".join(parts)
-
-def ffmpeg_segments_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: str, track: list,
-                        *, src_w: int, src_h: int, content_type: str | None = None,
-                        sub_token: str | None = None) -> list[str]:
-    """ffmpeg command for the per-segment concat render: one seeked input per segment (`-ss`/`-t` before each
-    `-i` = fast + accurate), a single -filter_complex (per-segment crop -> concat -> subtitles), one encode.
-    Segment times are RELATIVE to the clip; each input window is (cs+t0) for (t1-t0) seconds.
-
-    `-fps_mode cfr` is REQUIRED, not cosmetic: the concat filter offsets each joined segment's PTS by that
-    segment's duration rounded UP to a whole frame interval, leaving a 1-frame gap at every join. Without a
-    constant-rate resample that stretches the output ~1 frame per join — inflating the duration, dropping
-    avg_frame_rate below the source (measured 29.835 vs 29.97 on a 3-segment clip), and drifting the burned
-    .ass subtitles against the video (the _segments_filter_complex 'timeline aligns' claim only holds once the
-    gaps are filled). cfr resamples to a continuous grid: avg_frame_rate == r_frame_rate, subtitles realign.
-    This is an ffmpeg flag, NOT a fingerprint input, so it changes NO render fingerprint (no re-render churn)."""
-    cmd = ["ffmpeg", "-y"]
-    for seg in track:
-        seg_cs = cs + float(seg[0]); seg_dur = float(seg[1]) - float(seg[0])
-        cmd += ["-ss", f"{seg_cs:.3f}", "-t", f"{seg_dur:.3f}", "-i", src]
-    fc = _segments_filter_complex(track, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
-    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
-            "-fps_mode", "cfr",                       # fill concat's per-join PTS gaps -> CFR, no subtitle drift
-            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
-    return cmd
-
-def _supercut_span_entries(cfg: Config, src, spans: list[tuple[float, float]]):
-    """Per-span framing for supercut concat inputs (one ABSOLUTE seek per span). Fail-open centered."""
-    entries = []; ct_out = None
-    for s, e in spans:
-        dur = float(e) - float(s)
-        focus, track, ct = _resolve_framing(cfg, src, float(s), float(e))
-        if ct and ct_out is None:
-            ct_out = ct
-        if focus is not None:
-            fx, fy = focus[0], focus[1]
-            fh = focus[2] if len(focus) > 2 else None
-            ey = focus[3] if len(focus) > 3 else None
-            fw = focus[4] if len(focus) > 4 else None
-        elif track:
-            fx, fy = track[0][2], track[0][3]
-            fh = track[0][4] if len(track[0]) > 4 else None
-            ey = track[0][5] if len(track[0]) > 5 else None
-            fw = track[0][6] if len(track[0]) > 6 else None
-        else:
-            fx, fy, fh, ey, fw = 0.5, 0.5, None, None, None
-        entries.append((0.0, dur, fx, fy, fh, ey, fw))   # E1b: carry fw so the safe-area + fingerprint see it
-    return entries, ct_out
-
-def ffmpeg_supercut_cmd(src: str, dst: str, spans: list[tuple[float, float]], aspect_value: str,
-                        *, src_w: int = 0, src_h: int = 0, span_entries: list | None = None,
-                        content_type: str | None = None, sub_token: str | None = None) -> list[str]:
-    """S3 supercut: one ABSOLUTE seeked input per span (`-ss s -t (e-s) -i src`), each span its own
-    crop chain, joined by the concat-filter STRING `_segments_filter_complex` builds. NET-NEW seek loop;
-    only the concat string reuses."""
-    cmd = ["ffmpeg", "-y"]
-    for s, e in spans:
-        cmd += ["-ss", f"{float(s):.3f}", "-t", f"{float(e) - float(s):.3f}", "-i", src]
-    if span_entries is None:
-        span_entries = [(0.0, float(e) - float(s), 0.5, 0.5, None, None) for s, e in spans]
-    fc = _segments_filter_complex(span_entries, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
-    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
-            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
-    return cmd
-
-def render_supercut_reframed(src_path: str, dst: str, spans: list[tuple[float, float]], aspect_value: str, *,
-                             src_w: int, src_h: int, span_entries: list | None = None,
-                             content_type: str | None = None, extra_vf: str | None = None,
-                             timeout: float = _FFMPEG_TIMEOUT):
-    """Atomic supercut render (MOL-178). Returns subprocess result; fail-open caller falls back."""
-    tmp = str(dst) + ".part.mp4"
-    try:
-        cmd = ffmpeg_supercut_cmd(src_path, tmp, spans, aspect_value, src_w=src_w, src_h=src_h,
-                                  span_entries=span_entries, content_type=content_type, sub_token=extra_vf)
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-            os.replace(tmp, dst)
-        return r
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-
-# ---- Stable render strategy: a LOCKED-OFF camera per shot (no per-frame motion = no jitter) ----
-# A per-frame crop that CHASES the subject reads as a jittery hand-held cam — it tracks every detection wobble
-# and the zoom "breathes" with per-frame face-height noise (the operator's "jittery cameraman" complaint).
-# Seated podcast/interview footage wants the opposite: ONE fixed, correctly-sized crop held PERFECTLY STILL per
-# shot, hard-cutting between speakers — a locked-off virtual camera, how real clippers cut it. So the render is a
-# STATIC crop per active-speaker SEGMENT (the ffmpeg crop is constant within a segment -> zero camera motion),
-# or a single static subject-lock for a one-person clip. Per-shot sizing fixes the cross-speaker "random sizes";
-# the cut timing is the responsive ASD track. No per-frame motion = no jitter, by construction.
-_SMALL_FACE_FRAC = 0.18      # below this source face height the subject is FAR (often profile + mic-occluded) — a
-                             # tight punch-in just frames the foreground mic, so cap the zoom hard and show context
-_ZOOM_MAX_FAR = 1.25         # the far-subject zoom cap: a wide, contextual shot (punch in on a near subject, hold
-                             # wide on the far/turned one) — never a tight crop of an occlusion
-
-def _adaptive_zoom_max(fh, base: float) -> float:
-    """Face-size-adaptive zoom cap: a FAR/small subject (fh < _SMALL_FACE_FRAC, typically profile + mic-occluded)
-    is held WIDE (_ZOOM_MAX_FAR) so its crop shows context, not a tight frame of the foreground mic; a near/well-
-    sized subject keeps the `base` cap (punch-in). fh falsy -> base (no zoom applies anyway). The far cap only ever
-    TIGHTENS: `min` keeps it from LOOSENING a base that is already gentler than _ZOOM_MAX_FAR (S3 passes
-    _GENTLE_ZOOM_MAX 1.15, and a far subject must not zoom MORE than a near one). base=_ZOOM_MAX (1.6, the only
-    pre-S3 caller) -> min(1.25, 1.6) == 1.25 -> byte-identical."""
-    return min(_ZOOM_MAX_FAR, base) if (fh and 0 < fh < _SMALL_FACE_FRAC) else base
-
-# ---- S2 / D1-A: vertical STACK for a genuine wide two-shot (retain BOTH hosts, no empty gap) ----
-# A wide two-shot's hosts sit ~0.6+ apart in x; a single upright 9:16 crop is only ~0.316 of the source width,
-# so it can hold at most ONE host and the blind centre lands on the empty table between them (the D1-A defect).
-# framing._resolve instead emits a subject-derived STACK (content_type=RENDER_STACK_PAIR, focus = the two host
-# anchors) and this renders it: each host cropped into its OWN half of the frame and vstacked. Both hosts are
-# retained and reasonably large, and the dead centre is REMOVED — spec F6 permits zoom-in only to remove dead
-# space, and a gentle zoom cap (_GENTLE_ZOOM_MAX) honours the operator's minimal-zoom directive.
-def _stack_filter_complex(focus: tuple, src_w: int, src_h: int, aspect_value: str,
-                          *, sub_token: str | None = None) -> str:
-    """filter_complex for the vertical stack: the LEFT host anchor (focus[0:5] = cx,cy,fh,ey,fw) cropped into
-    the TOP half and the RIGHT host anchor (focus[5:10]) into the BOTTOM half, each scaled to tw×(th//2), then
-    vstacked; an optional subtitle burn runs on the stacked frame. Each half reuses the proven _crop_box sizing
-    at a GENTLE zoom cap (minimal punch-in). ch0 None (unknown dims) -> scale-only halves (fail-open, no crop)."""
-    tw, th = _TARGETS[aspect_value]
-    half = th // 2
-    frac = _target_frac(None)
-    ch0 = None
-    if src_w and src_h:
-        ch0 = src_h if (src_w / src_h) > (tw / half) else round(src_w * half / tw)
-    def _half(anchor: tuple, label: str) -> str:
-        if ch0 is None:
-            return f"[0:v]scale={tw}:{half},setsar=1[{label}]"
-        cx, cy, fh, ey = anchor[0], anchor[1], anchor[2], anchor[3]
-        fw = anchor[4] if len(anchor) > 4 else None
-        cw, ch, x, y = _crop_box(cx, cy, fh, ey, src_w, src_h, tw, half, ch0, frac, _GENTLE_ZOOM_MAX, fw)
-        return f"[0:v]crop={cw}:{ch}:{x}:{y},scale={tw}:{half},setsar=1[{label}]"
-    parts = [_half(tuple(focus[0:5]), "sptop"), _half(tuple(focus[5:10]), "spbot")]
-    vlabel = "[vc]" if sub_token else "[vout]"
-    parts.append(f"[sptop][spbot]vstack=inputs=2{vlabel}")
-    if sub_token:
-        parts.append(f"[vc]{sub_token}[vout]")
-    return ";".join(parts)
-
-def ffmpeg_stack_cmd(src: str, dst: str, cs: float, ce: float, aspect_value: str, focus: tuple,
-                     *, src_w: int, src_h: int, content_type: str | None = None,
-                     sub_token: str | None = None) -> list[str]:
-    """ffmpeg command for the vertical-stack render: ONE seeked input split into two host crops + a vstack, one
-    encode. `-ss` before `-i` (fast seek) makes `-to` a DURATION (== ce-cs), mirroring ffmpeg_clip_cmd. The
-    original audio is mapped through (`0:a?` — optional, so a video-only source never fails the map)."""
-    fc = _stack_filter_complex(focus, src_w, src_h, aspect_value, sub_token=sub_token)
-    return ["ffmpeg", "-y", "-ss", f"{cs:.3f}", "-i", src, "-to", f"{ce - cs:.3f}",
-            "-filter_complex", fc, "-map", "[vout]", "-map", "0:a?",
-            "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
-
-def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value: str, *,
-                    src_w: int, src_h: int, extra_vf: str | None = None, top_bias: bool = False,
-                    focus: tuple | None = None, track: list | None = None,
-                    content_type: str | None = None, timeout: float = _FFMPEG_TIMEOUT):
-    """Render the reframed clip to `dst` as a STABLE shot (no per-frame camera motion), fail-open ladder:
-      1. segment-concat (a real 2-shot track) — each speaker its OWN static, correctly-sized crop, hard cuts;
-      2. single-pass ffmpeg crop (single subject / centered) — one static subject-lock (or centered) crop.
-    Both are LOCKED-OFF per shot (the crop is constant within a segment) so there is zero jitter. Returns the
-    subprocess result for the caller's existing handling; FileNotFoundError/OSError/TimeoutExpired propagate
-    exactly like the single-pass `subprocess.run` they replace.
-
-    ATOMIC WRITE (MOL-78): ffmpeg renders to a `<dst>.part.mp4` temp SIBLING of `dst`, and the finished
-    output is `os.replace`d onto `dst` ONLY after success (rc==0 + temp exists + size>0). So `dst` is never
-    a torn file mid-write — a concurrent reader (preview fallback, ffprobe, upload) sees the OLD `dst` or
-    nothing, never a half-muxed byte stream; on failure/timeout `dst` is left untouched (absent, or its
-    prior good file), so the caller's rc/exists/size checks on `dst` still hold verbatim (an unreplaced
-    failure leaves `dst` missing, matching the existing `not dst.exists()` error branch). The temp MUST keep
-    a muxer-inferable `.mp4` suffix: `ffmpeg_clip_cmd`/`ffmpeg_segments_cmd` pass no `-f mp4`, so ffmpeg
-    picks the container from the OUTPUT EXTENSION alone — a bare `.part` temp fails "Error initializing the
-    muxer" and produces NO file (rc!=0), so os.replace would never run and `dst` would never be created
-    (the MOL-78 CI E2E failure; the unit tests missed it because they stubbed ffmpeg). This also heals
-    render_account_cut, which passes its OWN `<out>.part` as `dst` here: we render to `<dst>.part.mp4`
-    (muxes fine) and publish to `dst` whatever ITS extension. The temp is swept on EVERY exit path —
-    success, fail-through, or a raised exception — in the finally. Mirrors render_account_cut's proven
-    atomic+os.replace pattern in this same file (and overlay.burn_hook_only)."""
-    tmp = str(dst) + ".part.mp4"                              # keep a muxer-inferable .mp4 suffix (see ATOMIC WRITE)
-    try:
-        if content_type == framing.RENDER_STACK_PAIR and focus and len(focus) >= 10:
-            # S2/D1-A: a genuine wide two-shot -> both hosts vertically stacked (no empty gap). One input,
-            # two host crops, vstack, one encode. Fail-open: a working ffmpeg that rejects the stack graph
-            # falls through to the centred single-pass (the acceptance floor — never worse than the blind centre).
-            stack_cmd = ffmpeg_stack_cmd(src_path, tmp, cs, ce, aspect_value, focus,
-                                         src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
-            r = subprocess.run(stack_cmd, check=False, capture_output=True, text=True, timeout=timeout)
-            if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-                os.replace(tmp, dst)                          # atomic publish — never a half-written clip at dst
-                return r
-            focus, track, content_type = None, None, None    # stack graph rejected -> centre (fail-open)
-        if track and len(track) > 1:
-            seg_cmd = ffmpeg_segments_cmd(src_path, tmp, cs, ce, aspect_value, track,
-                                          src_w=src_w, src_h=src_h, content_type=content_type, sub_token=extra_vf)
-            r = subprocess.run(seg_cmd, check=False, capture_output=True, text=True, timeout=timeout)
-            if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-                os.replace(tmp, dst)                          # atomic publish — never a half-written clip at dst
-                return r
-            # a working ffmpeg rejected the segment graph -> fall through to the single-pass crop (fail-open);
-            # the .part is overwritten by the single-pass output below, and swept in finally on any failure.
-        cmd = ffmpeg_clip_cmd(src_path, tmp, cs, ce, aspect_value, src_w=src_w, src_h=src_h, extra_vf=extra_vf,
-                              top_bias=top_bias, focus=focus, track=track, content_type=content_type)
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-            os.replace(tmp, dst)                              # atomic publish (single-pass)
-        # rc!=0 / empty / missing temp -> leave dst UNTOUCHED; the caller's rc+exists+size checks on dst fire.
-        return r
-    finally:
-        # sweep the .part on EVERY exit path (success os.replace consumes it; failure/timeout/exception leave
-        # it). suppress(OSError) so a sweep hiccup never MASKS a propagating TimeoutExpired/OSError from above.
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
+from fanops.render_fingerprint import (  # noqa: F401 — re-export for tests and legacy clipmod callers
+    _REFRAME_GEOM_V,
+    _fingerprint_matches,
+    _render_fingerprint,
+    _render_fingerprint_payload,
+    fingerprint_of_payload,
+    fingerprint_payload_bytes,
+)
+from fanops.reframe_vf import (  # noqa: F401 — re-export for tests and legacy clipmod callers
+    _TARGETS,
+    _SAFE_MARGIN_FRAC,
+    _SMALL_FACE_FRAC,
+    _ZOOM_MAX,
+    _ZOOM_MAX_FAR,
+    _ZOOM_MAX_TRACK,
+    _EYELINE_FRAC,
+    _FACE_FRAC_MUSIC,
+    _FACE_FRAC_TALK,
+    _GENTLE_MIN_FACE_FRAC,
+    _GENTLE_ZOOM_MAX,
+    _adaptive_zoom_max,
+    _already_aspect,
+    _ch0_for,
+    _clamp,
+    _crop_box,
+    _focus_crop,
+    _place,
+    _safe_dims,
+    _safe_origin,
+    _segment_chain,
+    _segments_filter_complex,
+    _stack_filter_complex,
+    _step_expr,
+    _target_frac,
+    _track_crop,
+    _zoom_h,
+    reframe_filter,
+)
+from fanops.clip_ffmpeg import (  # noqa: F401 — re-export for tests and legacy clipmod callers
+    _FFMPEG_TIMEOUT,
+    _supercut_span_entries,
+    ffmpeg_clip_cmd,
+    ffmpeg_segments_cmd,
+    ffmpeg_stack_cmd,
+    ffmpeg_supercut_cmd,
+    render_reframed,
+    render_supercut_reframed,
+)
+from fanops.window_math import (  # noqa: F401 — re-export for tests and legacy clipmod callers
+    _SNAP_MAX_SHIFT_S,
+    _nearest,
+    _trusted_transcript,
+    fit_window,
+    realized_clip_seconds,
+    snap_window,
+)
+from fanops.visual_start import (  # noqa: F401 — re-export for tests and legacy clipmod callers
+    _VSTART_CANDIDATES,
+    _VSTART_MAX_SHIFT_S,
+    _VSTART_MIN_MOVE_S,
+    _VSTART_PROBE_TIMEOUT,
+    _VSTART_V,
+    _probe_frame_strength,
+    _vstart_candidate_times,
+    pick_visual_start,
+)
 
 def _build_ass_text(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fmt,
                     *, clip_start: float, clip_end: float,
@@ -728,72 +151,6 @@ def _subtitles_vf(led: Ledger, cfg: Config, moment_id: str, cid: str, aspect: Fm
     overlay.write_ass(ass_text, ass_path)
     return overlay.subtitles_vf(ass_path), False
 
-# Phase D: the clip's content-address (child_id of moment+aspect) does NOT include the burned hook or
-# the cut window, so an mp4 on disk is NOT proof it matches the INTENDED render — a changed hook would
-# leave a stale clip (the stale-render class of bug). The render fingerprint captures everything that
-# determines the rendered bytes (source, window, aspect, source dims, the burned .ass text), so the
-# lock-free pre-warm and the in-lock commit agree on when an existing mp4 may be reused. This is what
-# lets the heavy ffmpeg run OUTSIDE the ledger lock and the commit pass skip it.
-_REFRAME_GEOM_V = 5          # bump to force re-render of ZOOM/eyeline/dynamic clips after a geometry-math change
-                             # (v5: E1b face-box safe-area — margin on every edge, headroom, zoom-backoff, face width
-                             #  in focus/track; v4: STATIC locked-off crop per shot — adaptive far-speaker zoom + min-shot merge)
-
-def _render_fingerprint_payload(src_path: str, cs: float, ce: float, aspect_value: str,
-                                src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
-                                focus: tuple | None = None, track: list | None = None,
-                                content_type: str | None = None,
-                                supercut_segments: list[tuple[float, float]] | None = None,
-                                supercut_span_entries: list | None = None) -> dict:
-    """The fingerprint PAYLOAD — every input that determines the rendered bytes, before hashing.
-
-    Split out from _render_fingerprint (which is now a thin hash over this) so a read-only caller can
-    DIFF two payloads. `{cid}.render.json` persists ONLY the sha256, never the payload, so the historical
-    inputs are gone: you cannot diff a hash. A reconstruction must therefore be a PROOF — enumerate the
-    candidate legacy payloads, hash each, and accept the one whose digest equals the stored one."""
-    payload = {"src": src_path, "cs": round(cs, 3), "ce": round(ce, 3), "aspect": aspect_value,
-               "w": src_w, "h": src_h, "ass": ass_text}
-    if top_bias:                                          # additive: absent key -> byte-identical fp to today
-        payload["top_bias"] = True
-    if focus is not None:                                 # ALL elements: a 2-tuple hashes [fx,fy] (== old);
-        payload["focus"] = [round(v, 3) for v in focus]  # a 4-tuple adds fh,ey -> zoom changes bytes -> re-render
-    if track:                                             # full 6-tuple (fh,ey carried) -> dynamic crop re-renders
-        payload["track"] = [[round(s[0], 2), round(s[1], 2)] + [round(v, 3) for v in s[2:]] for s in track]
-    geom = bool(track) or (focus is not None and len(focus) > 2)   # zoom/eyeline/dynamic present?
-    if content_type and geom:                            # content_type only alters bytes when a zoom applies
-        payload["ct"] = content_type
-    if geom:                                              # version the new geometry so a future change can bust it
-        payload["geom"] = _REFRAME_GEOM_V
-    if supercut_segments:
-        payload["supercut"] = [[round(float(s), 3), round(float(e), 3)] for s, e in supercut_segments]
-        if supercut_span_entries:
-            payload["sc_spans"] = [[round(s[0], 2), round(s[1], 2)]
-                                   + [round(v, 3) if v is not None else None for v in s[2:]]
-                                   for s in supercut_span_entries]
-    return payload
-
-def fingerprint_payload_bytes(payload: dict) -> bytes:
-    """The EXACT canonical serialization _render_fingerprint hashes. Candidate reconstruction dedups on
-    THESE BYTES, never on dict equality: {"cs": 0.0} and {"cs": -0.0} compare equal as dicts but
-    serialize differently, so a dict-keyed dedup could silently drop a byte-distinct candidate and
-    report a false UNRECONSTRUCTABLE. No candidate axis can produce a signed zero today (fit_window
-    floors at 0.0, focus is clamped to [0,1], _compute_track snaps track[0][0] to 0.0) — this is
-    DEFENCE, not a bug fix, and it costs nothing."""
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-
-def fingerprint_of_payload(payload: dict) -> str:
-    return hashlib.sha256(fingerprint_payload_bytes(payload)).hexdigest()
-
-def _render_fingerprint(src_path: str, cs: float, ce: float, aspect_value: str,
-                        src_w: int, src_h: int, ass_text: str, *, top_bias: bool = False,
-                        focus: tuple | None = None, track: list | None = None,
-                        content_type: str | None = None,
-                        supercut_segments: list[tuple[float, float]] | None = None,
-                        supercut_span_entries: list | None = None) -> str:
-    return fingerprint_of_payload(_render_fingerprint_payload(
-        src_path, cs, ce, aspect_value, src_w, src_h, ass_text, top_bias=top_bias, focus=focus,
-        track=track, content_type=content_type, supercut_segments=supercut_segments,
-        supercut_span_entries=supercut_span_entries))
-
 def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     """Pick the reframe strategy for this window: (focus, track, content_type). Classify the window once,
     then route — active-speaker TRACK only for real multi-speaker talk; subject-lock FOCUS (zoomed) for a
@@ -814,12 +171,6 @@ def _resolve_framing(cfg: Config, src, cs: float, ce: float):
     # production fail-loud into fail-open; test_framing_outcomes pins it.
     return framing._resolve(cfg, src, cs, ce).as_tuple()
 
-def _fingerprint_matches(fp_path, fp: str) -> bool:
-    try:
-        return fp_path.exists() and json.loads(fp_path.read_text()).get("fp") == fp
-    except (OSError, json.JSONDecodeError, ValueError):
-        return False
-
 # M4 (impact-cut): a stitched render's validity is DURATION-checked, not size-checked — a short/empty
 # container that passes "size > 0" must still fail. Probe the rendered output's duration via ffprobe;
 # None on any failure (the caller treats an unprobeable stitch as invalid -> error + bare-clip fallback).
@@ -832,9 +183,6 @@ def _probe_duration(path: str) -> float | None:
         return dur or None
     except (ToolchainMissingError, OSError, ValueError):
         return None
-
-def _moment_profile(m, cfg: Config) -> str:
-    return (m.clip_profile if m is not None else None) or cfg.clip_profile
 
 def _moment_top_bias(m, cfg: Config) -> bool:
     if m is not None and m.framing == "top": return True

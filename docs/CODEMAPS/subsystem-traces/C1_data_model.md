@@ -220,7 +220,7 @@ The "fall-away" (M4 wipe) — removes ledger rows whose entire descendant closur
 Deterministic, content-addressed id generation (never `hash()`).
 
 - `_hash(*parts) -> str` (ids.py:7-8) — sha1-based. Private.
-- `make_id(kind, source) -> str` (ids.py:10-12) — Called by `ingest._catalogue_file`.
+- `make_id(kind, source) -> str` (ids.py:10-12) — Called by `ingest._stage_candidate`, `ingest.stage_inbox_candidates`.
 - `child_id(kind, parent_id, content_token) -> str` (ids.py:14-17) — ~10 call sites.
 - `content_id(kind, parent_id, content_token) -> str` (ids.py:19-21) — alias for child_id.
 - `surface_key(account, platform) -> str` (ids.py:23-26). All 5 functions pure.

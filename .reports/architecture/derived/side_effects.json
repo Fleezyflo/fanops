@@ -107,7 +107,7 @@
     "fanops.overlay_reburn": [
       {
         "call": "Ledger.transaction",
-        "line": 358
+        "line": 277
       }
     ],
     "fanops.paths_rebase": [
@@ -361,11 +361,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 500
+        "line": 501
       },
       {
         "call": "Ledger.transaction",
-        "line": 614
+        "line": 615
       }
     ],
     "fanops.studio.actions_segments": [
@@ -380,10 +380,10 @@
     ]
   },
   "locks": {
-    "fanops.accounts": [
+    "fanops.controlio": [
       {
         "call": "_file_lock",
-        "line": 411
+        "line": 30
       }
     ],
     "fanops.fanops_hashtags": [
@@ -432,12 +432,6 @@
         "line": 83
       }
     ],
-    "fanops.persona_store": [
-      {
-        "call": "_file_lock",
-        "line": 150
-      }
-    ],
     "fanops.pipeline_run": [
       {
         "call": "fcntl.flock",
@@ -467,11 +461,11 @@
     "fanops.reframe_apply": [
       {
         "call": "fcntl.flock",
-        "line": 169
+        "line": 170
       },
       {
         "call": "fcntl.flock",
-        "line": 182
+        "line": 183
       }
     ],
     "fanops.stage_lock": [
@@ -594,17 +588,17 @@
     "fanops.reframe_apply": [
       {
         "call": "shutil.rmtree",
-        "line": 939
+        "line": 849
       }
     ],
-    "fanops.transcribe": [
+    "fanops.transcribe_engine": [
       {
         "call": "shutil.rmtree",
-        "line": 279
+        "line": 79
       },
       {
         "call": "shutil.rmtree",
-        "line": 281
+        "line": 81
       }
     ]
   },
@@ -618,30 +612,22 @@
         "line": 1363
       }
     ],
-    "fanops.clip": [
-      {
-        "call": "subprocess.run",
-        "line": 114
-      },
+    "fanops.clip_ffmpeg": [
       {
         "call": "subprocess.run",
         "line": 125
       },
       {
         "call": "subprocess.run",
-        "line": 525
+        "line": 195
       },
       {
         "call": "subprocess.run",
-        "line": 632
+        "line": 203
       },
       {
         "call": "subprocess.run",
-        "line": 640
-      },
-      {
-        "call": "subprocess.run",
-        "line": 648
+        "line": 211
       }
     ],
     "fanops.daemon": [
@@ -681,11 +667,11 @@
     "fanops.discover": [
       {
         "call": "subprocess.run",
-        "line": 66
+        "line": 67
       },
       {
         "call": "subprocess.run",
-        "line": 73
+        "line": 74
       }
     ],
     "fanops.health": [
@@ -713,15 +699,13 @@
     "fanops.ingest": [
       {
         "call": "subprocess.run",
-        "line": 140
-      },
+        "line": 310
+      }
+    ],
+    "fanops.ingest_shard": [
       {
         "call": "subprocess.run",
-        "line": 203
-      },
-      {
-        "call": "subprocess.run",
-        "line": 488
+        "line": 24
       }
     ],
     "fanops.keyframes": [
@@ -742,6 +726,12 @@
       {
         "call": "subprocess.run",
         "line": 412
+      }
+    ],
+    "fanops.media_probe": [
+      {
+        "call": "subprocess.run",
+        "line": 35
       }
     ],
     "fanops.overlay": [
@@ -773,17 +763,17 @@
     "fanops.reframe": [
       {
         "call": "subprocess.run",
-        "line": 541
+        "line": 547
       }
     ],
     "fanops.reframe_apply": [
       {
         "call": "subprocess.run",
-        "line": 220
+        "line": 224
       },
       {
         "call": "subprocess.run",
-        "line": 313
+        "line": 317
       }
     ],
     "fanops.signals": [
@@ -798,10 +788,14 @@
         "line": 41
       }
     ],
-    "fanops.transcribe": [
+    "fanops.visual_start": [
       {
         "call": "subprocess.run",
-        "line": 441
+        "line": 55
+      },
+      {
+        "call": "subprocess.run",
+        "line": 67
       }
     ],
     "fanops.vocals": [
@@ -814,10 +808,10 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 83,
-    "lock_sites": 22,
+    "lock_sites": 21,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 39
   }
 }

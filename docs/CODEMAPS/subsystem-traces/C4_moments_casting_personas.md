@@ -187,7 +187,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 ### `accounts.py` — the flat active-account registry + lever hydration entrypoint
 
 - `AccountStatus` (str Enum) — `planned`, `warming`, `active`, `retired`.
-- `Account` (pydantic `BaseModel`) — the account record: `handle`, `account_id`, `platforms`, `status`, `access`, `persona`, `persona_id`, `clip_profile`, `framing`, `hashtag_corpus`, `content_focus`, `energy`, `hook_angle`, `persona_owns_profile` (hydration-only provenance flag, never persisted), `integrations` (per-platform poster id), `backends` (per-platform poster backend override), `ig_user_id` (per-account Meta Graph credential, non-secret).
+- `Account` (pydantic `BaseModel`) — the account record: `handle`, `account_id`, `platforms`, `status`, `access`, `persona`, `persona_id`, `clip_profile`, `framing`, `hashtag_corpus`, `content_focus`, `energy`, `hook_angle`, `integrations` (per-platform poster id), `backends` (per-platform poster backend override), `ig_user_id` (per-account Meta Graph credential, non-secret).
 - `Surface` (`NamedTuple`) — `(account, account_id, platform)`.
 - `Accounts.__init__(cfg)` — trivial.
 - `Accounts.load(cfg)` (classmethod) — reads `cfg.accounts_path`, parses JSON into `Account` list; raises `ControlFileError` (chained) on a corrupt file — deliberately distinct from a missing-file I/O error, which is allowed to raise raw ("a real problem, not 'invalid'"). **Always calls `_hydrate_from_personas(a, cfg)` before returning.** Called throughout the CLI/pipeline/studio.
@@ -203,15 +203,13 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `link_persona(cfg, handle, persona_id)` — **writes**: sets/clears `persona_id` atomically; a blank id clears the link. Does NOT validate the id exists (fails open at load time — Studio resolves against the live registry first). Raises `KeyError` on unknown handle. Called by `persona_store.link_personas_by_voice`/`migrate_from_accounts`.
 - `load_accounts_safe(cfg)` — **never raises**: wraps `Accounts.load`, returns `(Accounts(cfg), None)` on success-equivalent, or `(empty Accounts(cfg), truncated_error_str)` on any exception — used by read paths that must degrade rather than crash. Called by `cli._cmd_doctor_fix_routing`, `config.Config.is_live_backend`/`live_route_exists`, `meta_graph.credentialed_ig_handles`/`resolve_meta_creds`, `reconcile._reconcilable_routing`.
 - `_load_raw_accounts(p)` — reads `accounts.json` as raw dict + list. Called by every mutator.
-- `_accounts_txn(cfg)` — context manager: serializes via `_file_lock(cfg.accounts_lock_path)` (lazy import from `ledger`). Called by `add_account`, `ensure_channel`, `link_persona`, `remove_account`, `set_backend`, `set_channel_routing`.
+- `_accounts_txn(cfg)` — context manager via `controlio.control_file_txn(cfg.accounts_lock_path)`. Called by account mutators (`add_account`, `ensure_channel`, `link_persona`, `remove_account`, `set_backend`, etc.).
 - `write_integration(cfg, handle, platform, integration_id)` — **writes**: maps one `(handle, platform)` to its poster id in `integrations`. Raises `ValueError` on unknown platform, `KeyError` on unknown handle. Called by Studio's `golive.adopt_channels`/`map_account`.
 - `set_backend(cfg, handle, platform, backend)` — **writes**: sets/clears one channel's backend override in `backends`; blank/"default" clears. Validates platform + backend vocab. **CORRECTED: LIVE — called as `_accounts_set_backend` at `studio/golive.py:188`/`:506` (aliased import the call graph missed).**
-- `set_channel_routing(cfg, handle, platform, *, backend, integration_id)` — **writes**: atomically sets BOTH `integrations[platform]` and `backends[platform]` together (the R2 replacement for the two-write `write_integration`+`set_backend` seam that caused "the cisumwolfhom incident" per the docstring). Refuses partial/clearing calls. **No callers found anywhere in `src/`** (dead code candidate — the fix for a documented incident appears never wired into any route or CLI command).
 - `add_account(cfg, handle, platforms, persona="", status="active", access="postiz", clip_profile="", framing="")` — **writes**: onboards a brand-new account atomically; validates platforms/clip_profile/framing vocab; rejects duplicate handle. Called by Studio's `app_routes_golive.register_golive_routes`.
 - `ensure_channel(cfg, handle, platform, persona="")` — **writes** idempotently: appends a platform to an existing account or creates a new inert one. Never raises on duplicate (by design). **CORRECTED: LIVE — called as `_accounts_ensure_channel` at `studio/golive.py:501` (the discover→adopt flow; aliased import the call graph missed).**
 - `set_status(cfg, handle, status)` — **writes**: changes one account's status atomically. Validates against `AccountStatus`. **CORRECTED: LIVE — called as `_accounts_set_status` at `studio/golive.py:543`/`:558` (aliased import the call graph missed).**
 - `set_clip_profile(cfg, handle, profile)` — **writes**: sets/clears the per-account clip length tier; validates against `bands.PROFILE_NAMES`. Called by Studio's `app_routes_golive.register_golive_routes`.
-- `set_framing(cfg, handle, framing)` — **writes**: sets/clears the per-account crop bias; validates against `config.FRAMING_NAMES`. **No callers found anywhere in `src/`** (dead code candidate).
 - `set_ig_user_id(cfg, handle, ig_user_id)` — **writes**: sets/clears the per-account Meta Graph IG business user id (non-secret; token itself lives in `.env`, not here). **CORRECTED: LIVE — called as `_accounts_set_ig_user_id` at `studio/golive.py:381` (aliased import the call graph missed).**
 - `set_persona(cfg, handle, persona)` — **writes**: sets/clears the inline persona string. Called by Studio's `app_routes_golive.register_golive_routes`.
 - `remove_account(cfg, handle)` — **writes**: deletes an account row atomically. Called by Studio's `app_routes_golive.register_golive_routes`.
@@ -243,10 +241,10 @@ call graph's zero-call-site result, but that graph cannot resolve **aliased impo
 actually LIVE via `_accounts_*` aliases in `studio/golive.py`. Re-verified by grepping for both the
 bare name and every `<name> as <alias>` binding across `src/`:
 - `src/fanops/accounts.py:347` `set_backend` — **NOT dead.** Called as `_accounts_set_backend` at `studio/golive.py:188` and `:506`.
-- `src/fanops/accounts.py:383` `set_channel_routing` — **genuinely dead** (no bare or aliased call site). The documented fix for "the cisumwolfhom incident" (a real production drift bug per its own docstring) appears never wired into any route.
+- ~~`src/fanops/accounts.py:383` `set_channel_routing`~~ — **RESOLVED (removed)**; routing drift gated by `Accounts.validate`.
 - `src/fanops/accounts.py:469` `ensure_channel` — **NOT dead.** Called as `_accounts_ensure_channel` at `studio/golive.py:501` (the discover→adopt flow it was built for).
 - `src/fanops/accounts.py:509` `set_status` — **NOT dead.** Called as `_accounts_set_status` at `studio/golive.py:543` and `:558`.
-- `src/fanops/accounts.py:553` `set_framing` — **genuinely dead** (no bare or aliased call site; note: `set_clip_profile` IS wired via Studio go-live routes; its sibling `set_framing` is not).
+- ~~`src/fanops/accounts.py:553` `set_framing`~~ — **RESOLVED (removed)**.
 - `src/fanops/accounts.py:576` `set_ig_user_id` — **NOT dead.** Called as `_accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `src/fanops/persona_levers.py:87` `is_exempt` — **genuinely dead** (no caller).
 - `src/fanops/persona_levers.py:107` `channels` — **genuinely dead** (no caller); its own docstring's claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`, a different function.

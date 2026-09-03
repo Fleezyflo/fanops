@@ -71,7 +71,7 @@ class _Refuse(Exception):
 # Ledger-FREE render + probe primitives, wrapped so the heavy `clip`/`ingest` imports stay LAZY (no
 # import-time cycle) yet remain monkeypatchable in tests (patch `fanops.canary._do_render_single`, etc.).
 def _do_probe(path: Path):
-    from fanops.ingest import probe_dimensions
+    from fanops.media_probe import probe_dimensions
     return probe_dimensions(path)
 
 def _do_render_single(src: str, dst: str, cs: float, ce: float, aspect_value: str, *, src_w: int, src_h: int):

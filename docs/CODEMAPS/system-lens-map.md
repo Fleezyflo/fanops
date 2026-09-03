@@ -21,11 +21,11 @@ The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass ba
 **Intake paths (enumerated).** Three `source_origin` channels, all funnelling through one catalogue spine:
 - **drop** — `ingest.ingest_drops(...)` default `origin="drop"` (`ingest.py:201`), scanning `cfg.inbox`
   (`01_inbox`). Called inside `advance` in a short transaction FIRST (`pipeline.py:393-394`).
-- **url** — `ingest.download_url` shells `yt-dlp` into an isolated `.pull` stage (`ingest.py:258,274-279`),
-  then `ingest_drops(origin="url", inbox=stage, origin_paths=produced)` (`ingest.py:298`). Wired to
-  `download_source` (`ingest.py:294`); the CLI `pull` splits download-outside-lock from ingest-inside-txn.
-- **scan** — `ingest.scan_local(roots)` enumerates local roots (`ingest.py:301`), returns paths (no
-  catalogue); a `origin="scan"` catalogue path exists in `_catalogue_file`'s contract (`ingest.py:174`).
+- **url** — `ingest.download_url` shells `yt-dlp` into an isolated `.pull` stage (`ingest.py`), then
+  `ingest_drops(origin="url", inbox=stage, origin_paths=produced)`. The CLI `pull` splits download-outside-lock
+  from ingest-inside-txn.
+- **scan** — `ingest.scan_local(roots)` enumerates local roots, returns paths (no catalogue); discover
+  review-first intake copies approved files into `01_inbox/` for ordinary `ingest_drops`.
 - **Studio browser upload** — the Run tab "Upload video" streams into `01_inbox` via
   `studio/actions_run.save_uploads` (atomic `.uploadpart`→`os.replace`, 2 GiB cap) then the operator clicks
   Ingest inbox → `ingest_drops`. (Contract described in CLAUDE.md; the streamed file is just another inbox
@@ -38,7 +38,7 @@ The main-txn saves ONLY on clean exit; an uncaught raise rolls the whole pass ba
 
 | # | Stage | Owner (file:line) | Reads | Writes (ledger / disk) | External process (timeout; absent-binary) | Failure posture |
 |---|-------|-------------------|-------|------------------------|-------------------------------------------|-----------------|
-| 0 | Catalogue | `ingest._catalogue_file` (`ingest.py:156`) | inbox files, sha256 | `Source` born `catalogued`, copies bytes to `02_sources/<sid>.<ext>` (`ingest.py:178-189`); WRITE-ONCE `origin_kind`/`batch_id` | `ffprobe` for dims (`_run_ffprobe` `ingest.py:102`, `_FFPROBE_TIMEOUT=30.0` `ingest.py:99`); absent → `ToolchainMissingError` → clean exit 2 (`ingest.py:111-114`) | **Mixed**: ffprobe ABSENT is fail-loud (typed error, exit 2); a per-file ffprobe TIMEOUT is fail-soft (0×0 `degraded="probe_failed"`, re-probed next pass `ingest.py:185, 73-86`); copy ENOSPC = per-file skip, not pass-abort (`ingest.py:182-183`) |
+| 0 | Catalogue | `ingest.stage_inbox_candidates` + `ingest.ingest_staged` (`_stage_candidate` / `_mint_candidate`) | inbox files, sha256 | `Source` born `catalogued` or `pending` (queue-gate), copies bytes to `02_sources/<sid>.<ext>` via `.tmp`+`os.replace`; WRITE-ONCE `origin_kind`/`batch_id` | `ffprobe` for dims (`_run_ffprobe`, `_FFPROBE_TIMEOUT=30.0`); absent → `ToolchainMissingError` → clean exit 2 | **Mixed**: ffprobe ABSENT is fail-loud (typed error, exit 2); per-file ffprobe TIMEOUT is fail-soft (0×0 `degraded="probe_failed"`, re-probed next pass); copy ENOSPC = per-file skip, not pass-abort |
 | 0b | Video-stream guard | `ingest.has_video_stream` (`ingest.py:138`) | ffprobe codec_type | audio-only drops archived, not catalogued (`ingest.py:233-235`) | `ffprobe` (same wrapper) | Fail-loud on absent binary (must NOT drop a real video as audio, `ingest.py:145-147`) |
 | 1 | Transcribe | `transcribe.transcribe_source` (`transcribe.py:155`) | `Source.source_path`, cached JSON | `Source.transcript`, `.language`, `meta.transcribed`, state→`transcribed` (`transcribe.py:254-256`); JSON under `04_agent_io/transcripts` | faster-whisper via `python -m fanops._fwrun` else `whisper` CLI (`transcribe.py:217-220`); `_WHISPER_TIMEOUT=2700.0` length-scaled ×1.5 (`transcribe.py:27-37`); optional Demucs vocal isolation (`vocals.isolate_vocals`, `transcribe.py:198-210`) | **Fail-soft, per-source**: absent binary / timeout / no-JSON / malformed-JSON all → `SourceState.error` with a typed reason, `transcribed` unset so it re-runs (`transcribe.py:224-253`); vocal isolation fails OPEN to raw audio |
 | 2 | Signals | `signals.detect_signals` (`signals.py:108`) | source path, sidecar | `Source.signal_peaks` (top-400 capped `signals.py:22-35`), `.duration`, state→`signalled`; sidecar `04_agent_io/signals/<sid>.json` | 2× ffmpeg (`silencedetect`, `scdet`) + optional `ebur128`/astats energy (`signals.py:79-86,134`); `_FFMPEG_TIMEOUT=600.0` (`signals.py:92`); absent → `ToolchainMissingError` | **Fail-loud on the two required passes** (typed error → per-source quarantine); the ENERGY pass is an ENHANCEMENT that fails SOFT to today's scoring (`signals.py:129-138`) |
@@ -260,7 +260,7 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
   match (`accounts.py:226-237`).
 - Copies IN MEMORY: `acc.persona = per.voice` (`accounts.py:256`), `acc.hashtag_corpus = per.hashtag_corpus`
   (`accounts.py:258`), `acc.content_focus/energy/hook_angle` (`accounts.py:261-263`), and the DERIVED cut spec
-  `resolved_cut_spec(per)` → `acc.clip_profile`/`acc.framing` + `persona_owns_profile` provenance flag
+  `resolved_cut_spec(per)` → `acc.framing` (M3: length is picker-window; no persona clip_profile stamp)
   (`accounts.py:264-266`).
 - **Persists NOTHING** — hydration is in-memory only; the corpus is never stored on the account row
   (`accounts.py:47-51`). `set_*` mutators write the raw accounts.json dict, not hydrated values.
@@ -425,8 +425,4 @@ generation and schedule toward measured reach, but never past the operator appro
    (`hashtags.py:206,222`), no model-invented or performance-derived tag can ever ship. Evidence: the
    attribution-severance test names + the vet algorithm.
 
-**UNRESOLVED:** None material to the mapped questions. One narrow item: the `origin="scan"` catalogue path is
-declared in `_catalogue_file`'s contract (`ingest.py:174`) but I did not locate a production caller that
-invokes `ingest_drops`/`_catalogue_file` with `origin="scan"` (only `scan_local` which merely enumerates,
-`ingest.py:301`) — so whether the scan channel actually catalogues in the running system is not settled from
-the files I read.
+**UNRESOLVED:** None material to the mapped questions.

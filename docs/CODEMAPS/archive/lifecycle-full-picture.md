@@ -38,10 +38,10 @@ This is the end-to-end narrated map of one `advance()` pass plus the human-gated
 
 ---
 
-### Stage 0b — Catalogue to Source (`_catalogue_file` / `ingest_drops`)
+### Stage 0b — Catalogue to Source (`stage_inbox_candidates` / `ingest_staged`)
 **Contract.** Staged files → one `Source` per NEW sha256 (`ingest.py:116-119`) + a content-addressed copy at `cfg.sources/{sid}{ext}`. Transition: file-on-disk → `Source(state=catalogued)`. Runs INSIDE `advance()`'s first short transaction (`pipeline.py:434-435`) and the CLI ingest/pull transactions. No agent gate — deterministic.
 
-**Process.** `ingest_drops` walks `sorted(inbox.rglob('*'))`, skips symlinks/non-files/`.gitkeep`/non-`MEDIA_EXT`, PII names, and audio-only files lacking a video stream. `_catalogue_file`: streaming `sha256_of` → `already_seen` dedup → `make_id('src',digest)` content-addressed id → `shutil.copy2` → `probe_dimensions` via bounded ffprobe → `led.add_source` (setdefault, write-once). Deliberately NO original filename (PII).
+**Process.** `ingest_drops` delegates to `stage_inbox_candidates` (lock-free) then `ingest_staged` (in-lock). `stage_inbox_candidates` walks `sorted(inbox.rglob('*'))`, skips symlinks/non-files/`.gitkeep`/non-`MEDIA_EXT`, PII names, and audio-only files lacking a video stream. `_stage_candidate`: streaming `sha256_of` → `make_id('src',digest)` content-addressed id → atomic `.tmp` + `os.replace` copy → `probe_dimensions` via bounded ffprobe. `_mint_candidate`: `already_seen` dedup → `led.add_source` (setdefault, write-once). Deliberately NO original filename (PII).
 
 **Resilience — the dual ffprobe model is exactly right.** ffprobe ABSENT raises `ToolchainMissingError` that aborts the whole ingest CLEANLY (the transaction saves only on clean exit, so no partial catalogue; CLI exit 2, Studio catches a clean `ActionResult`). A per-file ffprobe HANG returns an empty rc=124 result so the one bad file is SKIPPED this pass and retried next — never wedging the pass (`ingest.py:41-61`).
 

@@ -47,7 +47,6 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `vocals.py:35-36` `_demucs_env` — `except Exception: pass` around an `import certifi`. Swallows any exception, not just `ImportError`; low-risk but should be narrowed.
 - `discover.py:59-62` `candidate_meta` — `except Exception as e: logger.debug(...)`. Intentionally broad per module docstring ("fail-soft — list it anyway"), but logs only at debug level — a real bug could go unnoticed in production logs.
-- `ingest.py:download_source` — dead code, zero callers; own docstring says "kept for any direct caller/test." Real CLI `pull` composes `download_url`+`ingest_drops` separately.
 - `discover.py:discover`/`intake` — zero-caller per call graph; likely a CLI-dispatch-table blind spot, not genuine dead code.
 - `transcribe.py:real_transcript_signal` — zero-caller; documented test-support helper.
 
@@ -60,10 +59,10 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 ## C4 — Moments, casting & personas
 
 - `accounts.py:347` `set_backend` — **NOT dead (corrected on validation).** Called via an aliased import (`set_backend as _accounts_set_backend`) at `studio/golive.py:188` and `:506`. The name-based call graph could not resolve the alias.
-- `accounts.py:383` `set_channel_routing` — dead code, zero callers (confirmed by alias-and-lazy-import sweep). Notable: own docstring frames it as "the documented fix for the cisumwolfhom incident" (a real production drift bug), never actually wired into any route.
+- ~~`accounts.py:383` `set_channel_routing`~~ — **RESOLVED (removed)**; routing drift gated by `Accounts.validate`.
 - `accounts.py:469` `ensure_channel` — **NOT dead (corrected on validation).** Called via `ensure_channel as _accounts_ensure_channel` at `studio/golive.py:501` (the discover→adopt flow it was built for).
 - `accounts.py:509` `set_status` — **NOT dead (corrected on validation).** Called via `set_status as _accounts_set_status` at `studio/golive.py:543` and `:558` (planned/active handle transitions).
-- `accounts.py:553` `set_framing` — dead code, zero callers (confirmed by sweep; sibling `set_clip_profile` IS wired via Studio go-live routes — asymmetric).
+- ~~`accounts.py:553` `set_framing`~~ — **RESOLVED (removed)**; sibling `set_clip_profile` remains wired via Studio go-live routes.
 - `accounts.py:576` `set_ig_user_id` — **NOT dead (corrected on validation).** Called via `set_ig_user_id as _accounts_set_ig_user_id` at `studio/golive.py:381`.
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
