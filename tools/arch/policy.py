@@ -29,6 +29,7 @@ from pathlib import Path
 
 from .common import ARCH, CONTRACT, DERIVED, GOVERNANCE, KB, REPO, SRC, load
 from .deltas import compile_edges
+from .ratchets import tests_defined, verification_matrix_test_names
 
 # Artifacts that are HISTORY, not live claims. A corrections record must keep saying what was true
 # when it was written — retroactively editing an erratum so it matches today destroys the only
@@ -508,42 +509,11 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
 
 
 def _verification_matrix_test_names() -> set[str]:
-    """Every test NAME the verification matrix requires."""
-    vm = CONTRACT / "verification_matrix.json"
-    if not vm.exists():
-        return set()
-    names: set[str] = set()
-
-    def walk(node) -> None:
-        if isinstance(node, dict):
-            n = node.get("name")
-            if isinstance(n, str) and n.startswith("test_"):
-                names.add(n)
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-    walk(load(vm))
-    return names
+    return verification_matrix_test_names()
 
 
 def _tests_defined() -> set[str]:
-    """Every `def test_*` actually defined under tests/."""
-    out: set[str] = set()
-    tests = REPO / "tests"
-    if not tests.exists():
-        return out
-    for py in tests.rglob("test_*.py"):
-        try:
-            tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
-                    and node.name.startswith("test_"):
-                out.add(node.name)
-    return out
+    return tests_defined()
 
 
 def _verification_persists() -> list[Finding]:
@@ -561,7 +531,7 @@ def _verification_persists() -> list[Finding]:
     baseline = _approved("required_verifications_present", default=None)
     if not baseline:
         return []
-    gone = sorted(set(baseline) - _tests_defined())
+    gone = sorted(set(baseline) - tests_defined())
     if gone:
         return [_f("IMPL-006",
                    f"{len(gone)} required verification(s) DISAPPEARED. A test that vanishes takes "

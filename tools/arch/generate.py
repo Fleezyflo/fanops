@@ -14,10 +14,11 @@ import ast
 import re
 from pathlib import Path
 
-from .common import (CONTRACT, DERIVED, KB, REPO, SRC, TESTS, dumps, load, provenance,
+from .common import (CONTRACT, DERIVED, KB, REPO, SRC, dumps, load, provenance,
                      sha256_text, write)
 from .extract import extract
 from .graph import build, tarjan_scc
+from .ratchets import declared_ratchets
 
 _S = "fanops-arch/derived"
 
@@ -25,53 +26,6 @@ _S = "fanops-arch/derived"
 # and is never ratchet-counted. Diverging from the test here would make this census disagree with
 # the gate it is meant to cross-check, which is worse than not measuring it at all.
 _SWALLOW_EXEMPT = frozenset({"src/fanops/errors.py"})
-
-
-# ── the ratchets: parse the TEST FILES, which are the canonical enforcement ──────────────────
-def _declared_ratchets() -> dict:
-    """Read the baselines the CI ratchet tests actually enforce.
-
-    These tests are the canonical owners of the print/swallow budgets. The implementation
-    contract *copies* their numbers into prose (`GB-6`), and a copy is a thing that rots. This
-    reads the source of truth so the copy can be checked against it.
-    """
-    out: dict = {"print": {}, "swallow": {}, "unsupported": []}
-
-    p = TESTS / "test_internal_prints_routed.py"
-    if p.exists():
-        tree = ast.parse(p.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                    and isinstance(node.targets[0], ast.Name):
-                name = node.targets[0].id
-                if name == "_CLI_PRINT_COUNT" and isinstance(node.value, ast.Constant):
-                    out["print"]["cli_print_count"] = node.value.value
-                if name == "_INTERNAL_MODULES" and isinstance(node.value, (ast.Tuple, ast.List)):
-                    out["print"]["zero_print_modules"] = sorted(
-                        e.value for e in node.value.elts
-                        if isinstance(e, ast.Constant) and isinstance(e.value, str))
-
-    s = TESTS / "test_swallow_ratchet.py"
-    if s.exists():
-        tree = ast.parse(s.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "_baseline_silent_swallows":
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Dict):
-                        base = {}
-                        for k, v in zip(sub.keys, sub.values):
-                            if isinstance(k, ast.Constant) and isinstance(v, ast.Constant):
-                                base[k.value] = v.value
-                        if base:
-                            out["swallow"]["baseline"] = dict(sorted(base.items()))
-                        break
-    if "baseline" not in out["swallow"]:
-        out["unsupported"].append({
-            "kind": "unparsed_swallow_baseline",
-            "evidence": "tests/test_swallow_ratchet.py::_baseline_silent_swallows",
-            "why": "the baseline dict literal could not be read; the budget cannot be cross-checked",
-        })
-    return out
 
 
 # ── the implementation contract, resolved against the real AST ───────────────────────────────
@@ -332,7 +286,7 @@ def generate(src: Path | None = None, out: Path | None = None) -> dict[str, bool
     }, inputs=["src/fanops/**/*.py"])
 
     # -- ratchets: measured AND declared, so the copy can be checked against the original ------
-    declared = _declared_ratchets()
+    declared = declared_ratchets()
     measured_prints = {m: len(f.print_calls) for m, f in sorted(mf.items()) if f.print_calls}
     # Paths are made relative to the SRC TREE'S OWN ROOT, not to the checkout — because `impact`
     # regenerates against a HISTORICAL tree unpacked into a temp dir, and hard-coding REPO here
