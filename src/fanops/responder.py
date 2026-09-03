@@ -12,12 +12,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from pydantic import ValidationError
 from fanops.config import Config
-from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, SourceState
-from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts, discard_gate
+from fanops.models import MomentDecision, MomentHookDecision, CaptionSet
+from fanops.agentstep import pending, request_path, write_response, latest_request_id, clear_attempts
 from fanops.escalation import (
     EscalationPosture, decide, record_attempt, clear_attempts as esc_clear_attempts,
-    ATTEMPT_CEILING as _GATE_DETERMINISTIC_MAX,
 )
+from fanops.escalation import ATTEMPT_CEILING as _GATE_DETERMINISTIC_MAX  # noqa: F401 — re-exported for tests
 from fanops.gate_keys import gate_source_id as _gate_source_id
 from fanops.errors import ToolchainMissingError, fail_open
 from fanops.llm import (claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError,
@@ -25,6 +25,10 @@ from fanops.llm import (claude_json_meta, LlmTimeoutError, LlmContextLimitError,
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
+from fanops.responder_policy import (
+    terminate_enrichment_gate_failopen,
+    terminate_moments_gate_failclosed,
+)
 
 def screen_model_text(obj):
     """MOL-166: ONE text-screen chokepoint — sanitize model-authored strings before *.response.json is written."""
@@ -165,38 +169,24 @@ class LlmResponder:
         _mark_gate_degraded — empty hook/items must not look like a healthy LLM answer."""
         log = get_logger(cfg)
         if kind == "moment_hooks":
-            rid = latest_request_id(cfg, kind, key)
-            if rid is None:
-                return
-            self._mark_gate_degraded(cfg, kind, key,
-                                    f"agent gate {kind} fail-open clean: {reason}"[:200])
-            obj = screen_model_text(MomentHookDecision(hook=None, request_id=rid))
-            write_response(cfg, kind, key, obj.model_dump_json(indent=2))
-            log("responder", f"{kind}:{key}", "gate_failopen_clean")
+            terminate_enrichment_gate_failopen(
+                cfg, kind, key, reason,
+                empty_response_factory=lambda rid: MomentHookDecision(hook=None, request_id=rid),
+                mark_degraded=self._mark_gate_degraded,
+                screen_model_text=screen_model_text,
+                log=log,
+            )
             return
         if kind == "captions":
-            rid = latest_request_id(cfg, kind, key)
-            if rid is None:
-                return
-            self._mark_gate_degraded(cfg, kind, key,
-                                    f"agent gate {kind} fail-open clean: {reason}"[:200])
-            obj = screen_model_text(CaptionSet(items=[], request_id=rid))
-            write_response(cfg, kind, key, obj.model_dump_json(indent=2))
-            log("responder", f"{kind}:{key}", "gate_failopen_clean")
+            terminate_enrichment_gate_failopen(
+                cfg, kind, key, reason,
+                empty_response_factory=lambda rid: CaptionSet(items=[], request_id=rid),
+                mark_degraded=self._mark_gate_degraded,
+                screen_model_text=screen_model_text,
+                log=log,
+            )
             return
-        from fanops.ledger import Ledger
-        saved = False
-        # Secondary write after TERMINATE posture — fail_open protects ledger I/O only (policy §2.6).
-        with fail_open(f"responder.{kind}:{key} terminate secondary write degrade:"):
-            with Ledger.transaction(cfg) as led:
-                sid = _gate_source_id(led, kind, key)
-                src = led.sources.get(sid) if sid else None
-                if src is not None and src.state != SourceState.error:
-                    led.set_source_state(sid, SourceState.error, error_reason=(
-                        f"agent gate {kind} failed (deterministic ceiling {_GATE_DETERMINISTIC_MAX}/{_GATE_DETERMINISTIC_MAX}): {reason}"[:200]))
-                    saved = True
-        if saved:
-            discard_gate(cfg, kind, key)      # H07: terminal moments gate must not linger pending
+        terminate_moments_gate_failclosed(cfg, kind, key, reason)
 
     def _mark_gate_degraded(self, cfg: Config, kind: str, key: str, reason: str) -> None:
         """AGENT-2: park the wedged gate's source-owner with a VISIBLE degraded_reason so the operator sees WHY
@@ -210,10 +200,6 @@ class LlmResponder:
                 src = led.sources.get(sid) if sid else None
                 if src is not None:
                     led.sources[sid] = src.model_copy(update={"degraded_reason": reason})
-
-    def _mark_context_limit(self, cfg: Config, kind: str, key: str, reason: str) -> None:
-        """Back-compat shim: wraps _mark_gate_degraded with the legacy context-limit prefix."""
-        self._mark_gate_degraded(cfg, kind, key, f"agent gate {kind} over context limit: {reason}")
 
     def answer_pending(self, cfg: Config, *, kinds: tuple[str, ...] | list[str] | None = None,
                        parallel: bool | None = None) -> int:

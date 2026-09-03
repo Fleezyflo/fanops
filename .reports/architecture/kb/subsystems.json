@@ -91,7 +91,8 @@
         "llm_json",
         "prompts",
         "prompts_caption",
-        "responder"
+        "responder",
+        "responder_policy"
       ]
     },
     "S08_selection": {
@@ -165,6 +166,8 @@
         "fanops_account_stats",
         "metrics_schedule",
         "reconcile",
+        "reconcile_liveness",
+        "reconcile_mirror",
         "track"
       ]
     },
@@ -172,9 +175,11 @@
       "modules": [
         "adjust",
         "digest",
+        "field_shape",
         "learn_doctor",
         "moment_hook_learning",
         "p4_dim_bias",
+        "reach_ranking",
         "timing_bias",
         "validation_gate",
         "variant_amplify",
@@ -238,6 +243,9 @@
         "doctor",
         "health",
         "health_model",
+        "health_probes",
+        "health_projectors",
+        "health_types",
         "reframe"
       ],
       "cycle_7_assignment": "reframe (added by #634) — `fanops reframe --dry-run`, a READ-ONLY corpus classification report. Assigned here because it MUTATES NOTHING; its closest analogue is `audit` (a read-only bucket table). *** THIS IS A JUDGEMENT, NOT AN OBVIOUS FACT: it exists to inform a MIGRATION, which is S19_maintenance's remit. Recorded as UNK-C7-1. If reframe ever grows a mutating verb, this assignment becomes wrong and it moves to S19. ***",

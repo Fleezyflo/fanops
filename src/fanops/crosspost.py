@@ -29,6 +29,17 @@ _JITTER_MAX = 30          # < _STEP_MIN — do not raise past it without breakin
 assert _JITTER_MAX < _STEP_MIN, "H1/H2 monotonicity: _JITTER_MAX must stay strictly < _STEP_MIN so index*_STEP + jitter is monotonic in index"
 _ANCHOR_SPAN = 50         # per-(surface,clip) head start, 0.._ANCHOR_SPAN min after base
 
+
+def owner_caption_surfaces(cfg: Config, m, accts: Accounts) -> list:
+    """P10 (MOL-151): the surfaces a clip's captions are REQUESTED for — the moment OWNER × the platforms it
+    posts to, gated by the SAME affinity_admits predicate crosspost enforces (so caption-scope can never drift
+    from post-minting). A cast moment (affinities=[owner]) authors captions for the owner's surfaces only;
+    casting OFF / an uncast moment fans to ALL (byte-identical). Returns the (account, platform) tuples
+    request_captions wants. The (clip × account) AccountSelection scoping is DELETED — owner × platform is the
+    truth."""
+    return [(s.account, s.platform) for s in accts.surfaces() if affinity_admits(cfg, m, s.account)]
+
+
 def _seed(account: str, platform: str, date_str: str, clip_id: str = "") -> int:
     # SHA1, NOT builtin hash() (FIX F00) — deterministic across processes. clip_id is part of the
     # seed (AUDIT H1/H2) so two clips on the SAME surface get DIFFERENT times instead of colliding
