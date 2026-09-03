@@ -31,6 +31,8 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/ledger_bridge.py": ("tests/test_ledger_json_to_sqlite_bridge.py",),
     "src/fanops/ledger.py": ("tests/test_ledger.py", "tests/test_ledger_store_interface.py",
                              "tests/test_ledger_backend_parity.py",),
+    "src/fanops/media_probe.py": ("tests/test_ingest.py", "tests/test_discover.py",
+                                  "tests/test_studio_upload.py"),
     "src/fanops/paths_rebase.py": ("tests/test_media_path_integrity.py",),
     "src/fanops/persona_research.py": ("tests/test_hashtag_layer_b_tombstone.py", "tests/test_persona_corpus.py"),
     "src/fanops/hashtags.py": ("tests/test_hashtags.py", "tests/test_source_tag_lock.py",

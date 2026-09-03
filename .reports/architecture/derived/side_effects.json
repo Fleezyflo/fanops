@@ -361,11 +361,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 500
+        "line": 501
       },
       {
         "call": "Ledger.transaction",
-        "line": 614
+        "line": 615
       }
     ],
     "fanops.studio.actions_segments": [
@@ -681,11 +681,11 @@
     "fanops.discover": [
       {
         "call": "subprocess.run",
-        "line": 66
+        "line": 67
       },
       {
         "call": "subprocess.run",
-        "line": 73
+        "line": 74
       }
     ],
     "fanops.health": [
@@ -713,15 +713,11 @@
     "fanops.ingest": [
       {
         "call": "subprocess.run",
-        "line": 140
+        "line": 129
       },
       {
         "call": "subprocess.run",
-        "line": 203
-      },
-      {
-        "call": "subprocess.run",
-        "line": 488
+        "line": 405
       }
     ],
     "fanops.keyframes": [
@@ -742,6 +738,12 @@
       {
         "call": "subprocess.run",
         "line": 412
+      }
+    ],
+    "fanops.media_probe": [
+      {
+        "call": "subprocess.run",
+        "line": 35
       }
     ],
     "fanops.overlay": [

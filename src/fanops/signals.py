@@ -8,7 +8,7 @@ import json, re, shutil, subprocess
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
-from fanops.ingest import probe_dimensions
+from fanops.media_probe import probe_dimensions
 from fanops.errors import ToolchainMissingError
 from fanops.audio_energy import energy_cmd, parse_energy, rms_to_strength
 from fanops.log import get_logger

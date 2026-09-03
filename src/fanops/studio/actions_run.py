@@ -12,14 +12,14 @@ from werkzeug.utils import secure_filename
 
 from fanops.config import Config
 from fanops.errors import AuthError, ToolchainMissingError
-from fanops.ingest import MEDIA_EXT
+from fanops.media_probe import MEDIA_EXT
 from fanops.ledger import Ledger
 from fanops.timeutil import iso_z
 from fanops.studio.actions_common import ActionResult, _now
 
 
 _VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}   # the has_video_stream subset of MEDIA_EXT
-if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of ingest.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
+if not (_VIDEO_EXT <= MEDIA_EXT): raise ValueError("_VIDEO_EXT drifted out of media_probe.MEDIA_EXT")  # import-time drift guard (not assert — survives -O)
 
 def kick_prepare(cfg: Config) -> bool:
     """WS-D1 Phase 3 — de-lazify: spawn a DETACHED `fanops run` so a fresh browser ingest starts processing
@@ -481,7 +481,7 @@ def save_thirdparty_uploads(cfg: Config, files: Sequence[FileStorage]) -> Action
     contract as save_uploads (traversal triad + secure_filename + dir-bound resolve + atomic replace +
     probe), but into the PEER staging dir cfg.thirdparty_inbox — never the native 01_inbox, so a native
     ingest pass can't reach and mislabel them — with the photo-inclusive MEDIA_EXT gate."""
-    from fanops.ingest import MEDIA_EXT
+    from fanops.media_probe import MEDIA_EXT
     return save_uploads(cfg, files, allowed_ext=MEDIA_EXT, dest_dir=cfg.thirdparty_inbox)
 
 
@@ -489,7 +489,8 @@ def run_ingest_thirdparty(cfg: Config) -> ActionResult:
     """Catalogue the third-party staging dir as third_party Sources (inert to clip-production). Mirrors
     run_ingest (one transaction + write_digest, never a 500). Surfaces the PII-excluded COUNT so a
     deliberately-uploaded file the ingest name-filter drops is visible to the operator, not silently lost."""
-    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged, is_excluded, MEDIA_EXT
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
+    from fanops.media_probe import is_excluded, MEDIA_EXT
     from fanops.digest import write_digest
     staged = ([f for f in cfg.thirdparty_inbox.rglob("*") if f.is_file() and f.suffix.lower() in MEDIA_EXT]
               if cfg.thirdparty_inbox.exists() else [])
