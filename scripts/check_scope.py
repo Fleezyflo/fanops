@@ -33,6 +33,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
                              "tests/test_ledger_backend_parity.py",),
     "src/fanops/media_probe.py": ("tests/test_ingest.py", "tests/test_discover.py",
                                   "tests/test_studio_upload.py"),
+    "src/fanops/ingest_shard.py": ("tests/test_source_sharding.py",),
     "src/fanops/paths_rebase.py": ("tests/test_media_path_integrity.py",),
     "src/fanops/persona_research.py": ("tests/test_hashtag_layer_b_tombstone.py", "tests/test_persona_corpus.py"),
     "src/fanops/hashtags.py": ("tests/test_hashtags.py", "tests/test_source_tag_lock.py",

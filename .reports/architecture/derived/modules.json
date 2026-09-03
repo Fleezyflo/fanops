@@ -53,6 +53,7 @@
     "fanops.ig_web_scrape",
     "fanops.impact_cut",
     "fanops.ingest",
+    "fanops.ingest_shard",
     "fanops.init_flow",
     "fanops.intro_match",
     "fanops.keyframes",
@@ -203,6 +204,7 @@
     "fanops.ig_web_scrape": "S10_caption_hashtag",
     "fanops.impact_cut": "S09_render",
     "fanops.ingest": "S05_ingestion",
+    "fanops.ingest_shard": null,
     "fanops.init_flow": "S17_cli_daemon",
     "fanops.intro_match": "S08_selection",
     "fanops.keyframes": "S06_media_analysis",
@@ -301,10 +303,11 @@
   "totals": {
     "assigned": 140,
     "ghosts": 0,
-    "modules": 141,
-    "unassigned": 1
+    "modules": 142,
+    "unassigned": 2
   },
   "unassigned_modules": [
+    "fanops.ingest_shard",
     "fanops.media_probe"
   ]
 }
