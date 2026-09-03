@@ -10,9 +10,9 @@ from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import _norm
 from fanops.controlio import control_file_txn, load_raw_list, write_json_atomic   # shared atomic control-file IO
-# NOT `from fanops.personas import Persona/_slug`: personas.py is the FACADE that re-exports this module (ARCH-004).
-# CUT_POLICY/INTENSITY are bound on personas before persona_store is imported back — safe module-level import.
-from fanops.personas import CUT_POLICY, INTENSITY
+from fanops.persona_levers import vocab as _lever_vocab
+CUT_POLICY = _lever_vocab("cut_policy")
+INTENSITY = _lever_vocab("intensity")
 
 _CORPUS_CAP = 80                # must cover FANOPS_CORPUS_TARGET default (80); was 40 and silently truncated
 _BAKED_FILE = "baked_personas.json"
