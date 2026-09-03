@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from .common import DEFAULT_REPO, Finding
+from .common import DEFAULT_REPO, Finding, workflow_basename
 
 _SHA40 = re.compile(r"[0-9a-f]{40}$")
 
@@ -82,7 +82,7 @@ def dc2_registry_jobs_bijection(reg: dict, jobs: list[dict]) -> list[Finding]:
     for c in reg["controls"]:
         wf, job = c.get("workflow"), c.get("job")
         if wf and job:
-            key = (wf.split("/")[-1], job)
+            key = (workflow_basename(wf), job)
             if key not in real:
                 out.append(Finding("DC-2", c["id"],
                     f"phantom control — names workflow job {job!r} in {wf} that does not exist", True))
@@ -185,7 +185,7 @@ def dc7_advisory_must_not_hard_fail(reg: dict, jobs: list[dict]) -> list[Finding
     # branch-protection context instead SILENTLY SKIPS every control whose id differs from its
     # job_id — which is most of them, including the two worst offenders. A control that quietly
     # covers less than it claims is the failure this whole module exists to catch.
-    by_job = {(c["workflow"].split("/")[-1], c["job"]): c
+    by_job = {(workflow_basename(c["workflow"]), c["job"]): c
               for c in reg["controls"] if c.get("workflow") and c.get("job")}
     out: list[Finding] = []
     for j in jobs:

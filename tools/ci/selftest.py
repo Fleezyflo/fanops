@@ -11,6 +11,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from . import checks
+from .common import declared_workflows, workflow_basename
 from .registry import load_registry
 from .workflows import discover_jobs
 
@@ -48,89 +49,88 @@ def _info(findings, dc=None):
             if not f.blocking and not f.skipped and (dc is None or f.dc == dc)}
 
 
-def _declared_workflows(reg):
-    """The DC-8 declaration: every workflow the registry commits to. All ACTIVE = a clean baseline."""
-    return {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
-
-
 def _first_required_ctx(reg):
     return next(c["branch_protection_context"] for c in reg["controls"]
-               if c.get("classification") == "required" and not c.get("parent"))
+               if c.get("classification") == "required")
 
 
-def detect(ctrl: Control):
-    """Return (fired, detail): fired == the named DC produced a NEW blocking finding vs baseline."""
-    reg, jobs = load_registry(), discover_jobs()
+def _detect_nc_dc1(reg, jobs):
+    before = checks.dc1_renamed_required_context(reg, jobs)
+    req = _first_required_ctx(reg)
+    j2 = copy.deepcopy(jobs)
+    for j in j2:
+        if j["name"] == req:
+            j["name"] = req + " RENAMED"
+    new = _blocking(checks.dc1_renamed_required_context(reg, j2), "DC-1") - _blocking(before, "DC-1")
+    return bool(new), "; ".join(sorted(new)) or "no new DC-1 finding"
 
-    if ctrl.id == "NC-DC1":
-        before = checks.dc1_renamed_required_context(reg, jobs)
-        req = _first_required_ctx(reg)
-        j2 = copy.deepcopy(jobs)
-        for j in j2:
-            if j["name"] == req:
-                j["name"] = req + " RENAMED"
-        new = _blocking(checks.dc1_renamed_required_context(reg, j2), "DC-1") - _blocking(before, "DC-1")
-        return bool(new), "; ".join(sorted(new)) or "no new DC-1 finding"
 
-    if ctrl.id == "NC-DC2-phantom":
-        before = checks.dc2_registry_jobs_bijection(reg, jobs)
-        r2 = copy.deepcopy(reg)
-        r2["controls"].append({
-            "id": "PHANTOM", "name": "ghost", "invariant": "phantom-only", "owner": "ci-lane",
-            "classification": "advisory", "trigger": ["pull_request"], "justification": "x",
-            "deletion_consequence": "x", "adr": ["ADR-0100"], "failure_evidence": "x",
-            "status": "active", "workflow": ".github/workflows/ci.yml", "job": "no-such-job"})
-        new = _blocking(checks.dc2_registry_jobs_bijection(r2, jobs), "DC-2") - _blocking(before, "DC-2")
-        return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
+def _detect_nc_dc2_phantom(reg, jobs):
+    before = checks.dc2_registry_jobs_bijection(reg, jobs)
+    r2 = copy.deepcopy(reg)
+    r2["controls"].append({
+        "id": "PHANTOM",
+        "classification": "advisory",
+        "workflow": ".github/workflows/ci.yml",
+        "job": "no-such-job",
+    })
+    new = _blocking(checks.dc2_registry_jobs_bijection(r2, jobs), "DC-2") - _blocking(before, "DC-2")
+    return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
 
-    if ctrl.id == "NC-DC2-unknown":
-        before = checks.dc2_registry_jobs_bijection(reg, jobs)
-        r2 = copy.deepcopy(reg)
-        victim = next(i for i, c in enumerate(r2["controls"])
-                      if c.get("workflow") and c.get("job") and not c.get("parent"))
-        del r2["controls"][victim]
-        new = _blocking(checks.dc2_registry_jobs_bijection(r2, jobs), "DC-2") - _blocking(before, "DC-2")
-        return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
 
-    if ctrl.id == "NC-DC3-drift":
-        current = list(reg.get("required_contexts", []))
-        before = checks.dc3_deployed_state(reg, current)
-        new = _blocking(checks.dc3_deployed_state(reg, ["only-one-context"])) - _blocking(before)
-        return bool(new), "; ".join(sorted(new)) or "no new DC-3 blocking finding"
+def _detect_nc_dc2_unknown(reg, jobs):
+    before = checks.dc2_registry_jobs_bijection(reg, jobs)
+    r2 = copy.deepcopy(reg)
+    victim = next(i for i, c in enumerate(r2["controls"])
+                  if c.get("workflow") and c.get("job"))
+    del r2["controls"][victim]
+    new = _blocking(checks.dc2_registry_jobs_bijection(r2, jobs), "DC-2") - _blocking(before, "DC-2")
+    return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
 
-    if ctrl.id == "NC-DC4-prose":
-        req = _first_required_ctx(reg)
-        with TemporaryDirectory() as d:
-            doc = Path(d) / "AGENTS.md"
-            doc.write_text(f"The `{req}` check is advisory and never blocks.\n", encoding="utf-8")
-            before = checks.dc4_prose_matches_classification(reg, [])
-            after = checks.dc4_prose_matches_classification(reg, [doc])
-        new = _blocking(after) - _blocking(before)
-        return bool(new), "; ".join(sorted(new)) or "no new DC-4 finding"
 
-    if ctrl.id == "NC-DC6-timeout":
-        j2 = copy.deepcopy(jobs)
-        for j in j2:                       # clean baseline: every job has a timeout
-            j["timeout"] = j["timeout"] or 10
-        base = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6")
-        j2[0]["timeout"] = None            # inject ONE missing timeout
-        new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
-        return bool(new), "; ".join(sorted(new)) or "no new DC-6 timeout finding"
+def _detect_nc_dc3_drift(reg, jobs):
+    current = list(reg.get("required_contexts", []))
+    before = checks.dc3_deployed_state(reg, current)
+    new = _blocking(checks.dc3_deployed_state(reg, ["only-one-context"])) - _blocking(before)
+    return bool(new), "; ".join(sorted(new)) or "no new DC-3 blocking finding"
 
-    if ctrl.id == "NC-DC6-float":
-        j2 = copy.deepcopy(jobs)
-        for j in j2:                       # clean baseline: pin every action to a fake 40-hex SHA
-            j["uses"] = [u.split("@")[0] + "@" + ("a" * 40) for u in j["uses"]]
-        base = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6")
-        for j in j2:                       # inject ONE floating ref
-            if j["uses"]:
-                j["uses"][0] = j["uses"][0].split("@")[0] + "@v7"
-                break
-        new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
-        return bool(new), "; ".join(sorted(new)) or "no new DC-6 float finding"
 
-    if ctrl.id == "NC-DC6-permission":
-        valid = """name: permission fixture
+def _detect_nc_dc4_prose(reg, jobs):
+    req = _first_required_ctx(reg)
+    with TemporaryDirectory() as d:
+        doc = Path(d) / "AGENTS.md"
+        doc.write_text(f"The `{req}` check is advisory and never blocks.\n", encoding="utf-8")
+        before = checks.dc4_prose_matches_classification(reg, [])
+        after = checks.dc4_prose_matches_classification(reg, [doc])
+    new = _blocking(after) - _blocking(before)
+    return bool(new), "; ".join(sorted(new)) or "no new DC-4 finding"
+
+
+def _detect_nc_dc6_timeout(reg, jobs):
+    j2 = copy.deepcopy(jobs)
+    for j in j2:                       # clean baseline: every job has a timeout
+        j["timeout"] = j["timeout"] or 10
+    base = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6")
+    j2[0]["timeout"] = None            # inject ONE missing timeout
+    new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
+    return bool(new), "; ".join(sorted(new)) or "no new DC-6 timeout finding"
+
+
+def _detect_nc_dc6_float(reg, jobs):
+    j2 = copy.deepcopy(jobs)
+    for j in j2:                       # clean baseline: pin every action to a fake 40-hex SHA
+        j["uses"] = [u.split("@")[0] + "@" + ("a" * 40) for u in j["uses"]]
+    base = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6")
+    for j in j2:                       # inject ONE floating ref
+        if j["uses"]:
+            j["uses"][0] = j["uses"][0].split("@")[0] + "@v7"
+            break
+    new = _blocking(checks.dc6_workflow_hygiene(reg, j2), "DC-6") - base
+    return bool(new), "; ".join(sorted(new)) or "no new DC-6 float finding"
+
+
+def _detect_nc_dc6_permission(reg, jobs):
+    valid = """name: permission fixture
 on: push
 permissions:
   contents: read
@@ -142,82 +142,108 @@ jobs:
       contents: read
     steps: []
 """
-        invalid_job = valid.replace("      contents: read",
-                                    "      contents: read\n      administration: read")
-        invalid_workflow = valid.replace("permissions:\n  contents: read\njobs:",
-                                         "permissions:\n  contents: read\n  administration: read\njobs:")
-        with TemporaryDirectory() as d:
-            workflow = Path(d) / "permission.yml"
-            workflow.write_text(valid, encoding="utf-8")
-            before = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
-            workflow.write_text(invalid_job, encoding="utf-8")
-            after_job = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
-            workflow.write_text(invalid_workflow, encoding="utf-8")
-            after_workflow = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
-        base = _blocking(before, "DC-6")
-        new_job = _blocking(after_job, "DC-6") - base
-        new_workflow = _blocking(after_workflow, "DC-6") - base
-        new = new_job | new_workflow
-        return bool(new_job) and bool(new_workflow), "; ".join(sorted(new)) or "no new DC-6 permission finding"
+    invalid_job = valid.replace("      contents: read",
+                                "      contents: read\n      administration: read")
+    invalid_workflow = valid.replace("permissions:\n  contents: read\njobs:",
+                                     "permissions:\n  contents: read\n  administration: read\njobs:")
+    with TemporaryDirectory() as d:
+        workflow = Path(d) / "permission.yml"
+        workflow.write_text(valid, encoding="utf-8")
+        before = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+        workflow.write_text(invalid_job, encoding="utf-8")
+        after_job = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+        workflow.write_text(invalid_workflow, encoding="utf-8")
+        after_workflow = checks.dc6_workflow_hygiene(reg, discover_jobs(Path(d)))
+    base = _blocking(before, "DC-6")
+    new_job = _blocking(after_job, "DC-6") - base
+    new_workflow = _blocking(after_workflow, "DC-6") - base
+    new = new_job | new_workflow
+    return bool(new_job) and bool(new_workflow), "; ".join(sorted(new)) or "no new DC-6 permission finding"
 
-    if ctrl.id == "NC-DC7-hardfail":
-        # Clean baseline: every advisory job reports (continue-on-error). Then take ONE advisory job
-        # and let it fail the workflow. Building the baseline rather than reading the live tree is
-        # what proves DISCRIMINATION — the live tree is already clean, so a control that merely
-        # asserted "DC-7 fires" would prove nothing about the injected defect.
-        advisory = {(c["workflow"].split("/")[-1], c["job"]) for c in reg["controls"]
-                    if c.get("classification") == "advisory" and c.get("workflow") and c.get("job")
-                    and not c.get("parent")}
-        j2 = copy.deepcopy(jobs)
-        for j in j2:
-            if (j["workflow"], j["job_id"]) in advisory:
-                j["continue_on_error"] = True
-        base = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7")
-        for j in j2:
-            if (j["workflow"], j["job_id"]) in advisory:
-                j["continue_on_error"] = False      # inject ONE hard-failing advisory job
-                break
-        new = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7") - base
-        return bool(new), "; ".join(sorted(new)) or "no new DC-7 finding"
 
-    if ctrl.id == "NC-DC8-disabled":
-        # The injected value is VERBATIM what GitHub returned for .github/workflows/nightly.yml on
-        # 2026-08-01 while it sat manually disabled and its declared daily jobs had not run since
-        # 2026-07-14. Feeding the real string is the point: a control fed a made-up sentinel proves
-        # only that the function rejects sentinels.
-        states = _declared_workflows(reg)
-        base = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
-        states[sorted(states)[0]] = "disabled_manually"
-        new = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8") - base
-        return bool(new), "; ".join(sorted(new)) or "no new DC-8 disabled finding"
+def _detect_nc_dc7_hardfail(reg, jobs):
+    # Clean baseline: every advisory job reports (continue-on-error). Then take ONE advisory job
+    # and let it fail the workflow. Building the baseline rather than reading the live tree is
+    # what proves DISCRIMINATION — the live tree is already clean, so a control that merely
+    # asserted "DC-7 fires" would prove nothing about the injected defect.
+    advisory = {(workflow_basename(c["workflow"]), c["job"]) for c in reg["controls"]
+                if c.get("classification") == "advisory" and c.get("workflow") and c.get("job")}
+    j2 = copy.deepcopy(jobs)
+    for j in j2:
+        if (j["workflow"], j["job_id"]) in advisory:
+            j["continue_on_error"] = True
+    base = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7")
+    for j in j2:
+        if (j["workflow"], j["job_id"]) in advisory:
+            j["continue_on_error"] = False      # inject ONE hard-failing advisory job
+            break
+    new = _blocking(checks.dc7_advisory_must_not_hard_fail(reg, j2), "DC-7") - base
+    return bool(new), "; ".join(sorted(new)) or "no new DC-7 finding"
 
-    if ctrl.id == "NC-DC8-absent":
-        # DISCRIMINATION, the acceptance criterion in its own right: a workflow GitHub has no record
-        # of must NOT read as disabled. Asserting only "no blocking finding" would pass if DC-8
-        # returned nothing at all for any input — the empty-container trap — so this asserts BOTH
-        # directions: a NEW INFO naming the workflow, and NO new blocking finding.
-        states = _declared_workflows(reg)
-        base_block = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
-        base_info = _info(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
-        victim = sorted(states)[0]
-        del states[victim]
-        after = checks.dc8_declared_workflow_disabled(reg, states)
-        new_block = _blocking(after, "DC-8") - base_block
-        new_info = {f for f in _info(after, "DC-8") - base_info if victim in f}
-        fired = bool(new_info) and not new_block
-        detail = ("; ".join(sorted(new_info)) or f"no INFO finding for absent {victim}")
-        if new_block:
-            detail = f"MISGRADED as blocking: {'; '.join(sorted(new_block))}"
-        return fired, detail
 
-    if ctrl.id == "NC-DC9-disabled":
-        # Verbatim live shape: `gh api repos/<repo> --jq .security_and_analysis` returned
-        # {"dependabot_security_updates":{"status":"disabled"}, ...} on 2026-08-01.
-        declared = list(reg.get("required_security_settings") or [])
-        settings = {name: "enabled" for name in declared}
-        base = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9")
-        settings[declared[0]] = "disabled"
-        new = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9") - base
-        return bool(new), "; ".join(sorted(new)) or "no new DC-9 finding"
+def _detect_nc_dc8_disabled(reg, jobs):
+    # The injected value is VERBATIM what GitHub returned for .github/workflows/nightly.yml on
+    # 2026-08-01 while it sat manually disabled and its declared daily jobs had not run since
+    # 2026-07-14. Feeding the real string is the point: a control fed a made-up sentinel proves
+    # only that the function rejects sentinels.
+    states = declared_workflows(reg)
+    base = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+    states[sorted(states)[0]] = "disabled_manually"
+    new = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8") - base
+    return bool(new), "; ".join(sorted(new)) or "no new DC-8 disabled finding"
 
-    return False, f"unknown control {ctrl.id}"
+
+def _detect_nc_dc8_absent(reg, jobs):
+    # DISCRIMINATION, the acceptance criterion in its own right: a workflow GitHub has no record
+    # of must NOT read as disabled. Asserting only "no blocking finding" would pass if DC-8
+    # returned nothing at all for any input — the empty-container trap — so this asserts BOTH
+    # directions: a NEW INFO naming the workflow, and NO new blocking finding.
+    states = declared_workflows(reg)
+    base_block = _blocking(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+    base_info = _info(checks.dc8_declared_workflow_disabled(reg, states), "DC-8")
+    victim = sorted(states)[0]
+    del states[victim]
+    after = checks.dc8_declared_workflow_disabled(reg, states)
+    new_block = _blocking(after, "DC-8") - base_block
+    new_info = {f for f in _info(after, "DC-8") - base_info if victim in f}
+    fired = bool(new_info) and not new_block
+    detail = ("; ".join(sorted(new_info)) or f"no INFO finding for absent {victim}")
+    if new_block:
+        detail = f"MISGRADED as blocking: {'; '.join(sorted(new_block))}"
+    return fired, detail
+
+
+def _detect_nc_dc9_disabled(reg, jobs):
+    # Verbatim live shape: `gh api repos/<repo> --jq .security_and_analysis` returned
+    # {"dependabot_security_updates":{"status":"disabled"}, ...} on 2026-08-01.
+    declared = list(reg.get("required_security_settings") or [])
+    settings = {name: "enabled" for name in declared}
+    base = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9")
+    settings[declared[0]] = "disabled"
+    new = _blocking(checks.dc9_repo_security_settings(reg, settings), "DC-9") - base
+    return bool(new), "; ".join(sorted(new)) or "no new DC-9 finding"
+
+
+_DETECT_HANDLERS = {
+    "NC-DC1": _detect_nc_dc1,
+    "NC-DC2-phantom": _detect_nc_dc2_phantom,
+    "NC-DC2-unknown": _detect_nc_dc2_unknown,
+    "NC-DC3-drift": _detect_nc_dc3_drift,
+    "NC-DC4-prose": _detect_nc_dc4_prose,
+    "NC-DC6-timeout": _detect_nc_dc6_timeout,
+    "NC-DC6-float": _detect_nc_dc6_float,
+    "NC-DC6-permission": _detect_nc_dc6_permission,
+    "NC-DC7-hardfail": _detect_nc_dc7_hardfail,
+    "NC-DC8-disabled": _detect_nc_dc8_disabled,
+    "NC-DC8-absent": _detect_nc_dc8_absent,
+    "NC-DC9-disabled": _detect_nc_dc9_disabled,
+}
+
+
+def detect(ctrl: Control):
+    """Return (fired, detail): fired == the named DC produced a NEW blocking finding vs baseline."""
+    handler = _DETECT_HANDLERS.get(ctrl.id)
+    if handler is None:
+        return False, f"unknown control {ctrl.id}"
+    reg, jobs = load_registry(), discover_jobs()
+    return handler(reg, jobs)
