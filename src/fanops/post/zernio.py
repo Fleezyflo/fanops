@@ -50,7 +50,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 import requests
 from fanops.config import Config
 from fanops.errors import ZernioAuthError, fail_open, redact
@@ -79,8 +79,6 @@ def _error_kind_for_terminal(result: TerminalFailure) -> ErrorKind:
 
 _log = logging.getLogger("fanops.post.zernio")
 _MAX_RETRIES = 4
-_PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
-
 # Zernio's documented same-attempt idempotency window for x-request-id (~5 minutes, report 09 §7).
 _IDEMPOTENCY_WINDOW_S = 300.0
 # Our retry budget, STRICTLY inside that window: past it the header is no longer honoured, so a "retry"
@@ -464,6 +462,25 @@ def zernio_check_auth(cfg: Config) -> bool:
         return False
 
 
+def _extract_zernio_permalink(body) -> Optional[str]:
+    # metrics imports this module for _zbase/_zkey; permalink needs _zernio_platform_rows from metrics.
+    from fanops.post.metrics import _zernio_platform_rows
+    for p in _zernio_platform_rows(body):
+        for k in ("platformPostUrl", "permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL"):
+            v = p.get(k)
+            if isinstance(v, str) and v.startswith("http"): return v
+    if not isinstance(body, dict): return None
+    for k in ("permalink", "postUrl", "publicUrl", "url", "link", "shareUrl", "share_url", "releaseURL", "platformPostUrl"):
+        v = body.get(k)
+        if isinstance(v, str) and v: return v
+    for wrap in ("post", "data", "result"):
+        nested = body.get(wrap)
+        if isinstance(nested, dict):
+            u = _extract_zernio_permalink(nested)
+            if u: return u
+    return None
+
+
 class ZernioPoster:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -591,7 +608,6 @@ class ZernioPoster:
             post = led.posts[post_id]
             post.submission_id = result.post_id
             if self._create_2xx_body is not None:
-                from fanops.post.metrics import _extract_zernio_permalink
                 post.public_url = safe_public_url(_extract_zernio_permalink(self._create_2xx_body)) or post.public_url
             self._create_2xx_body = None
             if isinstance(result, IdempotentReplay):

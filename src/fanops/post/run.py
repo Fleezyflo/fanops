@@ -4,113 +4,35 @@ network call, so a crash mid-submit cannot lose the fact and cause a duplicate l
 resume (FIX F11). Media is ensured ONCE PER CLIP (FIX F44). Failed submit -> PostState.failed
 (retryable), never analyzed (FIX F22). Held/retired clips never reach here (crosspost skips)."""
 from __future__ import annotations
-import json
-import logging
-import os
 import random
-import re
 import time
-from datetime import datetime, timedelta, timezone
-import requests
+from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
 from fanops.accounts import Account, AccountStatus, Accounts
-from fanops.controlio import write_text_atomic
-from fanops.errors import AuthError, redact
+from fanops.errors import redact
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, PostState, is_real_submission_id, validate_account_handle
 from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs
+from fanops.post.publish_archive import _archive_published
+from fanops.post.publish_dryrun import _handle_dryrun_boundary
+from fanops.post.publish_errors import _is_fatal_auth_error, _is_transient_publish_error
+from fanops.post.publish_requeue import _requeue_failed_posts
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
 from fanops.log import get_logger
+
+# Re-exports: keep test/studio/reconcile import sites stable (from fanops.post.run import …).
+from fanops.post.publish_requeue import (  # noqa: F401
+    _DAEMON_TRANSIENT_MAX,
+    _requeue_rate_limited_for_daemon,
+    _requeue_transient_failed_for_daemon,
+)
 
 def _now(now: str | None) -> datetime:
     return _parse(now) if now else datetime.now(timezone.utc)
 
-def _archive_published(cfg: Config, post: Post) -> None:
-    """Day-bucketed, human-browsable record of a just-published post -> 06_published/<YYYY-MM-DD>/<post_id>.json
-    (the dir existed but nothing wrote it). FAIL-OPEN: any write/mkdir error is logged and swallowed — the
-    archive is a convenience artifact, NEVER a publish blocker (a full disk must not strand a live post). Day =
-    operator_local_day(published_at), else created_at, else scheduled_time, else now (MOL-735)."""
-    from fanops.timeutil import operator_local_day
-    try:
-        day = None
-        for ts in (post.published_at, post.created_at, post.scheduled_time):
-            if ts:
-                day = operator_local_day(ts, cfg)
-                if day: break
-        if day is None: day = operator_local_day(datetime.now(timezone.utc), cfg)
-        d = cfg.published / day; d.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try: os.chmod(d, 0o700)             # L2 (audit): tighten a pre-existing world-listable day dir too
-        except OSError: pass
-        hook = ""
-        try:
-            hook = _moment_hook(Ledger.load(cfg), post)
-        except Exception as exc:                          # hook lookup is best-effort enrichment — archive without it
-            get_logger(cfg)("publish", post.id, "archive_hook_lookup_failed", err=str(exc)[:120])
-        rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
-               "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
-               "public_url": post.public_url, "scheduled_time": post.scheduled_time,
-               "created_at": post.created_at, "published_at": post.published_at,
-               "render_id": post.render_id, "hook": hook,
-               "media": (post.media_urls[0] if post.media_urls else None)}
-        ap = d / f"{post.id}.json"
-        # L2 (audit) + MOL-728: REPLACEMENT-atomic at 0600. mkstemp is born 0600, so the L2 property holds (no
-        # write-then-chmod world-readable window), and os.replace means an interrupted re-archive — reconcile
-        # re-fires this on an already-archived post — leaves the PRIOR record whole instead of the O_TRUNC husk
-        # the final-path open produced. The swapped-in inode carries 0600 outright, so no tighten-after chmod.
-        write_text_atomic(ap, json.dumps(rec, indent=2, ensure_ascii=False), mode=0o600)
-    except Exception as exc:
-        try:
-            get_logger(cfg)("publish", post.id, "archive_error", err=str(exc)[:160])
-        except Exception as log_exc:                      # even the breadcrumb write failed — fall back to stdlib, never re-raise
-            logging.getLogger("fanops.post.run").warning(
-                "_archive_published: breadcrumb write failed for %s (%s)", post.id, log_exc)
-
 _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload transients; never a hot loop
-_DAEMON_TRANSIENT_MAX = 3    # MOL-125: daemon re-queue cycles for failed-but-transient (no submission_id)
-
-
-def _is_transient_publish_error(exc: Exception) -> bool:
-    """True for network/timeout/5xx blips where retrying (or parking needs_reconcile) beats terminal failed.
-    Permanent 4xx/auth/validation -> False (retrying won't help). AuthError is never transient."""
-    if isinstance(exc, AuthError):
-        return False
-    if isinstance(exc, requests.exceptions.RequestException):
-        return isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout,
-                                requests.exceptions.Timeout, requests.exceptions.ReadTimeout))
-    if isinstance(exc, RuntimeError):
-        msg = str(exc)
-        lower = msg.lower()
-        m = re.search(r'\((\d{3})\)', msg)
-        if m:
-            code = int(m.group(1))
-            if code == 401:
-                return False
-            if 400 <= code < 500:
-                return False
-            if 500 <= code < 600:
-                return True
-        if "upstream request 401" in lower and "timed out" in lower:
-            return False
-        if any(x in lower for x in ("nameresolution", "name resolution", "failed to resolve",
-                                    "read timed out", "max retries exceeded", "connection refused",
-                                    "connection reset", "connection aborted")):
-            return True
-        if "timed out" in lower or "timeout" in lower:
-            return True
-    return False
-
-
-def _is_fatal_auth_error(exc: Exception) -> bool:
-    """Auth/config errors mean EVERY post will fail — halt the run instead of marking one post
-    failed and grinding through the rest. Matched by the TYPE AuthError (base of PostizAuthError +
-    ZernioAuthError), NOT by a substring in the message (AUDIT H8): the old `"401" in msg or
-    "API_KEY" in msg` both UNDER-fired (a reworded auth error slipped past and burned the
-    whole queue — the F52 regression) and OVER-fired (a 5xx whose body contained "401" wrongly
-    halted). Each backend's poster/media uploader raises an AuthError subclass on a real auth
-    failure; everything else is a per-post failure."""
-    return isinstance(exc, AuthError)
 
 # Network-determined fields merged back at finalize: the union a poster.publish mutates
 # ({state, submission_id, error_reason, public_url}) + the two run.py sets here (media_urls upload
@@ -175,17 +97,6 @@ def _post_provider(cfg: Config, accounts: Accounts, post: Post) -> str | None:
 
 
 
-def _moment_hook(led, post: Post) -> str:
-    clip = led.clips.get(post.parent_id)
-    if clip is None: return ""
-    m = led.moments.get(clip.parent_id)
-    return (m.hook or "").strip() if m is not None else ""
-
-
-def _materialize_variant_media(led: Ledger, cfg: Config, post: Post, accts: Accounts) -> None:
-    """P9: owner-moment hook is burned on the shared clip at render_moment — no per-post materialize."""
-    return
-
 def _resolve_publish_account_id(accounts: Accounts, post: Post, *, cfg: Config | None = None) -> str | None:
     """The CURRENT poster/integration id for this post's channel, re-resolved at publish time so a Go-Live
     integration REMAP since crosspost reaches the post (account_id is otherwise frozen onto the post at
@@ -205,7 +116,6 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
     runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
     not the global — so a TikTok-via-Zernio variant uploads to Zernio even if the global is Postiz."""
     aid = (account_id or post.account_id or "").strip() or None
-    _materialize_variant_media(led, cfg, post, Accounts.load(cfg))
     from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes
     if upload_cap_bytes(cfg, post, backend) is not None:
         apply_shrink_to_post(cfg, led, post, backend=backend)
@@ -490,95 +400,6 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
     return is_scheduled_due(post, cutoff)
 
 
-def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
-    """MOL-125: before publish_due, re-queue failed transient posts (no real submission_id) for another
-    daemon attempt. Bounded by _DAEMON_TRANSIENT_MAX — after that they stay terminal failed."""
-    from fanops.studio.views_common import is_transient_failure
-    from fanops.timeutil import iso_z
-    requeued = 0
-    led = Ledger.load(cfg)
-    candidates = [p for p in led.posts_in_state(PostState.failed)
-                  if not is_real_submission_id(p.submission_id)
-                  and is_transient_failure(p)
-                  and int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX]
-    if not candidates:
-        return 0
-    now = datetime.now(timezone.utc)
-    try:
-        with Ledger.transaction(cfg) as lg:
-            for p in candidates:
-                cur = lg.posts.get(p.id)
-                if cur is None or cur.state is not PostState.failed:
-                    continue
-                if is_real_submission_id(cur.submission_id):
-                    continue
-                if not is_transient_failure(cur):
-                    continue
-                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
-                if n > _DAEMON_TRANSIENT_MAX:
-                    continue
-                cur.submission_id = None
-                if not (cur.scheduled_time or "").strip():
-                    cur.scheduled_time = iso_z(now)
-                # MOL-812: counter is a field; clear the old counter-only prose so Studio never shows it.
-                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
-                                  daemon_transient_retry=n)
-                requeued += 1
-    except Exception as exc:                             # a re-queue txn hiccup must not sink the publish pass (fail-open)
-        get_logger(cfg)("publish", "-", "requeue_transient_failed", err=str(exc)[:120], requeued=requeued)
-        return requeued
-    return requeued
-
-
-def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
-    """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle."""
-    requeued = 0
-    led = Ledger.load(cfg)
-    by_acct: dict[str, Post] = {}
-    for p in led.posts_in_state(PostState.failed):
-        if is_real_submission_id(p.submission_id):
-            continue
-        if getattr(p, "error_kind", None) is not ErrorKind.rate_limit:
-            continue
-        if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
-            continue
-        if not led.can_promote(p):
-            continue
-        aid = (p.account_id or p.account or "").strip() or "_"
-        prev = by_acct.get(aid)
-        if prev is None or (p.scheduled_time or "") < (prev.scheduled_time or ""):
-            by_acct[aid] = p
-    if not by_acct:
-        return 0
-    now = datetime.now(timezone.utc)
-    per_min = cfg.postiz_publish_per_min
-    gap = timedelta(seconds=(60.0 / per_min) if per_min > 0 else 0)
-    try:
-        with Ledger.transaction(cfg) as lg:
-            for p in by_acct.values():
-                cur = lg.posts.get(p.id)
-                if cur is None or cur.state is not PostState.failed:
-                    continue
-                if is_real_submission_id(cur.submission_id):
-                    continue
-                if getattr(cur, "error_kind", None) is not ErrorKind.rate_limit:
-                    continue
-                if not lg.can_promote(cur):
-                    continue
-                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
-                if n > _DAEMON_TRANSIENT_MAX:
-                    continue
-                cur.submission_id = None
-                cur.scheduled_time = iso_z(now + gap)
-                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
-                                  daemon_transient_retry=n)
-                requeued += 1
-    except Exception as exc:
-        get_logger(cfg)("publish", "-", "requeue_rate_limited_failed", err=str(exc)[:120], requeued=requeued)
-        return requeued
-    return requeued
-
-
 def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
@@ -586,8 +407,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     (halt the queue, H8). Returns a small summary."""
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
-    _requeue_transient_failed_for_daemon(cfg)          # MOL-125: bounded daemon retry for transient failed
-    _requeue_rate_limited_for_daemon(cfg)
+    _requeue_failed_posts(cfg)                         # MOL-125: bounded daemon retry for transient + 429 failed
     led = Ledger.load(cfg)                             # lock-free snapshot of the due queue
     due = [post for post in led.posts_in_state(PostState.queued) if _due_or_fail(cfg, post, cutoff)]
     if account:
@@ -636,15 +456,9 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
             continue
         if provider == "dryrun":                       # dryrun-boundary (Finding #1): NOT live -> no real backend to
-            not_distributed += 1                       # distribute to. The post is built + approved + scheduled; it
-            from fanops.post.dryrun import write_preview   # M2: the boundary is the sole place a dryrun post is now
-            try:                                          # processed, so the would-send preview sidecar is written HERE
-                write_preview(cfg, post)                  # (DryRunPoster.publish is never reached post-M1). Fail-open:
-            except Exception as exc:                      # a preview-write error must still leave the post cleanly queued.
-                get_logger(cfg)("publish", post.id, "preview_write_failed", err=str(exc)[:120])
-            log("publish", post.id, "dryrun_not_distributed",   # halts here at the processing<->distribution seam,
-                account=post.account, platform=post.platform.value)   # staying `queued` — never claimed, never a
-            continue                                   # phantom-published row. A live-flip re-derives this each pass.
+            not_distributed += 1                       # distribute to — preview sidecar only, post stays `queued`
+            _handle_dryrun_boundary(cfg, post)
+            continue
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         key = (provider, (acct_id or post.account_id or "").strip() or "_")
         if key in tripped:
@@ -683,14 +497,8 @@ def publish_post(cfg: Config, post_id: str) -> str | None:
     if provider is None:                               # live but the channel has no provider -> can't publish
         get_logger(cfg)("publish", post_id, "no_provider", account=post.account, platform=post.platform.value)
         return None
-    if provider == "dryrun":                           # dryrun-boundary (M2): NOT live -> no backend to distribute to,
-        from fanops.post.dryrun import write_preview   # even on an explicit Publish-now click. Write the would-send
-        try:                                           # preview and HALT `queued` (never claim -> never a stuck
-            write_preview(cfg, post)                   # `submitting` post now that the poster no longer promotes state).
-        except Exception as exc:
-            get_logger(cfg)("publish", post_id, "preview_write_failed", err=str(exc)[:120])
-        get_logger(cfg)("publish", post_id, "dryrun_not_distributed",
-                        account=post.account, platform=post.platform.value)
+    if provider == "dryrun":                           # dryrun-boundary (M2): NOT live -> preview only, stay `queued`
+        _handle_dryrun_boundary(cfg, post, post_id=post_id)
         return PostState.queued.value
     return _publish_one(cfg, post_id, provider, accounts=accounts,   # RC-3b/S07: share the readiness gate
                         account_id=_resolve_publish_account_id(accounts, post, cfg=cfg))   # #10: cfg breadcrumbs a frozen-id fallback

@@ -134,30 +134,32 @@
         "line": 134
       }
     ],
+    "fanops.post.publish_requeue": [
+      {
+        "call": "Ledger.transaction",
+        "line": 27
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 76
+      }
+    ],
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 260
+        "line": 170
       },
       {
         "call": "Ledger.transaction",
-        "line": 306
+        "line": 216
       },
       {
         "call": "Ledger.transaction",
-        "line": 446
+        "line": 356
       },
       {
         "call": "Ledger.transaction",
-        "line": 484
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 508
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 557
+        "line": 394
       }
     ],
     "fanops.recaption": [
@@ -516,62 +518,64 @@
         "line": 63
       }
     ],
-    "fanops.post.metrics": [
+    "fanops.post.metrics.postiz_read": [
       {
         "call": "requests.get",
-        "line": 136
+        "line": 81
       },
       {
         "call": "requests.get",
-        "line": 209
+        "line": 159
+      }
+    ],
+    "fanops.post.metrics.zernio_read": [
+      {
+        "call": "requests.get",
+        "line": 143
       },
       {
         "call": "requests.get",
-        "line": 356
-      },
-      {
-        "call": "requests.get",
-        "line": 583
+        "line": 378
       }
     ],
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 222
+        "line": 221
       },
       {
         "call": "requests.post",
-        "line": 252
+        "line": 251
       },
       {
         "call": "requests.post",
-        "line": 323
+        "line": 322
       },
       {
         "call": "requests.get",
-        "line": 350
+        "line": 349
       },
       {
         "call": "requests.post",
-        "line": 502
+        "line": 501
       }
     ],
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 368
+        "line": 366
       },
       {
         "call": "requests.post",
-        "line": 398
+        "line": 396
       },
       {
         "call": "requests.get",
-        "line": 429
+        "line": 427
       },
       {
         "call": "requests.post",
-        "line": 496
+        "line": 513
       }
     ]
   },

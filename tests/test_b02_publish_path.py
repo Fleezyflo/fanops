@@ -65,7 +65,7 @@ def test_postiz_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
 
 
 def test_postiz_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, mocker):
-    from fanops.post.postiz import PostizPoster, _PUBLISH_TRANSIENT_MAX
+    from fanops.post.postiz import PostizPoster, _MAX_RETRIES
     _live_postiz(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg)
@@ -79,14 +79,14 @@ def test_postiz_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, moc
         def json(self): return {"id": "postiz_ok"}
     def post_side(*a, **kw):
         calls["n"] += 1
-        if calls["n"] < _PUBLISH_TRANSIENT_MAX:
+        if calls["n"] < _MAX_RETRIES:
             raise _rq.exceptions.ConnectTimeout("timed out")
         return _R()
     mocker.patch("fanops.post.postiz.requests.post", side_effect=post_side)
     mocker.patch("fanops.post.postiz.time.sleep", return_value=None)
     PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted
-    assert calls["n"] == _PUBLISH_TRANSIENT_MAX
+    assert calls["n"] == _MAX_RETRIES
 
 
 def test_zernio_connection_error_single_attempt_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
@@ -110,7 +110,7 @@ def test_zernio_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
 
 
 def test_zernio_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, mocker):
-    from fanops.post.zernio import ZernioPoster, _PUBLISH_TRANSIENT_MAX
+    from fanops.post.zernio import ZernioPoster, _MAX_RETRIES
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg)
@@ -124,14 +124,14 @@ def test_zernio_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, moc
         def json(self): return {"id": "z_ok"}
     def post_side(*a, **kw):
         calls["n"] += 1
-        if calls["n"] < _PUBLISH_TRANSIENT_MAX:
+        if calls["n"] < _MAX_RETRIES:
             raise _rq.exceptions.ConnectTimeout("timed out")
         return _R()
     mocker.patch("fanops.post.zernio.requests.post", side_effect=post_side)
     mocker.patch("fanops.post.zernio.time.sleep", return_value=None)
     ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted
-    assert calls["n"] == _PUBLISH_TRANSIENT_MAX
+    assert calls["n"] == _MAX_RETRIES
 
 
 # ---- H02: heal -> needs_reconcile; publish_due skips ----

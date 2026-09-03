@@ -15,6 +15,7 @@
       "fanops.pipeline",
       "fanops.post.compress",
       "fanops.post.run",
+      "fanops.post.publish_requeue",
       "fanops.product_closure",
       "fanops.recaption",
       "fanops.reconcile",
@@ -40,7 +41,8 @@
       "fanops.health_model",
       "fanops.health_probes",
       "fanops.ig_web_scrape",
-      "fanops.post.metrics",
+      "fanops.post.metrics.postiz_read",
+      "fanops.post.metrics.zernio_read",
       "fanops.post.postiz",
       "fanops.post.zernio"
     ],
@@ -85,7 +87,7 @@
     "env_write_sites": 2,
     "ledger_transaction_sites": 89,
     "mkdtemp_sites": 2,
-    "network_sites_literal_requests": 16,
+    "network_sites_literal_requests": 17,
     "rmtree_sites": 7,
     "subprocess_sites": 44
   },

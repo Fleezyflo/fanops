@@ -20,6 +20,15 @@ DEFAULT_REPO = "Fleezyflo/fanops"
 DEFAULT_BRANCH = "main"
 
 
+def workflow_basename(path: str) -> str:
+    return path.split("/")[-1]
+
+
+def declared_workflows(reg: dict) -> dict[str, str]:
+    """Every workflow the registry commits to. All ACTIVE = a clean DC-8 baseline."""
+    return {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
+
+
 @dataclass(frozen=True)
 class Finding:
     """One plane-divergence, with the control id and the EXACT divergence for actionable output.

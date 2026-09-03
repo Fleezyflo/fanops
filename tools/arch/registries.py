@@ -36,6 +36,13 @@ def _expired(exc: dict, today: str) -> bool:
     return str(exc.get("expiry", "")) < today
 
 
+def _today_iso(today: str | None) -> str:
+    if today is not None:
+        return today
+    from datetime import date
+    return date.today().isoformat()
+
+
 def active_exceptions(today: str | None = None) -> list[dict]:
     """Exceptions that are still in force.
 
@@ -44,10 +51,7 @@ def active_exceptions(today: str | None = None) -> list[dict]:
     reproducibility is the whole product here. CI passes the commit date; the operator can pass any
     date to ask "what will be expired next month?".
     """
-    if today is None:
-        from datetime import date
-        today = date.today().isoformat()
-    return [e for e in exceptions() if not _expired(e, today)]
+    return [e for e in exceptions() if not _expired(e, _today_iso(today))]
 
 
 def validate() -> list[str]:
@@ -82,10 +86,7 @@ def validate() -> list[str]:
 
 
 def expired(today: str | None = None) -> list[dict]:
-    if today is None:
-        from datetime import date
-        today = date.today().isoformat()
-    return [e for e in exceptions() if _expired(e, today)]
+    return [e for e in exceptions() if _expired(e, _today_iso(today))]
 
 
 def unknown_growth() -> tuple[int, int]:
