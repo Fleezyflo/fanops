@@ -110,9 +110,9 @@ callbacks). Outcome:
   - `post/compress.py:persist_post_shrink` — **called via a lazy in-function import at `studio/actions.py:395-396`** (C6). *(Corrected on validation — the first pass mislabeled this as genuinely dead.)*
   - `accounts.py:set_backend`, `ensure_channel`, `set_status`, `set_ig_user_id` — **all called via aliased imports (`... as _accounts_set_backend`) in `studio/golive.py`** (188/506, 501, 543/558, 381 respectively) (C4). *(Corrected on validation — the first pass mislabeled all four as dead; the name-based call graph cannot resolve the `_accounts_*` alias.)*
 - **Confirmed genuinely dead** (no caller anywhere — re-verified against source with an alias-and-lazy-import sweep):
-  - `accounts.py:set_channel_routing`, `set_framing` (C4) — two unwired account-mutation primitives; `set_channel_routing` is notable as "the documented fix for the cisumwolfhom incident" per its own docstring, never actually wired into a route.
   - `persona_levers.py:is_exempt`, `channels` (C4) — the latter's own docstring claim of being read by "the M4 manifest" is inaccurate (manifest calls `channels_of` instead).
 - **Already removed from `src/`** (do not re-list as present dead code; Wave 3 re-verified absent):
+  - `accounts.py:set_channel_routing`, `set_framing` (C4) — unwired mutators removed; routing drift gated by `Accounts.validate`.
   - `ingest.py:download_source`, `ingest.py:_catalogue_file` (C2) — production path is `stage_inbox_candidates` → `ingest_staged` (`_stage_candidate` + `_mint_candidate`).
   - `learn_doctor.load_verdict`, `timing_bias.timing_prior_hour` (C7)
   - `caption.normalize_variation_axis`, `caption.coherent_variation` (C5)

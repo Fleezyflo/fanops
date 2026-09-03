@@ -260,7 +260,7 @@ validation vocab, clause maps, and catalog cannot drift (`persona_levers.py:1-8`
   match (`accounts.py:226-237`).
 - Copies IN MEMORY: `acc.persona = per.voice` (`accounts.py:256`), `acc.hashtag_corpus = per.hashtag_corpus`
   (`accounts.py:258`), `acc.content_focus/energy/hook_angle` (`accounts.py:261-263`), and the DERIVED cut spec
-  `resolved_cut_spec(per)` → `acc.clip_profile`/`acc.framing` + `persona_owns_profile` provenance flag
+  `resolved_cut_spec(per)` → `acc.framing` (M3: length is picker-window; no persona clip_profile stamp)
   (`accounts.py:264-266`).
 - **Persists NOTHING** — hydration is in-memory only; the corpus is never stored on the account row
   (`accounts.py:47-51`). `set_*` mutators write the raw accounts.json dict, not hydrated values.
