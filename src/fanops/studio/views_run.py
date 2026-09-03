@@ -12,7 +12,7 @@ from fanops.config import Config
 from fanops.errors import fail_open
 from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState, StitchState, SourceState
-from fanops.studio.views_home import awaiting_moment_count
+from fanops.studio.views_review import awaiting_moment_count
 from fanops.timeutil import parse_iso
 
 
