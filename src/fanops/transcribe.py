@@ -28,9 +28,14 @@ from fanops.speech_trust import (_AVG_LOGPROB_MIN, _COMPRESSION_RATIO_MAX, _cach
                                  excerpt_for_window, real_transcript_signal, segment_trusted,
                                  trusted_segments, window_has_trusted_speech)
 from fanops.transcribe_engine import (_PREWARM_TIMEOUT_FACTOR, _WHISPER_TIMEOUT, _adopt_cached_transcript,
-                                      _fw_available, _produce_transcript, _transcribe_toolchain_present,
+                                      _produce_transcript, _transcribe_toolchain_present,
                                       _whisper_timeout, adopt_transcript_keep_state, asr_retry_marker,
                                       fw_cmd, purge_source_artifacts, transcribe_source, whisper_cmd)
+
+def _fw_available() -> bool:
+    """True iff the faster-whisper engine (the [asr] extra) is importable."""
+    try: import faster_whisper; return True       # noqa: F401  (probe only)
+    except ImportError: return False
 
 __all__ = [
     "_AVG_LOGPROB_MIN",

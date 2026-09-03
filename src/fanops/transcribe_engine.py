@@ -9,7 +9,6 @@ from fanops.log import get_logger
 from fanops.errors import ToolchainMissingError
 from fanops.models import SourceState
 from fanops.stage_lock import stage_lock
-from fanops.vocals import isolate_vocals
 from fanops.speech_trust import (_cache_is_quality_complete, _finalize_segments,
                                  _transcript_schema)
 
@@ -43,11 +42,6 @@ def whisper_cmd(src: str, out_dir: str, model: str = "turbo", language: str = ""
     langs = [x for x in (language or "").replace(",", " ").split() if x]
     if len(langs) == 1: cmd += ["--language", langs[0]]
     return cmd + [src]
-
-def _fw_available() -> bool:
-    """True iff the faster-whisper engine (the [asr] extra) is importable."""
-    try: import faster_whisper; return True       # noqa: F401  (probe only)
-    except ImportError: return False
 
 def fw_cmd(src: str, out_dir: str, model: str, language: str = "") -> list[str]:
     # faster-whisper runner invocation (`python -m fanops._fwrun`). Same --model/--output_dir flags
@@ -140,7 +134,8 @@ def adopt_transcript_keep_state(led: Ledger, cfg: Config, source_id: str) -> boo
 
 def _transcribe_toolchain_present() -> bool:
     """Cheap probe: faster-whisper ([asr] extra). No whisper-CLI fallback."""
-    return _fw_available()
+    import fanops.transcribe as facade
+    return facade._fw_available()
 
 
 def transcribe_source(led: Ledger, cfg: Config, source_id: str, *, model: str | None = None,
@@ -198,6 +193,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     Side-effects (write JSON, mutate `src`) match the prior in-function body byte-for-byte; the
     only contract change is that callers no longer pass lock_held= and the timeout is the single
     length-scaled cap — both deliberate consequences of M1's architecture collapse."""
+    import fanops.transcribe as facade
     # Vocal isolation (the music-transcription fix): strip the beat with Demucs so Whisper reads the
     # LYRICS, not the instrumental. Isolation ON + demucs/move failure -> SourceState.error (never
     # decode the mix). Isolation OFF leaves `audio` as the source path. The isolated mp3 is moved
@@ -214,7 +210,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
             from fanops.pipeline_run import note_stage
             note_stage(cfg, "transcribe:demucs", source_id)
             try:
-                voc = isolate_vocals(src.source_path, str(out_dir / "vocals"))
+                voc = facade.isolate_vocals(src.source_path, str(out_dir / "vocals"))
             except ToolchainMissingError as e:
                 led.set_source_state(source_id, SourceState.error,
                                      error_reason=f"vocals isolation failed: {e}")
@@ -232,7 +228,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
                 return led
     # Engine: faster-whisper only. A missing [asr] extra used to fail open to Homebrew `whisper`,
     # which left no per-source JSON and stalled the source at catalogued. Refuse instead.
-    if not _fw_available():
+    if not facade._fw_available():
         src.meta["preserve_vocals_on_retry"] = False
         led.set_source_state(source_id, SourceState.error,
                              error_reason="faster-whisper not installed — pip install -e '.[asr]'")
@@ -244,7 +240,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()
     try:
-        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
+        r = facade.subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout_s)
     except (FileNotFoundError, OSError) as e:
         # whisper ABSENT from PATH (or unspawnable): subprocess.run raises before the process
         # starts, which check=False does not cover (it only suppresses a nonzero RETURNCODE).
