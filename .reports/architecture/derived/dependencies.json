@@ -58,6 +58,7 @@
       "fanops.produce",
       "fanops.reconcile",
       "fanops.reconcile_liveness",
+      "fanops.reconcile_mirror",
       "fanops.reframe",
       "fanops.reframe_apply",
       "fanops.responder",
@@ -1332,6 +1333,7 @@
         "fanops.log",
         "fanops.models",
         "fanops.reconcile_liveness",
+        "fanops.reconcile_mirror",
         "fanops.text",
         "fanops.timeutil"
       ],
@@ -1358,6 +1360,20 @@
         "fanops.accounts",
         "fanops.meta_graph",
         "fanops.models",
+        "fanops.post.metrics"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reconcile_mirror": {
+      "compile": [
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models"
+      ],
+      "lazy": [
+        "fanops.accounts",
         "fanops.post.metrics"
       ],
       "optional": [],
@@ -2257,7 +2273,7 @@
     "fanops.cli": 0,
     "fanops.clip": 7,
     "fanops.compose": 1,
-    "fanops.config": 92,
+    "fanops.config": 93,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 12,
@@ -2291,16 +2307,16 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 58,
+    "fanops.ledger": 59,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
     "fanops.lever_docs": 0,
     "fanops.llm": 1,
-    "fanops.log": 44,
+    "fanops.log": 45,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 52,
+    "fanops.models": 53,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -2331,6 +2347,7 @@
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
     "fanops.reconcile_liveness": 1,
+    "fanops.reconcile_mirror": 1,
     "fanops.reframe": 2,
     "fanops.reframe_apply": 1,
     "fanops.responder": 3,
@@ -2473,8 +2490,9 @@
     "fanops.produce": 9,
     "fanops.prompts": 0,
     "fanops.recaption": 9,
-    "fanops.reconcile": 8,
+    "fanops.reconcile": 9,
     "fanops.reconcile_liveness": 4,
+    "fanops.reconcile_mirror": 4,
     "fanops.reframe": 8,
     "fanops.reframe_apply": 9,
     "fanops.responder": 11,
@@ -2643,6 +2661,14 @@
       "same_scc": false,
       "to": "fanops.health_model",
       "to_level": 1
+    },
+    {
+      "from": "fanops.digest",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.reconcile",
+      "to_level": 4
     },
     {
       "from": "fanops.doctor",
@@ -2835,6 +2861,22 @@
       "same_scc": false,
       "to": "fanops.crosspost",
       "to_level": 6
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.metrics",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.run",
+      "to_level": 4
     },
     {
       "from": "fanops.reconcile_liveness",
@@ -3423,19 +3465,11 @@
       "to_level": 4
     },
     {
-      "from": "fanops.reconcile",
+      "from": "fanops.reconcile_mirror",
       "from_level": 3,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.post.metrics",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.reconcile",
-      "from_level": 3,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.post.run",
       "to_level": 4
     },
     {
@@ -3609,8 +3643,9 @@
     "fanops.produce": 6,
     "fanops.prompts": 0,
     "fanops.recaption": 6,
-    "fanops.reconcile": 3,
+    "fanops.reconcile": 4,
     "fanops.reconcile_liveness": 2,
+    "fanops.reconcile_mirror": 3,
     "fanops.reframe": 6,
     "fanops.reframe_apply": 7,
     "fanops.responder": 5,
@@ -3755,7 +3790,7 @@
       "fanops.post.media",
       "fanops.post.postiz",
       "fanops.post.zernio",
-      "fanops.reconcile",
+      "fanops.reconcile_mirror",
       "fanops.stitch_render",
       "fanops.stranded_posts",
       "fanops.studio.actions_casting",
@@ -3778,6 +3813,7 @@
       "fanops.paths_rebase",
       "fanops.post.metrics",
       "fanops.post.run",
+      "fanops.reconcile",
       "fanops.responder_policy",
       "fanops.signals",
       "fanops.source_tags",
@@ -3842,17 +3878,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 142,
+    "G1_sccs_total": 143,
     "G1c_levels": 11,
-    "G2_largest_scc_size": 74,
+    "G2_largest_scc_size": 75,
     "G2_module_sccs_total": 61,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 607,
-    "lazy_edges": 380,
-    "lazy_edges_lateral": 51,
-    "lazy_edges_strictly_upward": 72,
-    "lazy_edges_to_equal_or_higher_level": 123,
-    "modules": 142,
+    "compile_edges_G1": 612,
+    "lazy_edges": 382,
+    "lazy_edges_lateral": 54,
+    "lazy_edges_strictly_upward": 71,
+    "lazy_edges_to_equal_or_higher_level": 125,
+    "modules": 143,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

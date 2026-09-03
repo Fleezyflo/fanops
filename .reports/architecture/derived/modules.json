@@ -97,6 +97,7 @@
     "fanops.recaption",
     "fanops.reconcile",
     "fanops.reconcile_liveness",
+    "fanops.reconcile_mirror",
     "fanops.reframe",
     "fanops.reframe_apply",
     "fanops.responder",
@@ -248,6 +249,7 @@
     "fanops.recaption": "S15_orchestration",
     "fanops.reconcile": "S13_reconcile_metrics",
     "fanops.reconcile_liveness": "S13_reconcile_metrics",
+    "fanops.reconcile_mirror": "S13_reconcile_metrics",
     "fanops.reframe": "S18_health_diag",
     "fanops.reframe_apply": "S19_maintenance",
     "fanops.responder": "S07_agent_gate",
@@ -301,9 +303,9 @@
     "fanops.vocals": "S06_media_analysis"
   },
   "totals": {
-    "assigned": 142,
+    "assigned": 143,
     "ghosts": 0,
-    "modules": 142,
+    "modules": 143,
     "unassigned": 0
   },
   "unassigned_modules": []
