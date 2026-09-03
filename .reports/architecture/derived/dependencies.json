@@ -340,7 +340,8 @@
         "fanops.ledger",
         "fanops.log",
         "fanops.models",
-        "fanops.overlay"
+        "fanops.overlay",
+        "fanops.render_fingerprint"
       ],
       "lazy": [
         "fanops.artifacts",
@@ -994,7 +995,8 @@
         "fanops.overlay",
         "fanops.pipeline_run",
         "fanops.reframe",
-        "fanops.reframe_apply"
+        "fanops.reframe_apply",
+        "fanops.render_fingerprint"
       ],
       "lazy": [],
       "optional": [],
@@ -1381,7 +1383,8 @@
         "fanops.framing_outcomes",
         "fanops.ids",
         "fanops.ledger",
-        "fanops.log"
+        "fanops.log",
+        "fanops.render_fingerprint"
       ],
       "lazy": [],
       "optional": [],
@@ -1397,11 +1400,18 @@
         "fanops.ledger",
         "fanops.log",
         "fanops.overlay",
-        "fanops.reframe"
+        "fanops.reframe",
+        "fanops.render_fingerprint"
       ],
       "lazy": [
         "fanops.reframe"
       ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.render_fingerprint": {
+      "compile": [],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -2390,6 +2400,7 @@
     "fanops.reconcile": 2,
     "fanops.reframe": 2,
     "fanops.reframe_apply": 1,
+    "fanops.render_fingerprint": 4,
     "fanops.responder": 3,
     "fanops.router": 3,
     "fanops.secret_provider": 2,
@@ -2461,7 +2472,7 @@
     "fanops.caption": 9,
     "fanops.casting": 0,
     "fanops.cli": 21,
-    "fanops.clip": 10,
+    "fanops.clip": 11,
     "fanops.compose": 0,
     "fanops.config": 0,
     "fanops.config_introspect": 3,
@@ -2512,7 +2523,7 @@
     "fanops.moment_hook_learning": 3,
     "fanops.moments": 14,
     "fanops.overlay": 0,
-    "fanops.overlay_reburn": 11,
+    "fanops.overlay_reburn": 12,
     "fanops.p4_dim_bias": 7,
     "fanops.paths_rebase": 3,
     "fanops.persona_directives": 3,
@@ -2538,8 +2549,9 @@
     "fanops.prompts": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
-    "fanops.reframe": 8,
-    "fanops.reframe_apply": 9,
+    "fanops.reframe": 9,
+    "fanops.reframe_apply": 10,
+    "fanops.render_fingerprint": 0,
     "fanops.responder": 10,
     "fanops.router": 1,
     "fanops.secret_provider": 0,
@@ -3714,6 +3726,7 @@
     "fanops.reconcile": 3,
     "fanops.reframe": 7,
     "fanops.reframe_apply": 8,
+    "fanops.render_fingerprint": 0,
     "fanops.responder": 4,
     "fanops.router": 2,
     "fanops.secret_provider": 0,
@@ -3791,6 +3804,7 @@
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
       "fanops.prompts",
+      "fanops.render_fingerprint",
       "fanops.secret_provider",
       "fanops.speech_trust",
       "fanops.studio",
@@ -3956,17 +3970,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 148,
+    "G1_sccs_total": 149,
     "G1c_levels": 12,
     "G2_largest_scc_size": 77,
-    "G2_module_sccs_total": 64,
+    "G2_module_sccs_total": 65,
     "G2_non_trivial_sccs": 4,
-    "compile_edges_G1": 623,
+    "compile_edges_G1": 627,
     "lazy_edges": 377,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 77,
     "lazy_edges_to_equal_or_higher_level": 127,
-    "modules": 148,
+    "modules": 149,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

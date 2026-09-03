@@ -24,7 +24,12 @@ from fanops import clip as clipmod
 from fanops import framing
 from fanops import overlay
 from fanops import reframe_apply as ra
-from fanops.clip import _build_ass_text, fingerprint_of_payload
+from fanops.clip import _build_ass_text
+from fanops.render_fingerprint import (
+    _render_fingerprint_payload,
+    fingerprint_of_payload,
+    fingerprint_payload_bytes,
+)
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
@@ -140,10 +145,10 @@ def prove_payload(paths: ReframePaths, cfg: Config, led: Ledger, c, fp_stored: s
         for ass, alab in ass_cands:
             for tb, tlab in _top_bias_candidates(m, cfg):
                 for (focus, track, ct), clab in crops:
-                    payload = clipmod._render_fingerprint_payload(
+                    payload = _render_fingerprint_payload(
                         src.source_path, cs, ce, c.aspect.value, src.width or 0, src.height or 0,
                         ass, top_bias=tb, focus=focus, track=track, content_type=ct)
-                    key = clipmod.fingerprint_payload_bytes(payload)
+                    key = fingerprint_payload_bytes(payload)
                     lab = f"{wlab}|{alab}|{tlab}|{clab}"
                     if key in by_bytes:
                         prev = by_bytes[key]
@@ -413,7 +418,7 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led, row: dict, *, run_id: st
 
     ass_new = row.get("ass_new") or (row.get("payload_new") or {}).get("ass") or ""
     focus, track, ct = rargs["focus"], rargs["track"], rargs["content_type"]
-    payload_actual = clipmod._render_fingerprint_payload(
+    payload_actual = _render_fingerprint_payload(
         rargs["src_path"], rargs["cs"], rargs["ce"], rargs["aspect"],
         rargs["src_w"], rargs["src_h"], ass_new, top_bias=rargs["top_bias"],
         focus=focus, track=track, content_type=ct)

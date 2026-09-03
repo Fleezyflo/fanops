@@ -47,6 +47,7 @@ from pathlib import Path
 
 from fanops import clip as clipmod
 from fanops import framing
+from fanops.render_fingerprint import _render_fingerprint_payload, fingerprint_of_payload
 from fanops import overlay
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
@@ -649,10 +650,10 @@ def apply_clip(paths: ReframePaths, dirs: RunDirs, led: Ledger, row: dict, *, ru
     # THE FINGERPRINT GATE, asserted on the inputs we are ABOUT to render with -- not on the plan's copy of
     # them. If these two disagree, the sidecar we would write would attest to a render that never happened.
     ass_text = Path(row["ass_path"]).read_text(encoding="utf-8") if r["has_ass"] else ""
-    payload = clipmod._render_fingerprint_payload(r["src_path"], r["cs"], r["ce"], r["aspect"],
+    payload = _render_fingerprint_payload(r["src_path"], r["cs"], r["ce"], r["aspect"],
                                                   r["src_w"], r["src_h"], ass_text, top_bias=r["top_bias"],
                                                   focus=focus, track=track, content_type=r["content_type"])
-    fp_actual = clipmod.fingerprint_of_payload(payload)
+    fp_actual = fingerprint_of_payload(payload)
     if fp_actual != row["fp_new"]:
         return {**rec, "phase": "refuse", "status": "FINGERPRINT_DIVERGED",
                 "error": f"inputs hash to {fp_actual[:16]} but the plan proved {row['fp_new'][:16]}"}

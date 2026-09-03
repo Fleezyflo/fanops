@@ -100,6 +100,7 @@
     "fanops.reconcile",
     "fanops.reframe",
     "fanops.reframe_apply",
+    "fanops.render_fingerprint",
     "fanops.responder",
     "fanops.router",
     "fanops.secret_provider",
@@ -257,6 +258,7 @@
     "fanops.reconcile": "S13_reconcile_metrics",
     "fanops.reframe": "S18_health_diag",
     "fanops.reframe_apply": "S19_maintenance",
+    "fanops.render_fingerprint": null,
     "fanops.responder": "S07_agent_gate",
     "fanops.router": "S08_selection",
     "fanops.secret_provider": "S02_configuration",
@@ -315,12 +317,13 @@
   "totals": {
     "assigned": 140,
     "ghosts": 0,
-    "modules": 148,
-    "unassigned": 8
+    "modules": 149,
+    "unassigned": 9
   },
   "unassigned_modules": [
     "fanops.ingest_shard",
     "fanops.media_probe",
+    "fanops.render_fingerprint",
     "fanops.source_tags_scrape",
     "fanops.source_tags_shortlist",
     "fanops.source_tags_sidecar",
