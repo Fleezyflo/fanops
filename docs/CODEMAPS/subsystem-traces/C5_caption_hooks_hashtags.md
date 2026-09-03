@@ -69,7 +69,7 @@ is a separate Plan A codemap — see `docs/CODEMAPS/hashtag-lifecycle.md` for th
 | Layer B vetting (`vet_hashtags`, frozen pools, corpus floors) | **Removed** — ship is `ship_from_lock` ∩ source lock |
 | `llm.py` still hosts Claude + Cursor transports (~417 lines) | **Remaining** — further split deferred |
 | `prompts.py` moment builders still share file (~267 lines) | **Remaining** — acceptable; caption half extracted |
-| `fanops_hashtags.py` scrape tick size | **Out of scope** (Plan A) |
+| Monolithic `fanops_hashtags.py` scrape tick | **Resolved** SA-A1–A4 → `hashtag_refresh`, `hashtag_scrape_policy`, `ig_safari_shell`; facade re-exports |
 
 ## Pipeline / data-flow overview
 
@@ -151,6 +151,10 @@ hookscore.narration_signature / hook_quality — read-only meter, never a gate
 - `compose_posted_caption` — sentence + ≤4 tags; idempotent hash-strip.
 - `posted_text_for` — vendor wire for IG/TikTok/dryrun/review.
 - `_hashtag_metrics_for` — forward numeric fields for caption prompt annotation.
+
+### `fanops_hashtags.py` — thin facade (SA-A1–A4); scrape logic in sibling modules
+
+Implementation split (see `docs/CODEMAPS/hashtag-lifecycle.md`): `hashtag_refresh.py` (refresh/remesure), `hashtag_scrape_policy.py` (cooldown/budget/freeze), `ig_safari_shell.py` (Safari XHR + tick slot). `fanops_hashtags.py` re-exports and hosts `cmd_hashtags_discover` only.
 
 ### `caption_ingest.py` — ingest helpers
 

@@ -107,7 +107,8 @@ which sits AFTER transcribe+signals+keyframes by construction (`pipeline._stage_
 1. **Composition floors** — `_ARABIC` only (`hashtags.py`). FORMAT, not a reach claim: one region tag on
    Arabic clips. The frozen reach-ranked pools (`_MEGA`/`_RELEVANCE`/`_RANK`/`VETTED`) and `_DISCOVERY` were
    DELETED 2026-07-26 — they asserted reach from desk research.
-2. **The platform measurement cache** — `fanops_hashtags.refresh_store` derives search terms from each
+2. **The platform measurement cache** — `fanops_hashtags.refresh_store` (implementation:
+   `hashtag_refresh.refresh_store`) derives search terms from each
    posting persona's declared niche (`persona_research.persona_terms`), resolves them via
    `meta_graph.resolve_hashtag`, and one `meta_graph.measure_and_harvest` call per tag returns both the
    verbatim `like_count` and the co-occurring tags. Writes `00_control/hashtags.json` as
@@ -191,7 +192,7 @@ empty line. Recorded in `meta_captions[surface].tag_sources`.
   remains anywhere in the path.
 - **Post-performance feedback into tag selection: NONE.** The `lift_score` weight map `_W` (`track.py:30`)
   carries NO hashtag dimension; the store is ranked by the tag's OWN live Graph reach, never a post that used
-  it (`fanops_hashtags.py:2-4`). Pinned by `tests/test_hashtag_attribution_severance.py`
+  it (`hashtag_refresh` / `fanops_hashtags` facade). Pinned by `tests/test_hashtag_attribution_severance.py`
   (`test_lift_weights_carry_no_hashtag_dimension`, `test_no_learning_module_attributes_a_post_outcome_to_hashtags`).
 - **IG/TT vendor `content` is `posted_text_for` → `compose_posted_caption`.** Empty lock keeps stored
   `Post.caption` (hashes included); lock tags append when present. YouTube sends `Post.caption` raw.

@@ -410,7 +410,7 @@ def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 3
     while True:
         got = None
         with fail_open("ig_hashtag_scrape.safari_auth"):
-            from fanops.ig_web_scrape import safari_profile_auth
+            from fanops.ig_safari_shell import safari_profile_auth
             got = safari_profile_auth(cfg, user)
         if got and got[0]:
             return got
