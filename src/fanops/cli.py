@@ -810,7 +810,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     try:
-        return _dispatch(cfg, args)
+        from fanops.cli_dispatch import dispatch
+        return dispatch(args, cfg)
     except ControlFileError as e:
         # A control file (ledger.json/accounts.json) is malformed — almost always a hand-edit
         # typo. Print the one-line reason and exit 2 (distinct from the run-halt/usage exit 1)
@@ -1048,6 +1049,217 @@ def _studio_ipv6_foreign_listener(port: int) -> bool:
     return daemon._studio_get_fingerprint("::1", port) is None
 
 
+
+def cmd_ingest(cfg: Config) -> int:
+    # Phase-B-followup: catalogue under a transaction (B4). M05: sha256+copy+ffprobe run lock-free
+    # (stage_inbox_candidates); only Source mint runs in-lock; archive AFTER commit.
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
+    staged = stage_inbox_candidates(cfg)
+    with Ledger.transaction(cfg) as led:
+        led, counts = ingest_staged(led, cfg, staged)
+        total = len(led.sources)
+    _archive_staged(cfg, staged)
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
+          f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
+
+
+def cmd_pull(cfg: Config, args) -> int:
+    # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
+    # ingest of what landed runs inside the transaction.
+    from fanops.ingest import _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
+    produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
+    staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+    with Ledger.transaction(cfg) as led:
+        # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
+        # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
+        led, counts = ingest_staged(led, cfg, staged)
+        total = len(led.sources)
+    _archive_staged(cfg, staged)
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"pulled -> {counts.added} new ({total} total)"); return 0
+
+
+def cmd_respond(cfg: Config) -> int:
+    from fanops.pipeline_run import run_lease
+    with run_lease(cfg):
+        n = get_responder(cfg).answer_pending(cfg)
+    print(f"responder answered {n} request(s)"); return 0
+
+
+def cmd_digest(cfg: Config) -> int:
+    write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
+
+
+def cmd_advance(cfg: Config, args) -> int:
+    if (rc := _check_accounts(cfg)):  return rc
+    if (rc := _check_preflight(cfg)):  return rc
+    from fanops.pipeline_run import run_lease
+    with run_lease(cfg):
+        s = advance(cfg, base_time=args.base_time)
+    _heartbeat(cfg, s); print(s); return 0
+
+
+def cmd_unhold(cfg: Config, args) -> int:
+    # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
+    # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the
+    # operator who has reviewed it forces it back into the caption gate from here. Tight
+    # transaction, local-only mutation (no network), like resolve.
+    from fanops.models import ClipState
+    with Ledger.transaction(cfg) as led:
+        if args.clip_id not in led.clips:
+            print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
+        c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
+        led.set_clip_state(args.clip_id, ClipState.captions_requested)  # re-enter the caption gate
+    print(f"unheld {args.clip_id}"); return 0
+
+
+def cmd_retry_source(cfg: Config, args) -> int:
+    from fanops.pipeline import resume_source
+    with Ledger.transaction(cfg) as led:
+        if args.source_id not in led.sources:
+            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+        if not resume_source(led, args.source_id, from_stage=args.from_stage, force=args.force, cfg=cfg):
+            st = led.sources[args.source_id].state.value
+            print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
+    print(f"retry-source {args.source_id}"); return 0
+
+
+def cmd_retire_source(cfg: Config, args) -> int:
+    # MOL-842: CLI caller guards — preview by default; sentence-flag + restorable snapshot + audit
+    # before cascade. Ledger.retire_source itself is unchanged (Studio depends on it). One print()
+    # node reused for preview-or-success so _CLI_PRINT_COUNT stays exact-equality.
+    from fanops.audit import write_audit
+    from fanops import ledger_wipe
+    led_ro = Ledger.load(cfg)
+    if args.source_id not in led_ro.sources:
+        print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+    preview = led_ro.preview_retire_cascade(args.source_id)
+    if not args.i_understand_this_deletes_unshipped_media:
+        line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
+    else:
+        snap = Ledger.snapshot(cfg)
+        if not ledger_wipe.snapshot_is_restorable(snap):
+            get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
+                            snapshot=str(snap))
+            return 2
+        with Ledger.transaction(cfg) as led:
+            led.retire_source(args.source_id)
+        write_audit(cfg, "retire_source", [args.source_id], reason="cli_retire")
+        line = f"retire-source {args.source_id}"
+    print(line); return 0
+
+
+def cmd_promote_source(cfg: Config, args) -> int:
+    from fanops.pipeline import promote_source
+    with Ledger.transaction(cfg) as led:
+        if args.source_id not in led.sources:
+            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+        if not promote_source(led, args.source_id):
+            st = led.sources[args.source_id].state.value
+            print(f"promote-source {args.source_id}: not promotable (state={st}; only discovered)", file=sys.stderr); return 2
+    print(f"promote-source {args.source_id}"); return 0
+
+
+def cmd_retry_metrics(cfg: Config, args) -> int:
+    from fanops.models import PostState
+    with Ledger.transaction(cfg) as led:
+        if args.post_id not in led.posts:
+            print(f"no such post: {args.post_id}", file=sys.stderr); return 2
+        p = led.posts[args.post_id]
+        if p.state is PostState.published:    # leave it published so the next track pass re-pulls
+            print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
+        print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
+
+
+def cmd_discover(cfg: Config, args) -> int:
+    from pathlib import Path as _P
+    from fanops.discover import discover as _discover
+    root = _P(args.folder)
+    if not root.exists() or not root.is_dir():
+        print(f"no such folder: {args.folder}", file=sys.stderr); return 2
+    s = _discover(cfg, [root])
+    print(f"discovered {s['found']} candidate(s): {s['new']} new in 00_review/, {s['skipped']} already seen. "
+          f"Review them in Finder, move keepers into 00_review/approved/, then `fanops intake`.")
+    return 0
+
+
+def cmd_intake(cfg: Config) -> int:
+    from fanops.discover import intake as _intake
+    s = _intake(cfg)
+    print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
+          f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
+    return 0
+
+
+def cmd_studio(cfg: Config, args) -> int:
+    # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
+    # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
+    # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
+    if args.install:
+        res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
+        print(f"Studio service installed -> {res['studio_plist']}")
+        print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
+        return 0 if res.get("studio_loaded") else 1
+    if args.uninstall:
+        res = daemon.stop_studio(cfg, remove=True)
+        print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
+        return 0 if res.get("stopped") else 1
+    if args.app:
+        url = f"http://{args.host}:{args.port}"
+        if not _studio_port_busy(args.host, args.port):
+            print(
+                f"REFUSED: Studio is not serving at {url}. "
+                "Use `fanops studio --install` to start the managed service, then retry `--app`.",
+                file=sys.stderr,
+            )
+            return 2
+        from fanops.studio_desktop import open_studio_window
+        return open_studio_window(url)
+    if not args.managed and not args.dev_reload:
+        print(
+            "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
+            "Use `fanops studio --install` for the managed service, or "
+            "`fanops studio --dev-reload` for explicit foreground development.",
+            file=sys.stderr,
+        )
+        return 2
+    if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
+        # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
+        # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
+        print(f"Studio already serving at http://{args.host}:{args.port}")
+        print("  open that URL, or stop that instance first to run a new one here")
+        return 0
+    if sys.platform == "darwin" and _studio_ipv6_foreign_listener(args.port):
+        print(f"REFUSED: something else is answering http://[::1]:{args.port} (not FanOps).")
+        print(f"  Browsers that open http://localhost:{args.port} hit that process, not Studio.")
+        print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
+        return 2
+    from fanops.studio.app import create_app
+    from fanops import postiz_lifecycle
+    from fanops.health import system_health
+    postiz_lifecycle.ensure_up(cfg)
+    app = create_app(cfg)
+    print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
+    for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
+        print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
+    # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
+    # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
+    # threaded=True: the cockpit streams large /media/ clips (HTTP 206). The Werkzeug dev server
+    # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
+    # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
+    # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
+    app.run(
+        host=args.host,
+        port=args.port,
+        debug=False,
+        threaded=True,
+        use_reloader=args.dev_reload,
+    )
+    return 0
+
+
+
 def _reframe_mutation(paths, args) -> int:
     """The MUTATION verbs. Split out so cmd_reframe's read-only path stays exactly what it was."""
     import json as _json, time as _time
@@ -1155,260 +1367,6 @@ def cmd_reframe(cfg: Config, args) -> int:
             shutil.rmtree(scratch, ignore_errors=True)          # RC-10: the auto dry-run scratch NEVER leaks to /tmp
 
 
-def _dispatch(cfg: Config, args) -> int:
-    if args.cmd == "reframe":  return cmd_reframe(cfg, args)
-    if args.cmd == "overlay-reburn": return cmd_overlay_reburn(cfg, args)
-    if args.cmd == "status":   return cmd_status(cfg)
-    if args.cmd == "pause":    return cmd_pause(cfg, on=True)
-    if args.cmd == "resume":   return cmd_pause(cfg, on=False)
-    if args.cmd == "recover":
-        if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
-        return 2
-    if args.cmd == "ingest":
-        # Phase-B-followup: catalogue under a transaction (B4). M05: sha256+copy+ffprobe run lock-free
-        # (stage_inbox_candidates); only Source mint runs in-lock; archive AFTER commit.
-        from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
-        staged = stage_inbox_candidates(cfg)
-        with Ledger.transaction(cfg) as led:
-            led, counts = ingest_staged(led, cfg, staged)
-            total = len(led.sources)
-        _archive_staged(cfg, staged)
-        write_digest(Ledger.load(cfg), cfg)
-        print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
-              f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
-    if args.cmd == "pull":
-        # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
-        # ingest of what landed runs inside the transaction.
-        from fanops.ingest import _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
-        produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
-        staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
-        with Ledger.transaction(cfg) as led:
-            # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
-            # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
-            led, counts = ingest_staged(led, cfg, staged)
-            total = len(led.sources)
-        _archive_staged(cfg, staged)
-        write_digest(Ledger.load(cfg), cfg)
-        print(f"pulled -> {counts.added} new ({total} total)"); return 0
-    if args.cmd == "respond":
-        from fanops.pipeline_run import run_lease
-        with run_lease(cfg):
-            n = get_responder(cfg).answer_pending(cfg)
-        print(f"responder answered {n} request(s)"); return 0
-    if args.cmd == "digest":
-        write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
-    if args.cmd == "advance":
-        if (rc := _check_accounts(cfg)):  return rc
-        if (rc := _check_preflight(cfg)):  return rc
-        from fanops.pipeline_run import run_lease
-        with run_lease(cfg):
-            s = advance(cfg, base_time=args.base_time)
-        _heartbeat(cfg, s); print(s); return 0
-    if args.cmd == "track":    return cmd_track(cfg, args.window)
-    if args.cmd == "map-media": return cmd_map_media(cfg)
-    if args.cmd == "verify-live": return cmd_verify_live(cfg)
-    if args.cmd == "reconcile": return cmd_reconcile(cfg, report_terminals=getattr(args, "report_terminals", False))
-    if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
-    if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
-    if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
-    if args.cmd == "cutover":  return cmd_cutover(cfg, args)
-    if args.cmd == "wipe":     return cmd_wipe(cfg, args)
-    if args.cmd == "purge":    return cmd_purge(cfg, args)
-    if args.cmd == "restore":  return cmd_restore(cfg, args)
-    if args.cmd == "paths-rebase":
-        from fanops.paths_rebase import cmd_paths_rebase
-        return cmd_paths_rebase(cfg, args)
-    if args.cmd == "learn":
-        if args.learn_cmd == "doctor":
-            from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path
-            return cmd_learn_doctor(cfg)
-        return 2
-    if args.cmd == "hashtags":
-        if args.hashtags_cmd == "refresh":
-            from fanops.fanops_hashtags import cmd_hashtags_refresh   # lazy: keeps it off the hot path
-            return cmd_hashtags_refresh(cfg)
-        if args.hashtags_cmd == "scrape-login":
-            from fanops.fanops_hashtags import cmd_hashtags_scrape_login
-            return cmd_hashtags_scrape_login(cfg)
-        if args.hashtags_cmd == "discover":
-            from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
-            return cmd_hashtags_discover(cfg)
-        return 2
-    if args.cmd in ("lever", "threshold"):
-        if getattr(args, "lever_cmd", None) == "docs" or getattr(args, "thresh_cmd", None) == "docs":
-            from fanops.lever_docs import cmd_lever_docs
-            return cmd_lever_docs(cfg)
-        return 2
-    if args.cmd == "init":     return cmd_init(cfg, args)
-    if args.cmd == "health":   return cmd_health(cfg, args)
-    if args.cmd == "config":   return cmd_config(cfg)
-    if args.cmd == "doctor":   return cmd_doctor(cfg, args)
-    if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
-    if args.cmd == "posts":
-        if args.posts_cmd == "recaption":
-            from fanops.recaption import cmd_posts_recaption   # lazy, matching the hashtags-verb precedent
-            return cmd_posts_recaption(cfg, args)
-        if args.posts_cmd == "census-retired":
-            from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
-            return cmd_posts_reconcile_retired(cfg, args)
-    if args.cmd == "daemon":   return cmd_daemon(cfg, args)
-    if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
-    if args.cmd == "up":       return cmd_up(cfg, args)
-    if args.cmd == "canary":   return cmd_canary(cfg, args)
-    if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
-    if args.cmd == "compose":  return cmd_compose(cfg, args)
-    if args.cmd == "resolve":
-        return cmd_resolve(cfg, args)
-    if args.cmd == "audit":
-        return cmd_audit(cfg, args)
-    if args.cmd == "bulk-send-to-review":
-        return cmd_bulk_send_to_review(cfg, args)
-    if args.cmd == "unhold":
-        # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
-        # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the
-        # operator who has reviewed it forces it back into the caption gate from here. Tight
-        # transaction, local-only mutation (no network), like resolve.
-        from fanops.models import ClipState
-        with Ledger.transaction(cfg) as led:
-            if args.clip_id not in led.clips:
-                print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
-            c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
-            led.set_clip_state(args.clip_id, ClipState.captions_requested)  # re-enter the caption gate
-        print(f"unheld {args.clip_id}"); return 0
-    if args.cmd == "retry-source":
-        from fanops.pipeline import resume_source
-        with Ledger.transaction(cfg) as led:
-            if args.source_id not in led.sources:
-                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            if not resume_source(led, args.source_id, from_stage=args.from_stage, force=args.force, cfg=cfg):
-                st = led.sources[args.source_id].state.value
-                print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
-        print(f"retry-source {args.source_id}"); return 0
-    if args.cmd == "retire-source":
-        # MOL-842: CLI caller guards — preview by default; sentence-flag + restorable snapshot + audit
-        # before cascade. Ledger.retire_source itself is unchanged (Studio depends on it). One print()
-        # node reused for preview-or-success so _CLI_PRINT_COUNT stays exact-equality.
-        from fanops.audit import write_audit
-        from fanops import ledger_wipe
-        led_ro = Ledger.load(cfg)
-        if args.source_id not in led_ro.sources:
-            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-        preview = led_ro.preview_retire_cascade(args.source_id)
-        if not args.i_understand_this_deletes_unshipped_media:
-            line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
-        else:
-            snap = Ledger.snapshot(cfg)
-            if not ledger_wipe.snapshot_is_restorable(snap):
-                get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
-                                snapshot=str(snap))
-                return 2
-            with Ledger.transaction(cfg) as led:
-                led.retire_source(args.source_id)
-            write_audit(cfg, "retire_source", [args.source_id], reason="cli_retire")
-            line = f"retire-source {args.source_id}"
-        print(line); return 0
-    if args.cmd == "promote-source":
-        from fanops.pipeline import promote_source
-        with Ledger.transaction(cfg) as led:
-            if args.source_id not in led.sources:
-                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            if not promote_source(led, args.source_id):
-                st = led.sources[args.source_id].state.value
-                print(f"promote-source {args.source_id}: not promotable (state={st}; only discovered)", file=sys.stderr); return 2
-        print(f"promote-source {args.source_id}"); return 0
-    if args.cmd == "retry-metrics":
-        from fanops.models import PostState
-        with Ledger.transaction(cfg) as led:
-            if args.post_id not in led.posts:
-                print(f"no such post: {args.post_id}", file=sys.stderr); return 2
-            p = led.posts[args.post_id]
-            if p.state is PostState.published:    # leave it published so the next track pass re-pulls
-                print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
-            print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
-    if args.cmd == "discover":
-        from pathlib import Path as _P
-        from fanops.discover import discover as _discover
-        root = _P(args.folder)
-        if not root.exists() or not root.is_dir():
-            print(f"no such folder: {args.folder}", file=sys.stderr); return 2
-        s = _discover(cfg, [root])
-        print(f"discovered {s['found']} candidate(s): {s['new']} new in 00_review/, {s['skipped']} already seen. "
-              f"Review them in Finder, move keepers into 00_review/approved/, then `fanops intake`.")
-        return 0
-    if args.cmd == "intake":
-        from fanops.discover import intake as _intake
-        s = _intake(cfg)
-        print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
-              f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
-        return 0
-    if args.cmd == "studio":
-        # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
-        # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
-        # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
-        if args.install:
-            res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
-            print(f"Studio service installed -> {res['studio_plist']}")
-            print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
-            return 0 if res.get("studio_loaded") else 1
-        if args.uninstall:
-            res = daemon.stop_studio(cfg, remove=True)
-            print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
-            return 0 if res.get("stopped") else 1
-        if args.app:
-            url = f"http://{args.host}:{args.port}"
-            if not _studio_port_busy(args.host, args.port):
-                print(
-                    f"REFUSED: Studio is not serving at {url}. "
-                    "Use `fanops studio --install` to start the managed service, then retry `--app`.",
-                    file=sys.stderr,
-                )
-                return 2
-            from fanops.studio_desktop import open_studio_window
-            return open_studio_window(url)
-        if not args.managed and not args.dev_reload:
-            print(
-                "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
-                "Use `fanops studio --install` for the managed service, or "
-                "`fanops studio --dev-reload` for explicit foreground development.",
-                file=sys.stderr,
-            )
-            return 2
-        if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
-            # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
-            # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
-            print(f"Studio already serving at http://{args.host}:{args.port}")
-            print("  open that URL, or stop that instance first to run a new one here")
-            return 0
-        if sys.platform == "darwin" and _studio_ipv6_foreign_listener(args.port):
-            print(f"REFUSED: something else is answering http://[::1]:{args.port} (not FanOps).")
-            print(f"  Browsers that open http://localhost:{args.port} hit that process, not Studio.")
-            print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
-            return 2
-        from fanops.studio.app import create_app
-        from fanops import postiz_lifecycle
-        from fanops.health import system_health
-        postiz_lifecycle.ensure_up(cfg)
-        app = create_app(cfg)
-        print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
-        for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
-            print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
-        # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
-        # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
-        # threaded=True: the cockpit streams large /media/ clips (HTTP 206). The Werkzeug dev server
-        # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
-        # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
-        # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
-        app.run(
-            host=args.host,
-            port=args.port,
-            debug=False,
-            threaded=True,
-            use_reloader=args.dev_reload,
-        )
-        return 0
-    if args.cmd == "run":
-        return cmd_run(cfg, args)
-    return 1
 
 if __name__ == "__main__":
     raise SystemExit(main())
