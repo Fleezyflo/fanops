@@ -301,8 +301,8 @@ def test_baseline_accept_carries_the_declaration_forward():
     """`approved_breaking_changes` is the ONE author-declared key in a file of derived ones. If
     `baseline --accept` rebuilt it from the tree like the others, every re-accept would silently
     wipe the declarations and re-arm the gate against already-reviewed breaks."""
-    src = (REPO / "tools" / "arch" / "cli.py").read_text(encoding="utf-8")
-    body = src.split("def cmd_baseline", 1)[1].split("\ndef ", 1)[0]
+    src = (REPO / "tools" / "arch" / "baseline.py").read_text(encoding="utf-8")
+    body = src.split("def build", 1)[1].split("\ndef ", 1)[0]
     assert "approved_breaking_changes" in body
     assert 'get("approved_breaking_changes"' in body     # READ from the existing file...
     assert '"approved_breaking_changes": approved_breaking' in body   # ...and written back
