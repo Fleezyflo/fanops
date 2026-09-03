@@ -8,7 +8,6 @@ import re
 import subprocess
 import sys
 import urllib.request
-from pathlib import Path
 
 from guards.manifest import load_manifest
 
