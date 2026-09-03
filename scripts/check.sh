@@ -12,16 +12,13 @@ set -euo pipefail
 # Usage:  ./scripts/check.sh                    # scope = changes vs origin/main merge-base
 #         BASE=origin/main ./scripts/check.sh   # override the diff base
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
-# Venv resolution: own .venv, else the MAIN checkout's .venv (worktrees don't need their own — the
-# default gate is ruff-only and ruff is path-agnostic; N workers each pip-installing a full venv on
-# one machine is the same resource class as the parallel-pytest crash). Tests are CI-only anyway.
-PY="$ROOT/.venv/bin/python"
-if [[ ! -x "$PY" ]]; then
-  COMMON="$(git rev-parse --git-common-dir 2>/dev/null || true)"   # <main>/.git even from a worktree
-  [[ -n "$COMMON" ]] && MAIN_ROOT="$(cd "$(dirname "$COMMON")" && pwd)" && PY="$MAIN_ROOT/.venv/bin/python"
-fi
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/gate_common.sh
+source "$_SCRIPT_DIR/lib/gate_common.sh"
+
+gate_root
+gate_resolve_python worktree
+
 if [[ ! -x "$PY" ]]; then
   echo "[check] no .venv here or in the main checkout — run in the MAIN repo: python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'" >&2
   exit 1

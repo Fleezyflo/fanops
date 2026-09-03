@@ -11,9 +11,13 @@ set -euo pipefail
 # CI (ci.yml) remains the authoritative gate; this is a convenience, not a substitute. No git hook
 # calls this, and none should — hooks enforce policy, scripts run tests, CI proves everything.
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT"
-PY="$ROOT/.venv/bin/python"
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/gate_common.sh
+source "$_SCRIPT_DIR/lib/gate_common.sh"
+
+gate_root
+gate_resolve_python
+
 if [[ ! -x "$PY" ]]; then
   echo "[check-full] .venv missing — run: python -m venv .venv && ./.venv/bin/pip install -e '.[dev,studio]'" >&2
   exit 1
