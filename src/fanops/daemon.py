@@ -14,7 +14,7 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, json, logging, os, plistlib, re, shutil, socket, subprocess, sys, time
+import contextlib, json, logging, os, plistlib, re, shutil, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -23,12 +23,8 @@ from fanops.errors import ToolchainMissingError
 _log = logging.getLogger(__name__)
 
 LABEL = "com.fanops.run"
-KEEPER_LABEL = "com.fanops.keeper"
-STUDIO_LABEL = "com.fanops.studio"
-STUDIO_DEFAULT_HOST = "127.0.0.1"
-STUDIO_DEFAULT_PORT = 8787
-KEEPER_POLL_INTERVAL_S = 120
 _LAUNCHCTL_TIMEOUT = 30.0
+_VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
 _MIN_INTERVAL = 60                                    # launchd ThrottleInterval floor — sub-minute is meaningless
 # kickstart -k SIGTERMs then waits for relaunch; launchd may hold "spawn scheduled" for the full
 # ThrottleInterval. A 30s wrapper returns rc 124 mid-throttle → false NOT-READY (MOL-697).
@@ -247,6 +243,31 @@ def _parse_etime(s: str) -> int | None:
     return days * 86400 + h * 3600 + m * 60 + sec
 
 
+def _confirm_loaded(label: str) -> bool:
+    return _launchctl("print", f"gui/{os.getuid()}/{label}").returncode == 0
+
+def _load_plist(plist: Path, label: str) -> bool:
+    """Idempotent load with proof: bootout, bootstrap (retry until print confirms), load -w fallback."""
+    uid = os.getuid()
+    _launchctl("bootout", f"gui/{uid}/{label}")          # idempotent; rc ignored
+    for _ in range(3):
+        _launchctl("bootstrap", f"gui/{uid}", str(plist))
+        if _confirm_loaded(label):
+            return True
+        time.sleep(2)
+    _launchctl("load", "-w", str(plist))
+    return _confirm_loaded(label)
+
+
+from fanops.daemon_siblings import (  # noqa: E402
+    KEEPER_LABEL,
+    KEEPER_POLL_INTERVAL_S,
+    _install_keeper,
+    ensure_keeper_loaded,
+    keeper_plist_path,
+)
+
+
 def _adopt_settle_s(cfg: Config) -> int:
     """How long a freshly-kickstarted pump must be left alone before a SHA mismatch may justify ANOTHER
     kickstart: one full pass interval + one keeper tick.
@@ -295,21 +316,6 @@ def _pump_pid_age_s() -> tuple[int | None, int | None]:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         age = None                                        # unreadable -> caller skips (never storm)
     return pid, age
-
-def _confirm_loaded(label: str) -> bool:
-    return _launchctl("print", f"gui/{os.getuid()}/{label}").returncode == 0
-
-def _load_plist(plist: Path, label: str) -> bool:
-    """Idempotent load with proof: bootout, bootstrap (retry until print confirms), load -w fallback."""
-    uid = os.getuid()
-    _launchctl("bootout", f"gui/{uid}/{label}")          # idempotent; rc ignored
-    for _ in range(3):
-        _launchctl("bootstrap", f"gui/{uid}", str(plist))
-        if _confirm_loaded(label):
-            return True
-        time.sleep(2)
-    _launchctl("load", "-w", str(plist))
-    return _confirm_loaded(label)
 
 
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
@@ -408,120 +414,6 @@ def ensure(cfg: Config) -> dict:
     ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
     return {"label": LABEL, "loaded": loaded, "action": action}
 
-_VERDICT_UNLOADED_ALARM = "installed but NOT loaded — should be running"
-
-# ── M2-D: host-level poll-timer siblings (explicitly NOT KeepAlive residents) ────────────────
-# Decision (MOL-355): com.fanops.postiz-reaper + com.fanops.media-sync stay StartInterval 300s
-# poll-timers — NOT the KeepAlive+--loop model used by com.fanops.run (M2-B). Each sibling is a
-# short cron-style job: launchd fires it, it runs one bounded unit of work, exits cleanly, sleeps
-# until the next StartInterval. KeepAlive would be wrong for both:
-#   • postiz-reaper — probes whether local Postiz is idle and STOPS the Docker stack to reclaim RAM;
-#     pairs with postiz_lifecycle.ensure_up (on-demand bring-up at publish). A resident process would
-#     fight that on-demand/idle-stop cycle or respawn a successful one-shot endlessly.
-#   • media-sync — batch-scans and mirrors uploads to R2 (~5 min). Publish-time mirror in postiz.py
-#     is the correctness path; this job is a convenience pre-mirror. Fire-and-exit cron semantics,
-#     not a long-lived sync daemon.
-# Silent death is still caught: M2-C readiness alarms treat plist-on-disk + launchctl-not-loaded as
-# ALARM for every installed agent in the fleet (main pump + siblings).
-SIBLING_POLL_INTERVAL_S = 300
-SIBLING_POLL_TIMERS_RATIONALE = (
-    "postiz-reaper and media-sync remain StartInterval poll-timers (300s): each is a short "
-    "cron-style job (run → exit → sleep until next fire), not a KeepAlive resident. "
-    "Reaper stops idle local Postiz (RAM); media-sync pre-mirrors to R2 (publish path mirrors inline). "
-    "M2-C readiness alarms still flag plist-on-disk + not-loaded for every installed sibling."
-)
-SIBLING_POLL_AGENTS: tuple[dict[str, str | int], ...] = (
-    {"label": "com.fanops.postiz-reaper", "short": "Postiz reaper"},
-    {"label": "com.fanops.media-sync", "short": "media-sync"},
-    {"label": KEEPER_LABEL, "short": "daemon keeper", "poll_interval_s": KEEPER_POLL_INTERVAL_S},
-)
-
-def sibling_plist_path(label: str) -> Path:
-    return Path.home() / "Library/LaunchAgents" / f"{label}.plist"
-
-def keeper_plist_path() -> Path:
-    return sibling_plist_path(KEEPER_LABEL)
-
-def render_keeper_plist(cfg: Config) -> str:
-    """StartInterval poll-timer: fire-and-exit `fanops daemon ensure` every 120s to re-assert main pump."""
-    fb, path = _fanops_bin(), _daemon_path()
-    pl = {
-        "Label": KEEPER_LABEL,
-        "ProgramArguments": [fb, "daemon", "ensure"],
-        "StartInterval": KEEPER_POLL_INTERVAL_S,
-        "RunAtLoad": True,
-        "WorkingDirectory": str(cfg.root),
-        "StandardOutPath": str(cfg.reports / "daemon-keeper.out"),
-        "StandardErrorPath": str(cfg.reports / "daemon-keeper.err"),
-        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
-    }
-    return plistlib.dumps(pl).decode()
-
-def _install_keeper(cfg: Config) -> dict:
-    kp = keeper_plist_path()
-    kp.parent.mkdir(parents=True, exist_ok=True)
-    from fanops.controlio import write_text_atomic
-    write_text_atomic(kp, render_keeper_plist(cfg))
-    return {"keeper_loaded": _load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
-
-def ensure_keeper_loaded(cfg: Config) -> bool:
-    """Re-bootstrap the keeper if its plist is on disk but launchd has dropped it.
-
-    The keeper cannot heal itself: it is the thing that is unloaded. The pump (KeepAlive resident)
-    calls this each loop tick; `ensure()` also calls it so a still-firing keeper is a no-op."""
-    if sys.platform != "darwin":
-        return False
-    kp = keeper_plist_path()
-    if not kp.exists():
-        return False
-    if _confirm_loaded(KEEPER_LABEL):
-        return True
-    return _load_plist(kp, KEEPER_LABEL)
-
-def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | None = None) -> dict:
-    """Readiness for one host-level poll-timer sibling. plist-on-disk + not-loaded = ALARM."""
-    if poll_interval_s is None:
-        for spec in SIBLING_POLL_AGENTS:
-            if spec["label"] == label:
-                poll_interval_s = int(spec.get("poll_interval_s", SIBLING_POLL_INTERVAL_S))
-                break
-    installed = sibling_plist_path(label).exists()
-    try:
-        # `print gui/UID/label` is the loaded probe (`_confirm_loaded`). `list label` is PID-only —
-        # a StartInterval job is loaded-and-idle with no PID, and list has been observed to miss it.
-        loaded = _confirm_loaded(label)
-        pid = None
-        if loaded:
-            r = _launchctl("list", label)
-            pid = _grep_int(r.stdout, "PID") if r.returncode == 0 else None
-    except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
-        _log.warning("sibling_agent_status: launchctl probe %s failed (%s)", label, exc)
-        loaded, pid = False, None
-    if not installed:
-        verdict = "not installed"
-    elif not loaded:
-        verdict = _VERDICT_UNLOADED_ALARM
-    else:
-        verdict = "loaded"
-    iv = poll_interval_s if poll_interval_s is not None else SIBLING_POLL_INTERVAL_S
-    return {"label": label, "short": short or label, "installed": installed, "loaded": loaded, "pid": pid,
-            "verdict": verdict, "poll_interval_s": iv, "alarm": installed and not loaded}
-
-def sibling_agents_status() -> list[dict]:
-    """All known poll-timer siblings — doctor + Studio readiness surfaces (fail-open off-darwin)."""
-    if sys.platform != "darwin":
-        return []
-    out: list[dict] = []
-    for spec in SIBLING_POLL_AGENTS:
-        iv = spec.get("poll_interval_s", SIBLING_POLL_INTERVAL_S)
-        try:
-            out.append(sibling_agent_status(spec["label"], short=str(spec["short"]), poll_interval_s=int(iv)))
-        except Exception as exc:                         # one sibling's probe failing must not sink the rest (fail-open)
-            _log.warning("sibling_agents_status: %s status failed (%s)", spec.get("label"), exc)
-            out.append({"label": spec["label"], "short": spec["short"], "installed": False, "loaded": False,
-                        "verdict": "unknown", "poll_interval_s": int(iv), "alarm": False})
-    return out
-
 
 def status(cfg: Config, *, interval: int = 600) -> dict:
     """Read-only liveness + readiness — PID-primary, thin caller of the one liveness owner. A live
@@ -615,124 +507,36 @@ def stop(cfg: Config, *, remove: bool = False) -> dict:
         out["removed"] = True
     return out
 
-def studio_plist_path() -> Path:
-    return sibling_plist_path(STUDIO_LABEL)
 
-def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
-                        generation: str | None = None) -> str:
-    """KeepAlive resident for the localhost Studio cockpit — direct `fanops studio` exec (keeper-style, no bash wrapper)."""
-    fb, path = _fanops_bin(), _daemon_path()
-    env = {"PATH": path, "HOME": str(Path.home())}
-    if generation:
-        env["FANOPS_STUDIO_GENERATION"] = generation
-    pl = {
-        "Label": STUDIO_LABEL,
-        "ProgramArguments": [
-            fb,
-            "studio",
-            "--managed",
-            "--host",
-            host,
-            "--port",
-            str(port),
-        ],
-        "KeepAlive": {"SuccessfulExit": False},
-        "RunAtLoad": True,
-        "WorkingDirectory": str(cfg.root),
-        "StandardOutPath": str(cfg.reports / "studio.out"),
-        "StandardErrorPath": str(cfg.reports / "studio.err"),
-        "ThrottleInterval": _MIN_INTERVAL,
-        "LSMultipleInstancesProhibited": True,
-        "EnvironmentVariables": env,
-    }
-    return plistlib.dumps(pl).decode()
+# Sibling/keeper poll-timers — extracted to daemon_siblings; re-exported for stable imports.
+from fanops.daemon_siblings import (  # noqa: E402, F401
+    SIBLING_POLL_AGENTS,
+    SIBLING_POLL_INTERVAL_S,
+    SIBLING_POLL_TIMERS_RATIONALE,
+    render_keeper_plist,
+    sibling_agent_status,
+    sibling_agents_status,
+    sibling_plist_path,
+)
 
-def studio_agent_status() -> dict:
-    """Readiness for the Studio KeepAlive resident. plist-on-disk + not-loaded = ALARM (fail-open off-darwin)."""
-    if sys.platform != "darwin":
-        return {"label": STUDIO_LABEL, "short": "Studio", "installed": False, "loaded": False,
-                "pid": None, "verdict": "not installed", "alarm": False}
-    installed = studio_plist_path().exists()
-    try:
-        r = _launchctl("list", STUDIO_LABEL)
-        loaded = r.returncode == 0
-        pid = _grep_int(r.stdout, "PID") if loaded else None
-    except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
-        _log.warning("studio_agent_status: launchctl list %s failed (%s)", STUDIO_LABEL, exc)
-        loaded, pid = False, None
-    if not installed:
-        verdict = "not installed"
-    elif not loaded:
-        verdict = _VERDICT_UNLOADED_ALARM
-    else:
-        verdict = "loaded"
-    return {"label": STUDIO_LABEL, "short": "Studio", "installed": installed, "loaded": loaded, "pid": pid,
-            "verdict": verdict, "alarm": installed and not loaded}
-
-def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
-                   generation: str | None = None, wait: bool = False) -> dict:
-    """Write the Studio KeepAlive plist and load via launchctl. Idempotent: bootout any prior copy first.
-    MOL-728: mint a `generation` nonce into the plist so the resident can prove it is the process launchd
-    just started, not a survivor.
-
-    `wait` picks whether we then BLOCK to confirm it came up — same seam as _redeploy_studio(wait=...).
-    Default False, because installing and verifying are different jobs: fused, every caller paid a ~2min
-    port poll whether it wanted the answer or not, which is a 120s hang for anything that only needed the
-    plist written. `fanops studio --install` passes wait=True; it is the one caller that reports a verdict
-    to a human standing there."""
-    _require_darwin()
-    cfg.reports.mkdir(parents=True, exist_ok=True)
-    
-    # 1. Own the generation invariant (MOL-728)
-    if generation is None:
-        import secrets
-        generation = secrets.token_hex(16)
-
-    # 2. Render and write new plist
-    pp = studio_plist_path()
-    pp.parent.mkdir(parents=True, exist_ok=True)
-    from fanops.controlio import write_text_atomic
-    write_text_atomic(pp, render_studio_plist(cfg, host=host, port=port, generation=generation))
-
-    # 3. Capture old PID — AFTER the write, so a failed/interrupted write never reaches launchctl at all.
-    # (studio_agent_status shells `launchctl list`; reading it is harmless, but install_studio is fail-CLOSED
-    # and its contract is that a write failure touches launchctl zero times. Ordering, not severity.)
-    old_pid = studio_agent_status().get("pid")
-
-    # 4. Load (bootout + bootstrap)
-    loaded = _load_plist(pp, STUDIO_LABEL)
-    if not loaded:
-        return {"studio_loaded": False, "studio_plist": str(pp), "error": "failed to load plist"}
-    
-    # 5. Verify replacement and freshness — only when the caller asked to wait for it. Without `wait`,
-    # `studio_loaded` means what it says: launchd accepted the job. `verdict` is None to say so, rather
-    # than reporting an unproven True.
-    if wait:
-        loaded = _studio_port_answers_within(host, port, expect_gen=generation, old_pid=old_pid)
-
-    return {
-        "studio_loaded": loaded,
-        "studio_plist": str(pp),
-        "host": host,
-        "port": port,
-        "generation": generation,
-        "old_pid": old_pid
-    }
-
-def stop_studio(cfg: Config, *, remove: bool = False) -> dict:
-    """Unload the Studio agent; confirm via launchctl list. remove=True deletes the plist."""
-    _require_darwin()
-    uid = os.getuid()
-    r = _launchctl("bootout", f"gui/{uid}/{STUDIO_LABEL}")
-    if r.returncode != 0:
-        _launchctl("unload", "-w", str(studio_plist_path()))
-    stopped = _launchctl("list", STUDIO_LABEL).returncode != 0
-    out = {"label": STUDIO_LABEL, "plist": str(studio_plist_path()), "stopped": stopped}
-    if remove:
-        try: studio_plist_path().unlink()
-        except OSError: pass
-        out["removed"] = True
-    return out
+# Studio launchd resident — extracted to daemon_studio; re-exported for stable imports.
+from fanops.daemon_studio import (  # noqa: E402, F401
+    STUDIO_DEFAULT_HOST,
+    STUDIO_DEFAULT_PORT,
+    STUDIO_LABEL,
+    _STUDIO_LAUNCH_CMD,
+    _STUDIO_PORT_STEP,
+    _STUDIO_PORT_TRIES,
+    _studio_fingerprint_matches,
+    _studio_get_fingerprint,
+    _studio_port_answers,
+    _studio_port_answers_within,
+    install_studio,
+    render_studio_plist,
+    stop_studio,
+    studio_agent_status,
+    studio_plist_path,
+)
 
 def tail_logs(cfg: Config, n: int = 40) -> str:
     p = cfg.log_path
@@ -817,9 +621,6 @@ _DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
 _KICKSTART_HEARTBEAT_TRIES = 60 # confirm one fresh loop heartbeat after a restart (~2 min at 2s)
 _KICKSTART_HEARTBEAT_STEP = 2.0
-_STUDIO_PORT_TRIES = 60         # confirm the CYCLED Studio answers again (~2 min at 2s)
-_STUDIO_PORT_STEP = 2.0
-_STUDIO_LAUNCH_CMD = f"fanops studio --managed --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
 
 
 def _ondemand_script() -> Path:
@@ -887,74 +688,6 @@ def _heartbeat_fresh_since(cfg: Config, since: datetime, *,
             return True
         time.sleep(step)
     return False
-
-
-def _studio_port_answers(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> bool:
-    """True iff something is ACCEPTING on the Studio port (liveness, not launchd registration —
-    mirrors cli._studio_port_busy). A refused connect is the expected negative, not an error."""
-    try:
-        with socket.create_connection((host or STUDIO_DEFAULT_HOST, port), timeout=1.0):
-            return True
-    except OSError:
-        return False
-
-
-def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT, *,
-                                tries: int = _STUDIO_PORT_TRIES,
-                                step: float = _STUDIO_PORT_STEP,
-                                expect_sha: str | None = None,
-                                expect_gen: str | None = None,
-                                old_pid: int | None = None) -> bool:
-    """Poll the Studio port until it ACCEPTS, bounded — the post-RESTART form of _studio_port_answers.
-    MOL-728 verifies replacement (new PID != old_pid) and freshness (sha + generation) on top.
-
-    LIVENESS and FRESHNESS are polled SEPARATELY. Fused in one loop they broke three ways: a healthy
-    resident whose /_fingerprint was unreachable could never return True, so `fanops up` called a
-    SERVING cockpit DOWN and burned the full ~2min budget doing it; the port probe kept firing long
-    after the port was up, because the loop was really waiting on the fingerprint; and any test of the
-    polling had to stub the fingerprint to get past it.
-
-    An unreachable endpoint is absence of evidence, not evidence of stale code — it does NOT fail here.
-    A REACHABLE endpoint that disagrees is evidence, and it does."""
-    for _ in range(max(1, tries)):
-        if _studio_port_answers(host, port):
-            break
-        time.sleep(step)
-    else:
-        return False                             # never came back inside the budget
-    if expect_sha is None and expect_gen is None and old_pid is None:
-        return True                              # nothing was claimed, so nothing to disprove
-    # ONE read, no retry loop: kickstart -k SIGKILLs the old resident, so whatever is accepting on the
-    # port is already the new process, and create_app registers every route before app.run binds.
-    fp = _studio_get_fingerprint(host, port)
-    if fp is None:
-        return True                              # unreachable -> unproven, NOT failed
-    return ((expect_sha is None or fp.get("sha") == expect_sha)
-            and (expect_gen is None or fp.get("generation") == expect_gen)
-            and (old_pid is None or fp.get("pid") != old_pid))
-
-def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict | None:
-    """MOL-728: probe the resident's /_fingerprint endpoint. Returns the JSON payload or None on error."""
-    import http.client, json, logging
-    from fanops.errors import fail_open
-    conn = http.client.HTTPConnection(host or STUDIO_DEFAULT_HOST, port, timeout=2.0)
-    try:
-        # DEBUG, not warning: _studio_port_answers_within polls this while the resident is still
-        # booting, so connection-refused here is the EXPECTED steady state, not an incident.
-        with fail_open("daemon._studio_get_fingerprint", log=logging.getLogger("fanops.daemon").debug):
-            conn.request("GET", "/_fingerprint")
-            resp = conn.getresponse()
-            if resp.status != 200:
-                return None
-            return json.loads(resp.read().decode())
-    finally:
-        conn.close()
-    return None
-
-def _studio_fingerprint_matches(expected: str, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> bool:
-    """Thin compatibility alias for _redeploy_studio."""
-    fp = _studio_get_fingerprint(host, port)
-    return bool(fp and fp.get("sha") == expected)
 
 
 def _version_signal(cfg: Config) -> tuple[str | None, str]:
@@ -1190,7 +923,8 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
         return False
     
     if not wait:
-        return _studio_port_answers()
+        import fanops.daemon as _daemon
+        return _daemon._studio_port_answers()
         
     # Freshness verification: SHA on disk must match serving code.
     # PID replacement: serving PID must differ from old_pid.
@@ -1203,7 +937,8 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
         pl = plistlib.loads(studio_plist_path().read_bytes())
         expect_gen = pl.get("EnvironmentVariables", {}).get("FANOPS_STUDIO_GENERATION")
     
-    return _studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
+    import fanops.daemon as _daemon
+    return _daemon._studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
 
 
 def _kickstart_studio_if_present(cfg: Config) -> None:
@@ -1223,13 +958,14 @@ def _plane_studio(cfg: Config) -> dict:
     ONCE there: nothing was restarted) and print the exact launch command
     (in .claude/launch.json). Either way Studio never blocks `up`'s READY (report-only gate posture
     unchanged) — the difference is `fanops up` now cycles Studio instead of just printing a command."""
+    import fanops.daemon as _daemon
     if studio_plist_path().exists():
         if _redeploy_studio(cfg, wait=True):
             return {"plane": "studio", "ok": True, "report_only": True,
                     "detail": f"cycled onto current code; answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
         return {"plane": "studio", "ok": False, "report_only": True,
                 "detail": f"restarted but not answering on {STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT} after {int(_STUDIO_PORT_TRIES * _STUDIO_PORT_STEP)}s — check 07_reports/studio.err"}
-    if _studio_port_answers():
+    if _daemon._studio_port_answers():
         return {"plane": "studio", "ok": True, "report_only": True,
                 "detail": f"answering at http://{STUDIO_DEFAULT_HOST}:{STUDIO_DEFAULT_PORT}"}
     return {"plane": "studio", "ok": False, "report_only": True,

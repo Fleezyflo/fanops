@@ -7,6 +7,7 @@
     ],
     "ledger_transaction_sites": [
       "fanops.canary",
+      "fanops.cli_run",
       "fanops.cli",
       "fanops.ledger_wipe",
       "fanops.overlay_reburn",
@@ -53,6 +54,7 @@
     ],
     "subprocess_sites": [
       "fanops.canary",
+      "fanops.canary_baseline",
       "fanops.clip",
       "fanops.clip_ffmpeg",
       "fanops.daemon",

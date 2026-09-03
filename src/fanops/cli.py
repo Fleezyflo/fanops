@@ -3,13 +3,12 @@ advance() lives in pipeline.py; track/adjust close the feedback loop (FIX F04); 
 the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run loops
 respond+advance until stable for unattended operation."""
 from __future__ import annotations
-import argparse, json, subprocess, sys, time
-from datetime import datetime, timezone
-import fanops
+import json, subprocess, sys, time
 from fanops.config import Config
 from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError, fail_open
-from fanops.escalation import EscalationPosture, decide
+from fanops.escalation import EscalationPosture, decide  # cmd_run loop spine only
+from fanops import cli_run
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import ClipState, PostState, ErrorKind
@@ -23,25 +22,12 @@ from fanops.reconcile import reconcile_due
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
-from fanops.timing_bias import apply_timing_bias
+from fanops.timing_bias import apply_timing_bias  # noqa: F401  # re-export for tests / cli_run patch surface
+
 from fanops import autopilot, daemon
 from fanops.log import get_logger
-
-def _gates_blocked_note(s) -> str | None:
-    """A LOUD note when the run loop ends with gates still awaiting — distinguishes 'all blocked'
-    from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
-    caller can `if (note := ...)` unconditionally."""
-    aw = (s or {}).get("awaiting", {})
-    # WS2 (audit x-f2): EVERY agent gate blocks downstream work — moments (pick) blocks the hook gate,
-    # moment_hooks blocks the clip/caption stages, captions blocks crosspost. Iterate the awaiting dict itself
-    # (built from pipeline.GATE_KINDS) so a stuck gate (the bug) — or any future gate — raises the same loud
-    # signal; a hardcoded subset let a wedged gate read as converged. (P11/MOL-152: moment_casting is gone.)
-    open_gates = {k: v for k, v in aw.items() if v}
-    if open_gates:
-        detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
-        return (f"gates STILL BLOCKED after the run loop: {detail} — the responder is not clearing "
-                f"them (rate limit? repeated validation failures? run `fanops doctor`)")
-    return None
+from fanops.cli_parser import build_parser
+from fanops.cli_parser import _parse_segments  # noqa: F401  # re-export for tests
 
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
@@ -150,44 +136,6 @@ def cmd_track(cfg: Config, window: str) -> int:
     write_digest(Ledger.load(cfg), cfg)              # digest read OUTSIDE the lock
     print(f"tracked; analyzed={analyzed} series_rows+={added} degraded={deg}")
     return 0
-
-def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
-    # E1 post-loop learning pass, extracted from cmd_run for testability AND to close the same
-    # lost-update window cmd_track closes (ECC-review fix #1): the metrics FETCH (up to ~30s network)
-    # runs OUTSIDE the ledger lock; only classify/amplify/retire run inside a tight transaction.
-    # Holding the flock across the network call serialized any concurrent advance/ingest behind it.
-    # Snapshot the published submission_ids FIRST (postiz/zernio read per-post analytics, so the client
-    # must know which ids to fetch).
-    # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
-    led0 = Ledger.load(cfg)
-    pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
-                      if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
-    with Ledger.transaction(cfg) as led:
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
-        r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
-        # BOTH learn-pass actuators carry an operator-INTENT flag, default OFF, and both leave a
-        # breadcrumb whichever way they go. AMPLIFY MINTS NEW WORK — a winner re-opens a moment
-        # request on its source, producing new moments -> clips -> posts. RETIRE DESTROYS — a loser's
-        # clip is suppressed, its moment too when no live sibling remains, and every unshipped post of
-        # that lineage is rewritten to `retired`. Both ran on `cfg.is_live_backend` alone, so going
-        # live to PUBLISH switched on an autonomous generator AND an autonomous destroyer. NOTE the
-        # validation freeze is deliberately absent: nothing ever writes metrics_confirmed False, so
-        # once the first real metric auto-stamps it `learning_validated` can never re-bind — a
-        # condition that cannot bind is theatre, not a gate. With both flags OFF this pass is
-        # read-only: pull metrics, classify, log the counts, write nothing.
-        if cfg.learn_amplify:
-            before = {sid: int(s.meta.get("amplify_count", 0)) for sid, s in led.sources.items()}
-            led = amplify(led, cfg, r["winners"])
-            fired = [sid for sid, s in led.sources.items() if int(s.meta.get("amplify_count", 0)) > before.get(sid, 0)]
-            get_logger(cfg)("learn", "-", "amplified", sources=len(fired), winners=len(r["winners"]))
-        else:
-            get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]))
-        if cfg.learn_retire:
-            led = retire(led, r["losers"])
-            get_logger(cfg)("learn", "-", "retired", losers=len(r["losers"]))
-        else:
-            get_logger(cfg)("learn", "-", "retire_skipped", losers=len(r["losers"]))
 
 def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile against the backend. reconcile_due
@@ -465,28 +413,6 @@ def cmd_resolve(cfg: Config, args) -> int:
             else:
                 led.set_post_state(args.post_id, PostState.failed, error_kind=ErrorKind.unknown)
     print(f"resolved {args.post_id} -> {args.status}"); return 0
-
-
-def _parse_segments(s: str) -> list:
-    # argparse `type=` callback: a malformed value raises ArgumentTypeError, so argparse exits 2 with a clean
-    # usage message instead of letting float() throw an uncaught traceback. Non-finite bounds (nan/inf) are
-    # rejected HERE so they can never reach the identity-bearing canonical JSON (canary Phase 8).
-    import math as _math
-    out = []
-    for part in (s or "").split(","):
-        part = part.strip()
-        if not part: continue
-        a, sep, b = part.partition("-")
-        if not sep:
-            raise argparse.ArgumentTypeError(f"segment {part!r} must be 't0-t1' (dash-separated seconds)")
-        try:
-            a_f, b_f = float(a), float(b)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"segment {part!r} has non-numeric bounds")
-        if not (_math.isfinite(a_f) and _math.isfinite(b_f)):
-            raise argparse.ArgumentTypeError(f"segment {part!r} bounds must be finite (no nan/inf)")
-        out.append((a_f, b_f))
-    return out
 
 
 def cmd_canary(cfg: Config, args) -> int:
@@ -869,215 +795,9 @@ def cmd_autopilot(cfg: Config, args) -> int:
     print("  go-live (separate, when you want posts to ship): self-host Postiz (FANOPS_POSTER=postiz) OR `fanops publish-queue` by hand")
     return 0 if report_is_healthy(rep) else 1
 
-def _http_url(s: str) -> str:
-    """argparse type for `pull url` (stage-4 audit): the url is handed to yt-dlp verbatim, so
-    validate the scheme at the boundary — file:///generic schemes and flag-lookalike args
-    (argument injection into yt-dlp) die with the standard usage error, never reach a subprocess."""
-    if not s.startswith(("http://", "https://")):
-        raise argparse.ArgumentTypeError(f"url must be http(s)://, got {s[:60]!r}")
-    return s
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="fanops")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status"); sub.add_parser("ingest"); sub.add_parser("digest"); sub.add_parser("respond")
-    sub.add_parser("pause", help="stop the unattended pump (survives restarts; operator verbs still run)"); sub.add_parser("resume", help="clear the pause marker")
-    p_reconcile = sub.add_parser("reconcile")
-    p_reconcile.add_argument("--report-terminals", action="store_true",
-                             help="S04: preview which parked posts the (state, age) rule WOULD escalate "
-                                  "submitting->needs_reconcile — reads only, writes nothing (to the log)")
-    p_reframe = sub.add_parser("reframe", help="classify (--dry-run) or migrate (--apply) the clip corpus framing")
-    p_reframe.add_argument("--dry-run", action="store_true",
-                           help="READ-ONLY classification; writes only to a scratch root")
-    p_reframe.add_argument("--limit", type=int, help="classify at most N clips (a PARTIAL run: go/no-go is suppressed)")
-    p_reframe.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL writes land here.")
-    p_reframe.add_argument("--json", action="store_true", help="emit the full manifest as JSON")
-    # ---- MUTATION. Never the default; mutually exclusive with --dry-run; every verb needs an explicit run id.
-    p_reframe.add_argument("--apply", action="store_true",
-                           help="MUTATE: reframe the ELIGIBLE clips of a reviewed full-corpus manifest (needs --manifest)")
-    p_reframe.add_argument("--manifest", help="path to the REVIEWED full-corpus dry-run manifest (--apply plans from it)")
-    p_reframe.add_argument("--run-id", help="the migration run id (immutable; names 07_reports/reframe/<run_id>/)")
-    p_reframe.add_argument("--source", help="restrict --apply to ONE source id (the pilot)")
-    p_reframe.add_argument("--plan-only", action="store_true", help="--apply: write the plan and stop before mutating")
-    p_reframe.add_argument("--status", metavar="RUN_ID", help="what a run actually did, re-read from disk")
-    p_reframe.add_argument("--resume", metavar="RUN_ID", help="resume a run from its immutable plan + journal")
-    p_reframe.add_argument("--rollback", metavar="RUN_ID", help="restore the original bytes (whole run, or --clip)")
-    p_reframe.add_argument("--clip", metavar="CLIP_ID", help="--rollback: restore just this clip")
-    p_reframe.add_argument("--cleanup", metavar="RUN_ID", help="delete a terminal run's backups (explicit, refused otherwise)")
-    p_or = sub.add_parser("overlay-reburn", help="recut awaiting-only Review clips in place (ass-only). Reuses reframe.lock; stale lock = operator unlink. fanops reframe --status will not understand or_ run dirs.")
-    p_or.add_argument("--dry-run", action="store_true", help="READ-ONLY classify (the default)")
-    p_or.add_argument("--apply", action="store_true", help="MUTATE: stage-then-replace eligible clips (pauses the pump)")
-    p_or.add_argument("--limit", type=int, help="classify/apply at most N awaiting clips")
-    p_or.add_argument("--scratch", help="scratch root (default: a fresh temp dir). ALL prove writes land here.")
-    p_rec = sub.add_parser("recover", help="delivery recovery read-models")
-    rec_sub = p_rec.add_subparsers(dest="recover_cmd", required=True)
-    rec_sub.add_parser("audit", help="read-only live/inflight/failed bucket table")
-    p_adv = sub.add_parser("advance"); p_adv.add_argument("--base-time", default="2026-06-02T18:00:00Z")
-    p_pull = sub.add_parser("pull"); p_pull.add_argument("url", type=_http_url)
-    p_trk = sub.add_parser("track"); p_trk.add_argument("--window", default="30d")
-    sub.add_parser("map-media", help="Leg 2: resolve each live IG post's Graph media_id from its permalink (read-only; instagram_basic)")
-    sub.add_parser("verify-live", help="MOL-113: per-object liveness report over the confirm-post-live seam (read-only; ledger untouched)")
-    p_adj = sub.add_parser("adjust"); p_adj.add_argument("--winner-pct", type=float, default=0.3)
-    p_adj.add_argument("--retire-pct", type=float, default=0.2); p_adj.add_argument("--lift-floor", type=float, default=20.0)
-    p_gc = sub.add_parser("gc"); p_gc.add_argument("--keep-days", type=int, default=None)   # None -> cfg.gc_keep_days
-    sub.add_parser("amplify-variants")     # variant-gated amplification (v3); inert unless flag on
-    sub.add_parser("p4-bias")              # P4(b) cross-account reach dim-bias; inert unless flag on + validated
-    p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
-    p_res.add_argument("status", choices=["published", "failed", "analyzed", "retired"]); p_res.add_argument("--url", default=None)
-    p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
-    p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
-    p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript
-    p_rs.add_argument("--force", action="store_true", help="MOL-471: purge caches + rewind terminal sources to catalogued (requires --from-stage catalogued)")
-    p_ret = sub.add_parser("retire-source", help="preview or execute source retire (cascade-deletes unshipped media; snapshot-gated)")
-    p_ret.add_argument("source_id")
-    p_ret.add_argument("--i-understand-this-deletes-unshipped-media",
-                       dest="i_understand_this_deletes_unshipped_media", action="store_true",
-                       help="execute retire-source (requires a verified-restorable pre-retire snapshot)")
-    p_prom = sub.add_parser("promote-source"); p_prom.add_argument("source_id")
-    p_rm = sub.add_parser("retry-metrics"); p_rm.add_argument("post_id")
-    p_disc = sub.add_parser("discover"); p_disc.add_argument("folder")
-    sub.add_parser("intake")
-    p_comp = sub.add_parser("compose", help="produced clip: intro/outro brand cards + dynamic title + crossfades (MoviePy; needs .[compose])")
-    p_comp.add_argument("clip_id")
-    p_comp.add_argument("--title", default=None, help="on-screen title (default: the clip's hook)")
-    p_comp.add_argument("--intro", default=None, help="intro card text (default: artist name; pass '' to disable)")
-    p_comp.add_argument("--outro", default=None, help="outro card text, e.g. an @handle (default: none)")
-    p_doctor = sub.add_parser("doctor", help="read-only first-run health screen (toolchain/accounts/key/go-live readiness)")
-    sub.add_parser("config", help="introspect every env var (type, default, effective value, source, Studio-settable)")
-    p_doctor.add_argument("--fix-routing", action="store_true",
-                          help="(R2) READ-ONLY: list every accounts.json (handle, platform) routing-drift state with a proposed fix")
-    p_doctor.add_argument("--json", action="store_true", help="machine-readable health JSON (exit 1 when unhealthy)")
-    p_init = sub.add_parser("init", help="walk a fresh checkout to doctor-clean ready-to-go-live")
-    p_init.add_argument("--postiz-url", default="", help="Postiz instance URL (optional; connects when set)")
-    p_init.add_argument("--postiz-key", default="", help="Postiz public API key (optional)")
-    p_init.add_argument("--go-live", action="store_true", help="optionally flip live via golive.go_live (all gates apply)")
-    p_init.add_argument("--validate-learning", action="store_true", help="optionally run golive.validate_learning")
-    p_health = sub.add_parser("health", help="runtime dependency health (docker/postiz/zernio) from the unified model")
-    p_health.add_argument("--json", action="store_true", help="machine-readable JSON (exit 1 when unhealthy)")
-    sub.add_parser("publish-queue", help="list queued posts to publish BY HAND (manual / no-service free path)")
-    p_posts = sub.add_parser("posts", help="post-lifecycle utilities")
-    posts_sub = p_posts.add_subparsers(dest="posts_cmd", required=True)
-    p_rc = posts_sub.add_parser("recaption", help="re-run the ORIGINAL caption pipeline over the backlog "
-                                "(awaiting_approval + non-imminent queued posts); default = read-only dry-run listing")
-    p_rc.add_argument("--apply", action="store_true", help="MUTATE: request->answer->ingest->sync per seed clip; "
-                      "snapshot first; resumable via 00_control/.recaption_progress.json")
-    p_rc.add_argument("--dry-run", action="store_true", help="READ-ONLY target listing (the default)")
-    p_rc.add_argument("--limit", type=int, default=None,
-                      help="max seed clips after --account filter (positive int; omit = all)")
-    p_rc.add_argument("--account", default=None,
-                      help="exact handle filter; unknown handle lists 0")
-    posts_sub.add_parser("census-retired", help="census: posts under a RETIRED lineage "
-                         "(read-only; suppression is derived, never written; "
-                         "renamed from reconcile-retired)")
-    p_audit = sub.add_parser("audit", help="(R3) operator audit-trail commands")
-    audit_sub = p_audit.add_subparsers(dest="audit_cmd")
-    p_at = audit_sub.add_parser("tail", help="print the last N lines of 00_control/studio_audit.log")
-    p_at.add_argument("-n", type=int, default=20)
-    p_bsr = sub.add_parser("bulk-send-to-review", help="(R3) revert posts to awaiting_approval; clears scheduled_time/public_url/metrics/published_at")
-    p_bsr.add_argument("post_ids", nargs="+")
-    p_bsr.add_argument("--reason", required=True, help="operator intent recorded in the audit (e.g. bad_batch_revert)")
-    p_studio = sub.add_parser("studio", help="local content-cockpit web UI (Review/Schedule/Lift)")
-    p_studio.add_argument("--host", default="127.0.0.1")   # localhost only; no auth in v1
-    p_studio.add_argument("--port", type=int, default=8787)
-    p_studio.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
-    p_studio.add_argument(
-        "--dev-reload",
-        action="store_true",
-        help="UNSAFE DEV ONLY: run Studio in the foreground with automatic source reload",
-    )
-    p_studio.add_argument(
-        "--app",
-        action="store_true",
-        help="open a native window onto the already-running Studio (does not start the server)",
-    )
-    st_grp = p_studio.add_mutually_exclusive_group()
-    st_grp.add_argument("--install", action="store_true", help="install + load as launchd KeepAlive resident (macOS)")
-    st_grp.add_argument("--uninstall", action="store_true", help="unload the launchd Studio agent and remove its plist")
-    p_cut = sub.add_parser("cutover", help="live-cutover validation harness — prove the pipeline against a REAL Postiz backend")
-    cut_sub = p_cut.add_subparsers(dest="cutover_action", required=True)
-    cut_sub.add_parser("auth", help="step 1: prove POSTIZ_API_KEY authenticates (read-only)")
-    p_cpost = cut_sub.add_parser("post", help="step 2: publish ONE 2099-scheduled probe to a THROWAWAY account")
-    p_cpost.add_argument("account_id")
-    p_cpost.add_argument("--i-understand-this-posts-to-a-real-account", dest="confirmed", action="store_true")
-    p_cmet = cut_sub.add_parser("metrics", help="step 3: pull the real row + reconcile fields vs track._W")
-    p_cmet.add_argument("submission_id")
-    p_clift = cut_sub.add_parser("lift", help="step 4: compute one real lift_score from the captured row")
-    p_clift.add_argument("submission_id")
-    p_wipe = sub.add_parser("wipe", help="preview or execute the ledger fall-away (unbacked cache removal; snapshot-gated)")
-    p_wipe.add_argument("--i-understand-this-clears-unshipped-content", dest="i_understand_this_clears_unshipped_content", action="store_true",
-                        help="execute scoped wipe (keeps shipped history; requires pre-wipe snapshot)")
-    p_wipe.add_argument("--include-shipped-history", dest="include_shipped_history", action="store_true",
-                        help="total wipe mode — remove shipped history too (requires both total confirm flags)")
-    p_wipe.add_argument("--i-understand-this-erases-shipped-history", dest="i_understand_this_erases_shipped_history", action="store_true",
-                        help="confirm total wipe — must be paired with --include-shipped-history")
-    p_purge = sub.add_parser("purge", help="scoped purge: days+origins dual-facet agreement; plan-only by default; deletes rows AND clip media")
-    p_purge.add_argument("--day", action="append", default=[], metavar="YYYY-MM-DD",
-                         help="ISO day facet over Post.created_at (repeatable; required with --origin)")
-    p_purge.add_argument("--origin", action="append", default=[], metavar="ORIGIN",
-                         help="MomentOrigin member facet (repeatable; required with --day): operator|machine|machine_inferred|unknown")
-    p_purge.add_argument("--force-live", action="append", default=[], dest="force_live", metavar="POST_ID",
-                         help="enumerated live-guard override for a specific post id (repeatable; never a bare boolean)")
-    p_purge.add_argument("--i-understand-this-permanently-deletes-rows-and-media",
-                         dest="i_understand_this_permanently_deletes_rows_and_media", action="store_true",
-                         help="execute the purge (snapshot-gated; irreversible for media)")
-    p_restore = sub.add_parser("restore", help="restore the ledger from a pre-wipe snapshot (the reversible half of `fanops wipe`)")
-    p_restore.add_argument("snapshot_path", help="path to a ledger.snapshot.*.sqlite (the 'snapshot' path printed by `fanops wipe`)")
-    p_prb = sub.add_parser("paths-rebase", help="(R1) rebase stale absolute media paths after FANOPS_ROOT move")
-    p_prb.add_argument("--apply", action="store_true", help="snapshot + rewrite ledger/manifests (default: dry-run counts only)")
-    p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
-    learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
-    learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
-    p_hash = sub.add_parser("hashtags", help="source-lock measurement cache (Safari play_count)")
-    hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
-    hash_sub.add_parser(
-        "refresh",
-        help="remesure sidecar pile and lock names now via Safari",
-        description="remesure sidecar pile and lock names now via Safari",
-    )
-    hash_sub.add_parser(
-        "scrape-login",
-        help="open Safari on Instagram and promote the device envelope",
-        description="open Safari on Instagram and promote the device envelope",
-    )
-    hash_sub.add_parser(
-        "discover",
-        help="report each source lock (read-only, zero network)",
-        description="report each source lock (read-only, zero network)",
-    )
-    p_lever = sub.add_parser("lever", help="persona lever reference docs (generated from the live registry)")
-    lever_sub = p_lever.add_subparsers(dest="lever_cmd", required=True)
-    lever_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
-    p_thresh = sub.add_parser("threshold", help="selection threshold reference docs (generated from live constants)")
-    thresh_sub = p_thresh.add_subparsers(dest="thresh_cmd", required=True)
-    thresh_sub.add_parser("docs", help="regenerate docs/LEVERS.md + docs/LEVER-THRESHOLDS.md")
-    p_run = sub.add_parser("run"); p_run.add_argument("--base-time", default="2026-06-02T18:00:00Z")
-    p_run.add_argument("--loop", action="store_true", help="resident outer loop: re-run each --interval with a fresh base-time")
-    p_run.add_argument("--interval", default="10m", help="sleep between --loop iterations (e.g. 10m, 90s)")
-    p_dae = sub.add_parser("daemon", help="run fanops unattended via launchd (survives logout, restarts on crash)")
-    dae_sub = p_dae.add_subparsers(dest="dae_cmd", required=True)
-    p_dins = dae_sub.add_parser("install", help="install + load the launchd agent (macOS)")
-    p_dins.add_argument("--interval", default="10m")
-    dae_sub.add_parser("status", help="is the agent loaded + actually firing (heartbeat)?")
-    dae_sub.add_parser("ensure", help="re-assert main daemon load if absent (keeper hook)")
-    p_dstop = dae_sub.add_parser("stop", help="unload the launchd agent"); p_dstop.add_argument("--remove", action="store_true")
-    p_dlog = dae_sub.add_parser("logs", help="tail the run log"); p_dlog.add_argument("-n", type=int, default=40)
-    p_auto = sub.add_parser("autopilot", help="one command -> autonomous: install the supervising daemon + report readiness (doctor)")
-    p_auto.add_argument("--interval", default="10m"); p_auto.add_argument("--no-daemon", action="store_true")
-    p_up = sub.add_parser("up", help="one-step self-healing bring-up: git/Postiz/daemon/Studio -> one READY/NOT-READY verdict")
-    p_up.add_argument("--no-restart", action="store_true", help="skip the daemon freshness kickstart (leave a running daemon on its current code)")
-    p_can = sub.add_parser("canary", help="isolated single-lineage publish-path probe (prepare/discard/cancel + baseline/compare)")
-    can_sub = p_can.add_subparsers(dest="canary_cmd", required=True)
-    p_cprep = can_sub.add_parser("prepare", help="mint ONE isolated canary Source+Moment+Clip+Batch (0 Posts, 0 Renders)")
-    p_cprep.add_argument("--media", required=True); p_cprep.add_argument("--handle", default="fanops_canary")
-    p_cprep.add_argument("--run-label", default=None); p_cprep.add_argument("--start", required=True)
-    p_cprep.add_argument("--end", default=None); p_cprep.add_argument("--segments", default=None, type=_parse_segments, help='"t0-t1,t2-t3"')
-    p_cprep.add_argument("--caption", required=True); p_cprep.add_argument("--hashtag", action="append", default=[])
-    p_cprep.add_argument("--hook", default=None); p_cprep.add_argument("--plan-only", action="store_true")
-    p_cdisc = can_sub.add_parser("discard", help="pre-mint only: retire the canary lineage, close its batch"); p_cdisc.add_argument("run_id")
-    p_ccanc = can_sub.add_parser("cancel", help="retire an awaiting/queued canary Post before any network acceptance")
-    p_ccanc.add_argument("post_id"); p_ccanc.add_argument("--reason", required=True)
-    p_cbase = can_sub.add_parser("baseline", help="capture a read-only CANDIDATE multilayer posts baseline"); p_cbase.add_argument("--output", required=True)
-    p_ccmp = can_sub.add_parser("compare", help="compare the live ledger against a baseline manifest (non-zero exit on mismatch)"); p_ccmp.add_argument("--baseline", required=True)
+    parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     cfg = Config()
     load_dotenv(cfg.root / ".env", override=True)   # .env is operator truth — beat stale shell env (Studio restart)
@@ -1092,7 +812,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     try:
-        return _dispatch(cfg, args)
+        from fanops.cli_dispatch import dispatch
+        return dispatch(args, cfg)
     except ControlFileError as e:
         # A control file (ledger.json/accounts.json) is malformed — almost always a hand-edit
         # typo. Print the one-line reason and exit 2 (distinct from the run-halt/usage exit 1)
@@ -1220,154 +941,31 @@ def _check_preflight(cfg: Config) -> int:
     return 0
 
 
-def _fresh_run_base_time() -> str:
-    """UTC now as --base-time (matches a per-iteration resident loop advance)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _gates_blocked_note(s) -> str | None:
+    return cli_run.gates_blocked_note(s)
 
+def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
+    return cli_run.learn_pass(cfg, window=window)
+
+def _fresh_run_base_time() -> str:
+    return cli_run.fresh_run_base_time()
 
 def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
-    """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
-    from fanops.fanops_hashtags import reset_safari_tick_slot
-    from fanops.pipeline_run import paused, run_lease
-    reset_safari_tick_slot()
-    # T1.3: the operator brake, checked BEFORE the lease is taken — a paused pump must not even
-    # contend for the run flock, so `fanops advance` by hand stays unblocked while paused. Returning a
-    # DICT (not None) is load-bearing twice over: the --loop path still emits its heartbeat (a silent
-    # pause would freeze the recorded code SHA and the keeper would SIGTERM-kickstart every ~720s after
-    # any code change), and the one-shot path exits 0 because a pause is not a failure. `awaiting: {}`
-    # keeps _gates_blocked_note quiet — no open gates, so it returns None.
-    if paused(cfg):
-        get_logger(cfg)("run", "-", "paused")
-        return {"paused": True, "awaiting": {}}
-    # unattended: respond to gates, advance, repeat until no progress.
-    # BOTH the responder and advance() are inside the guard: advance()'s deterministic
-    # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
-    # response that fails validation can raise) and crosspost/publish run outside those
-    # guards, and publish_due RE-RAISES on fatal auth (bad key/401) by design. So a raise
-    # from either degrades cleanly here (log one line + stop) rather than crashing the
-    # unattended cron loop with a traceback.
-    s = None
-    with run_lease(cfg):
-        for _ in range(10):
-            try:
-                get_responder(cfg).answer_pending(cfg)
-                s = advance(cfg, base_time=base_time)
-            except Exception as e:
-                # Progress spine: converge fault → NONZERO (None → cmd_run exit 1; loop skips tick).
-                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
-                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                if decide("toolchain_run", 0) is EscalationPosture.nonzero:
-                    return None
-                raise
-            # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
-            # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
-            if not any(s["awaiting"].values()):
-                break
-    # B2 / MOL-960: gates still awaiting after converge → LOUD stderr + run.log; cmd_run maps this
-    # to exit 1 (intentional pause keeps awaiting={} so exit stays 0).
-    if (note := _gates_blocked_note(s)):
-        print(note, file=sys.stderr)
-        get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
-    # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
-    # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
-    # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
-    # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
-    # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
-    if cfg.is_live_backend:
-        try:
-            _learn_pass(cfg)
-        except AuthError as e:
-            # A bad/rotated key is actionable, not a transient 5xx — surface it VISIBLY on stderr +
-            # a distinct breadcrumb, but keep exit 0: the unattended run SKIPS the learn pass cleanly,
-            # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
-            print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
-            get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
-        except Exception:
-            with fail_open("cli._run_once learn degrade:"):
-                raise
-    # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
-    # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
-    # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
-    # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
-    # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
-    if cfg.variant_amplify and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_variant_amplify(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once variant_amplify degrade:"):
-                raise
-    # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
-    # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
-    # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
-    # the live-backend+key guard; apply_p4_dim_bias is amplify-only AND stays INERT until cutover
-    # validation (validation_gate.learning_validated), so wiring it in is fail-SAFE. Own try/except —
-    # a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-    if cfg.p4_dim_bias and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_p4_dim_bias(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once p4_dim_bias degrade:"):
-                raise
-    # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
-    # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
-    # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
-    # bias-only (writes ONE prior file, never retires) AND validation-frozen, so wiring it in is fail-SAFE.
-    # Own try/except — a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-    if cfg.timing_bias and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_timing_bias(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once timing_bias degrade:"):
-                raise
-    # HV1-PR4: vocab expand is not called from the run loop (it restocked persona search seeds).
-    # Module stays on disk; the tick remesures sidecar pile∪lock names only.
-    # WS2: remesure sidecar names at most once per cadence (12h), gated on last_complete_pass (not
-    # file mtime) so a throttled write cannot buy silence. NOT gated on is_live_backend — only on
-    # scrape session, handled inside the helper. Its OWN try/except; refresh_store_if_due never
-    # raises. Non-fresh skips log (MOL-525): a missing scrape session must not look identical to a
-    # correctly-throttled tick.
-    try:
-        from fanops.fanops_hashtags import refresh_store_if_due
-        r = refresh_store_if_due(cfg)
-        if r.get("aborted"):     # no_scrape / freeze / busy: report the abort LOUDLY, never a false
-                                 # store_refreshed (a skipped remesure is not a refresh)
-            get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
-        elif r.get("refreshed"):
-            get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
-        elif r.get("reason") and r.get("reason") != "fresh":
-            get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
-    except Exception:
-        with fail_open("cli._run_once hashtags refresh degrade:"):
-            raise
-    # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
-    try:
-        from fanops.fanops_account_stats import refresh_account_stats_if_due
-        r = refresh_account_stats_if_due(cfg)
-        if r.get("refreshed"):
-            get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
-    except Exception:
-        with fail_open("cli._run_once account_stats refresh degrade:"):
-            raise
-    return s
-
-
-_RUNNING_CODE_SHA: tuple[str | None] | None = None   # process-lifetime snapshot; see _running_code_sha
+    """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr).
+    Sidecar remesure (refresh_store_if_due) runs inside cli_run.cmd_run_pass."""
+    outcome = cli_run.cmd_run_pass(cfg, base_time)
+    if outcome.halt_stderr:
+        print(outcome.halt_stderr, file=sys.stderr)
+    if outcome.gates_stderr:
+        print(outcome.gates_stderr, file=sys.stderr)
+    if outcome.learn_skip_stderr:
+        print(outcome.learn_skip_stderr, file=sys.stderr)
+    if outcome.reraise:
+        raise outcome.reraise
+    return outcome.status
 
 def _running_code_sha(cfg: Config) -> str | None:
-    """The git-HEAD SHA this pump PROCESS was loaded from, snapshotted ONCE at the first heartbeat and
-    cached for the process's life. This is deliberately NOT re-read per tick: _version_signal reads the
-    checkout's CURRENT on-disk HEAD, so after an operator `git pull` it would report the NEW disk SHA
-    while this process still runs the OLD code in memory — which would make the keeper's drift check
-    (heartbeat `code` vs disk SHA) ALWAYS equal and adoption NEVER fire. A start-of-process snapshot is
-    the running-code truth the keeper needs: it stays the OLD SHA until a restart loads the new code and
-    a fresh process snapshots the new SHA (clearing the drift). Also spares a `git rev-parse` per tick."""
-    global _RUNNING_CODE_SHA
-    if _RUNNING_CODE_SHA is None:
-        _RUNNING_CODE_SHA = (daemon._version_signal(cfg)[0],)
-    return _RUNNING_CODE_SHA[0]
+    return cli_run.running_code_sha(cfg)
 
 def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
@@ -1376,22 +974,57 @@ def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     that mutation is the load-bearing signal, not cosmetic. Printed to stdout AND appended to
     cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert.
     `origin='loop'` marks resident --loop ticks; daemon.status ignores heartbeats without it."""
-    hb = {
-        "heartbeat": datetime.now(timezone.utc).isoformat(),
-        "fanops_version": fanops.__version__,
-        "published_in_run": s.get("published_in_run", 0),
-        # UNCONDITIONAL, unlike `origin`: a monitor telling "paused" from "dead" needs the key on EVERY
-        # line — a key present only when true makes its absence ambiguous between "not paused" and "old code".
-        "paused": bool(s.get("paused", False)),
-        "last_published_age_hours": s.get("last_published_age_hours"),
-        "code": _running_code_sha(cfg),   # SHA this PROCESS loaded (snapshot at start); the keeper compares it to disk to adopt new code
-    }
+    hb = cli_run.heartbeat_dict(cfg, s)
     print(json.dumps(hb))
-    fields = dict(hb)
-    if origin:
-        fields["origin"] = origin
-    get_logger(cfg)("heartbeat", "-", "ok", **fields)
+    cli_run.heartbeat_log(cfg, hb, origin=origin)
 
+def cmd_run(cfg: Config, args) -> int:
+    if (rc := _check_accounts(cfg)):  return rc
+    if (rc := _check_preflight(cfg)):  return rc
+    if args.loop:
+        try:
+            interval = daemon.parse_interval(args.interval)
+        except (RuntimeError, ValueError, OSError) as e:
+            print(f"run: {e}", file=sys.stderr)
+            return 2
+        # Code adoption is NOT done here anymore — the in-process baseline-capture + loop-top os.execv
+        # was deleted (keeper-adopts-pump). A wedged pump, or a pump on broken detector code, could not
+        # adopt when the check lived inside the thing that had to restart. The EXTERNAL keeper
+        # (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) now compares this loop's
+        # per-tick heartbeat `code` SHA against the SHA on disk and kickstarts the pump on drift
+        # (daemon.ensure). Each tick still records its running-HEAD SHA via _heartbeat(code=...).
+        while True:
+            load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
+            cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
+            base_time = _fresh_run_base_time()
+            try:
+                with fail_open("run.ensure_keeper_loaded"):
+                    daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
+                if (s := _cmd_run_pass(cfg, base_time)) is not None:
+                    _heartbeat(cfg, s, origin="loop"); print(s)
+                    from fanops.health import refresh_runtime_snapshots
+                    refresh_runtime_snapshots(cfg)
+            except RunBusyError as e:
+                print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
+            except Exception as e:
+                # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
+                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
+                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                if decide("transient", 1) is EscalationPosture.refuse:
+                    pass
+                else:
+                    return 1
+            time.sleep(interval)
+    try:
+        if (s := _cmd_run_pass(cfg, args.base_time)) is None:
+            return 1
+    except RunBusyError as e:
+        print(str(e), file=sys.stderr); return 1
+    # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
+    # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
+    _heartbeat(cfg, s); print(s)
+    # MOL-960: stuck gates after converge → NONZERO; pause / clean converge → 0.
+    return 1 if _gates_blocked_note(s) else 0
 
 def _studio_port_busy(host: str, port: int) -> bool:
     # Liveness probe for the studio launch guard: something must be ACCEPTING on the port. Never test
@@ -1417,6 +1050,217 @@ def _studio_ipv6_foreign_listener(port: int) -> bool:
     except OSError:
         return False
     return daemon._studio_get_fingerprint("::1", port) is None
+
+
+
+def cmd_ingest(cfg: Config) -> int:
+    # Phase-B-followup: catalogue under a transaction (B4). M05: sha256+copy+ffprobe run lock-free
+    # (stage_inbox_candidates); only Source mint runs in-lock; archive AFTER commit.
+    from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
+    staged = stage_inbox_candidates(cfg)
+    with Ledger.transaction(cfg) as led:
+        led, counts = ingest_staged(led, cfg, staged)
+        total = len(led.sources)
+    _archive_staged(cfg, staged)
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
+          f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
+
+
+def cmd_pull(cfg: Config, args) -> int:
+    # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
+    # ingest of what landed runs inside the transaction.
+    from fanops.ingest import _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
+    produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
+    staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+    with Ledger.transaction(cfg) as led:
+        # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
+        # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
+        led, counts = ingest_staged(led, cfg, staged)
+        total = len(led.sources)
+    _archive_staged(cfg, staged)
+    write_digest(Ledger.load(cfg), cfg)
+    print(f"pulled -> {counts.added} new ({total} total)"); return 0
+
+
+def cmd_respond(cfg: Config) -> int:
+    from fanops.pipeline_run import run_lease
+    with run_lease(cfg):
+        n = get_responder(cfg).answer_pending(cfg)
+    print(f"responder answered {n} request(s)"); return 0
+
+
+def cmd_digest(cfg: Config) -> int:
+    write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
+
+
+def cmd_advance(cfg: Config, args) -> int:
+    if (rc := _check_accounts(cfg)):  return rc
+    if (rc := _check_preflight(cfg)):  return rc
+    from fanops.pipeline_run import run_lease
+    with run_lease(cfg):
+        s = advance(cfg, base_time=args.base_time)
+    _heartbeat(cfg, s); print(s); return 0
+
+
+def cmd_unhold(cfg: Config, args) -> int:
+    # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
+    # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the
+    # operator who has reviewed it forces it back into the caption gate from here. Tight
+    # transaction, local-only mutation (no network), like resolve.
+    from fanops.models import ClipState
+    with Ledger.transaction(cfg) as led:
+        if args.clip_id not in led.clips:
+            print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
+        c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
+        led.set_clip_state(args.clip_id, ClipState.captions_requested)  # re-enter the caption gate
+    print(f"unheld {args.clip_id}"); return 0
+
+
+def cmd_retry_source(cfg: Config, args) -> int:
+    from fanops.pipeline import resume_source
+    with Ledger.transaction(cfg) as led:
+        if args.source_id not in led.sources:
+            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+        if not resume_source(led, args.source_id, from_stage=args.from_stage, force=args.force, cfg=cfg):
+            st = led.sources[args.source_id].state.value
+            print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
+    print(f"retry-source {args.source_id}"); return 0
+
+
+def cmd_retire_source(cfg: Config, args) -> int:
+    # MOL-842: CLI caller guards — preview by default; sentence-flag + restorable snapshot + audit
+    # before cascade. Ledger.retire_source itself is unchanged (Studio depends on it). One print()
+    # node reused for preview-or-success so _CLI_PRINT_COUNT stays exact-equality.
+    from fanops.audit import write_audit
+    from fanops import ledger_wipe
+    led_ro = Ledger.load(cfg)
+    if args.source_id not in led_ro.sources:
+        print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+    preview = led_ro.preview_retire_cascade(args.source_id)
+    if not args.i_understand_this_deletes_unshipped_media:
+        line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
+    else:
+        snap = Ledger.snapshot(cfg)
+        if not ledger_wipe.snapshot_is_restorable(snap):
+            get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
+                            snapshot=str(snap))
+            return 2
+        with Ledger.transaction(cfg) as led:
+            led.retire_source(args.source_id)
+        write_audit(cfg, "retire_source", [args.source_id], reason="cli_retire")
+        line = f"retire-source {args.source_id}"
+    print(line); return 0
+
+
+def cmd_promote_source(cfg: Config, args) -> int:
+    from fanops.pipeline import promote_source
+    with Ledger.transaction(cfg) as led:
+        if args.source_id not in led.sources:
+            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
+        if not promote_source(led, args.source_id):
+            st = led.sources[args.source_id].state.value
+            print(f"promote-source {args.source_id}: not promotable (state={st}; only discovered)", file=sys.stderr); return 2
+    print(f"promote-source {args.source_id}"); return 0
+
+
+def cmd_retry_metrics(cfg: Config, args) -> int:
+    from fanops.models import PostState
+    with Ledger.transaction(cfg) as led:
+        if args.post_id not in led.posts:
+            print(f"no such post: {args.post_id}", file=sys.stderr); return 2
+        p = led.posts[args.post_id]
+        if p.state is PostState.published:    # leave it published so the next track pass re-pulls
+            print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
+        print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
+
+
+def cmd_discover(cfg: Config, args) -> int:
+    from pathlib import Path as _P
+    from fanops.discover import discover as _discover
+    root = _P(args.folder)
+    if not root.exists() or not root.is_dir():
+        print(f"no such folder: {args.folder}", file=sys.stderr); return 2
+    s = _discover(cfg, [root])
+    print(f"discovered {s['found']} candidate(s): {s['new']} new in 00_review/, {s['skipped']} already seen. "
+          f"Review them in Finder, move keepers into 00_review/approved/, then `fanops intake`.")
+    return 0
+
+
+def cmd_intake(cfg: Config) -> int:
+    from fanops.discover import intake as _intake
+    s = _intake(cfg)
+    print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
+          f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
+    return 0
+
+
+def cmd_studio(cfg: Config, args) -> int:
+    # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
+    # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
+    # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
+    if args.install:
+        res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
+        print(f"Studio service installed -> {res['studio_plist']}")
+        print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
+        return 0 if res.get("studio_loaded") else 1
+    if args.uninstall:
+        res = daemon.stop_studio(cfg, remove=True)
+        print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
+        return 0 if res.get("stopped") else 1
+    if args.app:
+        url = f"http://{args.host}:{args.port}"
+        if not _studio_port_busy(args.host, args.port):
+            print(
+                f"REFUSED: Studio is not serving at {url}. "
+                "Use `fanops studio --install` to start the managed service, then retry `--app`.",
+                file=sys.stderr,
+            )
+            return 2
+        from fanops.studio_desktop import open_studio_window
+        return open_studio_window(url)
+    if not args.managed and not args.dev_reload:
+        print(
+            "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
+            "Use `fanops studio --install` for the managed service, or "
+            "`fanops studio --dev-reload` for explicit foreground development.",
+            file=sys.stderr,
+        )
+        return 2
+    if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
+        # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
+        # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
+        print(f"Studio already serving at http://{args.host}:{args.port}")
+        print("  open that URL, or stop that instance first to run a new one here")
+        return 0
+    if sys.platform == "darwin" and _studio_ipv6_foreign_listener(args.port):
+        print(f"REFUSED: something else is answering http://[::1]:{args.port} (not FanOps).")
+        print(f"  Browsers that open http://localhost:{args.port} hit that process, not Studio.")
+        print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
+        return 2
+    from fanops.studio.app import create_app
+    from fanops import postiz_lifecycle
+    from fanops.health import system_health
+    postiz_lifecycle.ensure_up(cfg)
+    app = create_app(cfg)
+    print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
+    for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
+        print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
+    # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
+    # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
+    # threaded=True: the cockpit streams large /media/ clips (HTTP 206). The Werkzeug dev server
+    # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
+    # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
+    # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
+    app.run(
+        host=args.host,
+        port=args.port,
+        debug=False,
+        threaded=True,
+        use_reloader=args.dev_reload,
+    )
+    return 0
+
 
 
 def _reframe_mutation(paths, args) -> int:
@@ -1526,305 +1370,6 @@ def cmd_reframe(cfg: Config, args) -> int:
             shutil.rmtree(scratch, ignore_errors=True)          # RC-10: the auto dry-run scratch NEVER leaks to /tmp
 
 
-def _dispatch(cfg: Config, args) -> int:
-    if args.cmd == "reframe":  return cmd_reframe(cfg, args)
-    if args.cmd == "overlay-reburn": return cmd_overlay_reburn(cfg, args)
-    if args.cmd == "status":   return cmd_status(cfg)
-    if args.cmd == "pause":    return cmd_pause(cfg, on=True)
-    if args.cmd == "resume":   return cmd_pause(cfg, on=False)
-    if args.cmd == "recover":
-        if args.recover_cmd == "audit": return cmd_recover_audit(cfg)
-        return 2
-    if args.cmd == "ingest":
-        # Phase-B-followup: catalogue under a transaction (B4). M05: sha256+copy+ffprobe run lock-free
-        # (stage_inbox_candidates); only Source mint runs in-lock; archive AFTER commit.
-        from fanops.ingest import stage_inbox_candidates, ingest_staged, _archive_staged
-        staged = stage_inbox_candidates(cfg)
-        with Ledger.transaction(cfg) as led:
-            led, counts = ingest_staged(led, cfg, staged)
-            total = len(led.sources)
-        _archive_staged(cfg, staged)
-        write_digest(Ledger.load(cfg), cfg)
-        print(f"ingested -> {counts.added} new ({total} total; {counts.deduped} dup, "
-              f"{counts.excluded} excluded, {counts.skipped} skipped)"); return 0   # ING-2: this-pass delta, not cumulative
-    if args.cmd == "pull":
-        # Phase-B-followup: the yt-dlp DOWNLOAD (network, slow) runs OUTSIDE the lock; only the
-        # ingest of what landed runs inside the transaction.
-        from fanops.ingest import _pull_stage, stage_inbox_candidates, ingest_staged, _archive_staged
-        produced = download_url(cfg, args.url)       # network, NO lock held; returns the files it produced (in .pull stage)
-        staged = stage_inbox_candidates(cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
-        with Ledger.transaction(cfg) as led:
-            # per-file origin (audit c0-f1 / ING-6): the pull catalogues ONLY its isolated .pull stage, so a
-            # manual drop sitting in the inbox is never re-scanned or mislabeled by this pull.
-            led, counts = ingest_staged(led, cfg, staged)
-            total = len(led.sources)
-        _archive_staged(cfg, staged)
-        write_digest(Ledger.load(cfg), cfg)
-        print(f"pulled -> {counts.added} new ({total} total)"); return 0
-    if args.cmd == "respond":
-        from fanops.pipeline_run import run_lease
-        with run_lease(cfg):
-            n = get_responder(cfg).answer_pending(cfg)
-        print(f"responder answered {n} request(s)"); return 0
-    if args.cmd == "digest":
-        write_digest(Ledger.load(cfg), cfg); print(f"wrote {cfg.digest_path}"); return 0
-    if args.cmd == "advance":
-        if (rc := _check_accounts(cfg)):  return rc
-        if (rc := _check_preflight(cfg)):  return rc
-        from fanops.pipeline_run import run_lease
-        with run_lease(cfg):
-            s = advance(cfg, base_time=args.base_time)
-        _heartbeat(cfg, s); print(s); return 0
-    if args.cmd == "track":    return cmd_track(cfg, args.window)
-    if args.cmd == "map-media": return cmd_map_media(cfg)
-    if args.cmd == "verify-live": return cmd_verify_live(cfg)
-    if args.cmd == "reconcile": return cmd_reconcile(cfg, report_terminals=getattr(args, "report_terminals", False))
-    if args.cmd == "adjust":   return cmd_adjust(cfg, args.winner_pct, args.retire_pct, args.lift_floor)
-    if args.cmd == "amplify-variants": return cmd_amplify_variants(cfg)
-    if args.cmd == "p4-bias": return cmd_p4_bias(cfg)
-    if args.cmd == "cutover":  return cmd_cutover(cfg, args)
-    if args.cmd == "wipe":     return cmd_wipe(cfg, args)
-    if args.cmd == "purge":    return cmd_purge(cfg, args)
-    if args.cmd == "restore":  return cmd_restore(cfg, args)
-    if args.cmd == "paths-rebase":
-        from fanops.paths_rebase import cmd_paths_rebase
-        return cmd_paths_rebase(cfg, args)
-    if args.cmd == "learn":
-        if args.learn_cmd == "doctor":
-            from fanops.learn_doctor import cmd_learn_doctor   # lazy: keeps requests/postiz off the core path
-            return cmd_learn_doctor(cfg)
-        return 2
-    if args.cmd == "hashtags":
-        if args.hashtags_cmd == "refresh":
-            from fanops.fanops_hashtags import cmd_hashtags_refresh   # lazy: keeps it off the hot path
-            return cmd_hashtags_refresh(cfg)
-        if args.hashtags_cmd == "scrape-login":
-            from fanops.fanops_hashtags import cmd_hashtags_scrape_login
-            return cmd_hashtags_scrape_login(cfg)
-        if args.hashtags_cmd == "discover":
-            from fanops.fanops_hashtags import cmd_hashtags_discover  # lazy: keeps it off the hot path
-            return cmd_hashtags_discover(cfg)
-        return 2
-    if args.cmd in ("lever", "threshold"):
-        if getattr(args, "lever_cmd", None) == "docs" or getattr(args, "thresh_cmd", None) == "docs":
-            from fanops.lever_docs import cmd_lever_docs
-            return cmd_lever_docs(cfg)
-        return 2
-    if args.cmd == "init":     return cmd_init(cfg, args)
-    if args.cmd == "health":   return cmd_health(cfg, args)
-    if args.cmd == "config":   return cmd_config(cfg)
-    if args.cmd == "doctor":   return cmd_doctor(cfg, args)
-    if args.cmd == "publish-queue": return cmd_publish_queue(cfg)
-    if args.cmd == "posts":
-        if args.posts_cmd == "recaption":
-            from fanops.recaption import cmd_posts_recaption   # lazy, matching the hashtags-verb precedent
-            return cmd_posts_recaption(cfg, args)
-        if args.posts_cmd == "census-retired":
-            from fanops.stranded_posts import cmd_posts_reconcile_retired   # lazy, same precedent
-            return cmd_posts_reconcile_retired(cfg, args)
-    if args.cmd == "daemon":   return cmd_daemon(cfg, args)
-    if args.cmd == "autopilot": return cmd_autopilot(cfg, args)
-    if args.cmd == "up":       return cmd_up(cfg, args)
-    if args.cmd == "canary":   return cmd_canary(cfg, args)
-    if args.cmd == "gc":       return cmd_gc(cfg, args.keep_days if args.keep_days is not None else cfg.gc_keep_days)
-    if args.cmd == "compose":  return cmd_compose(cfg, args)
-    if args.cmd == "resolve":
-        return cmd_resolve(cfg, args)
-    if args.cmd == "audit":
-        return cmd_audit(cfg, args)
-    if args.cmd == "bulk-send-to-review":
-        return cmd_bulk_send_to_review(cfg, args)
-    if args.cmd == "unhold":
-        # RUNTIME backlog (f): clear a brand-risk hold WITHOUT a hand-edit of ledger.json. When a
-        # clip was parked in `held` (held=True, held_reason set) by the brand-risk gate, the
-        # operator who has reviewed it forces it back into the caption gate from here. Tight
-        # transaction, local-only mutation (no network), like resolve.
-        from fanops.models import ClipState
-        with Ledger.transaction(cfg) as led:
-            if args.clip_id not in led.clips:
-                print(f"no such clip: {args.clip_id}", file=sys.stderr); return 2
-            c = led.clips[args.clip_id]; c.held = False; c.held_reason = None
-            led.set_clip_state(args.clip_id, ClipState.captions_requested)  # re-enter the caption gate
-        print(f"unheld {args.clip_id}"); return 0
-    if args.cmd == "retry-source":
-        from fanops.pipeline import resume_source
-        with Ledger.transaction(cfg) as led:
-            if args.source_id not in led.sources:
-                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            if not resume_source(led, args.source_id, from_stage=args.from_stage, force=args.force, cfg=cfg):
-                st = led.sources[args.source_id].state.value
-                print(f"retry-source {args.source_id}: not recoverable (state={st}; use --force --from-stage catalogued for terminal sources)", file=sys.stderr); return 2
-        print(f"retry-source {args.source_id}"); return 0
-    if args.cmd == "retire-source":
-        # MOL-842: CLI caller guards — preview by default; sentence-flag + restorable snapshot + audit
-        # before cascade. Ledger.retire_source itself is unchanged (Studio depends on it). One print()
-        # node reused for preview-or-success so _CLI_PRINT_COUNT stays exact-equality.
-        from fanops.audit import write_audit
-        from fanops import ledger_wipe
-        led_ro = Ledger.load(cfg)
-        if args.source_id not in led_ro.sources:
-            print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-        preview = led_ro.preview_retire_cascade(args.source_id)
-        if not args.i_understand_this_deletes_unshipped_media:
-            line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
-        else:
-            snap = Ledger.snapshot(cfg)
-            if not ledger_wipe.snapshot_is_restorable(snap):
-                get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
-                                snapshot=str(snap))
-                return 2
-            with Ledger.transaction(cfg) as led:
-                led.retire_source(args.source_id)
-            write_audit(cfg, "retire_source", [args.source_id], reason="cli_retire")
-            line = f"retire-source {args.source_id}"
-        print(line); return 0
-    if args.cmd == "promote-source":
-        from fanops.pipeline import promote_source
-        with Ledger.transaction(cfg) as led:
-            if args.source_id not in led.sources:
-                print(f"no such source: {args.source_id}", file=sys.stderr); return 2
-            if not promote_source(led, args.source_id):
-                st = led.sources[args.source_id].state.value
-                print(f"promote-source {args.source_id}: not promotable (state={st}; only discovered)", file=sys.stderr); return 2
-        print(f"promote-source {args.source_id}"); return 0
-    if args.cmd == "retry-metrics":
-        from fanops.models import PostState
-        with Ledger.transaction(cfg) as led:
-            if args.post_id not in led.posts:
-                print(f"no such post: {args.post_id}", file=sys.stderr); return 2
-            p = led.posts[args.post_id]
-            if p.state is PostState.published:    # leave it published so the next track pass re-pulls
-                print(f"retry-metrics {args.post_id}: will re-pull on next track"); return 0
-            print(f"retry-metrics {args.post_id}: not published (state={p.state.value})", file=sys.stderr); return 2
-    if args.cmd == "discover":
-        from pathlib import Path as _P
-        from fanops.discover import discover as _discover
-        root = _P(args.folder)
-        if not root.exists() or not root.is_dir():
-            print(f"no such folder: {args.folder}", file=sys.stderr); return 2
-        s = _discover(cfg, [root])
-        print(f"discovered {s['found']} candidate(s): {s['new']} new in 00_review/, {s['skipped']} already seen. "
-              f"Review them in Finder, move keepers into 00_review/approved/, then `fanops intake`.")
-        return 0
-    if args.cmd == "intake":
-        from fanops.discover import intake as _intake
-        s = _intake(cfg)
-        print(f"intake: {s['intaken']} approved original(s) copied into 01_inbox/ "
-              f"({s['approved']} approved, {s['missing']} missing). Run `fanops advance`/`run` to pipeline them.")
-        return 0
-    if args.cmd == "studio":
-        # LAZY import (spec §10): Flask is an optional extra; importing create_app here — never at
-        # module top — keeps `import fanops.cli` (hence every other verb) working on a core,
-        # no-[studio] install. Mirrors the discover/intake lazy-import idiom (cli.py:325,334).
-        if args.install:
-            res = daemon.install_studio(cfg, host=args.host, port=args.port, wait=True)
-            print(f"Studio service installed -> {res['studio_plist']}")
-            print(f"Always-on at http://{args.host}:{args.port} (launchd KeepAlive; runs at login)")
-            return 0 if res.get("studio_loaded") else 1
-        if args.uninstall:
-            res = daemon.stop_studio(cfg, remove=True)
-            print(f"Studio service stopped -> {res['plist']}" + (" (plist removed)" if res.get("removed") else ""))
-            return 0 if res.get("stopped") else 1
-        if args.app:
-            url = f"http://{args.host}:{args.port}"
-            if not _studio_port_busy(args.host, args.port):
-                print(
-                    f"REFUSED: Studio is not serving at {url}. "
-                    "Use `fanops studio --install` to start the managed service, then retry `--app`.",
-                    file=sys.stderr,
-                )
-                return 2
-            from fanops.studio_desktop import open_studio_window
-            return open_studio_window(url)
-        if not args.managed and not args.dev_reload:
-            print(
-                "REFUSED: unmanaged foreground Studio can serve stale code indefinitely. "
-                "Use `fanops studio --install` for the managed service, or "
-                "`fanops studio --dev-reload` for explicit foreground development.",
-                file=sys.stderr,
-            )
-            return 2
-        if sys.platform == "darwin" and _studio_port_busy(args.host, args.port):
-            # Liveness, not launchd registration — a plist-loaded check self-trips from inside the
-            # KeepAlive resident's own child (it IS the loaded service) and bricks it (see _studio_port_busy).
-            print(f"Studio already serving at http://{args.host}:{args.port}")
-            print("  open that URL, or stop that instance first to run a new one here")
-            return 0
-        if sys.platform == "darwin" and _studio_ipv6_foreign_listener(args.port):
-            print(f"REFUSED: something else is answering http://[::1]:{args.port} (not FanOps).")
-            print(f"  Browsers that open http://localhost:{args.port} hit that process, not Studio.")
-            print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
-            return 2
-        from fanops.studio.app import create_app
-        from fanops import postiz_lifecycle
-        from fanops.health import system_health
-        postiz_lifecycle.ensure_up(cfg)
-        app = create_app(cfg)
-        print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
-        for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried
-            print(f"  [{'ok  ' if d.ok else 'DOWN'}] {d.name}: {d.detail}")
-        # debug EXPLICITLY off (stage-5 audit): a stray FLASK_DEBUG=1 in the operator's env would
-        # otherwise enable the Werkzeug interactive debugger — arbitrary code exec on the cockpit.
-        # threaded=True: the cockpit streams large /media/ clips (HTTP 206). The Werkzeug dev server
-        # defaults to one-request-at-a-time, so a single in-flight video stream starves every other
-        # request (page loads hang → "Studio won't load"). Threading lets navigation proceed while a
-        # clip streams. localhost-only, low concurrency — the dev server is adequate; no WSGI server needed.
-        app.run(
-            host=args.host,
-            port=args.port,
-            debug=False,
-            threaded=True,
-            use_reloader=args.dev_reload,
-        )
-        return 0
-    if args.cmd == "run":
-        if (rc := _check_accounts(cfg)):  return rc
-        if (rc := _check_preflight(cfg)):  return rc
-        if args.loop:
-            try:
-                interval = daemon.parse_interval(args.interval)
-            except (RuntimeError, ValueError, OSError) as e:
-                print(f"run: {e}", file=sys.stderr)
-                return 2
-            # Code adoption is NOT done here anymore — the in-process baseline-capture + loop-top os.execv
-            # was deleted (keeper-adopts-pump). A wedged pump, or a pump on broken detector code, could not
-            # adopt when the check lived inside the thing that had to restart. The EXTERNAL keeper
-            # (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) now compares this loop's
-            # per-tick heartbeat `code` SHA against the SHA on disk and kickstarts the pump on drift
-            # (daemon.ensure). Each tick still records its running-HEAD SHA via _heartbeat(code=...).
-            while True:
-                load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
-                cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
-                base_time = _fresh_run_base_time()
-                try:
-                    with fail_open("run.ensure_keeper_loaded"):
-                        daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
-                    if (s := _cmd_run_pass(cfg, base_time)) is not None:
-                        _heartbeat(cfg, s, origin="loop"); print(s)
-                        from fanops.health import refresh_runtime_snapshots
-                        refresh_runtime_snapshots(cfg)
-                except RunBusyError as e:
-                    print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
-                except Exception as e:
-                    # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
-                    get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
-                    print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                    if decide("transient", 1) is EscalationPosture.refuse:
-                        pass
-                    else:
-                        return 1
-                time.sleep(interval)
-        try:
-            if (s := _cmd_run_pass(cfg, args.base_time)) is None:
-                return 1
-        except RunBusyError as e:
-            print(str(e), file=sys.stderr); return 1
-        # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
-        # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
-        _heartbeat(cfg, s); print(s)
-        # MOL-960: stuck gates after converge → NONZERO; pause / clean converge → 0.
-        return 1 if _gates_blocked_note(s) else 0
-    return 1
 
 if __name__ == "__main__":
     raise SystemExit(main())

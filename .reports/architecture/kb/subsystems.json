@@ -243,8 +243,15 @@
     "S17_cli_daemon": {
       "modules": [
         "canary",
+        "canary_baseline",
+        "canary_identity",
         "cli",
+        "cli_dispatch",
+        "cli_parser",
+        "cli_run",
         "daemon",
+        "daemon_siblings",
+        "daemon_studio",
         "init_flow"
       ]
     },
