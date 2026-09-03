@@ -246,9 +246,10 @@ def _reach_by_dim(led: Ledger, cfg: Config) -> list[str]:
     # separate default-OFF feature). Gated per dim so a thin/unconfirmed dim stays hidden; the whole section is
     # absent when nothing qualifies (byte-identical to today's digest). Fail-open like the v3 block above.
     try:
+        from fanops.p4_dim_bias import _P4_DIMS
         from fanops.validation_gate import p4_unlocked
         dlines = []
-        for dim in ("first_frame_kind", "clip_profile", "top_bias"):   # Leg 3: framing joins the rollup
+        for dim in _P4_DIMS:
             if not p4_unlocked(led, cfg, dim): continue
             for value, row in sorted(aggregate_by_dim(led, dim).items(),
                                      key=lambda kv: kv[1]["reach_mean"], reverse=True):
