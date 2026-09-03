@@ -11,7 +11,7 @@ from fanops.models import (Source, Moment, Clip, ClipState, MomentState, Fmt,
                            CaptionSet, CaptionItem)
 from fanops.accounts import Accounts
 from fanops.casting import affinity_admits
-from fanops.pipeline import _owner_caption_surfaces
+from fanops.crosspost import owner_caption_surfaces
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
 from fanops.crosspost import crosspost_clips
 from fanops.agentstep import latest_request_id, response_path, request_path
@@ -69,26 +69,26 @@ def test_affinity_admits_on_matrix(tmp_path, monkeypatch):
 
 
 # ---- P10: owner × platform caption scoping (the filter the pipeline calls) ----
-def test_owner_caption_surfaces_scopes_to_owner_when_cast(tmp_path, monkeypatch):
+def testowner_caption_surfaces_scopes_to_owner_when_cast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     accts = Accounts.load(cfg)
-    scoped = _owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
+    scoped = owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
     assert {acct for acct, _ in scoped} == {"a"}                            # owner ONLY (no @b) — clip × account scoping dead
     assert {plat.value for _, plat in scoped} == {"instagram", "youtube"}   # per-platform survives: owner × its platforms
 
-def test_owner_caption_surfaces_full_when_off(tmp_path, monkeypatch):
+def testowner_caption_surfaces_full_when_off(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     accts = Accounts.load(cfg)
-    scoped = _owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
+    scoped = owner_caption_surfaces(cfg, _moment(affinities=["a"]), accts)
     assert list(scoped) == [(s.account, s.platform) for s in accts.surfaces()]   # OFF -> byte-identical (all)
 
-def test_owner_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
+def testowner_caption_surfaces_full_when_uncast(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
     cfg = Config(root=tmp_path); _seed_accounts(cfg, [_acct("a"), _acct("b", aid="2")])
     accts = Accounts.load(cfg)
-    scoped = _owner_caption_surfaces(cfg, _moment(affinities=[]), accts)
+    scoped = owner_caption_surfaces(cfg, _moment(affinities=[]), accts)
     assert {acct for acct, _ in scoped} == {"a", "b"}                      # uncast -> all surfaces (fan-to-all)
 
 
@@ -108,7 +108,7 @@ def test_casting_on_scopes_request_and_loses_no_post(tmp_path, monkeypatch, mock
     }))
     accts = Accounts.load(cfg)
     # the owner-scoped request the pipeline would build (P10 wiring uses this exact call)
-    led = request_captions(led, cfg, "clip_1", _owner_caption_surfaces(cfg, led.moments["mom_1"], accts),
+    led = request_captions(led, cfg, "clip_1", owner_caption_surfaces(cfg, led.moments["mom_1"], accts),
                            accounts=accts)
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert {s["surface"].split("/")[0] for s in payload["surfaces"]} == {"a"}   # request SCOPED to @a
