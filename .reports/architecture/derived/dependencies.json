@@ -80,6 +80,10 @@
       "fanops.reframe_apply"
     ],
     [
+      "fanops.prompts",
+      "fanops.prompts_caption"
+    ],
+    [
       "fanops.studio.actions",
       "fanops.studio.actions_approve"
     ],
@@ -1369,6 +1373,16 @@
     },
     "fanops.prompts": {
       "compile": [],
+      "lazy": [
+        "fanops.prompts_caption"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.prompts_caption": {
+      "compile": [
+        "fanops.prompts"
+      ],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2470,7 +2484,8 @@
     "fanops.post.zernio_outcome": 1,
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 1,
-    "fanops.prompts": 1,
+    "fanops.prompts": 2,
+    "fanops.prompts_caption": 0,
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
     "fanops.reframe": 2,
@@ -2630,6 +2645,7 @@
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 9,
     "fanops.prompts": 0,
+    "fanops.prompts_caption": 1,
     "fanops.recaption": 9,
     "fanops.reconcile": 7,
     "fanops.reframe": 9,
@@ -3597,6 +3613,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.prompts",
+      "from_level": 0,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.prompts_caption",
+      "to_level": 1
+    },
+    {
       "from": "fanops.reconcile",
       "from_level": 3,
       "jump": 1,
@@ -3813,6 +3837,7 @@
     "fanops.postiz_lifecycle": 0,
     "fanops.produce": 9,
     "fanops.prompts": 0,
+    "fanops.prompts_caption": 1,
     "fanops.recaption": 5,
     "fanops.reconcile": 3,
     "fanops.reframe": 9,
@@ -3926,6 +3951,7 @@
       "fanops.persona_directives",
       "fanops.persona_research",
       "fanops.post.providers",
+      "fanops.prompts_caption",
       "fanops.settings",
       "fanops.stage_lock",
       "fanops.validation_gate",
@@ -4076,17 +4102,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 157,
+    "G1_sccs_total": 158,
     "G1c_levels": 14,
     "G2_largest_scc_size": 30,
     "G2_module_sccs_total": 93,
-    "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 653,
-    "lazy_edges": 376,
+    "G2_non_trivial_sccs": 8,
+    "compile_edges_G1": 654,
+    "lazy_edges": 377,
     "lazy_edges_lateral": 48,
-    "lazy_edges_strictly_upward": 79,
-    "lazy_edges_to_equal_or_higher_level": 127,
-    "modules": 157,
+    "lazy_edges_strictly_upward": 80,
+    "lazy_edges_to_equal_or_higher_level": 128,
+    "modules": 158,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

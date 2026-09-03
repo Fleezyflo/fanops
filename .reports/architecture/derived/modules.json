@@ -103,6 +103,7 @@
     "fanops.postiz_lifecycle",
     "fanops.produce",
     "fanops.prompts",
+    "fanops.prompts_caption",
     "fanops.recaption",
     "fanops.reconcile",
     "fanops.reframe",
@@ -269,6 +270,7 @@
     "fanops.postiz_lifecycle": "S12_publish",
     "fanops.produce": "S09_render",
     "fanops.prompts": "S07_agent_gate",
+    "fanops.prompts_caption": "S07_agent_gate",
     "fanops.recaption": "S15_orchestration",
     "fanops.reconcile": "S13_reconcile_metrics",
     "fanops.reframe": "S18_health_diag",
@@ -333,9 +335,9 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 153,
+    "assigned": 154,
     "ghosts": 1,
-    "modules": 157,
+    "modules": 158,
     "unassigned": 4
   },
   "unassigned_modules": [
