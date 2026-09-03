@@ -247,7 +247,7 @@ def test_igweb_json_paces_safari_xhr(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_HASHTAG_SCRAPE_DELAY", "2,2")
     iws._LAST_REQUEST_MONO.clear()
     sleeps = []
-    monkeypatch.setattr(iws.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda s: sleeps.append(s))
     monkeypatch.setattr(iws, "_safari_xhr", _ok_xhr)
     cfg = Config(root=tmp_path)
     live = IgWebSession("u", safari=True, cfg=cfg)
@@ -272,7 +272,7 @@ def test_igweb_json_charges_each_live_xhr(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _cooldown_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", _ok_xhr)
     cfg = Config(root=tmp_path)
     live = IgWebSession("u", safari=True, cfg=cfg)
@@ -314,7 +314,7 @@ def test_safari_fetch_429_freezes(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: json.dumps({
         "status": 429, "url": "https://www.instagram.com/api/v1/tags/music/info/", "text": "{}",
     }))
@@ -345,7 +345,7 @@ def test_safari_fetch_200_please_wait_freezes(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
         "status": "fail",
         "message": "Please wait a few minutes before you try again.",
@@ -367,7 +367,7 @@ def test_safari_fetch_200_feedback_required_freezes(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
         "status": "fail",
         "message": "feedback_required",
@@ -392,7 +392,7 @@ def test_safari_fetch_200_login_required_body_freezes(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
         "status": "fail", "message": "login_required", "require_login": True,
     }))
@@ -414,7 +414,7 @@ def test_safari_fetch_200_missing_tag_does_not_freeze(tmp_path, monkeypatch):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: _xhr_json(200, {
         "status": "fail", "message": "Invalid hashtag",
     }))
@@ -432,7 +432,7 @@ def _assert_fetch_freezes(tmp_path, monkeypatch, xhr_raw, exc_cls, reason):
     from fanops.fanops_hashtags import _account_rec, _is_frozen, _load_cooldown_blob
     from datetime import datetime, timezone
     iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.time", "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(iws, "_safari_xhr", lambda *_a, **_k: xhr_raw)
     cfg = Config(root=tmp_path)
     try:
