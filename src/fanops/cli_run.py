@@ -196,7 +196,8 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     # raises. Non-fresh skips log (MOL-525): a missing scrape session must not look identical to a
     # correctly-throttled tick.
     try:
-        r = cli.refresh_store_if_due(cfg)
+        from fanops.fanops_hashtags import refresh_store_if_due
+        r = refresh_store_if_due(cfg)
         if r.get("aborted"):     # no_scrape / freeze / busy: report the abort LOUDLY, never a false
                                  # store_refreshed (a skipped remesure is not a refresh)
             get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))

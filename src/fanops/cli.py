@@ -23,7 +23,7 @@ from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
 from fanops.timing_bias import apply_timing_bias  # noqa: F401  # re-export for tests / cli_run patch surface
-from fanops.fanops_hashtags import refresh_store_if_due  # noqa: F401  # re-export for tests / cli_run patch surface
+
 from fanops import autopilot, daemon
 from fanops.log import get_logger
 from fanops.cli_parser import build_parser
