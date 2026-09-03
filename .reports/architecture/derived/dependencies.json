@@ -95,6 +95,10 @@
     [
       "fanops.prompts",
       "fanops.prompts_caption"
+    ],
+    [
+      "fanops.studio.actions",
+      "fanops.studio.actions_schedule"
     ]
   ],
   "confidence": "CERTAIN",
@@ -1819,8 +1823,8 @@
         "fanops.studio.actions_common",
         "fanops.studio.actions_edit",
         "fanops.studio.actions_run",
+        "fanops.studio.actions_schedule",
         "fanops.studio.actions_segments",
-        "fanops.studio.views",
         "fanops.timeutil"
       ],
       "lazy": [
@@ -1845,7 +1849,6 @@
         "fanops.studio.actions_run",
         "fanops.studio.views_common",
         "fanops.studio.views_results",
-        "fanops.timeutil",
         "fanops.track"
       ],
       "optional": [],
@@ -1896,7 +1899,8 @@
         "fanops.log",
         "fanops.models",
         "fanops.studio.actions_common",
-        "fanops.studio.views"
+        "fanops.studio.views",
+        "fanops.timeutil"
       ],
       "lazy": [
         "fanops.accounts",
@@ -1935,6 +1939,30 @@
         "fanops.pipeline",
         "fanops.pipeline_run",
         "fanops.responder"
+      ],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.studio.actions_schedule": {
+      "compile": [
+        "fanops.audit",
+        "fanops.config",
+        "fanops.ledger",
+        "fanops.log",
+        "fanops.models",
+        "fanops.studio.actions_common",
+        "fanops.studio.actions_edit",
+        "fanops.studio.views",
+        "fanops.timeutil"
+      ],
+      "lazy": [
+        "fanops.errors",
+        "fanops.post.run",
+        "fanops.studio.actions",
+        "fanops.studio.actions_approve",
+        "fanops.studio.views_common",
+        "fanops.studio.views_results",
+        "fanops.timeutil"
       ],
       "optional": [],
       "typing": []
@@ -2649,7 +2677,7 @@
     "fanops.apply_common": 2,
     "fanops.artifacts": 1,
     "fanops.audio_energy": 1,
-    "fanops.audit": 3,
+    "fanops.audit": 4,
     "fanops.autopilot": 2,
     "fanops.bands": 2,
     "fanops.batches": 0,
@@ -2662,7 +2690,7 @@
     "fanops.clip": 7,
     "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 108,
+    "fanops.config": 109,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 14,
@@ -2703,7 +2731,7 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 66,
+    "fanops.ledger": 67,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
@@ -2711,11 +2739,11 @@
     "fanops.llm": 1,
     "fanops.llm_errors": 1,
     "fanops.llm_json": 1,
-    "fanops.log": 50,
+    "fanops.log": 51,
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 58,
+    "fanops.models": 59,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -2772,9 +2800,10 @@
     "fanops.studio.actions": 7,
     "fanops.studio.actions_approve": 1,
     "fanops.studio.actions_casting": 1,
-    "fanops.studio.actions_common": 8,
-    "fanops.studio.actions_edit": 1,
+    "fanops.studio.actions_common": 9,
+    "fanops.studio.actions_edit": 2,
     "fanops.studio.actions_run": 1,
+    "fanops.studio.actions_schedule": 1,
     "fanops.studio.actions_segments": 1,
     "fanops.studio.actions_wipe": 2,
     "fanops.studio.app": 4,
@@ -2804,7 +2833,7 @@
     "fanops.studio_desktop": 0,
     "fanops.tagging": 1,
     "fanops.text": 5,
-    "fanops.timeutil": 22,
+    "fanops.timeutil": 24,
     "fanops.timing_bias": 1,
     "fanops.track": 3,
     "fanops.transcribe": 3,
@@ -2950,8 +2979,9 @@
     "fanops.studio.actions_approve": 10,
     "fanops.studio.actions_casting": 4,
     "fanops.studio.actions_common": 0,
-    "fanops.studio.actions_edit": 7,
+    "fanops.studio.actions_edit": 8,
     "fanops.studio.actions_run": 6,
+    "fanops.studio.actions_schedule": 9,
     "fanops.studio.actions_segments": 5,
     "fanops.studio.actions_wipe": 6,
     "fanops.studio.app": 8,
@@ -2997,7 +3027,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 274,
+  "lazy_downward_count": 279,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3826,6 +3856,14 @@
       "to_level": 5
     },
     {
+      "from": "fanops.studio.actions_schedule",
+      "from_level": 9,
+      "jump": 2,
+      "same_scc": false,
+      "to": "fanops.studio.actions",
+      "to_level": 11
+    },
+    {
       "from": "fanops.studio.views_home",
       "from_level": 4,
       "jump": 2,
@@ -4257,6 +4295,7 @@
     "fanops.studio.actions_common": 0,
     "fanops.studio.actions_edit": 8,
     "fanops.studio.actions_run": 3,
+    "fanops.studio.actions_schedule": 9,
     "fanops.studio.actions_segments": 10,
     "fanops.studio.actions_wipe": 4,
     "fanops.studio.app": 12,
@@ -4501,7 +4540,8 @@
       "fanops.crosspost",
       "fanops.moments",
       "fanops.produce",
-      "fanops.reframe"
+      "fanops.reframe",
+      "fanops.studio.actions_schedule"
     ]
   },
   "metric_definitions": {
@@ -4517,17 +4557,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 175,
+    "G1_sccs_total": 176,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
     "G2_module_sccs_total": 102,
-    "G2_non_trivial_sccs": 7,
-    "compile_edges_G1": 730,
-    "lazy_edges": 414,
+    "G2_non_trivial_sccs": 8,
+    "compile_edges_G1": 740,
+    "lazy_edges": 420,
     "lazy_edges_lateral": 53,
-    "lazy_edges_strictly_upward": 87,
-    "lazy_edges_to_equal_or_higher_level": 140,
-    "modules": 175,
+    "lazy_edges_strictly_upward": 88,
+    "lazy_edges_to_equal_or_higher_level": 141,
+    "modules": 176,
     "optional_edges": 0,
     "typing_only_edges": 8
   }

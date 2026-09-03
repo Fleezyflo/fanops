@@ -110,6 +110,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/post/zernio_outcome.py": ("tests/test_zernio_idempotency.py",),
     "src/fanops/studio/actions_approve.py": ("tests/test_studio_approval.py",),
     "src/fanops/studio/actions_edit.py": ("tests/test_studio_regenerate.py", "tests/test_studio_approve_hook.py", "tests/test_studio_review_preview.py"),
+    "src/fanops/studio/actions_schedule.py": ("tests/test_studio_schedule_cockpit.py", "tests/test_studio_schedule_readiness.py"),
     "src/fanops/studio/actions_common.py": ("tests/test_studio_golive.py",),
     "src/fanops/studio/actions_run.py": ("tests/test_studio_run.py", "tests/test_studio_upload.py",
                                         "tests/test_upload_chunked.py", "tests/test_queue_gate.py"),
