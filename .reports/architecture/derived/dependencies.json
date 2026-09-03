@@ -340,6 +340,7 @@
         "fanops.digest",
         "fanops.errors",
         "fanops.escalation",
+        "fanops.fanops_hashtags",
         "fanops.ingest",
         "fanops.ledger",
         "fanops.log",
@@ -348,6 +349,7 @@
         "fanops.pipeline",
         "fanops.reconcile",
         "fanops.responder",
+        "fanops.timing_bias",
         "fanops.track",
         "fanops.variant_amplify"
       ],
@@ -421,10 +423,7 @@
         "fanops.escalation",
         "fanops.ledger",
         "fanops.log",
-        "fanops.models",
-        "fanops.p4_dim_bias",
-        "fanops.timing_bias",
-        "fanops.variant_amplify"
+        "fanops.models"
       ],
       "lazy": [
         "fanops",
@@ -2770,7 +2769,7 @@
     "fanops.errors": 47,
     "fanops.escalation": 6,
     "fanops.fanops_account_stats": 0,
-    "fanops.fanops_hashtags": 0,
+    "fanops.fanops_hashtags": 1,
     "fanops.field_shape": 1,
     "fanops.frames": 1,
     "fanops.framing": 6,
@@ -2814,7 +2813,7 @@
     "fanops.moments": 4,
     "fanops.overlay": 4,
     "fanops.overlay_reburn": 0,
-    "fanops.p4_dim_bias": 2,
+    "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
     "fanops.persona_levers": 4,
@@ -2903,7 +2902,7 @@
     "fanops.transcribe": 3,
     "fanops.transcribe_engine": 1,
     "fanops.validation_gate": 5,
-    "fanops.variant_amplify": 2,
+    "fanops.variant_amplify": 1,
     "fanops.variant_learning": 7,
     "fanops.variant_transfer": 2,
     "fanops.visual_start": 1,
@@ -2930,10 +2929,10 @@
     "fanops.caption_compose": 3,
     "fanops.caption_ingest": 5,
     "fanops.casting": 0,
-    "fanops.cli": 22,
+    "fanops.cli": 24,
     "fanops.cli_dispatch": 1,
     "fanops.cli_parser": 0,
-    "fanops.cli_run": 11,
+    "fanops.cli_run": 8,
     "fanops.clip": 14,
     "fanops.clip_ffmpeg": 4,
     "fanops.compose": 0,
@@ -3096,7 +3095,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 279,
+  "lazy_downward_count": 277,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3105,6 +3104,14 @@
       "same_scc": false,
       "to": "fanops.signals",
       "to_level": 3
+    },
+    {
+      "from": "fanops.cli",
+      "from_level": 12,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.studio.app",
+      "to_level": 12
     },
     {
       "from": "fanops.config",
@@ -3447,6 +3454,14 @@
       "from_level": 12,
       "jump": 0,
       "same_scc": false,
+      "to": "fanops.cli",
+      "to_level": 12
+    },
+    {
+      "from": "fanops.studio.app",
+      "from_level": 12,
+      "jump": 0,
+      "same_scc": false,
       "to": "fanops.studio.app_routes_run",
       "to_level": 12
     },
@@ -3511,10 +3526,10 @@
     {
       "from": "fanops.cli_dispatch",
       "from_level": 1,
-      "jump": 12,
+      "jump": 11,
       "same_scc": false,
       "to": "fanops.cli",
-      "to_level": 13
+      "to_level": 12
     },
     {
       "from": "fanops.cli_dispatch",
@@ -3523,6 +3538,14 @@
       "same_scc": false,
       "to": "fanops.lever_docs",
       "to_level": 10
+    },
+    {
+      "from": "fanops.cli_run",
+      "from_level": 4,
+      "jump": 8,
+      "same_scc": false,
+      "to": "fanops.cli",
+      "to_level": 12
     },
     {
       "from": "fanops.compose",
@@ -4022,11 +4045,11 @@
     },
     {
       "from": "fanops.cli_run",
-      "from_level": 12,
+      "from_level": 4,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.cli",
-      "to_level": 13
+      "to": "fanops.fanops_hashtags",
+      "to_level": 5
     },
     {
       "from": "fanops.clip_ffmpeg",
@@ -4217,14 +4240,6 @@
       "from_level": 12,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.cli",
-      "to_level": 13
-    },
-    {
-      "from": "fanops.studio.app",
-      "from_level": 12,
-      "jump": 1,
-      "same_scc": false,
       "to": "fanops.studio.app_routes_golive",
       "to_level": 13
     },
@@ -4321,10 +4336,10 @@
     "fanops.caption_compose": 3,
     "fanops.caption_ingest": 3,
     "fanops.casting": 0,
-    "fanops.cli": 13,
+    "fanops.cli": 12,
     "fanops.cli_dispatch": 1,
     "fanops.cli_parser": 0,
-    "fanops.cli_run": 12,
+    "fanops.cli_run": 4,
     "fanops.clip": 8,
     "fanops.clip_ffmpeg": 7,
     "fanops.compose": 0,
@@ -4561,14 +4576,13 @@
       "fanops.variant_amplify"
     ],
     "12": [
-      "fanops.cli_run",
+      "fanops.cli",
       "fanops.studio.app",
       "fanops.studio.app_routes_run",
       "fanops.studio.golive",
       "fanops.studio.personas"
     ],
     "13": [
-      "fanops.cli",
       "fanops.studio.app_routes_golive",
       "fanops.studio.app_routes_personas",
       "fanops.studio.app_routes_review",
@@ -4636,6 +4650,7 @@
     "4": [
       "fanops.canary",
       "fanops.caption",
+      "fanops.cli_run",
       "fanops.cutover",
       "fanops.cutover_postiz",
       "fanops.digest",
@@ -4713,11 +4728,11 @@
     "G2_largest_scc_size": 33,
     "G2_module_sccs_total": 103,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 749,
+    "compile_edges_G1": 748,
     "lazy_edges": 429,
-    "lazy_edges_lateral": 51,
+    "lazy_edges_lateral": 53,
     "lazy_edges_strictly_upward": 99,
-    "lazy_edges_to_equal_or_higher_level": 150,
+    "lazy_edges_to_equal_or_higher_level": 152,
     "modules": 181,
     "optional_edges": 0,
     "typing_only_edges": 9
