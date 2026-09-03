@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..common import ARCH, CONTRACT, DERIVED, KB, REPO, load
+from ..common import CONTRACT, DERIVED, KB, REPO, load
 from ..deltas import compile_edges
 from .ast_guards import _gb_checks, _terminal_post_writers
 from .checks_impl import _coverage, _tests_defined, _verification_matrix_test_names, _verification_persists

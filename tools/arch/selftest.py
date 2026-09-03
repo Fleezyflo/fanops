@@ -30,8 +30,11 @@ from pathlib import Path
 
 from . import common, drift, generate, policy, registries, render
 from .common import ARCH, REPO, SRC, dumps
+from .policy import ast_guards as policy_ast, checks_impl as policy_checks, exceptions as policy_exc
+from .policy import ratchets_check as policy_ratchets, rules as policy_rules
 
-_PATCHED = (common, generate, policy, registries, drift, render)
+_PATCHED = (common, generate, policy, policy_rules, policy_ratchets, policy_ast, policy_checks,
+            policy_exc, registries, drift, render)
 
 
 @dataclass
