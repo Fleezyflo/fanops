@@ -1,4 +1,3 @@
-# src/fanops/hookscore.py
 """Hook-quality measurement (Task 5 + Task 9). One job, non-gating:
   - narration_signature(): a high-precision detector for third-person scene-narration with no viewer
     address. Used as a viewer-POV METER on the read-only scoreboard — it measures how many shipped
@@ -13,6 +12,7 @@ addresses the scroller, so it is NOT narration regardless of any third-person pr
 from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
+from fanops.log import get_logger
 from fanops.models import MomentState
 if TYPE_CHECKING:                                     # annotations only (PEP 563) — no runtime import, no cycle
     from fanops.ledger import Ledger
@@ -61,7 +61,6 @@ def hook_quality(led: Ledger) -> dict:
 def log_hook_quality(led: Ledger, cfg: Config) -> dict:
     """Emit ONE digest line of hook_quality(led) via the standard logger and return the dict. Read-only
     (delegates to hook_quality); a thin surface a pass can call without taking the ledger lock."""
-    from fanops.log import get_logger
     q = hook_quality(led)
     get_logger(cfg)("hookscore", "feed", "hook_quality", **q)
     return q

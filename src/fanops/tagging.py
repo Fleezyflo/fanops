@@ -1,4 +1,5 @@
-"""Subtle, NON-SYNCHRONIZED artist tagging. A minority of posts carry a buried @mohflowmusic
+"""Crosspost artist @mention tagging — not hook quality, not hashtag vetting. Subtle,
+NON-SYNCHRONIZED artist tagging: a minority of posts carry a buried @mohflowmusic
 (decided deterministically), and never two accounts within min_gap_minutes (tracked on
 ledger.tag_log, keyed per (account,clip) so a re-tag can't overwrite a time the window still
 needs — AUDIT H3; writes are made durable by the ledger's atomic save). decide_tag() returns
