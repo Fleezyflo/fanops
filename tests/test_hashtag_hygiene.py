@@ -11,7 +11,7 @@
 # Relevance is enforced upstream (discovery is anchored in the persona's description) and the operator's
 # ban list remains the explicit veto.
 import pytest
-from fanops.hashtag_hygiene import is_curatable, tag_defect
+from fanops.hashtags import is_curatable, norm_tag, tag_defect
 
 _FYP = "#fypppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"   # 73 p's — was live + shipping
 
@@ -57,3 +57,11 @@ def test_keysmash_beats_length_in_the_reason_string():
 
 def test_structurally_junk_tag_is_not_curatable():
     assert not is_curatable(_FYP)
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("", ""), ("   ", ""), ("#", ""), ("#Love", "#love"), (" #bars ", "#bars"),
+    ("bars", "#bars"), ("##bars", "#bars"),
+])
+def test_norm_tag_canonicalizes(raw, want):
+    assert norm_tag(raw) == want

@@ -32,11 +32,14 @@ HARVEST_CAP = 5000                 # upper bound on distinct co-tags per harvest
 # `density()` denominator MUST be this same number, and Layer B does no network.
 TOP_SAMPLE_N = 27
 
-def _norm(tag: str) -> str:
+def norm_tag(tag: str) -> str:
     """Canonicalise one tag: strip, lowercase, exactly one leading '#', no inner spaces. '' -> ''."""
     if not tag: return ""
     t = tag.strip().lower().lstrip("#").strip()
     return f"#{t}" if t else ""
+
+
+_norm = norm_tag  # scrape stack + in-module callers; prefer norm_tag at new call sites
 
 
 def _dedupe_norm(seq) -> list[str]:
@@ -256,3 +259,39 @@ def load_measurements(cfg) -> dict[str, dict]:
 def ranked_tags(measurements: dict[str, dict]) -> list[str]:
     """Cache order via `size_rank_key` (band, then size, then 7-day trend, then tag)."""
     return sorted(measurements, key=lambda t: size_rank_key(t, measurements[t]))
+
+
+# --- hashtag hygiene (structural gates for derived corpus tags) -----------------------------------
+_RUN = re.compile(r"(.)\1{3,}")            # 4+ of the same char in a row: keysmash, never a real tag
+_SHAPE = re.compile(r"^#[a-z0-9_]+$")      # post-norm_tag shape; anything else is malformed
+_MAX_LEN = 30                              # 30 chars after '#'; longer is a sentence or a keysmash
+_MIN_LEN = 2
+
+
+def tag_defect(tag: str) -> str | None:
+    """The STRUCTURAL defect in `tag`, or None if it is clean enough to be curated. Pure + deterministic
+    — the same string always yields the same verdict, so a refusal is explainable and testable. Expects a
+    raw tag; normalizes internally (so callers cannot bypass the gate by passing 'FYP' or ' #Love ')."""
+    h = norm_tag(tag) if isinstance(tag, str) else ""
+    if not h or h == "#":
+        return "empty"
+    body = h[1:]
+    if len(body) < _MIN_LEN:
+        return f"too short (<{_MIN_LEN} chars)"
+    # Keysmash is checked BEFORE length: `#fypppppppppp…` is both over-long and a keysmash, and "keysmash" is
+    # the more specific, more actionable diagnosis. The reason string is operator-facing (the migration prints
+    # it), so the most precise true statement wins.
+    if _RUN.search(body):
+        return "malformed (4+ repeated characters — keysmash)"
+    if len(body) > _MAX_LEN:
+        return f"too long (>{_MAX_LEN} chars) — a tag, not a sentence"
+    if not _SHAPE.match(h):
+        return "malformed (only a-z, 0-9 and _ survive normalization)"
+    if body.isdigit():
+        return "digits only — cannot describe content"
+    return None
+
+
+def is_curatable(tag: str) -> bool:
+    """True when `tag` may enter a derived corpus. Sugar over tag_defect for call sites that only branch."""
+    return tag_defect(tag) is None
