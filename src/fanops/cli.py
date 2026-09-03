@@ -4,12 +4,11 @@ the agent gates via the responder (FIX F02/F13); gc reclaims disk (FIX F83); run
 respond+advance until stable for unattended operation."""
 from __future__ import annotations
 import json, subprocess, sys, time
-from datetime import datetime, timezone
-import fanops
 from fanops.config import Config
 from dotenv import load_dotenv
 from fanops.errors import AuthError, ControlFileError, CutoverError, DownloadError, LockBusyError, RunBusyError, ToolchainMissingError, fail_open
-from fanops.escalation import EscalationPosture, decide
+from fanops.escalation import EscalationPosture, decide  # cmd_run loop spine only
+from fanops import cli_run
 from fanops.ledger import Ledger
 from fanops.accounts import Accounts
 from fanops.models import ClipState, PostState, ErrorKind
@@ -23,27 +22,10 @@ from fanops.reconcile import reconcile_due
 from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.variant_amplify import apply_variant_amplify
 from fanops.p4_dim_bias import apply_p4_dim_bias
-from fanops.timing_bias import apply_timing_bias
 from fanops import autopilot, daemon
 from fanops.log import get_logger
 from fanops.cli_parser import build_parser
 from fanops.cli_parser import _parse_segments  # noqa: F401  # re-export for tests
-
-def _gates_blocked_note(s) -> str | None:
-    """A LOUD note when the run loop ends with gates still awaiting — distinguishes 'all blocked'
-    from 'nothing to do' (which the bare summary buries). None when converged / no status, so the
-    caller can `if (note := ...)` unconditionally."""
-    aw = (s or {}).get("awaiting", {})
-    # WS2 (audit x-f2): EVERY agent gate blocks downstream work — moments (pick) blocks the hook gate,
-    # moment_hooks blocks the clip/caption stages, captions blocks crosspost. Iterate the awaiting dict itself
-    # (built from pipeline.GATE_KINDS) so a stuck gate (the bug) — or any future gate — raises the same loud
-    # signal; a hardcoded subset let a wedged gate read as converged. (P11/MOL-152: moment_casting is gone.)
-    open_gates = {k: v for k, v in aw.items() if v}
-    if open_gates:
-        detail = " ".join(f"{k}={v}" for k, v in open_gates.items())
-        return (f"gates STILL BLOCKED after the run loop: {detail} — the responder is not clearing "
-                f"them (rate limit? repeated validation failures? run `fanops doctor`)")
-    return None
 
 def cmd_status(cfg: Config) -> int:
     led = Ledger.load(cfg)
@@ -152,44 +134,6 @@ def cmd_track(cfg: Config, window: str) -> int:
     write_digest(Ledger.load(cfg), cfg)              # digest read OUTSIDE the lock
     print(f"tracked; analyzed={analyzed} series_rows+={added} degraded={deg}")
     return 0
-
-def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
-    # E1 post-loop learning pass, extracted from cmd_run for testability AND to close the same
-    # lost-update window cmd_track closes (ECC-review fix #1): the metrics FETCH (up to ~30s network)
-    # runs OUTSIDE the ledger lock; only classify/amplify/retire run inside a tight transaction.
-    # Holding the flock across the network call serialized any concurrent advance/ingest behind it.
-    # Snapshot the published submission_ids FIRST (postiz/zernio read per-post analytics, so the client
-    # must know which ids to fetch).
-    # Raises on a fetch/apply hiccup; the caller logs+swallows so the unattended run stays exit 0.
-    led0 = Ledger.load(cfg)
-    pollable_posts = [p for p in led0.posts.values()   # P3: published OR analyzed (re-pollable)
-                      if p.submission_id and p.state in (PostState.published, PostState.analyzed)]
-    rows = list(_default_list_posts(cfg, posts=pollable_posts)(window))   # network, NO lock held (per-post backend routing)
-    with Ledger.transaction(cfg) as led:
-        led = pull_metrics(led, cfg, list_posts=lambda _w: rows, window=window)
-        r = classify_outcomes(led, per_surface=cfg.adjust_per_surface)   # P4(a): per-surface WINNERS when on
-        # BOTH learn-pass actuators carry an operator-INTENT flag, default OFF, and both leave a
-        # breadcrumb whichever way they go. AMPLIFY MINTS NEW WORK — a winner re-opens a moment
-        # request on its source, producing new moments -> clips -> posts. RETIRE DESTROYS — a loser's
-        # clip is suppressed, its moment too when no live sibling remains, and every unshipped post of
-        # that lineage is rewritten to `retired`. Both ran on `cfg.is_live_backend` alone, so going
-        # live to PUBLISH switched on an autonomous generator AND an autonomous destroyer. NOTE the
-        # validation freeze is deliberately absent: nothing ever writes metrics_confirmed False, so
-        # once the first real metric auto-stamps it `learning_validated` can never re-bind — a
-        # condition that cannot bind is theatre, not a gate. With both flags OFF this pass is
-        # read-only: pull metrics, classify, log the counts, write nothing.
-        if cfg.learn_amplify:
-            before = {sid: int(s.meta.get("amplify_count", 0)) for sid, s in led.sources.items()}
-            led = amplify(led, cfg, r["winners"])
-            fired = [sid for sid, s in led.sources.items() if int(s.meta.get("amplify_count", 0)) > before.get(sid, 0)]
-            get_logger(cfg)("learn", "-", "amplified", sources=len(fired), winners=len(r["winners"]))
-        else:
-            get_logger(cfg)("learn", "-", "amplify_skipped", winners=len(r["winners"]))
-        if cfg.learn_retire:
-            led = retire(led, r["losers"])
-            get_logger(cfg)("learn", "-", "retired", losers=len(r["losers"]))
-        else:
-            get_logger(cfg)("learn", "-", "retire_skipped", losers=len(r["losers"]))
 
 def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     # AUDIT H4 + M1: resolve posts stranded in submitting/needs_reconcile against the backend. reconcile_due
@@ -994,154 +938,30 @@ def _check_preflight(cfg: Config) -> int:
     return 0
 
 
-def _fresh_run_base_time() -> str:
-    """UTC now as --base-time (matches a per-iteration resident loop advance)."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _gates_blocked_note(s) -> str | None:
+    return cli_run.gates_blocked_note(s)
 
+def _learn_pass(cfg: Config, *, window: str = "30d") -> None:
+    return cli_run.learn_pass(cfg, window=window)
+
+def _fresh_run_base_time() -> str:
+    return cli_run.fresh_run_base_time()
 
 def _cmd_run_pass(cfg: Config, base_time: str) -> dict | None:
     """One respond+advance converge-then-learn pass. None = halted (run-halted line already on stderr)."""
-    from fanops.fanops_hashtags import reset_safari_tick_slot
-    from fanops.pipeline_run import paused, run_lease
-    reset_safari_tick_slot()
-    # T1.3: the operator brake, checked BEFORE the lease is taken — a paused pump must not even
-    # contend for the run flock, so `fanops advance` by hand stays unblocked while paused. Returning a
-    # DICT (not None) is load-bearing twice over: the --loop path still emits its heartbeat (a silent
-    # pause would freeze the recorded code SHA and the keeper would SIGTERM-kickstart every ~720s after
-    # any code change), and the one-shot path exits 0 because a pause is not a failure. `awaiting: {}`
-    # keeps _gates_blocked_note quiet — no open gates, so it returns None.
-    if paused(cfg):
-        get_logger(cfg)("run", "-", "paused")
-        return {"paused": True, "awaiting": {}}
-    # unattended: respond to gates, advance, repeat until no progress.
-    # BOTH the responder and advance() are inside the guard: advance()'s deterministic
-    # stages are per-unit quarantined, but the responder (FIX H7 — the LLM model call or a
-    # response that fails validation can raise) and crosspost/publish run outside those
-    # guards, and publish_due RE-RAISES on fatal auth (bad key/401) by design. So a raise
-    # from either degrades cleanly here (log one line + stop) rather than crashing the
-    # unattended cron loop with a traceback.
-    s = None
-    with run_lease(cfg):
-        for _ in range(10):
-            try:
-                get_responder(cfg).answer_pending(cfg)
-                s = advance(cfg, base_time=base_time)
-            except Exception as e:
-                # Progress spine: converge fault → NONZERO (None → cmd_run exit 1; loop skips tick).
-                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
-                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                if decide("toolchain_run", 0) is EscalationPosture.nonzero:
-                    return None
-                raise
-            # Converge only when EVERY gate is clear. any() over all awaiting kinds (moments, captions)
-            # is robust to future gates too — a run that exits with any open has not produced its clips/posts.
-            if not any(s["awaiting"].values()):
-                break
-    # B2 / MOL-960: gates still awaiting after converge → LOUD stderr + run.log; cmd_run maps this
-    # to exit 1 (intentional pause keeps awaiting={} so exit stays 0).
-    if (note := _gates_blocked_note(s)):
-        print(note, file=sys.stderr)
-        get_logger(cfg)("run", "-", "gates_blocked", **s["awaiting"])   # WS2: log EVERY gate kind, not just moments/captions
-    # E1: post-loop learning pass — close the feedback loop ONCE per `run` after respond+advance
-    # converges. Gated by the identical reconcile guard (pipeline.py:106): live backend + key
-    # only. In dryrun (default) the guard short-circuits and the pass is NEVER entered. Runs in
-    # its own lock-safe transaction (won't race the next advance); a pull/classify/amplify/retire
-    # hiccup is logged and swallowed so it can NEVER crash the unattended run (exit stays 0).
-    if cfg.is_live_backend:
-        try:
-            _learn_pass(cfg)
-        except AuthError as e:
-            # A bad/rotated key is actionable, not a transient 5xx — surface it VISIBLY on stderr +
-            # a distinct breadcrumb, but keep exit 0: the unattended run SKIPS the learn pass cleanly,
-            # mirroring cmd_track/cmd_reconcile (read paths skip; only the WRITE path publish_due halts).
-            print(f"learn skipped: auth failure ({type(e).__name__}) — check the API key", file=sys.stderr)
-            get_logger(cfg)("learn", "-", "auth_error", err=f"{type(e).__name__}: {str(e)[:120]}")
-        except Exception:
-            with fail_open("cli._run_once learn degrade:"):
-                raise
-    # variant-amplify (v3): a SEPARATE, independently-gated learning pass — proven SUSTAINED
-    # variant winners auto-amplify their source. Gated by its OWN kill switch (cfg.variant_amplify,
-    # default OFF) AND the same live-backend+key guard as the learn block. Its OWN try/except so it
-    # can never affect the block above and a hiccup is swallowed (exit stays 0). apply_variant_amplify
-    # is amplify-only (never retires/deletes) and self-guards on the flag, so this is fail-SAFE.
-    if cfg.variant_amplify and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_variant_amplify(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once variant_amplify degrade:"):
-                raise
-    # P4(b) cross-account reach dim-bias: SYMMETRIC with variant_amplify — a SEPARATE, independently
-    # gated learning pass so the unattended run applies a proven higher-reach creative dim, not only
-    # the manual `fanops p4-bias` verb. Gated by its OWN kill switch (cfg.p4_dim_bias, default OFF) AND
-    # the live-backend+key guard; apply_p4_dim_bias is amplify-only AND stays INERT until cutover
-    # validation (validation_gate.learning_validated), so wiring it in is fail-SAFE. Own try/except —
-    # a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-    if cfg.p4_dim_bias and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_p4_dim_bias(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once p4_dim_bias degrade:"):
-                raise
-    # Leg 3 (timing): SYMMETRIC with p4_dim_bias — a SEPARATE, independently gated pass so the unattended
-    # run refreshes the reach-winning publish-HOUR prior (consumed by the next crosspost's surface_time).
-    # Own kill switch (cfg.timing_bias, default OFF) AND the live-backend guard; apply_timing_bias is
-    # bias-only (writes ONE prior file, never retires) AND validation-frozen, so wiring it in is fail-SAFE.
-    # Own try/except — a hiccup is swallowed (exit stays 0) and can't touch the blocks above.
-    if cfg.timing_bias and cfg.is_live_backend:
-        try:
-            with Ledger.transaction(cfg) as led:
-                led = apply_timing_bias(led, cfg)
-        except Exception:
-            with fail_open("cli._run_once timing_bias degrade:"):
-                raise
-    # HV1-PR4: vocab expand is not called from the run loop (it restocked persona search seeds).
-    # Module stays on disk; the tick remesures sidecar pile∪lock names only.
-    # WS2: remesure sidecar names at most once per cadence (12h), gated on last_complete_pass (not
-    # file mtime) so a throttled write cannot buy silence. NOT gated on is_live_backend — only on
-    # scrape session, handled inside the helper. Its OWN try/except; refresh_store_if_due never
-    # raises. Non-fresh skips log (MOL-525): a missing scrape session must not look identical to a
-    # correctly-throttled tick.
-    try:
-        from fanops.fanops_hashtags import refresh_store_if_due
-        r = refresh_store_if_due(cfg)
-        if r.get("aborted"):     # no_scrape / freeze / busy: report the abort LOUDLY, never a false
-                                 # store_refreshed (a skipped remesure is not a refresh)
-            get_logger(cfg)("hashtags", "-", "store_refresh_aborted", aborted=r.get("aborted"), reason=r.get("reason", ""))
-        elif r.get("refreshed"):
-            get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
-        elif r.get("reason") and r.get("reason") != "fresh":
-            get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
-    except Exception:
-        with fail_open("cli._run_once hashtags refresh degrade:"):
-            raise
-    # U3: throttled IG follower snapshot — own try/except; refresh_account_stats_if_due never raises.
-    try:
-        from fanops.fanops_account_stats import refresh_account_stats_if_due
-        r = refresh_account_stats_if_due(cfg)
-        if r.get("refreshed"):
-            get_logger(cfg)("account_stats", "-", "refreshed", updated=r.get("updated", 0), total=r.get("total", 0))
-    except Exception:
-        with fail_open("cli._run_once account_stats refresh degrade:"):
-            raise
-    return s
-
-
-_RUNNING_CODE_SHA: tuple[str | None] | None = None   # process-lifetime snapshot; see _running_code_sha
+    outcome = cli_run.cmd_run_pass(cfg, base_time)
+    if outcome.halt_stderr:
+        print(outcome.halt_stderr, file=sys.stderr)
+    if outcome.gates_stderr:
+        print(outcome.gates_stderr, file=sys.stderr)
+    if outcome.learn_skip_stderr:
+        print(outcome.learn_skip_stderr, file=sys.stderr)
+    if outcome.reraise:
+        raise outcome.reraise
+    return outcome.status
 
 def _running_code_sha(cfg: Config) -> str | None:
-    """The git-HEAD SHA this pump PROCESS was loaded from, snapshotted ONCE at the first heartbeat and
-    cached for the process's life. This is deliberately NOT re-read per tick: _version_signal reads the
-    checkout's CURRENT on-disk HEAD, so after an operator `git pull` it would report the NEW disk SHA
-    while this process still runs the OLD code in memory — which would make the keeper's drift check
-    (heartbeat `code` vs disk SHA) ALWAYS equal and adoption NEVER fire. A start-of-process snapshot is
-    the running-code truth the keeper needs: it stays the OLD SHA until a restart loads the new code and
-    a fresh process snapshots the new SHA (clearing the drift). Also spares a `git rev-parse` per tick."""
-    global _RUNNING_CODE_SHA
-    if _RUNNING_CODE_SHA is None:
-        _RUNNING_CODE_SHA = (daemon._version_signal(cfg)[0],)
-    return _RUNNING_CODE_SHA[0]
+    return cli_run.running_code_sha(cfg)
 
 def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
@@ -1150,22 +970,57 @@ def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     that mutation is the load-bearing signal, not cosmetic. Printed to stdout AND appended to
     cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert.
     `origin='loop'` marks resident --loop ticks; daemon.status ignores heartbeats without it."""
-    hb = {
-        "heartbeat": datetime.now(timezone.utc).isoformat(),
-        "fanops_version": fanops.__version__,
-        "published_in_run": s.get("published_in_run", 0),
-        # UNCONDITIONAL, unlike `origin`: a monitor telling "paused" from "dead" needs the key on EVERY
-        # line — a key present only when true makes its absence ambiguous between "not paused" and "old code".
-        "paused": bool(s.get("paused", False)),
-        "last_published_age_hours": s.get("last_published_age_hours"),
-        "code": _running_code_sha(cfg),   # SHA this PROCESS loaded (snapshot at start); the keeper compares it to disk to adopt new code
-    }
+    hb = cli_run.heartbeat_dict(cfg, s)
     print(json.dumps(hb))
-    fields = dict(hb)
-    if origin:
-        fields["origin"] = origin
-    get_logger(cfg)("heartbeat", "-", "ok", **fields)
+    cli_run.heartbeat_log(cfg, hb, origin=origin)
 
+def cmd_run(cfg: Config, args) -> int:
+    if (rc := _check_accounts(cfg)):  return rc
+    if (rc := _check_preflight(cfg)):  return rc
+    if args.loop:
+        try:
+            interval = daemon.parse_interval(args.interval)
+        except (RuntimeError, ValueError, OSError) as e:
+            print(f"run: {e}", file=sys.stderr)
+            return 2
+        # Code adoption is NOT done here anymore — the in-process baseline-capture + loop-top os.execv
+        # was deleted (keeper-adopts-pump). A wedged pump, or a pump on broken detector code, could not
+        # adopt when the check lived inside the thing that had to restart. The EXTERNAL keeper
+        # (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) now compares this loop's
+        # per-tick heartbeat `code` SHA against the SHA on disk and kickstarts the pump on drift
+        # (daemon.ensure). Each tick still records its running-HEAD SHA via _heartbeat(code=...).
+        while True:
+            load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
+            cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
+            base_time = _fresh_run_base_time()
+            try:
+                with fail_open("run.ensure_keeper_loaded"):
+                    daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
+                if (s := _cmd_run_pass(cfg, base_time)) is not None:
+                    _heartbeat(cfg, s, origin="loop"); print(s)
+                    from fanops.health import refresh_runtime_snapshots
+                    refresh_runtime_snapshots(cfg)
+            except RunBusyError as e:
+                print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
+            except Exception as e:
+                # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
+                get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
+                print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
+                if decide("transient", 1) is EscalationPosture.refuse:
+                    pass
+                else:
+                    return 1
+            time.sleep(interval)
+    try:
+        if (s := _cmd_run_pass(cfg, args.base_time)) is None:
+            return 1
+    except RunBusyError as e:
+        print(str(e), file=sys.stderr); return 1
+    # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
+    # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
+    _heartbeat(cfg, s); print(s)
+    # MOL-960: stuck gates after converge → NONZERO; pause / clean converge → 0.
+    return 1 if _gates_blocked_note(s) else 0
 
 def _studio_port_busy(host: str, port: int) -> bool:
     # Liveness probe for the studio launch guard: something must be ACCEPTING on the port. Never test
@@ -1552,52 +1407,7 @@ def _dispatch(cfg: Config, args) -> int:
         )
         return 0
     if args.cmd == "run":
-        if (rc := _check_accounts(cfg)):  return rc
-        if (rc := _check_preflight(cfg)):  return rc
-        if args.loop:
-            try:
-                interval = daemon.parse_interval(args.interval)
-            except (RuntimeError, ValueError, OSError) as e:
-                print(f"run: {e}", file=sys.stderr)
-                return 2
-            # Code adoption is NOT done here anymore — the in-process baseline-capture + loop-top os.execv
-            # was deleted (keeper-adopts-pump). A wedged pump, or a pump on broken detector code, could not
-            # adopt when the check lived inside the thing that had to restart. The EXTERNAL keeper
-            # (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) now compares this loop's
-            # per-tick heartbeat `code` SHA against the SHA on disk and kickstarts the pump on drift
-            # (daemon.ensure). Each tick still records its running-HEAD SHA via _heartbeat(code=...).
-            while True:
-                load_dotenv(cfg.root / ".env", override=True)   # operator disk truth each tick (B01 C1)
-                cfg = Config(cfg.root)                          # side-effect-free; re-read after dotenv
-                base_time = _fresh_run_base_time()
-                try:
-                    with fail_open("run.ensure_keeper_loaded"):
-                        daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
-                    if (s := _cmd_run_pass(cfg, base_time)) is not None:
-                        _heartbeat(cfg, s, origin="loop"); print(s)
-                        from fanops.health import refresh_runtime_snapshots
-                        refresh_runtime_snapshots(cfg)
-                except RunBusyError as e:
-                    print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
-                except Exception as e:
-                    # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
-                    get_logger(cfg)("run", "-", "halted", err=f"{type(e).__name__}: {e}"[:160])
-                    print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
-                    if decide("transient", 1) is EscalationPosture.refuse:
-                        pass
-                    else:
-                        return 1
-                time.sleep(interval)
-        try:
-            if (s := _cmd_run_pass(cfg, args.base_time)) is None:
-                return 1
-        except RunBusyError as e:
-            print(str(e), file=sys.stderr); return 1
-        # E2: emit one heartbeat for the WHOLE run from the final advance summary (so
-        # published_in_run/last_published_age_hours reflect this run incl. the learning pass effect).
-        _heartbeat(cfg, s); print(s)
-        # MOL-960: stuck gates after converge → NONZERO; pause / clean converge → 0.
-        return 1 if _gates_blocked_note(s) else 0
+        return cmd_run(cfg, args)
     return 1
 
 if __name__ == "__main__":
