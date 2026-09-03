@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import ARCH, CONTRACT, DERIVED, GOVERNANCE, KB, REPO, SRC, load
+from .deltas import compile_edges
 
 # Artifacts that are HISTORY, not live claims. A corrections record must keep saying what was true
 # when it was written — retroactively editing an erratum so it matches today destroys the only
@@ -411,8 +412,7 @@ def check(derived_dir: Path | None = None) -> list[Finding]:
     baseline = _approved("must_stay_lazy", default=None)
     if baseline is not None:
         pinned = {(e[0], e[1]) for e in baseline}
-        compile_edges = {(s, t) for s, d in deps["edges"].items() for t in d["compile"]}
-        hoisted = sorted(pinned & compile_edges)
+        hoisted = sorted(pinned & compile_edges(deps))
         if hoisted:
             out.append(_f("ARCH-007",
                           f"{len(hoisted)} import(s) pinned as must-stay-LAZY are now MODULE-LEVEL. "

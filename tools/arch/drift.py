@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import DERIVED, SRC
+from .deltas import compile_edges, set_delta, totals_delta
 from .generate import generate
 
 # Architecture drift classes
@@ -100,36 +101,30 @@ def _explain(name: str, old: dict, new: dict) -> list[str]:
     ev: list[str] = []
 
     if name == "modules.json":
-        ev += _set_delta("module", set(old.get("modules", [])), set(new.get("modules", [])))
+        ev += set_delta("module", set(old.get("modules", [])), set(new.get("modules", [])))
         o_un, n_un = set(old.get("unassigned_modules", [])), set(new.get("unassigned_modules", []))
         ev += [f"module lost its subsystem: {m}" for m in sorted(n_un - o_un)]
         ev += [f"module gained a subsystem: {m}" for m in sorted(o_un - n_un)]
 
     elif name == "dependencies.json":
-        for k, ov in (old.get("totals") or {}).items():
-            nv = (new.get("totals") or {}).get(k)
-            if nv != ov:
-                ev.append(f"{k}: {ov} -> {nv}")
-        oc = {(s, t) for s, d in old.get("edges", {}).items() for t in d["compile"]}
-        nc = {(s, t) for s, d in new.get("edges", {}).items() for t in d["compile"]}
+        ev += totals_delta(old.get("totals"), new.get("totals"))
+        oc = compile_edges(old)
+        nc = compile_edges(new)
         ev += [f"NEW compile-time edge: {s} -> {t}" for s, t in sorted(nc - oc)]
         ev += [f"REMOVED compile-time edge: {s} -> {t}" for s, t in sorted(oc - nc)]
 
     elif name == "configuration.json":
-        ev += _set_delta("env var", set(old.get("env_vars", {})), set(new.get("env_vars", {})))
+        ev += set_delta("env var", set(old.get("env_vars", {})), set(new.get("env_vars", {})))
 
     elif name == "surfaces.json":
         o = {(r["path"], tuple(r["methods"])) for r in old.get("routes", [])}
         n = {(r["path"], tuple(r["methods"])) for r in new.get("routes", [])}
         ev += [f"NEW route: {' '.join(m)} {p}" for p, m in sorted(n - o)]
         ev += [f"REMOVED route: {' '.join(m)} {p}" for p, m in sorted(o - n)]
-        ev += _set_delta("CLI verb", set(old.get("cli_verbs", [])), set(new.get("cli_verbs", [])))
+        ev += set_delta("CLI verb", set(old.get("cli_verbs", [])), set(new.get("cli_verbs", [])))
 
     elif name == "side_effects.json":
-        for k, ov in (old.get("totals") or {}).items():
-            nv = (new.get("totals") or {}).get(k)
-            if nv != ov:
-                ev.append(f"{k}: {ov} -> {nv}")
+        ev += totals_delta(old.get("totals"), new.get("totals"))
 
     elif name == "ratchets.json":
         op = (old.get("measured") or {}).get("print_calls_by_module", {})
@@ -140,7 +135,7 @@ def _explain(name: str, old: dict, new: dict) -> list[str]:
 
     elif name == "contract_surface.json":
         os_, ns = old.get("slices", {}), new.get("slices", {})
-        ev += _set_delta("slice", set(os_), set(ns))
+        ev += set_delta("slice", set(os_), set(ns))
         for sid in sorted(set(os_) & set(ns)):
             a, b = set(os_[sid]["owned_files"]), set(ns[sid]["owned_files"])
             ev += [f"slice {sid} GAINED file {f}" for f in sorted(b - a)]
@@ -149,11 +144,6 @@ def _explain(name: str, old: dict, new: dict) -> list[str]:
     if not ev:
         ev.append("bytes differ but no modelled dimension changed — inspect the raw diff")
     return ev[:40]
-
-
-def _set_delta(label: str, old: set, new: set) -> list[str]:
-    return ([f"NEW {label}: {x}" for x in sorted(new - old)]
-            + [f"REMOVED {label}: {x}" for x in sorted(old - new)])
 
 
 def all_stale(derived_dir: Path | None = None) -> list[Drift]:

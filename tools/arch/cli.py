@@ -120,16 +120,14 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     whatever was just committed — which is not a ratchet, it is a rubber stamp.
     """
     from .common import load
+    from .deltas import lazy_only_edges
     deps = load(DERIVED / "dependencies.json")
 
     # An edge that is ALREADY module-level is not a candidate for "must stay lazy" — it is not
     # lazy. (`persona_store -> personas` appears in BOTH sets: it is part of the one compile-time
     # cycle AND is also imported inside a function.) Pinning such an edge would fire ARCH-007 on
     # the status quo, which is the classic way a ratchet becomes noise and then gets ignored.
-    compile_edges = {(s, t) for s, d in deps["edges"].items() for t in d["compile"]}
-    lazy_only = sorted({(e["from"], e["to"])
-                        for e in deps["lazy_upward"] + deps["lazy_lateral"]} - compile_edges)
-    must_stay_lazy = [list(e) for e in lazy_only]
+    must_stay_lazy = [list(e) for e in lazy_only_edges(deps)]
 
     # AUTHOR-DECLARED, not derived: nothing in the tree can regenerate "the operator meant to
     # remove this route". Carried forward verbatim — a re-accept that dropped it would silently

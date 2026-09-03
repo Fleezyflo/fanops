@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path
 
 from .common import DERIVED, GOVERNANCE, REPO, SRC, load
+from .deltas import compile_edges
 from .drift import stale_artifacts
 from .generate import generate
 
@@ -150,8 +151,8 @@ def report(base: str = "origin/main") -> dict:
 
     # ── dependencies ────────────────────────────────────────────────────────────────────────
     od, nd = base_derived.get("dependencies", {}), head.get("dependencies", {})
-    oc = {(s, t) for s, d in od.get("edges", {}).items() for t in d["compile"]}
-    nc = {(s, t) for s, d in nd.get("edges", {}).items() for t in d["compile"]}
+    oc = compile_edges(od)
+    nc = compile_edges(nd)
     ol = {(s, t) for s, d in od.get("edges", {}).items() for t in d["lazy"]}
     for s, t in sorted(nc - oc):
         rep["architecture"]["changed_dependencies"].append(f"NEW compile-time edge {s} -> {t}")
