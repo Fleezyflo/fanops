@@ -17,6 +17,9 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "scripts" / "check.sh"
 SCOPE = REPO / "scripts" / "check_scope.py"
+GATE_COMMON = REPO / "scripts" / "lib" / "gate_common.sh"
+GATE_MARKERS = REPO / "scripts" / "gate_markers.py"
+SCOPE_OVERRIDES = REPO / "scripts" / "check_scope_overrides.json"
 
 # Body written into throwaway fixture test files. A real (never-trivial) assertion so it is not a
 # hollow test; the stub python never executes pytest on it anyway (scope is asserted via the log).
@@ -54,7 +57,7 @@ def sandbox(tmp_path):
         # Delegate scope resolution to the real interpreter (stdlib-only script).
         for a in "$@"; do
           case "$a" in
-            *check_scope.py) exec /usr/bin/env python3 "$@";;
+            *check_scope.py|*gate_markers.py) exec /usr/bin/env python3 "$@";;
           esac
         done
         echo "$@" >> "$INVOKED_LOG"
@@ -69,8 +72,12 @@ def sandbox(tmp_path):
 
     scripts = repo / "scripts"
     scripts.mkdir(parents=True)
+    (scripts / "lib").mkdir(parents=True)
     shutil.copy2(CHECK, scripts / "check.sh")
     shutil.copy2(SCOPE, scripts / "check_scope.py")
+    shutil.copy2(GATE_COMMON, scripts / "lib" / "gate_common.sh")
+    shutil.copy2(GATE_MARKERS, scripts / "gate_markers.py")
+    shutil.copy2(SCOPE_OVERRIDES, scripts / "check_scope_overrides.json")
     shutil.copy2(REPO / "scripts" / "setup-hooks.sh", scripts / "setup-hooks.sh")
 
     _git(repo, "init", "-q")
@@ -243,16 +250,20 @@ def test_pre_push_hook_runs_no_pytest():
 def test_check_sh_excludes_slow_marker():
     """check.sh must deselect slow cross-face proofs for fast local scoped runs."""
     check = CHECK.read_text()
-    assert 'pytest -q -m "not integration and not slow"' in check
+    markers = (REPO / "scripts" / "gate_markers.py").read_text()
+    assert "gate_markers" in check
+    assert 'PYTEST_FAST = "not integration and not slow"' in markers
 
 
 def test_check_full_default_excludes_slow():
     """Default check-full.sh skips slow; CHECK_FULL_SLOW=1 mirrors CI unit (-m 'not integration')."""
     full = (REPO / "scripts" / "check-full.sh").read_text()
+    markers = (REPO / "scripts" / "gate_markers.py").read_text()
     assert "ruff check ." in full
-    assert "not integration and not slow" in full
+    assert "gate_markers" in full
+    assert 'PYTEST_FAST = "not integration and not slow"' in markers
     assert 'CHECK_FULL_SLOW:-' in full or "CHECK_FULL_SLOW" in full
-    assert "MARKER='not integration'" in full or 'MARKER="not integration"' in full
+    assert 'PYTEST_WITH_SLOW = "not integration"' in markers
 
 
 def test_check_full_slow_env_mirrors_ci():

@@ -54,7 +54,7 @@ jobs:
       # disappears from unit-lane logs and toolchain-presence debugging falls back to inferring
       # from YAML. That is why a step that can't go red still earns its seconds.
       - name: CI env probe (diagnostic — measures ffmpeg/cv2, never fails)
-        run: python scripts/ci_env_probe.py
+        run: python scripts/ci/env_probe.py
       - name: Lint (ruff — pyflakes F + pycodestyle E, the house ruleset in pyproject)
         run: ruff check .          # was configured in pyproject but never enforced in CI (Phase 4b)
       - name: Unit tests
@@ -75,7 +75,7 @@ jobs:
         if: always() && (steps.unit-tests.outcome == 'success' || steps.unit-tests.outcome == 'failure')
         continue-on-error: true
         run: |
-          python scripts/ci_timing_report.py --step unit --log pytest-unit.log \
+          python scripts/ci/timing_report.py --step unit --log pytest-unit.log \
             --sha "${{ github.sha }}" --xdist --json-out ci-timing.partial.json
       # Blocking on PURPOSE: without a gate the unit suite slows without bound and the
       # fast-feedback contract erodes silently — no single PR is ever the one that broke it.
@@ -92,7 +92,7 @@ jobs:
         if: always() && (steps.unit-tests.outcome == 'success' || steps.unit-tests.outcome == 'failure')
         env:
           CI_UNIT_PYTEST_BUDGET_S: '240'
-        run: python scripts/ci_slo_gate.py --log pytest-unit.log
+        run: python scripts/ci/slo_gate.py --log pytest-unit.log
       - name: Upload ci-timing partial (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -182,7 +182,7 @@ jobs:
         run: |
           set -o pipefail
           . .venv-base/bin/activate
-          python scripts/base_install_smoke.py 2>&1 | tee -a base-install.log
+          python scripts/ci/base_install_smoke.py 2>&1 | tee -a base-install.log
 
       # The INSTALL is teed as well as the smoke: if `pip install .` is what breaks, that IS the
       # packaging regression this job exists to catch, and it must not vanish into a green check.
@@ -217,7 +217,7 @@ jobs:
           python-version: "3.12"
       - name: Merge ci-timing.json
         run: |
-          python scripts/ci_timing_report.py --merge timing-parts \
+          python scripts/ci/timing_report.py --merge timing-parts \
             --sha "${{ github.sha }}" --json-out ci-timing.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

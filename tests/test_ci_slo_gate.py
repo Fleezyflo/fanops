@@ -1,5 +1,6 @@
-"""Unit tests for scripts/ci_slo_gate.py — blocking unit pytest SLO gate."""
+"""Unit tests for scripts/ci/slo_gate.py — blocking unit pytest SLO gate."""
 from __future__ import annotations
+import importlib
 import io
 import os
 import subprocess
@@ -7,13 +8,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "ci_slo_gate.py"
+SCRIPT = ROOT / "scripts" / "ci" / "slo_gate.py"
 
 
 def _import():
     sys.path.insert(0, str(ROOT / "scripts"))
-    import ci_slo_gate as m  # noqa: PLC0415
-    return m
+    return importlib.import_module("ci.slo_gate")
 
 
 def test_within_budget_passes():

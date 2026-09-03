@@ -45,7 +45,7 @@ captured.
     purpose, or with a sub-row describing a STEP of another job. The registry manufactured the
     duplication the check then found.
 - **`ruff check .`** (F+E), **`scripts/scan-secrets.sh`** (PR-diff secret scan),
-  **`scripts/check-locks.sh`** (lockfile drift), **`scripts/ci_slo_gate.py`** (unit-suite SLO,
+  **`scripts/check-locks.sh`** (lockfile drift), **`scripts/ci/slo_gate.py`** (unit-suite SLO,
   blocking) — all steps of the `unit` job.
 - **`tests/test_governance_tombstone.py`** — pins the governance-prose deletion (see Tombstone below)
   and this file's existence, forever in the required lane.
@@ -121,7 +121,7 @@ from "passed silently" would rebuild the blind spot it exists to close.
   validators fire on an injected defect. The pytest twin is `@pytest.mark.slow` and the unit lane
   deselects `slow`. Nothing gates on it, while the unit lane's own blocking check is "no blocking
   findings" — a check that goes GREENER when a rule silently stops firing.
-- ci.yml `base-install` job — `scripts/base_install_smoke.py`, the only exercise of a clean
+- ci.yml `base-install` job — `scripts/ci/base_install_smoke.py`, the only exercise of a clean
   no-extras install and the loud cv2 refusal; the unit lane installs `[framing]`, so it is
   structurally incapable of covering this.
 - `.github/workflows/lane-guard.yml` — `scripts/lane_guard.py` (file-ownership) +
