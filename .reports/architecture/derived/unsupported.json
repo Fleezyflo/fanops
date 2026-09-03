@@ -42,6 +42,24 @@
       "file": "src/fanops/cli.py",
       "slice": "S09",
       "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "bulk_send_to_review",
+      "file": "src/fanops/studio/actions.py",
+      "slice": "S06",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "retry_oversize_failures",
+      "file": "src/fanops/studio/actions.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "retry_rate_limited_failures",
+      "file": "src/fanops/studio/actions.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
     }
   ],
   "generated_by": "tools/arch",

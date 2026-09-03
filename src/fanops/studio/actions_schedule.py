@@ -258,7 +258,7 @@ def publish_due_bucket(cfg: Config, *, handle: Optional[str] = None, batch: Opti
     """Publish every DUE queued post in scope (Schedule 'Publish all due'). LIVE requires confirm + shows rate."""
     from fanops.errors import AuthError
     from fanops.post.run import publish_due
-    from fanops.studio.actions import _studio_publish_guard
+    from fanops.studio.actions_publish import _studio_publish_guard
     from fanops.studio.views_results import due_publish_plan
     plan = due_publish_plan(cfg, handle=handle, batch=batch, now=_now(now))
     if plan.due == 0:

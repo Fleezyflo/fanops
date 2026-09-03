@@ -138,7 +138,10 @@
     "fanops.studio.actions_approve",
     "fanops.studio.actions_casting",
     "fanops.studio.actions_common",
+    "fanops.studio.actions_crosspost",
     "fanops.studio.actions_edit",
+    "fanops.studio.actions_publish",
+    "fanops.studio.actions_recover",
     "fanops.studio.actions_run",
     "fanops.studio.actions_schedule",
     "fanops.studio.actions_segments",
@@ -323,7 +326,10 @@
     "fanops.studio.actions_approve": "S16_studio",
     "fanops.studio.actions_casting": "S16_studio",
     "fanops.studio.actions_common": "S16_studio",
+    "fanops.studio.actions_crosspost": null,
     "fanops.studio.actions_edit": null,
+    "fanops.studio.actions_publish": null,
+    "fanops.studio.actions_recover": null,
     "fanops.studio.actions_run": "S16_studio",
     "fanops.studio.actions_schedule": null,
     "fanops.studio.actions_segments": "S16_studio",
@@ -371,11 +377,14 @@
   "totals": {
     "assigned": 174,
     "ghosts": 0,
-    "modules": 176,
-    "unassigned": 2
+    "modules": 179,
+    "unassigned": 5
   },
   "unassigned_modules": [
+    "fanops.studio.actions_crosspost",
     "fanops.studio.actions_edit",
+    "fanops.studio.actions_publish",
+    "fanops.studio.actions_recover",
     "fanops.studio.actions_schedule"
   ]
 }

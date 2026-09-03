@@ -4,29 +4,28 @@ its existence + state(queued) + not-imminent guard + mutation INSIDE the lock, o
 freshly-loaded ledger — mirroring the cmd_reconcile/cmd_resolve recovery verbs in cli.py so it cannot
 lose-update against a concurrent cron `fanops run`. Reads/normalization that can fail happen OUTSIDE the lock."""
 from __future__ import annotations
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from pydantic import ValidationError
 
 from fanops.config import Config
-from fanops.errors import AuthError, fail_open, reason
+from fanops.errors import AuthError, reason
 from fanops.ledger import Ledger
-from fanops.models import (CaptionSet, ClipState, ErrorKind, MomentDecision, MomentHookDecision, Platform, Post,
-                           PostState, _REVIEW_REVERT_BLOCKED)   # MOL-802: defined beside PostState, which owns it
-from fanops.ids import child_id, surface_key, _hash
-from fanops.timeutil import iso_z
-from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
+from fanops.models import (CaptionSet, ClipState, MomentDecision, MomentHookDecision, PostState)
 from fanops.audit import write_audit
 from fanops.log import get_logger
+from fanops.studio.actions_common import ActionResult, _now, _inherit_captions  # noqa: F401
 from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_uploads_and_ingest, save_thirdparty_uploads, run_ingest_thirdparty, run_advance, run_prepare, upload_init, upload_chunk, upload_finalize, catalogue_inbox, bind_queue, release_batch, release_all_held, release_reopens)  # noqa: F401
 from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_with_edits, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 from fanops.studio.actions_segments import set_segments, clear_segments  # noqa: F401
 from fanops.studio.actions_edit import edit_caption, reburn_hook, regenerate_caption, _guard_editable_post  # noqa: F401
 from fanops.studio.actions_schedule import (SNOOZE_DAYS, _normalize_z, reschedule_post, clear_time, accept_suggested_account, snooze_clip, _seconds_away, reschedule_bucket, shift_account_schedule, reschedule_account, randomize_account_schedule, publish_due_bucket)  # noqa: F401
+from fanops.studio.actions_publish import (mark_published, _studio_publish_guard, preflight_publish_media, reconcile_inflight, publish_now)  # noqa: F401
+from fanops.studio.actions_crosspost import (repost_post, repost_to_other_accounts, crosspost_to_account, crosspost_all_to_account, _warm_target_aspect)  # noqa: F401
+from fanops.studio.actions_recover import (retry_rate_limited_failures, retry_oversize_failures, retry_transient_failures, recover_posts, bulk_send_to_review, resolve_post, _refuse_retired, _rearm_to_queued)  # noqa: F401
 
 _GATE_MODELS = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 
@@ -94,186 +93,6 @@ def approve_candidate(cfg: Config, eid: str) -> ActionResult:
     return ActionResult(ok=True, detail=detail)
 
 
-# Non-terminal states an operator may mark "posted by hand". `error` is included (ecc:python-review):
-# it is semantically a recoverable failure like `failed` (digest.py treats them alike), so the UI
-# must not strand an error-state post. Excludes the terminal published/analyzed/retired.
-_POSTABLE = {PostState.queued, PostState.needs_reconcile, PostState.submitting,
-             PostState.submitted, PostState.failed, PostState.error}
-
-def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> ActionResult:
-    """Track B: the operator posted this clip by hand — force the post to `published` (+ REQUIRED
-    live URL). Like `fanops resolve <id> published` but STRICTER (ecc:python-review): resolve is the
-    unguarded force-anything escape hatch, whereas this rejects an already-terminal
-    (published/analyzed/retired) post so a double-click can't churn terminal state. Tight local
-    transaction, no network.
-
-    R1/D9: `url` is now REQUIRED (non-empty after strip). Saying "I posted by hand" MEANS the
-    operator has a permalink they can paste — refusing the action without one closes the third door
-    onto the ghost-row class (alongside D1: DryRunPoster, D2: _publish_one). Without this check the
-    same operator-driven path produced Post(state=published, public_url='') — a row that says
-    SHIPPED but the Posted tub can't render."""
-    if not (url or "").strip():
-        return ActionResult(ok=False, error=(
-            "mark_published requires a non-empty url — you said you posted by hand, paste the "
-            "permalink so the Posted tub has something to render (R1/D9)."))
-    with Ledger.transaction(cfg) as led:
-        if post_id not in led.posts:
-            return ActionResult(ok=False, error=f"no such post: {post_id}")
-        p = led.posts[post_id]
-        if p.state not in _POSTABLE:
-            return ActionResult(ok=False, error=f"post {post_id} is {p.state.value} — only an unpublished post can be marked posted")
-        # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
-        # the next ledger save (Pydantic re-validates the modified instance on serialization).
-        p.public_url = url.strip()
-        led.set_post_state(post_id, PostState.published)
-    # R3/D17: audit the SUCCESS — 'I posted by hand' is the most opaque action; the audit gives the operator a breadcrumb.
-    write_audit(cfg, "mark_published", [post_id], reason="studio_mark_published", url=url.strip())
-    return ActionResult(ok=True, detail={"post_id": post_id, "url": url})
-
-
-
-def _studio_publish_guard(cfg: Config, post=None) -> Optional[str]:
-    """Studio publish actions must not silently dryrun when the operator expects live — and must not submit
-    into a DEAD backend. T10: once the per-post provider is resolved, exercise that provider's REAL health
-    (Postiz's docker health-check is nginx-only and LIES while the Node backend crash-loops; Zernio auth can
-    lapse) and FAIL FAST with an ops pointer BEFORE the poster runs, instead of submitting-then-parking the
-    post in needs_reconcile. FAIL CLOSED: an unhealthy probe / failed auth blocks. The probe never echoes a key."""
-    if not cfg.is_live:
-        return "Not live — flip Go Live before publishing. Nothing reaches social in dryrun."
-    if post is not None:
-        from fanops.accounts import Accounts
-        from fanops.post.run import _post_provider
-        accts = Accounts.load(cfg)
-        prov = _post_provider(cfg, accts, post)
-        if prov == "dryrun":
-            return (f"{post.account} on {post.platform.value} routes to dryrun — map the channel in Go Live → Accounts.")
-        if prov is None:
-            return (f"{post.account} on {post.platform.value} is not mapped — connect the channel in Go Live.")
-        if prov == "postiz":
-            from fanops.post import postiz as _postiz            # module ref so a test monkeypatch on the symbol applies
-            health = _postiz.postiz_health_probe(cfg)
-            if not health.healthy:
-                from fanops.postiz_lifecycle import ensure_up
-                ensure_up(cfg)                                 # self-heal: wake idle-stopped local stack once
-                health = _postiz.postiz_health_probe(cfg)
-            if not health.healthy:
-                return (f"Postiz backend unhealthy ({health.status_code or 'unreachable'}) — its docker health-check "
-                        f"is nginx-only and can lie while the Node backend crash-loops. Publishing now would submit "
-                        f"then park in needs_reconcile. Fix Postiz first; see docs/POSTIZ_OPS.md.")
-        elif prov == "zernio":
-            from fanops.post import zernio as _zernio            # module ref so a test monkeypatch on the symbol applies
-            from fanops.errors import ZernioAuthError
-            try:
-                if not _zernio.zernio_check_auth(cfg):
-                    return ("Zernio unreachable — publishing now would submit then park. Check ZERNIO_API_KEY / the "
-                            "Zernio API; see docs/POSTIZ_OPS.md.")
-            except ZernioAuthError:
-                return ("Zernio rejected the API key (401) — check ZERNIO_API_KEY in the Studio Go-Live tab; "
-                        "see docs/POSTIZ_OPS.md.")
-    return None
-
-
-
-def preflight_publish_media(cfg: Config, post, led=None) -> str | None:
-    """Return an error string when local media exceeds backend caps (fail BEFORE network). Shrinks when possible."""
-    from fanops.post.compress import apply_shrink_to_post, media_path_for_post, publish_backend_for_post, upload_cap_bytes
-    led = led if led is not None else Ledger.load(cfg)
-    backend = publish_backend_for_post(cfg, post)
-    cap = upload_cap_bytes(cfg, post, backend)
-    if cap is None:
-        return None
-    if apply_shrink_to_post(cfg, led, post, backend=backend):
-        return None
-    path = media_path_for_post(cfg, led, post)
-    size = path.stat().st_size if path else 0
-    return f"oversize: {size} bytes > {cap} — re-render shorter"
-
-
-def reconcile_inflight(cfg: Config) -> ActionResult:
-    """Poll backends for permalinks on in-flight posts (Studio reconcile strip)."""
-    if not cfg.is_live:
-        return ActionResult(ok=False, error="Publishing is off — turn on Go Live before checking for links.")
-    from fanops.reconcile import reconcile_due
-    try:
-        summary = reconcile_due(cfg)
-    except Exception as exc:
-        get_logger(cfg)("reconcile", "-", "reconcile_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"reconcile failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"outcome": "reconciled", **summary})
-
-def publish_now(cfg: Config, post_id: str, *, confirmed: bool = True) -> ActionResult:
-    """Ship ONE reviewed post IMMEDIATELY from the Studio (milestone 5: publish in the UI) via the
-    SAME poster path the pipeline uses (post.run.publish_post) — a real post on a live backend, a
-    dryrun no-op->published locally — IGNORING the post's (future) schedule, so the occasional-batch
-    operator can review then ship without waiting for the schedule or touching the CLI. Same
-    live-publish confirm + fatal-auth surfacing as run_advance; queued-only; scoped to THIS post
-    (other scheduled posts are untouched). Distinct from mark_published (Track B: 'I posted by hand')
-    — this actually drives the poster."""
-    from fanops.post.run import publish_post
-    if cfg.is_live and not confirmed:
-        # UI-LIE-FIX: per-channel truth, not the legacy global.
-        return ActionResult(ok=False, error=f"LIVE backend ({cfg.effective_publish_mode()}): this "
-                            "PUBLISHES the post to a real account — tick the confirm box, then click again.")
-    # Short lock-free guard read for a friendly message; publish_post's own CLAIM transaction is the
-    # authoritative queued-only gate (a state change in the gap is re-validated there -> a clean no-op).
-    led = Ledger.load(cfg)
-    if post_id not in led.posts:
-        return ActionResult(ok=False, error=f"no such post: {post_id}")
-    post = led.posts[post_id]
-    st = post.state
-    if st is not PostState.queued:
-        return ActionResult(ok=False, error=f"post {post_id} is {st.value} — only a queued post can be published")
-    if (err := _studio_publish_guard(cfg, post)):
-        return ActionResult(ok=False, error=err)
-    if (pf := preflight_publish_media(cfg, post, led=led)):
-        with fail_open("studio.actions.publish_now"):
-            with Ledger.transaction(cfg) as led:
-                p = led.posts.get(post_id)
-                if p is not None:
-                    led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.bad_payload,
-                                       error_reason=pf)
-        return ActionResult(ok=False, error=pf)
-    from fanops.post.compress import persist_post_shrink
-    persist_post_shrink(cfg, led, post_id)
-    try:
-        # network runs OUTSIDE the ledger lock (per-post claim->network->finalize) — the Studio no longer
-        # holds the flock across the publish round-trip, so a concurrent daemon pass isn't starved.
-        state = publish_post(cfg, post_id)
-    except AuthError as exc:
-        # UI-LIE-FIX: the auth-key name comes from the EXCEPTION CLASS, not a backend guess
-        # (PostizAuthError -> POSTIZ_API_KEY, etc). This is unambiguous: the backend that raised
-        # owns the key. Replaces the old `if cfg.poster_backend == 'postiz'` ternary that lied on
-        # per-channel deployments and didn't even know zernio existed.
-        key = Config.auth_key_name_from_error(exc)
-        return ActionResult(ok=False, error=f"FATAL auth failure — check {key}: {str(exc)[:160]}")
-    except Exception as exc:
-        # A non-auth failure (media upload RuntimeError, corrupt clip.path, etc.) must NOT escape to
-        # Flask as a 500 — the cockpit surfaces it cleanly (mirrors run_advance's broad catch).
-        get_logger(cfg)("publish", post_id, "publish_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"publish failed: {str(exc)[:160]}")
-    # ONLY 'published' is success: _publish_one advances submitted -> published on a clean poster return,
-    # so any other terminal state means the post did NOT fully ship. A None return means the CLAIM gate
-    # found it no longer queued (e.g. a concurrent daemon pass just claimed it between the guard read and
-    # the claim) — tell the operator to retry rather than print a confusing "post is None".
-    if state in ("published", "needs_reconcile", "submitted"):
-        pub = Ledger.load(cfg).posts.get(post_id)
-        # dryrun-boundary M3: the "LIVE publish accidentally ran dryrun -> dryrun:// url" guard is gone —
-        # nothing writes a dryrun:// url any more, and a dryrun provider is boundary-skipped before it can
-        # reach _publish_one on a live system. The row can't be constructed, so there's nothing to catch.
-        from fanops.studio.views_results import classify_post_delivery
-        delivery = classify_post_delivery(pub) if pub else "dryrun"
-        outcome = {"live": "live_shipped", "inflight": "inflight_submitted", "dryrun": "dryrun_local"}.get(delivery, "live_shipped")
-        write_audit(cfg, "publish_now", [post_id], reason="studio_publish_now",
-                    backend=cfg.effective_publish_mode())
-        return ActionResult(ok=True, detail={"post_id": post_id, "state": state, "outcome": outcome,
-                                             "submission_id": getattr(pub, "submission_id", None),
-                                             "public_url": getattr(pub, "public_url", None),
-                                             "backend": cfg.effective_publish_mode()})
-    if state is None:
-        return ActionResult(ok=False, error="post was not claimable (it may be publishing already) — refresh and try again")
-    return ActionResult(ok=False, error=f"publish did not complete (post is {state}) — see the run log")
-
-
 def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
     """Answer a moment/caption agent gate from the browser through the SAME validated contract the
     responder uses (Phase 3a): echo the latest request_id, validate the FULL response against its
@@ -298,257 +117,13 @@ def answer_gate(cfg: Config, kind: str, key: str, data: dict) -> ActionResult:
     return ActionResult(ok=True, detail={"kind": kind, "key": key})
 
 
-
-def repost_post(cfg: Config, post_id: str) -> ActionResult:
-    """'Post again' (post-approval-lifecycle): spawn a NEW awaiting_approval post from the SAME clip+surface
-    as a shipped post, re-entering the approval gate. The source post stays immutable history. Honors
-    fan-accounts-repost-freely — reposting is allowed; this is NOT a supersede. The new id is content-
-    addressed with a repost epoch (count of existing posts for this clip+surface) so it never collides with
-    the original or a prior repost, and `add_post`'s setdefault therefore does not silently drop it. The
-    operator schedules it on approval (scheduled_time=None). One transaction, never a 500."""
-    try:
-        with Ledger.transaction(cfg) as led:
-            src = led.posts.get(post_id)
-            if src is None: return ActionResult(ok=False, error=f"no such post: {post_id}")
-            skey = surface_key(src.account, src.platform.value)
-            epoch = sum(1 for p in led.posts.values()                       # originals + prior reposts for this surface
-                        if p.parent_id == src.parent_id and p.account == src.account and p.platform is src.platform)
-            new_id = child_id("post", src.parent_id, f"{skey}#r{epoch}")
-            # DECLARE post_type (Postiz "post" for IG); never copy src — a legacy row may carry Meta vocab.
-            # TikTok: None — Zernio OpenAPI createPost has no post-type enum.
-            led.add_post(Post(id=new_id, parent_id=src.parent_id, state=PostState.awaiting_approval,
-                              account=src.account, account_id=src.account_id, platform=src.platform,
-                              caption=src.caption, hashtags=list(src.hashtags or []), aspect=src.aspect,
-                              media_urls=list(src.media_urls or []), scheduled_time=None,
-                              created_at=iso_z(_now(None)),   # content-lifecycle: fresh birth day (aware)
-                              post_type=("post" if src.platform is Platform.instagram else None),
-                              submission_id=f"fanops_{_hash('idemp', new_id)}",
-                              first_frame_kind=src.first_frame_kind,
-                              cut_seconds=src.cut_seconds, clip_profile=src.clip_profile,
-                              batch_id=src.batch_id,
-                              variation_axis=src.variation_axis))
-    except Exception as exc:
-        get_logger(cfg)("repost", post_id, "repost_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"repost failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"post_id": new_id, "source_id": post_id, "batch_id": src.batch_id, "account": src.account})
-
-def repost_to_other_accounts(cfg: Config, post_id: str, *, target_accounts: Optional[list] = None,
-                             all_others: bool = False, now: Optional[datetime] = None) -> ActionResult:
-    """U8 'Repost anywhere': re-post an already-shipped clip onto ONE or ALL OTHER accounts. A THIN composer
-    over crosspost_to_account (NOT a fourth Post() mint site): resolve the source post's clip + platform +
-    account, then fan out one crosspost_to_account per target on the SAME platform as the shipped row. Each
-    minted post is born awaiting_approval (approval gate intact, scheduled_time=None — no auto-schedule).
-    Targets: all_others=True -> every OTHER active handle; else the picked (deduped) target_accounts minus the
-    source account. Per-target honesty mirrors crosspost_all_to_account: ok=True when ANY target minted OR
-    already_exists, ok=False only when EVERY target skipped. Same-account reuse is NOT this path — that's
-    repost_post (epoch id, fan-accounts-repost-freely); crosspost_to_account on the same (clip,surface) would
-    just report already_exists. Never a 500 (crosspost_to_account fail-opens per target)."""
-    from fanops.accounts import Accounts
-    now = _now(now)
-    src = Ledger.load(cfg).posts.get(post_id)                    # read-only resolve (the mint verb owns the transaction)
-    if src is None: return ActionResult(ok=False, error=f"no such post: {post_id}")
-    clip_id = src.parent_id; platform = src.platform.value; source_account = src.account
-    if all_others:
-        # Accounts.load unguarded — mirrors the sibling crosspost_all_to_account (Ledger.load) and the
-        # _posted_panel that renders this result (Accounts.load(cfg).active()); a broken accounts.json 500s
-        # the whole Posted tab regardless, so a redundant local catch here would only add a silent swallow.
-        targets = [a.handle for a in Accounts.load(cfg).active() if a.handle != source_account]
-    else:
-        seen: dict = {}                                          # dedup preserving order; drop the source account
-        for h in (target_accounts or []):
-            if h and h != source_account and h not in seen: seen[h] = True
-        targets = list(seen)
-    if not targets: return ActionResult(ok=False, error="pick at least one other account to repost to")
-    lines: list = []
-    for handle in targets:
-        r = crosspost_to_account(cfg, clip_id, handle, platform, now=now)
-        surface = (r.detail or {}).get("surface") if r.ok else f"{handle}/{platform}"
-        if not r.ok:
-            lines.append({"surface": surface, "status": "skipped", "post_id": None, "error": r.error})
-        elif r.detail and r.detail.get("already_exists"):
-            lines.append({"surface": surface, "status": "already_exists", "post_id": r.detail.get("post_id"), "error": None})
-        else:
-            lines.append({"surface": surface, "status": "minted", "post_id": (r.detail or {}).get("post_id"), "error": None})
-    minted = [ln for ln in lines if ln["status"] == "minted"]
-    existed = [ln for ln in lines if ln["status"] == "already_exists"]
-    review_account = (minted[0]["surface"].split("/")[0] if minted else targets[0])   # first mint (else first pick) for the Review link
-    detail = {"outcome": "repost_anywhere", "lines": lines, "batch_id": src.batch_id, "review_account": review_account}
-    if not minted and not existed:                              # every target skipped -> honest failure (mirror crosspost_all_to_account)
-        return ActionResult(ok=False, error=f"nothing reposted ({len(lines)} skipped) — no matching surface / held / retired", detail=detail)
-    return ActionResult(ok=True, detail=detail)
-
-def _warm_target_aspect(cfg: Config, moment_id: str, aspect) -> None:
-    # #4 lock-free pre-render (mirror pipeline._prewarm): _clip_for_aspect on a THROWAWAY Ledger.load snapshot
-    # reuses an existing render OR runs render_moment, which writes cid.mp4 + its fingerprint sidecar with NO
-    # flock held. The in-transaction _clip_for_aspect below then hits the fingerprint-skip and mints
-    # microseconds-fast instead of running ffmpeg (600s-bound) UNDER the lock — N bulk clips no longer
-    # serialize N renders behind the write lock. FAIL-OPEN: any error here just means the in-lock path renders
-    # as today (never a crash); the snapshot state is discarded — only the on-disk mp4+fp persist, and the
-    # transaction re-resolves authoritatively.
-    from fanops.crosspost import _clip_for_aspect
-    with fail_open("studio.actions._warm_target_aspect"):
-        _clip_for_aspect(Ledger.load(cfg), cfg, moment_id, aspect)
-
-def crosspost_to_account(cfg: Config, clip_id: str, target_account: str, platform: str, *,
-                         now: Optional[datetime] = None) -> ActionResult:
-    """Cross-account reuse (content-lifecycle Phase 4): mint a fresh awaiting_approval post of an EXISTING clip
-    on a NEW (target_account, platform) surface — how a later-onboarded account gets posts for clips that
-    already left ClipState.captioned. Honors fan-accounts-repost-freely: NO supersede/dedup beyond the per-
-    (clip,surface) content-addressed setdefault; NO one-version-per-moment guard. Does NOT reset clip state and
-    does NOT re-run moments. Aspect-correct (renders/reuses the target aspect via _clip_for_aspect) and
-    duration-capped (PLATFORM_MAX_SECONDS, mirroring crosspost_clips). Caption: the clip's per-surface caption
-    if present, else an EMPTY caption + empty hashtags (the operator edits in Review before approving — a
-    deliberate softening of the seed-tag fallback, which lives upstream in the caption pipeline, not at mint).
-    created_at is wall-clock birth (NOT part of the pid). Enters the standard approval gate, scheduled_time=None.
-    One transaction, never a 500."""
-    from fanops.accounts import Accounts
-    from fanops.models import Platform, PLATFORM_ASPECT, Fmt
-    from fanops.crosspost import _clip_for_aspect
-    now = _now(now)
-    try: plat = Platform(platform)
-    except ValueError: return ActionResult(ok=False, error=f"unknown platform: {platform!r}")
-    try: accts = Accounts.load(cfg)
-    except Exception as exc:
-        get_logger(cfg)("crosspost", target_account, "accounts_load_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"accounts.json: {str(exc)[:160]}")
-    surf = next((s for s in accts.surfaces() if s.account == target_account and s.platform is plat), None)
-    if surf is None:
-        return ActionResult(ok=False, error=f"no active surface {target_account}/{platform} — onboard it in Go Live first")
-    skey = surface_key(surf.account, surf.platform.value)
-    aspect = PLATFORM_ASPECT.get(plat, Fmt.r9x16)
-    pre = Ledger.load(cfg).clips.get(clip_id)                                  # #4: lock-free read of the moment id...
-    if pre is not None: _warm_target_aspect(cfg, pre.parent_id, aspect)        # ...so the target aspect renders OUTSIDE the flock
-    try:
-        with Ledger.transaction(cfg) as led:
-            clip = led.clips.get(clip_id)
-            if clip is None: return ActionResult(ok=False, error=f"no such clip: {clip_id}")
-            if not led.can_seed(clip):   # the OWNER folds held + retired lineage, and fails CLOSED on a missing moment
-                return ActionResult(ok=False, error=f"clip {clip_id} is held/retired — not eligible for cross-post")
-            m = led.moments.get(clip.parent_id)
-            source = led.sources.get(m.parent_id) if m is not None else None
-            src_batch = source.batch_id if source is not None else None   # AUDIT M2: inherit the clip's ingest-batch
-            # lineage (like repost_post) so the reuse post groups + approves with its batched siblings — a None-batch
-            # post showed in the ?batch= drill-in (card derives bid from a sibling) but approve_account silently skipped it.
-            from fanops.studio.actions_approve import _clip_over_cap
-            over = _clip_over_cap(cfg, led, clip, plat)
-            if over is not None:
-                clip_dur, max_secs = over
-                return ActionResult(ok=False, error=f"clip duration {clip_dur:.0f}s exceeds {platform} cap {max_secs}s")
-            target_clip = _clip_for_aspect(led, cfg, clip.parent_id, aspect)   # the RIGHT-aspect render (H7); warm -> fingerprint-skip
-            pid = child_id("post", target_clip.id, skey)
-            if pid in led.posts:                                               # honest report (H9)
-                return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": True,
-                                                     "surface": f"{surf.account}/{surf.platform.value}"})
-            if not (target_clip.path and os.path.exists(target_clip.path)):    # #10: a gc-swept render -> refuse at mint,
-                return ActionResult(ok=False, error=f"clip {clip_id} render missing on disk — re-run the clip before cross-posting")  # not silently at publish
-            cap = clip.meta_captions.get(f"{surf.account}/{surf.platform.value}")
-            caption = cap["caption"] if isinstance(cap, dict) and cap.get("caption") else ""
-            hashtags = list(cap.get("hashtags", [])) if isinstance(cap, dict) else []
-            # DECLARE post_type (Postiz "post" for IG); never copy a source post's field.
-            # TikTok: None — Zernio OpenAPI createPost has no post-type enum.
-            led.add_post(Post(id=pid, parent_id=target_clip.id, state=PostState.awaiting_approval,
-                              account=surf.account, account_id=surf.account_id, platform=surf.platform,
-                              caption=caption, hashtags=hashtags, aspect=aspect, scheduled_time=None,
-                              created_at=iso_z(now), submission_id=f"fanops_{_hash('idemp', pid)}",
-                              post_type=("post" if surf.platform is Platform.instagram else None),
-                              clip_profile=cfg.clip_profile, batch_id=src_batch))
-    except Exception as exc:
-        get_logger(cfg)("crosspost", clip_id, "crosspost_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"cross-post failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"post_id": pid, "clip_id": clip_id, "already_exists": False,
-                                         "surface": f"{surf.account}/{surf.platform.value}"})
-
-def crosspost_all_to_account(cfg: Config, source_account: str, target_account: str, platform: str, *,
-                             now: Optional[datetime] = None) -> ActionResult:
-    """Bulk cross-account backfill (content-lifecycle Phase 4): mint an awaiting_approval post on
-    (target_account, platform) for EVERY clip already posted to source_account. Each enters the approval gate.
-    Honors repost-freely (per-(clip,surface) setdefault is the only dedup, so a re-run is a clean no-op).
-    clip_ids is a SET — a multi-platform source_account yields one source post per platform per clip, the set
-    collapses them to ONE crosspost_to_account call per clip (correct: fan out once per clip). Reports
-    minted / already_exists / skipped honestly. LATENCY (ECC review): a FIRST fan-out to an aspect that has
-    no existing render makes each clip pay an ffmpeg render (600s-bound) under its own short lock — N clips
-    serialize N renders. Not a deadlock (per-clip lock, released between clips) and mirrors crosspost_clips;
-    the common same-aspect reuse returns instantly. Operator-gated, single-operator Studio."""
-    if source_account == target_account:                 # bulk backfill is CROSS-account; same->same is a no-op
-        return ActionResult(ok=False, error=f"source and target are the same account ({source_account}) — pick a different target")
-    led = Ledger.load(cfg)
-    clip_ids = sorted({p.parent_id for p in led.posts.values() if p.account == source_account})
-    if not clip_ids:
-        return ActionResult(ok=False, error=f"no clips posted to {source_account} — nothing to backfill")
-    minted, existed, skipped = [], [], []
-    for cid in clip_ids:
-        r = crosspost_to_account(cfg, cid, target_account, platform, now=now)
-        if not r.ok: skipped.append(cid)
-        elif r.detail and r.detail.get("already_exists"): existed.append(cid)
-        else: minted.append(cid)
-    if not minted and not existed:
-        return ActionResult(ok=False, error=f"nothing minted ({len(skipped)} skipped) — held/retired or bad surface",
-                            detail={"minted": 0, "already_exists": 0, "skipped": len(skipped)})
-    return ActionResult(ok=True, detail={"minted": len(minted), "already_exists": len(existed),
-                                         "skipped": len(skipped), "target": f"{target_account}/{platform}"})
-
-
-def _refuse_retired(cfg: Config, led: Ledger, p) -> bool:
-    """True when a re-arm must be REFUSED: suppressed lineage never moves forward. The five Studio re-arm
-    verbs all ask this one question of one row, so the Ledger's derived-disposition predicate owns it — this
-    is the SOLE caller here, never a hand-copied lineage walk. Refuse BEFORE the write (a re-armed retired
-    post used to be silently un-done by the per-tick sweep 600s later); every refusal is logged, never
-    swallowed. A BACKWARD move (recover_posts `discard`) is NOT gated — it re-arms nothing.
-    MOL-818: both failed/error oversize paths call this BEFORE apply_shrink_to_post, so a suppressed
-    clip's file is unreachable by shrink — cmd_gc may reclaim it without orphaning a live retry."""
-    if led.can_promote(p): return False
-    get_logger(cfg)("review", p.id, "skipped_retired_lineage", account=p.account); return True
-
-
-def _rearm_to_queued(led: Ledger, pid: str) -> None:
-    """Sole owner of the failed→queued re-arm write (MOL-817). Clears submission_id + error_reason and
-    routes state through Ledger.set_post_state. Callers stamp scheduled_time / media_urls on led.posts[pid]
-    first when their verb requires it; _refuse_retired stays outside so oversize shrink runs only after
-    an admitted (can_promote) re-arm — never on suppressed lineage (MOL-818 / Branch A)."""
-    led.posts[pid].submission_id = None
-    led.set_post_state(pid, PostState.queued, error_reason=None, error_kind=None)
-
-
-def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None) -> ActionResult:
-    """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
-    from fanops.models import _POST_TERMINAL_REQUIRES_URL
-    if post_id not in (Ledger.load(cfg).posts):
-        return ActionResult(ok=False, error=f"no such post: {post_id}")
-    try:
-        st = PostState(status)
-    except ValueError:
-        st = PostState.published if status == "published" else PostState.failed
-    if st not in (PostState.published, PostState.failed):
-        return ActionResult(ok=False, error=f"resolve only supports published or failed, not {st.value!r}")
-    if st in _POST_TERMINAL_REQUIRES_URL and not (url or "").strip():
-        return ActionResult(ok=False, error="Paste the live permalink to mark this post published.")
-    try:
-        with Ledger.transaction(cfg) as led:
-            if post_id not in led.posts:
-                return ActionResult(ok=False, error=f"no such post: {post_id}")
-            p = led.posts[post_id]
-            if (url or "").strip():
-                p.public_url = url.strip()
-            if st is PostState.failed:
-                led.set_post_state(post_id, st, error_kind=ErrorKind.unknown,
-                                  error_reason=p.error_reason or "marked failed by operator")
-            else:
-                led.set_post_state(post_id, st, error_kind=None)
-    except Exception as exc:
-        get_logger(cfg)("resolve", post_id, "resolve_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
-    write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value, url=(url or "").strip())
-    outcome = "live_shipped" if st is PostState.published else "failed"
-    return ActionResult(ok=True, detail={"post_id": post_id, "outcome": outcome, "state": st.value,
-                                          "public_url": (url or "").strip() or None})
-
-
 def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
     """Pull analytics for live posts — closes the Posted→Learn loop from Studio."""
     if not cfg.is_live:
         return ActionResult(ok=False, error="Publishing is off — turn on Go Live before pulling metrics.")
     from fanops.track import pull_metrics, _default_list_posts
     from fanops.digest import write_digest
+    from fanops.errors import fail_open
     try:
         led0 = Ledger.load(cfg)
         pollable = [p for p in led0.posts.values()
@@ -582,51 +157,6 @@ def pull_metrics_studio(cfg: Config, *, window: str = "30d") -> ActionResult:
                                           "series_rows": added, "degraded": deg, "pollable": len(pollable)})
 
 
-def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:
-    """R3/D7: the operator's wipe-and-revert flow as a first-class API. For each id move
-    state -> awaiting_approval and clear the post-publish telemetry (scheduled_time,
-    public_url, metrics, published_at) AND the failure latch (error_reason — RC-8: it is a
-    status/suppression field, not lineage, so a reverted post never carries a stale one into
-    Review). The session's hand-edited 67-post revert becomes
-    one atomic call. Best-effort: known ids are moved; unknown ids surface in the result
-    (operator typo never passes for success). Atomic per id (one transaction holding the
-    flock for the whole batch). The reason field is the operator's intent — pinned in the
-    audit so 'why this batch went back to Review' is in the log."""
-    ids = [str(i) for i in (post_ids or []) if i]
-    moved: list[str] = []
-    skipped: list[str] = []
-    skipped_retired: list[str] = []
-    unknown: list[str] = []
-    try:
-        with Ledger.transaction(cfg) as led:
-            for pid in ids:
-                if pid not in led.posts:
-                    unknown.append(pid); continue
-                p = led.posts[pid]
-                if p.state in _REVIEW_REVERT_BLOCKED:
-                    skipped.append(pid); continue
-                if _refuse_retired(cfg, led, p):
-                    skipped_retired.append(pid); continue
-                p.scheduled_time = None
-                p.public_url = ""
-                p.metrics = {}
-                p.published_at = None
-                led.set_post_state(pid, PostState.awaiting_approval, error_reason=None, error_kind=None)  # RC-8: clear failure latch on revert
-                # Don't touch submission_id / batch_id — keep the lineage so the operator can
-                # see "this post was once part of batch X" in the audit / Posted history.
-                moved.append(pid)
-    except Exception as exc:
-        get_logger(cfg)("review", "-", "bulk_send_to_review_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"bulk_send_to_review failed: {str(exc)[:160]}")
-    # R3/D17: audit the bulk revert — the most operator-impactful action in the system.
-    if moved:
-        write_audit(cfg, "bulk_send_to_review", moved, reason=reason,
-                    unknown=unknown, moved=len(moved))
-    return ActionResult(ok=True, detail={"moved": len(moved), "skipped": len(skipped),
-                                          "skipped_retired": len(skipped_retired), "unknown": unknown,
-                                          "post_ids": moved})
-
-
 # dryrun-boundary M3: revert_phantom_published (+ its CLI verb) is DELETED. It was the operator's
 # recovery path for reconcile-laundered phantom `published` rows — a class the boundary makes
 # unconstructable (a dryrun post never reaches `published`; nothing writes a terminal-without-url row).
@@ -648,150 +178,6 @@ def restore_persona_hook(cfg: Config, post_id: str, *, now: Optional[datetime] =
     if not removed:
         return ActionResult(ok=False, error="no stripped hook to restore")
     return reburn_hook(cfg, post_id, removed, now=now)
-
-
-def retry_rate_limited_failures(cfg: Config, *, reason: str = "studio_retry_rate_limit", stagger_min: int = 2) -> ActionResult:
-    """Pace 429 retries through the same one-per-integration daemon helper. stagger_min is ignored."""
-    from fanops.post.run import _requeue_rate_limited_for_daemon
-    from fanops.studio.views_results import classify_failure
-    led = Ledger.load(cfg)
-    skipped_retired = [pid for pid, p in led.posts.items()
-                       if p.state in (PostState.failed, PostState.error)
-                       and classify_failure(p) == "rate_limit"
-                       and _refuse_retired(cfg, led, p)]
-    candidates = [pid for pid, p in led.posts.items()
-                  if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "rate_limit"]
-    try:
-        n = _requeue_rate_limited_for_daemon(cfg)
-    except Exception as exc:
-        get_logger(cfg)("recover", "-", "retry_rate_limit_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"retry_rate_limited failed: {str(exc)[:160]}")
-    after = Ledger.load(cfg)
-    retried = [pid for pid in candidates if after.posts[pid].state is PostState.queued]
-    if retried:
-        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=n)
-    return ActionResult(ok=True, detail={"retried": n, "skipped_retired": len(skipped_retired),
-                                          "post_ids": retried, "outcome": "retried_rate_limit"})
-
-
-
-def retry_oversize_failures(cfg: Config, *, reason: str = "studio_retry_oversize", stagger_min: int = 2) -> ActionResult:
-    """Re-shrink and re-queue failed oversize (413) posts for daemon publish."""
-    from fanops.post.compress import apply_shrink_to_post
-    from fanops.studio.views_results import classify_failure
-    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
-           if p.state in (PostState.failed, PostState.error) and classify_failure(p) == "oversize"]
-    if not ids:
-        return ActionResult(ok=True, detail={"retried": 0, "post_ids": [], "skipped": 0, "outcome": "retried_oversize"})
-    retried: list[str] = []; skipped: list[str] = []; skipped_retired: list[str] = []
-    now = _now(None)
-    try:
-        with Ledger.transaction(cfg) as led:
-            for i, pid in enumerate(ids):
-                p = led.posts.get(pid)
-                if p is None or p.state not in (PostState.failed, PostState.error):
-                    continue
-                if _refuse_retired(cfg, led, p):   # BEFORE the shrink: apply_shrink_to_post transcodes and rewrites media_urls + the render row, so guarding after it would commit a write on a REFUSED re-arm
-                    skipped_retired.append(pid); continue
-                if not apply_shrink_to_post(cfg, led, p):
-                    skipped.append(pid); continue
-                p.media_urls = [u for u in (p.media_urls or []) if not (u.startswith("http"))]
-                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                _rearm_to_queued(led, pid)
-                retried.append(pid)
-    except Exception as exc:
-        get_logger(cfg)("recover", "-", "retry_oversize_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"retry_oversize failed: {str(exc)[:160]}")
-    if retried:
-        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "skipped": len(skipped),
-                                          "skipped_retired": len(skipped_retired), "post_ids": retried,
-                                          "outcome": "retried_oversize", "stagger_min": stagger_min})
-
-
-def retry_transient_failures(cfg: Config, *, reason: str = "studio_retry_transient", stagger_min: int = 2) -> ActionResult:
-    """Queue all failed posts stamped ErrorKind.transient for daemon retry."""
-    from fanops.studio.views_common import is_transient_failure
-    ids = [pid for pid, p in Ledger.load(cfg).posts.items()
-           if p.state in (PostState.failed, PostState.error) and is_transient_failure(p)]
-    if not ids:
-        return ActionResult(ok=True, detail={"retried": 0, "post_ids": []})
-    retried: list[str] = []; skipped_retired: list[str] = []
-    now = _now(None)
-    try:
-        with Ledger.transaction(cfg) as led:
-            for i, pid in enumerate(ids):
-                p = led.posts.get(pid)
-                if p is None or p.state not in (PostState.failed, PostState.error):
-                    continue
-                if not is_transient_failure(p):
-                    continue
-                if _refuse_retired(cfg, led, p):
-                    skipped_retired.append(pid); continue
-                p.scheduled_time = iso_z(now + timedelta(minutes=stagger_min * i))
-                _rearm_to_queued(led, pid)
-                retried.append(pid)
-    except Exception as exc:
-        get_logger(cfg)("recover", "-", "retry_transient_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"retry_transient failed: {str(exc)[:160]}")
-    if retried:
-        write_audit(cfg, "recover_posts", retried, reason=reason, recover_action="retry", retried=len(retried))
-    return ActionResult(ok=True, detail={"retried": len(retried), "skipped_retired": len(skipped_retired),
-                                          "post_ids": retried, "outcome": "retried_transient",
-                                          "stagger_min": stagger_min})
-
-
-def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str = "") -> ActionResult:
-    """S1 recovery cockpit: retry (failed→queued, retryable buckets only), review (→awaiting_approval),
-    or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize retried after auto-shrink."""
-    from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
-    ids = [str(i) for i in (post_ids or []) if i]
-    if not ids:
-        return ActionResult(ok=True, detail={"retried": 0, "discarded": 0, "reviewed": 0, "skipped": 0, "unknown": []})
-    action = (action or "").strip().lower()
-    if action == "review":
-        return bulk_send_to_review(cfg, ids, reason=reason or "studio_recover_review")
-    retried: list[str] = []; discarded: list[str] = []; skipped: list[str] = []
-    skipped_retired: list[str] = []; unknown: list[str] = []
-    try:
-        with Ledger.transaction(cfg) as led:
-            for pid in ids:
-                if pid not in led.posts:
-                    unknown.append(pid); continue
-                p = led.posts[pid]
-                if p.state not in (PostState.failed, PostState.error):
-                    skipped.append(pid); continue
-                if action == "retry":
-                    if classify_failure(p) not in _RETRYABLE_FAILURES:
-                        skipped.append(pid); continue
-                    if _refuse_retired(cfg, led, p):   # BEFORE the oversize shrink below, which transcodes and rewrites media_urls + the render row — a refused re-arm must leave NO write behind
-                        skipped_retired.append(pid); continue
-                    if classify_failure(p) == "oversize":
-                        from fanops.post.compress import apply_shrink_to_post, upload_cap_bytes, publish_backend_for_post
-                        backend = publish_backend_for_post(cfg, p)
-                        if upload_cap_bytes(cfg, p, backend) is None or not apply_shrink_to_post(cfg, led, p, backend=backend):
-                            skipped.append(pid); continue
-                        p.media_urls = [u for u in (p.media_urls or []) if not u.startswith("http")]
-                    if not (p.scheduled_time or "").strip():   # timeless-queued: a recovered post with no schedule (cleared/corrupt) parks FOREVER in _due_or_fail (silent). Land a time so the daemon publishes it, never never.
-                        p.scheduled_time = iso_z(_now(None) + timedelta(minutes=cfg.publish_lead_minutes))
-                    _rearm_to_queued(led, pid)
-                    retried.append(pid)
-                elif action == "discard":
-                    led.set_post_state(pid, PostState.rejected)
-                    discarded.append(pid)
-                else:
-                    return ActionResult(ok=False, error=f"unknown recover action: {action}")
-    except Exception as exc:
-        get_logger(cfg)("recover", "-", "recover_posts_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"recover_posts failed: {str(exc)[:160]}")
-    if retried or discarded:
-        write_audit(cfg, "recover_posts", retried or discarded, reason=reason,
-                    recover_action=action, retried=len(retried), discarded=len(discarded),
-                    skipped=len(skipped), unknown=unknown)
-    detail = {"retried": len(retried), "discarded": len(discarded), "reviewed": 0,
-              "skipped": len(skipped), "skipped_retired": len(skipped_retired),
-              "unknown": unknown, "post_ids": retried or discarded}
-    return ActionResult(ok=True, detail=detail)
 
 
 def resume_source_studio(cfg: Config, source_id: str, *, from_stage: str = "auto", force: bool = False) -> ActionResult:
@@ -837,7 +223,7 @@ def dismiss_gate_studio(cfg: Config, kind: str, key: str) -> ActionResult:
     from fanops.agentstep import discard_gates_for
     from fanops.gate_keys import gate_source_id
     if kind not in ("moments", "moment_hooks", "captions"):
-        return ActionResult(ok=False, error=f"unknown gate kind: {kind}")
+        return ActionResult(ok=False, error=f"unknown gate kind: {kind!r}")
     n = discard_gates_for(cfg, kind, key)
     sid = gate_source_id(Ledger.load(cfg), kind, key) or key
     write_audit(cfg, "dismiss_gate", [sid], reason="studio_dismiss", kind=kind, key=key, discarded=n)

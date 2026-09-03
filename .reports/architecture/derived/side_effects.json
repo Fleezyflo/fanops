@@ -197,59 +197,23 @@
     "fanops.studio.actions": [
       {
         "call": "Ledger.transaction",
-        "line": 119
+        "line": 141
       },
       {
         "call": "Ledger.transaction",
-        "line": 230
+        "line": 190
       },
       {
         "call": "Ledger.transaction",
-        "line": 310
+        "line": 201
       },
       {
         "call": "Ledger.transaction",
-        "line": 422
+        "line": 212
       },
       {
         "call": "Ledger.transaction",
-        "line": 526
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 566
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 601
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 689
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 722
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 757
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 804
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 815
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 826
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 852
+        "line": 238
       }
     ],
     "fanops.studio.actions_approve": [
@@ -288,6 +252,16 @@
         "line": 42
       }
     ],
+    "fanops.studio.actions_crosspost": [
+      {
+        "call": "Ledger.transaction",
+        "line": 38
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 140
+      }
+    ],
     "fanops.studio.actions_edit": [
       {
         "call": "Ledger.transaction",
@@ -300,6 +274,38 @@
       {
         "call": "Ledger.transaction",
         "line": 172
+      }
+    ],
+    "fanops.studio.actions_publish": [
+      {
+        "call": "Ledger.transaction",
+        "line": 36
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 146
+      }
+    ],
+    "fanops.studio.actions_recover": [
+      {
+        "call": "Ledger.transaction",
+        "line": 74
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 110
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 173
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 205
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 240
       }
     ],
     "fanops.studio.actions_run": [

@@ -9,8 +9,9 @@ import ast
 from pathlib import Path
 
 import fanops.studio.actions as actions
+import fanops.studio.actions_recover as actions_recover
 
-_ACTIONS = Path(actions.__file__).resolve()
+_ACTIONS = Path(actions_recover.__file__).resolve()
 _SRC = _ACTIONS.read_text()
 _TREE = ast.parse(_SRC)
 
