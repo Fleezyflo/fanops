@@ -5,7 +5,12 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Sequence
+
+
+def _normalize_ids(ids: Sequence[str] | None) -> list[str]:
+    """Drop falsy entries from a Studio form/htmx id list (approve/reject/stitch bulk routes)."""
+    return [i for i in (ids or []) if i]
 
 
 # #4: the durable marker stamped on a post when an approve was ATTEMPTED but its per-account render could

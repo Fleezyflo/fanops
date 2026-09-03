@@ -8,7 +8,7 @@ from flask import redirect, render_template, request, url_for
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
 from fanops.studio import actions, views
-from fanops.studio.app import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _month_arg, _offset_arg, _row_chips, _source_arg, _time_arg
+from fanops.studio.app_request import _account_arg, _batch_arg, _delivery_arg, _failure_arg, _month_arg, _offset_arg, _row_chips, _source_arg, _time_arg
 
 
 def register_schedule_routes(app, cfg):

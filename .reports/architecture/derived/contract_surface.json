@@ -290,7 +290,7 @@
         "swallow": "baseline 23 — SHARED between S06 and S09. *** NEITHER may raise it. ***"
       },
       "exists": true,
-      "function_count": 44,
+      "function_count": 10,
       "is_partitioned": true,
       "missing": false,
       "owners": [
@@ -300,17 +300,17 @@
       "planned_new": false,
       "regions": {
         "S06": {
-          "functions": [
+          "functions": [],
+          "unresolved_entries": [
             "bulk_send_to_review"
-          ],
-          "unresolved_entries": []
+          ]
         },
         "S09": {
-          "functions": [
+          "functions": [],
+          "unresolved_entries": [
             "retry_oversize_failures",
             "retry_rate_limited_failures"
-          ],
-          "unresolved_entries": []
+          ]
         }
       }
     },
@@ -585,6 +585,24 @@
     {
       "entry": "a NEW `cmd_clean` + its argparse registration",
       "file": "src/fanops/cli.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "bulk_send_to_review",
+      "file": "src/fanops/studio/actions.py",
+      "slice": "S06",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "retry_oversize_failures",
+      "file": "src/fanops/studio/actions.py",
+      "slice": "S09",
+      "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
+    },
+    {
+      "entry": "retry_rate_limited_failures",
+      "file": "src/fanops/studio/actions.py",
       "slice": "S09",
       "why": "no identifier in this entry names a function that exists in the file; the boundary is PROSE, not a machine-checkable predicate"
     }

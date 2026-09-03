@@ -4,7 +4,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt)
 from fanops.studio.actions import reburn_hook
-from fanops.studio.app import _media_path_for_post
+from fanops.studio.preview_media import media_path_for_post
 
 FUTURE = "2099-01-01T00:00:00Z"
 
@@ -44,7 +44,7 @@ def test_reburn_serves_rerendered_clip_path(tmp_path, mocker):
     rendered = Clip(id="clip_1", parent_id="mom_1", path=str(out), aspect=Fmt.r16x9, state=ClipState.rendered)
     mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
     assert reburn_hook(cfg, "p_edit", "YT HOOK").ok is True
-    assert _media_path_for_post(cfg, Ledger.load(cfg), "p_edit") == str(out)
+    assert media_path_for_post(cfg, Ledger.load(cfg), "p_edit") == str(out)
 
 
 def _fake_render_reset(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):

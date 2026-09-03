@@ -54,3 +54,13 @@ def live_library_scope(cfg: Config) -> str:
     if handle:
         return f"Scoped to the credentialed Instagram account ({handle})."
     return "No Instagram account is connected — connect one on the Go Live tab to mirror its live media."
+
+
+def live_library_page_context(cfg: Config, *, preview=None, wipe_result=None) -> dict:
+    """Template kwargs for library.html under the ?view=live lens (U13 fold) and the wipe POST re-renders."""
+    from fanops.studio import actions_wipe
+    from fanops.studio.views_library import library_catalog
+    led = Ledger.load(cfg)
+    return {"view": "live", "catalog": library_catalog(cfg), "rows": live_library(led, cfg),
+            "scope": live_library_scope(cfg), "tab": "library", "preview": preview,
+            "wipe_result": wipe_result, "confirm_word": actions_wipe.CONFIRM_WORD}

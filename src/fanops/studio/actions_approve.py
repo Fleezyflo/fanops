@@ -12,7 +12,32 @@ from fanops.errors import fail_open
 from fanops.timeutil import iso_z
 from fanops.studio.views import suggest_time
 from fanops.studio.views_common import suggest_times_for_batch
-from fanops.studio.actions_common import ActionResult, _now, _inherit_captions
+from fanops.studio.actions_common import ActionResult, _now, _inherit_captions, _normalize_ids
+
+
+def _apply_schedule_for_account(led: Ledger, cfg: Config, handle: str, *, now: datetime) -> int:
+    """Re-spread every queued post on one account (post-approve respread + accept-suggested). Returns moved count."""
+    posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
+    moved = 0
+    for pid, t in suggest_times_for_batch(cfg, posts, now=now).items():
+        p = led.posts[pid]
+        if p.scheduled_time != t:
+            p.scheduled_time = t
+            moved += 1
+    return moved
+
+
+def _clip_over_cap(cfg: Config, led: Ledger, clip, platform) -> Optional[tuple[float, int]]:
+    """Return (duration, cap) when a clip exceeds its platform ceiling, else None."""
+    cap = PLATFORM_MAX_SECONDS.get(platform)
+    if cap is None:
+        return None
+    from fanops.clip import realized_clip_seconds
+    m = led.moments.get(clip.parent_id)
+    dur = realized_clip_seconds(clip, m)
+    if dur is None or dur <= 0 or dur <= cap:
+        return None
+    return dur, cap
 
 
 def _over_cap_refusal(cfg: Config, led: Ledger, post) -> Optional[str]:
@@ -22,13 +47,12 @@ def _over_cap_refusal(cfg: Config, led: Ledger, post) -> Optional[str]:
     all, so the same post on the same ledger was admissible or not purely by which button the operator
     pressed (MOL-832); a second hand-written copy of the predicate is how that gap opened."""
     clip = led.clips.get(post.parent_id)
-    cap = PLATFORM_MAX_SECONDS.get(post.platform)
-    if clip is None or cap is None:
+    if clip is None:
         return None
-    from fanops.clip import realized_clip_seconds
-    dur = realized_clip_seconds(clip, led.moments.get(clip.parent_id))
-    if dur is None or dur <= 0 or dur <= cap:
+    over = _clip_over_cap(cfg, led, clip, post.platform)
+    if over is None:
         return None
+    dur, cap = over
     post.error_reason = reason = f"realized cut {round(dur, 1)}s exceeds {post.platform.value} cap {cap}s"
     get_logger(cfg)("approve", post.id, "cut_over_cap", realized=round(dur, 1), cap=cap)
     return reason
@@ -72,10 +96,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
             # accept_suggested_account) inside this open transaction.
             approved_accts = {led.posts[i].account for i in approved_ids if i in led.posts}
             for handle in sorted(approved_accts):
-                posts = [p for p in led.posts.values() if p.state is PostState.queued and p.account == handle]
-                for pid, t in suggest_times_for_batch(cfg, posts, now=now).items():
-                    p = led.posts[pid]
-                    if p.scheduled_time != t: p.scheduled_time = t
+                _apply_schedule_for_account(led, cfg, handle, now=now)
             audited_ids = [i for i in approved_ids if i in led.posts]   # audit what PROMOTED, not what was offered
     except Exception as exc:
         get_logger(cfg)("approve", "-", "approve_failed", err=str(exc)[:160])
@@ -97,15 +118,28 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
 
 BULK_APPROVE_CONFIRM_AT = 15
 
+def _stitch_ids_action(cfg: Config, ids: Sequence[str], *, verb: str, ledger_fn: Callable[[Ledger, str], None],
+                       detail_key: str) -> ActionResult:
+    sel = _normalize_ids(ids)
+    try:
+        with Ledger.transaction(cfg) as led:
+            for pid in sel:
+                ledger_fn(led, pid)
+    except Exception as exc:
+        get_logger(cfg)(verb, "-", f"{verb}_failed", err=str(exc)[:160])
+        return ActionResult(ok=False, error=f"{verb} failed: {str(exc)[:160]}")
+    return ActionResult(ok=True, detail={detail_key: len(sel)})
+
+
 def approve_posts(cfg: Config, ids: Sequence[str], *, now: Optional[datetime] = None, confirmed: bool = False) -> ActionResult:
-    sel = [i for i in (ids or []) if i]
+    sel = _normalize_ids(ids)
     if len(sel) > BULK_APPROVE_CONFIRM_AT and not confirmed:
         return ActionResult(ok=False, error=(f"Approving {len(sel)} posts queues them for the daemon — "
                             "approved ≠ live. Tick batch confirm, then approve again."))
     return _approve_ids_with_render(cfg, resolve_ids=lambda led: sel, now=now, detail={})
 
 def reject_posts(cfg: Config, ids: Sequence[str]) -> ActionResult:
-    sel = [i for i in (ids or []) if i]
+    sel = _normalize_ids(ids)
     audited_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -252,8 +286,9 @@ def approve_moment(cfg: Config, moment_id: str, *, now: Optional[datetime] = Non
 def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: str,
                        now: Optional[datetime] = None) -> ActionResult:
     """U6: composite approve — persist caption/hook edits when dirty, then promote ONE awaiting post."""
-    from fanops.studio.actions import edit_caption, reburn_hook, _guard_editable_post
-    now = _now(now)
+    from fanops.studio import actions as _actions
+    from fanops.studio.actions_edit import edit_caption, reburn_hook, _guard_editable_post
+    now = _actions._now(now)
     led = Ledger.load(cfg)
     p, err = _guard_editable_post(led, post_id, now)
     if err:
@@ -282,27 +317,15 @@ def approve_as_is(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) 
     return ActionResult(ok=True, detail={**r.detail, "hook": False})
 
 def approve_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
-    sel = [i for i in (ids or []) if i]
-    try:
-        with Ledger.transaction(cfg) as led:
-            for pid in sel: led.approve_stitch_plan(pid)
-    except Exception as exc:
-        get_logger(cfg)("approve_stitches", "-", "approve_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"approve failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"approved": len(sel)})
+    return _stitch_ids_action(cfg, ids, verb="approve_stitches", ledger_fn=lambda led, pid: led.approve_stitch_plan(pid),
+                              detail_key="approved")
 
 def dismiss_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
-    sel = [i for i in (ids or []) if i]
-    try:
-        with Ledger.transaction(cfg) as led:
-            for pid in sel: led.dismiss_stitch_plan(pid)
-    except Exception as exc:
-        get_logger(cfg)("dismiss_stitches", "-", "dismiss_failed", err=str(exc)[:160])
-        return ActionResult(ok=False, error=f"dismiss failed: {str(exc)[:160]}")
-    return ActionResult(ok=True, detail={"dismissed": len(sel)})
+    return _stitch_ids_action(cfg, ids, verb="dismiss_stitches", ledger_fn=lambda led, pid: led.dismiss_stitch_plan(pid),
+                              detail_key="dismissed")
 
 def release_stitches(cfg: Config, ids: Sequence[str]) -> ActionResult:
-    sel = [i for i in (ids or []) if i]
+    sel = _normalize_ids(ids)
     released = 0
     try:
         with Ledger.transaction(cfg) as led:
