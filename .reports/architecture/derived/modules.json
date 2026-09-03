@@ -110,6 +110,7 @@
     "fanops.source_tags_shortlist",
     "fanops.source_tags_sidecar",
     "fanops.source_tags_walk",
+    "fanops.speech_trust",
     "fanops.stage_lock",
     "fanops.stitch_render",
     "fanops.stranded_posts",
@@ -147,6 +148,7 @@
     "fanops.timing_bias",
     "fanops.track",
     "fanops.transcribe",
+    "fanops.transcribe_engine",
     "fanops.validation_gate",
     "fanops.variant_amplify",
     "fanops.variant_learning",
@@ -265,6 +267,7 @@
     "fanops.source_tags_shortlist": null,
     "fanops.source_tags_sidecar": null,
     "fanops.source_tags_walk": null,
+    "fanops.speech_trust": null,
     "fanops.stage_lock": "S01_foundation",
     "fanops.stitch_render": "S09_render",
     "fanops.stranded_posts": "S19_maintenance",
@@ -302,6 +305,7 @@
     "fanops.timing_bias": "S14_learning",
     "fanops.track": "S13_reconcile_metrics",
     "fanops.transcribe": "S06_media_analysis",
+    "fanops.transcribe_engine": null,
     "fanops.validation_gate": "S14_learning",
     "fanops.variant_amplify": "S14_learning",
     "fanops.variant_learning": "S14_learning",
@@ -311,8 +315,8 @@
   "totals": {
     "assigned": 140,
     "ghosts": 0,
-    "modules": 146,
-    "unassigned": 6
+    "modules": 148,
+    "unassigned": 8
   },
   "unassigned_modules": [
     "fanops.ingest_shard",
@@ -320,6 +324,8 @@
     "fanops.source_tags_scrape",
     "fanops.source_tags_shortlist",
     "fanops.source_tags_sidecar",
-    "fanops.source_tags_walk"
+    "fanops.source_tags_walk",
+    "fanops.speech_trust",
+    "fanops.transcribe_engine"
   ]
 }
