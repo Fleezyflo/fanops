@@ -224,13 +224,28 @@
       "planned_new": false,
       "regions": {}
     },
-    "src/fanops/post/metrics.py": {
+    "src/fanops/post/metrics/postiz_read.py": {
       "declared_ratchets": {
         "print": "not scoped",
         "swallow": "*** NOT IN BASELINE -> 0 allowed. ***"
       },
       "exists": true,
-      "function_count": 30,
+      "function_count": 7,
+      "is_partitioned": false,
+      "missing": false,
+      "owners": [
+        "S05"
+      ],
+      "planned_new": false,
+      "regions": {}
+    },
+    "src/fanops/post/metrics/zernio_read.py": {
+      "declared_ratchets": {
+        "print": "not scoped",
+        "swallow": "*** NOT IN BASELINE -> 0 allowed. ***"
+      },
+      "exists": true,
+      "function_count": 19,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -245,7 +260,7 @@
         "swallow": "baseline 4 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 21,
+      "function_count": 14,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -438,7 +453,8 @@
       "class": "REMEDIATION",
       "co_required_with": [],
       "owned_files": [
-        "src/fanops/post/metrics.py"
+        "src/fanops/post/metrics/postiz_read.py",
+        "src/fanops/post/metrics/zernio_read.py"
       ],
       "prerequisites": [
         "S04"

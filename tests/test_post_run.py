@@ -134,7 +134,7 @@ def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
     _http_media(led, "pw"); _stub_ok_poster(mocker, cfg)
-    boom = mocker.patch("fanops.post.run.write_text_atomic", side_effect=OSError("disk full"))
+    boom = mocker.patch("fanops.post.publish_archive.write_text_atomic", side_effect=OSError("disk full"))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert boom.called                                                 # NEGATIVE CONTROL: the fault really fired
     assert Ledger.load(cfg).posts["pw"].state is PostState.published   # archive failure did NOT flip it to failed
@@ -539,25 +539,6 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     assert sent["media_urls"] == ["img1|https://cdn.postiz.test/v.mp4"]     # the poster sees postiz composite, never file://
     assert led.posts["pv"].media_urls == ["img1|https://cdn.postiz.test/v.mp4"]  # persisted -> a retry never re-uploads
     assert led.posts["pv"].state is PostState.published
-
-
-def test_materialize_variant_media_is_noop_p9(tmp_path):
-    # P9: owner-moment hook is burned on the shared clip at render_moment — no per-post rematerialize.
-    from fanops.models import Source, Moment, MomentState
-    from fanops.accounts import Accounts
-    from fanops.post.run import _materialize_variant_media
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
-                          state=MomentState.clipped, hook="HOOK"))
-    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued))
-    post = Post(id="pv", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.queued, render_id="rid_A",
-                media_urls=["file:///clips/rid_A.mp4"], public_url="dryrun://pv")
-    led.add_post(post)
-    before = (post.render_id, list(post.media_urls))
-    _materialize_variant_media(led, cfg, post, Accounts.load(cfg))
-    assert (post.render_id, list(post.media_urls)) == before
 
 
 def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path):
