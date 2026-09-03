@@ -13,17 +13,6 @@ import sys
 from pathlib import Path
 
 from fanops.config import Config
-from fanops.daemon import (
-    _MIN_INTERVAL,
-    _VERDICT_UNLOADED_ALARM,
-    _daemon_path,
-    _fanops_bin,
-    _grep_int,
-    _launchctl,
-    _load_plist,
-    _require_darwin,
-    sibling_plist_path,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -36,13 +25,15 @@ _STUDIO_LAUNCH_CMD = f"fanops studio --managed --host {STUDIO_DEFAULT_HOST} --po
 
 
 def studio_plist_path() -> Path:
+    from fanops.daemon_siblings import sibling_plist_path
     return sibling_plist_path(STUDIO_LABEL)
 
 
 def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT,
                         generation: str | None = None) -> str:
     """KeepAlive resident for the localhost Studio cockpit — direct `fanops studio` exec (keeper-style, no bash wrapper)."""
-    fb, path = _fanops_bin(), _daemon_path()
+    from fanops import daemon
+    fb, path = daemon._fanops_bin(), daemon._daemon_path()
     env = {"PATH": path, "HOME": str(Path.home())}
     if generation:
         env["FANOPS_STUDIO_GENERATION"] = generation
@@ -62,7 +53,7 @@ def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: i
         "WorkingDirectory": str(cfg.root),
         "StandardOutPath": str(cfg.reports / "studio.out"),
         "StandardErrorPath": str(cfg.reports / "studio.err"),
-        "ThrottleInterval": _MIN_INTERVAL,
+        "ThrottleInterval": daemon._MIN_INTERVAL,
         "LSMultipleInstancesProhibited": True,
         "EnvironmentVariables": env,
     }
@@ -71,21 +62,22 @@ def render_studio_plist(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: i
 
 def studio_agent_status() -> dict:
     """Readiness for the Studio KeepAlive resident. plist-on-disk + not-loaded = ALARM (fail-open off-darwin)."""
+    from fanops import daemon
     if sys.platform != "darwin":
         return {"label": STUDIO_LABEL, "short": "Studio", "installed": False, "loaded": False,
                 "pid": None, "verdict": "not installed", "alarm": False}
     installed = studio_plist_path().exists()
     try:
-        r = _launchctl("list", STUDIO_LABEL)
+        r = daemon._launchctl("list", STUDIO_LABEL)
         loaded = r.returncode == 0
-        pid = _grep_int(r.stdout, "PID") if loaded else None
+        pid = daemon._grep_int(r.stdout, "PID") if loaded else None
     except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
         _log.warning("studio_agent_status: launchctl list %s failed (%s)", STUDIO_LABEL, exc)
         loaded, pid = False, None
     if not installed:
         verdict = "not installed"
     elif not loaded:
-        verdict = _VERDICT_UNLOADED_ALARM
+        verdict = daemon._VERDICT_UNLOADED_ALARM
     else:
         verdict = "loaded"
     return {"label": STUDIO_LABEL, "short": "Studio", "installed": installed, "loaded": loaded, "pid": pid,
@@ -103,7 +95,8 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     port poll whether it wanted the answer or not, which is a 120s hang for anything that only needed the
     plist written. `fanops studio --install` passes wait=True; it is the one caller that reports a verdict
     to a human standing there."""
-    _require_darwin()
+    from fanops import daemon
+    daemon._require_darwin()
     cfg.reports.mkdir(parents=True, exist_ok=True)
 
     # 1. Own the generation invariant (MOL-728)
@@ -119,10 +112,11 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     # 3. Capture old PID — AFTER the write, so a failed/interrupted write never reaches launchctl at all.
     # (studio_agent_status shells `launchctl list`; reading it is harmless, but install_studio is fail-CLOSED
     # and its contract is that a write failure touches launchctl zero times. Ordering, not severity.)
-    old_pid = studio_agent_status().get("pid")
+    # Route through fanops.daemon so tests patch the same surface they patch for other studio verbs.
+    old_pid = daemon.studio_agent_status().get("pid")
 
     # 4. Load (bootout + bootstrap)
-    loaded = _load_plist(pp, STUDIO_LABEL)
+    loaded = daemon._load_plist(pp, STUDIO_LABEL)
     if not loaded:
         return {"studio_loaded": False, "studio_plist": str(pp), "error": "failed to load plist"}
 
@@ -130,7 +124,6 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     # `studio_loaded` means what it says: launchd accepted the job. `verdict` is None to say so, rather
     # than reporting an unproven True.
     if wait:
-        from fanops import daemon
         loaded = daemon._studio_port_answers_within(host, port, expect_gen=generation, old_pid=old_pid)
 
     return {
@@ -145,12 +138,13 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
 
 def stop_studio(cfg: Config, *, remove: bool = False) -> dict:
     """Unload the Studio agent; confirm via launchctl list. remove=True deletes the plist."""
-    _require_darwin()
+    from fanops import daemon
+    daemon._require_darwin()
     uid = os.getuid()
-    r = _launchctl("bootout", f"gui/{uid}/{STUDIO_LABEL}")
+    r = daemon._launchctl("bootout", f"gui/{uid}/{STUDIO_LABEL}")
     if r.returncode != 0:
-        _launchctl("unload", "-w", str(studio_plist_path()))
-    stopped = _launchctl("list", STUDIO_LABEL).returncode != 0
+        daemon._launchctl("unload", "-w", str(studio_plist_path()))
+    stopped = daemon._launchctl("list", STUDIO_LABEL).returncode != 0
     out = {"label": STUDIO_LABEL, "plist": str(studio_plist_path()), "stopped": stopped}
     if remove:
         try: studio_plist_path().unlink()

@@ -189,7 +189,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -209,16 +209,16 @@
     "fanops.bands": "S01_foundation",
     "fanops.batches": "S05_ingestion",
     "fanops.canary": "S17_cli_daemon",
-    "fanops.canary_baseline": null,
-    "fanops.canary_identity": null,
+    "fanops.canary_baseline": "S17_cli_daemon",
+    "fanops.canary_identity": "S17_cli_daemon",
     "fanops.caption": "S10_caption_hashtag",
     "fanops.caption_compose": "S10_caption_hashtag",
     "fanops.caption_ingest": "S10_caption_hashtag",
     "fanops.casting": "S08_selection",
     "fanops.cli": "S17_cli_daemon",
-    "fanops.cli_dispatch": null,
-    "fanops.cli_parser": null,
-    "fanops.cli_run": null,
+    "fanops.cli_dispatch": "S17_cli_daemon",
+    "fanops.cli_parser": "S17_cli_daemon",
+    "fanops.cli_run": "S17_cli_daemon",
     "fanops.clip": "S09_render",
     "fanops.clip_ffmpeg": "S09_render",
     "fanops.compose": "S09_render",
@@ -230,8 +230,8 @@
     "fanops.cutover": "S18_health_diag",
     "fanops.cutover_postiz": "S18_health_diag",
     "fanops.daemon": "S17_cli_daemon",
-    "fanops.daemon_siblings": null,
-    "fanops.daemon_studio": null,
+    "fanops.daemon_siblings": "S17_cli_daemon",
+    "fanops.daemon_studio": "S17_cli_daemon",
     "fanops.digest": "S14_learning",
     "fanops.discover": "S05_ingestion",
     "fanops.doctor": "S18_health_diag",
@@ -379,18 +379,10 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 174,
+    "assigned": 181,
     "ghosts": 0,
     "modules": 181,
-    "unassigned": 7
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.canary_baseline",
-    "fanops.canary_identity",
-    "fanops.cli_dispatch",
-    "fanops.cli_parser",
-    "fanops.cli_run",
-    "fanops.daemon_siblings",
-    "fanops.daemon_studio"
-  ]
+  "unassigned_modules": []
 }

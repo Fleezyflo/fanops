@@ -8,15 +8,6 @@ import sys
 from pathlib import Path
 
 from fanops.config import Config
-from fanops.daemon import (
-    _VERDICT_UNLOADED_ALARM,
-    _confirm_loaded,
-    _daemon_path,
-    _fanops_bin,
-    _grep_int,
-    _launchctl,
-    _load_plist,
-)
 
 _log = logging.getLogger(__name__)
 
@@ -60,7 +51,8 @@ def keeper_plist_path() -> Path:
 
 def render_keeper_plist(cfg: Config) -> str:
     """StartInterval poll-timer: fire-and-exit `fanops daemon ensure` every 120s to re-assert main pump."""
-    fb, path = _fanops_bin(), _daemon_path()
+    from fanops import daemon
+    fb, path = daemon._fanops_bin(), daemon._daemon_path()
     pl = {
         "Label": KEEPER_LABEL,
         "ProgramArguments": [fb, "daemon", "ensure"],
@@ -75,11 +67,12 @@ def render_keeper_plist(cfg: Config) -> str:
 
 
 def _install_keeper(cfg: Config) -> dict:
+    from fanops import daemon
     kp = keeper_plist_path()
     kp.parent.mkdir(parents=True, exist_ok=True)
     from fanops.controlio import write_text_atomic
     write_text_atomic(kp, render_keeper_plist(cfg))
-    return {"keeper_loaded": _load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
+    return {"keeper_loaded": daemon._load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
 
 
 def ensure_keeper_loaded(cfg: Config) -> bool:
@@ -89,16 +82,18 @@ def ensure_keeper_loaded(cfg: Config) -> bool:
     calls this each loop tick; `ensure()` also calls it so a still-firing keeper is a no-op."""
     if sys.platform != "darwin":
         return False
+    from fanops import daemon
     kp = keeper_plist_path()
     if not kp.exists():
         return False
-    if _confirm_loaded(KEEPER_LABEL):
+    if daemon._confirm_loaded(KEEPER_LABEL):
         return True
-    return _load_plist(kp, KEEPER_LABEL)
+    return daemon._load_plist(kp, KEEPER_LABEL)
 
 
 def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | None = None) -> dict:
     """Readiness for one host-level poll-timer sibling. plist-on-disk + not-loaded = ALARM."""
+    from fanops import daemon
     if poll_interval_s is None:
         for spec in SIBLING_POLL_AGENTS:
             if spec["label"] == label:
@@ -108,18 +103,18 @@ def sibling_agent_status(label: str, *, short: str = "", poll_interval_s: int | 
     try:
         # `print gui/UID/label` is the loaded probe (`_confirm_loaded`). `list label` is PID-only —
         # a StartInterval job is loaded-and-idle with no PID, and list has been observed to miss it.
-        loaded = _confirm_loaded(label)
+        loaded = daemon._confirm_loaded(label)
         pid = None
         if loaded:
-            r = _launchctl("list", label)
-            pid = _grep_int(r.stdout, "PID") if r.returncode == 0 else None
+            r = daemon._launchctl("list", label)
+            pid = daemon._grep_int(r.stdout, "PID") if r.returncode == 0 else None
     except Exception as exc:                             # launchctl blip -> report not-loaded (fail-open)
         _log.warning("sibling_agent_status: launchctl probe %s failed (%s)", label, exc)
         loaded, pid = False, None
     if not installed:
         verdict = "not installed"
     elif not loaded:
-        verdict = _VERDICT_UNLOADED_ALARM
+        verdict = daemon._VERDICT_UNLOADED_ALARM
     else:
         verdict = "loaded"
     iv = poll_interval_s if poll_interval_s is not None else SIBLING_POLL_INTERVAL_S

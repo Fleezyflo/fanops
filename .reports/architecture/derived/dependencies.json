@@ -1,12 +1,6 @@
 {
   "$schema": "fanops-arch/derived/dependencies",
-  "G1_non_trivial_sccs": [
-    [
-      "fanops.daemon",
-      "fanops.daemon_siblings",
-      "fanops.daemon_studio"
-    ]
-  ],
+  "G1_non_trivial_sccs": [],
   "G2_non_trivial_sccs": [
     [
       "fanops.accounts",
@@ -600,24 +594,25 @@
     },
     "fanops.daemon_siblings": {
       "compile": [
-        "fanops.config",
-        "fanops.daemon"
+        "fanops.config"
       ],
       "lazy": [
-        "fanops.controlio"
+        "fanops",
+        "fanops.controlio",
+        "fanops.daemon"
       ],
       "optional": [],
       "typing": []
     },
     "fanops.daemon_studio": {
       "compile": [
-        "fanops.config",
-        "fanops.daemon"
+        "fanops.config"
       ],
       "lazy": [
         "fanops",
         "fanops.controlio",
         "fanops.daemon",
+        "fanops.daemon_siblings",
         "fanops.errors"
       ],
       "optional": [],
@@ -2766,7 +2761,7 @@
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
-    "fanops.daemon": 4,
+    "fanops.daemon": 2,
     "fanops.daemon_siblings": 1,
     "fanops.daemon_studio": 1,
     "fanops.digest": 4,
@@ -2950,8 +2945,8 @@
     "fanops.cutover": 4,
     "fanops.cutover_postiz": 4,
     "fanops.daemon": 4,
-    "fanops.daemon_siblings": 2,
-    "fanops.daemon_studio": 2,
+    "fanops.daemon_siblings": 1,
+    "fanops.daemon_studio": 1,
     "fanops.digest": 7,
     "fanops.discover": 6,
     "fanops.doctor": 6,
@@ -3101,7 +3096,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 278,
+  "lazy_downward_count": 279,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3110,14 +3105,6 @@
       "same_scc": false,
       "to": "fanops.signals",
       "to_level": 3
-    },
-    {
-      "from": "fanops.autopilot",
-      "from_level": 1,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.daemon",
-      "to_level": 1
     },
     {
       "from": "fanops.config",
@@ -3161,11 +3148,11 @@
     },
     {
       "from": "fanops.daemon",
-      "from_level": 1,
+      "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.controlio",
-      "to_level": 1
+      "to": "fanops.pipeline_run",
+      "to_level": 2
     },
     {
       "from": "fanops.daemon_siblings",
@@ -3187,8 +3174,8 @@
       "from": "fanops.daemon_studio",
       "from_level": 1,
       "jump": 0,
-      "same_scc": true,
-      "to": "fanops.daemon",
+      "same_scc": false,
+      "to": "fanops.daemon_siblings",
       "to_level": 1
     },
     {
@@ -3229,6 +3216,14 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.ig_hashtag_scrape",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.health_probes",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.daemon",
       "to_level": 2
     },
     {
@@ -3850,14 +3845,6 @@
       "to_level": 2
     },
     {
-      "from": "fanops.daemon",
-      "from_level": 1,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.health_model",
-      "to_level": 3
-    },
-    {
       "from": "fanops.fanops_hashtags",
       "from_level": 5,
       "jump": 2,
@@ -4026,6 +4013,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.autopilot",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.daemon",
+      "to_level": 2
+    },
+    {
       "from": "fanops.cli_run",
       "from_level": 12,
       "jump": 1,
@@ -4059,10 +4054,26 @@
     },
     {
       "from": "fanops.daemon",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.health_model",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.daemon_siblings",
       "from_level": 1,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.pipeline_run",
+      "to": "fanops.daemon",
+      "to_level": 2
+    },
+    {
+      "from": "fanops.daemon_studio",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.daemon",
       "to_level": 2
     },
     {
@@ -4324,7 +4335,7 @@
     "fanops.crosspost": 9,
     "fanops.cutover": 4,
     "fanops.cutover_postiz": 4,
-    "fanops.daemon": 1,
+    "fanops.daemon": 2,
     "fanops.daemon_siblings": 1,
     "fanops.daemon_studio": 1,
     "fanops.digest": 4,
@@ -4516,7 +4527,6 @@
       "fanops.cli_dispatch",
       "fanops.control",
       "fanops.controlio",
-      "fanops.daemon",
       "fanops.daemon_siblings",
       "fanops.daemon_studio",
       "fanops.health_projectors",
@@ -4570,6 +4580,7 @@
       "fanops.batches",
       "fanops.canary_identity",
       "fanops.config_introspect",
+      "fanops.daemon",
       "fanops.hashtag_scrape_policy",
       "fanops.health_probes",
       "fanops.hookscore",
@@ -4696,17 +4707,17 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "G1_non_trivial_sccs": 1,
-    "G1_sccs_total": 179,
+    "G1_non_trivial_sccs": 0,
+    "G1_sccs_total": 181,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
     "G2_module_sccs_total": 103,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 751,
-    "lazy_edges": 426,
+    "compile_edges_G1": 749,
+    "lazy_edges": 429,
     "lazy_edges_lateral": 51,
-    "lazy_edges_strictly_upward": 97,
-    "lazy_edges_to_equal_or_higher_level": 148,
+    "lazy_edges_strictly_upward": 99,
+    "lazy_edges_to_equal_or_higher_level": 150,
     "modules": 181,
     "optional_edges": 0,
     "typing_only_edges": 9
