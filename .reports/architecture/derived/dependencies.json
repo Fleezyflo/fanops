@@ -731,6 +731,7 @@
       ],
       "lazy": [
         "fanops.doctor",
+        "fanops.health_probes",
         "fanops.ledger",
         "fanops.models",
         "fanops.studio.views_review"
@@ -2880,7 +2881,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 261,
+  "lazy_downward_count": 262,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -4330,7 +4331,7 @@
     "G2_module_sccs_total": 100,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 696,
-    "lazy_edges": 393,
+    "lazy_edges": 394,
     "lazy_edges_lateral": 50,
     "lazy_edges_strictly_upward": 82,
     "lazy_edges_to_equal_or_higher_level": 132,

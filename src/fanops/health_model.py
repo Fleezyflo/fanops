@@ -13,13 +13,9 @@ from fanops.health_probes import (
     daemon_liveness_check,
     daemon_progress,
     dep_health_list,
-    deps_from_snapshot,
     heartbeat_stale,
     postiz_dep_health,
     postiz_doctor_check,
-    snapshot_daemon_status,
-    snapshot_postiz_probe,
-    strip_metrics_freshness_check,
     zernio_dep_health,
 )
 from fanops.health_projectors import (
@@ -48,6 +44,27 @@ from fanops.health_types import (
 )
 
 _log = logging.getLogger("fanops.health")
+
+
+def snapshot_postiz_probe(cfg: Config):
+    from fanops.health_probes import snapshot_postiz_probe as _impl
+    return _impl(cfg)
+
+
+def snapshot_daemon_status(cfg: Config, interval: int) -> dict:
+    from fanops.health_probes import snapshot_daemon_status as _impl
+    return _impl(cfg, interval)
+
+
+def deps_from_snapshot(cfg: Config) -> list[DepHealth]:
+    from fanops.health_probes import deps_from_snapshot as _impl
+    return _impl(cfg)
+
+
+def strip_metrics_freshness_check(cfg: Config) -> dict:
+    from fanops.health_probes import strip_metrics_freshness_check as _impl
+    return _impl(cfg)
+
 
 __all__ = [
     "DAEMON_CHECK_LABEL_NEEDLE",
