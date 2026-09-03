@@ -10,7 +10,7 @@ from fanops.models import (Source, Moment, Clip, Post, Render, Platform, PostSta
 from fanops.post.media import resolve_media_path, ensure_clip_media
 from fanops.post.compress import media_path_for_post
 from fanops.studio.preview_media import preview_media_path
-from fanops.studio.app import _media_path_for_post, create_app
+from fanops.studio.app import create_app
 
 
 def _old_root(tmp_path) -> Path:
@@ -115,7 +115,7 @@ def test_media_path_for_post_and_flask_serve_stale(tmp_path):
     cfg = Config(root=tmp_path)
     real, _ = _seed_stale_post(cfg, render=True)
     led = Ledger.load(cfg)
-    got = _media_path_for_post(cfg, led, "p0")
+    got = preview_media_path(cfg, led, "p0")
     assert got and Path(got).resolve() == real.resolve()
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().get("/media/p0")

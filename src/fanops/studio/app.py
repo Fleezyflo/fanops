@@ -15,6 +15,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Platform
 from fanops.studio import views, actions
+from fanops.studio.preview_media import media_path_for_post
 from fanops.personas import lever_catalog        # the code-derived lever catalog (every option + its real effect)
 from fanops.timeutil import local_input_to_utc_z, to_local_display, to_local_display_hybrid, to_local_input  # local-time rendering at the web boundary
 
@@ -51,44 +52,6 @@ def _bounded(cfg: Config, candidate) -> Path | None:
         return None
     p = Path(candidate).resolve()
     return p if p.is_relative_to(cfg.base.resolve()) else None
-
-
-def _media_path_for_post(cfg: Config, led: Ledger, post_id: str):
-    """Resolve the local file to serve for a post — a pure lookup, no guessing (the Render foundation
-    killed the old 3-way heuristic that silently served a textless base):
-      1. post.render_id -> the per-account Render's path (THE authoritative per-account artifact);
-      2. else media_urls[0] when it is a local file:// / bare path (legacy pre-Render rows; resilient if
-         a Render entity was swept but its file remains — media_urls still points at the same path);
-      3. else the shared base clip.path (a hookless surface legitimately ships the base).
-    An http(s) media_urls (an already-published URL) is NOT locally servable -> fall through. The id is a
-    dict-key lookup and every path comes from the trusted ledger (never the URL), so no path traversal.
-    The route 404s when the resolved path does not exist (a missing render surfaces, never a silent swap)."""
-    from fanops.post.media import resolve_media_path
-    post = led.posts.get(post_id)
-    if post is None:
-        return None
-    if post.render_id:
-        r = led.renders.get(post.render_id)
-        if r is not None and r.path:
-            p = resolve_media_path(cfg, r.path, "render")
-            return str(p) if p else None
-    candidate = None
-    kind = "render" if post.render_id else "clip"
-    if post.media_urls:
-        raw = post.media_urls[0]
-        if raw.startswith("file://"):
-            candidate = raw[len("file://"):]
-        elif not raw.startswith(("http://", "https://")):
-            candidate = raw            # a bare local path
-        # http(s) publicUrl -> not locally servable; fall through to base clip
-    if candidate is not None:
-        p = resolve_media_path(cfg, candidate, kind)
-        return str(p) if p else None
-    clip = led.clips.get(post.parent_id)
-    if clip and clip.path:
-        p = resolve_media_path(cfg, clip.path, "clip")
-        return str(p) if p else None
-    return None
 
 
 def _parse_gate_form(kind: str, form) -> dict:
@@ -573,15 +536,14 @@ def create_app(cfg: Config) -> Flask:
     # (incl. under a failed/error post — MOL-818), that 404 is expected; do not special-case post state here.
     @app.get("/media/<post_id>")
     def media(post_id):
-        path = _bounded(cfg, _media_path_for_post(cfg, Ledger.load(cfg), post_id))
+        path = _bounded(cfg, media_path_for_post(cfg, Ledger.load(cfg), post_id))
         if not path or not os.path.exists(path):
             abort(404)
         return send_file(path)
 
     @app.get("/media-preview/<post_id>")
     def media_preview(post_id):
-        from fanops.studio.preview_media import preview_media_path
-        path = _bounded(cfg, preview_media_path(cfg, Ledger.load(cfg), post_id))
+        path = _bounded(cfg, media_path_for_post(cfg, Ledger.load(cfg), post_id))
         if not path or not os.path.exists(path):
             abort(404)
         return send_file(path)
