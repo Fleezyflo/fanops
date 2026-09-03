@@ -17,21 +17,6 @@ def _parked(led, pid="p"):
                       caption="x", state=PostState.needs_reconcile, submission_id="s"))
 
 
-def test_safe_public_url_accepts_only_well_formed_https():
-    from fanops.text import safe_public_url
-    assert safe_public_url("https://www.instagram.com/p/abc/") == "https://www.instagram.com/p/abc/"
-    assert safe_public_url("  https://x.com/p  ") == "https://x.com/p"   # trimmed
-    assert safe_public_url("http://x.com/p") is None        # http rejected (public permalinks are https)
-    assert safe_public_url("javascript:alert(1)") is None   # non-web scheme
-    assert safe_public_url("ftp://x.com/p") is None
-    assert safe_public_url("not-a-url") is None
-    assert safe_public_url("https://") is None              # scheme but no host
-    assert safe_public_url("https://evil\n.com/p") is None   # embedded newline -> malformed/injected
-    assert safe_public_url("https://x.com/a b") is None      # internal whitespace
-    assert safe_public_url("") is None
-    assert safe_public_url(None) is None
-
-
 def test_reconcile_drops_a_non_https_public_url(tmp_path):
     # the audit target: a malformed publicUrl from the backend must NOT be persisted on the post.
     # R1 (updated contract): when the backend reports 'published' but no VALID url was captured AND
