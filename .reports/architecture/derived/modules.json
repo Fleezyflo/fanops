@@ -3,9 +3,7 @@
   "confidence": "CERTAIN",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
-  "ghost_modules": [
-    "fanops.hashtag_hygiene"
-  ],
+  "ghost_modules": [],
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "modules": [
     "fanops",
@@ -168,7 +166,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -189,8 +187,8 @@
     "fanops.batches": "S05_ingestion",
     "fanops.canary": "S17_cli_daemon",
     "fanops.caption": "S10_caption_hashtag",
-    "fanops.caption_compose": null,
-    "fanops.caption_ingest": null,
+    "fanops.caption_compose": "S10_caption_hashtag",
+    "fanops.caption_ingest": "S10_caption_hashtag",
     "fanops.casting": "S08_selection",
     "fanops.cli": "S17_cli_daemon",
     "fanops.clip": "S09_render",
@@ -236,8 +234,8 @@
     "fanops.ledger_wipe": "S19_maintenance",
     "fanops.lever_docs": "S19_maintenance",
     "fanops.llm": "S07_agent_gate",
-    "fanops.llm_errors": null,
-    "fanops.llm_json": null,
+    "fanops.llm_errors": "S07_agent_gate",
+    "fanops.llm_json": "S07_agent_gate",
     "fanops.log": "S01_foundation",
     "fanops.media_probe": "S05_ingestion",
     "fanops.meta_graph": "S10_caption_hashtag",
@@ -335,15 +333,10 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 154,
-    "ghosts": 1,
+    "assigned": 158,
+    "ghosts": 0,
     "modules": 158,
-    "unassigned": 4
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.caption_compose",
-    "fanops.caption_ingest",
-    "fanops.llm_errors",
-    "fanops.llm_json"
-  ]
+  "unassigned_modules": []
 }
