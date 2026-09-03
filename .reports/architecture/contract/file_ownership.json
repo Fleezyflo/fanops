@@ -87,14 +87,24 @@
       "ratchets": {"swallow": "baseline 9 — MUST NOT EXCEED.", "print": "not scoped"}
     },
 
-    "src/fanops/post/metrics.py": {
+    "src/fanops/post/metrics/zernio_read.py": {
       "owner": "S05",
-      "permitted_region": "`ZernioStatusClient.get_status` (:511-531) — the *** 404 branch ONLY. ***",
+      "permitted_region": "`ZernioStatusClient.get_status` — the *** 404 branch ONLY. ***",
       "forbidden_within_the_file": [
         "*** The 5xx -> RuntimeError path (parked, never guessed `failed`). ***",
         "*** The 401 -> ZernioAuthError halt. ***",
         "`PostizStatusClient` — it is ALREADY CORRECT.",
         "The `{status, publicUrl, tiktokUsername?}` return shape."
+      ],
+      "ratchets": {"swallow": "*** NOT IN BASELINE -> 0 allowed. ***", "print": "not scoped"}
+    },
+
+    "src/fanops/post/metrics/postiz_read.py": {
+      "owner": "S05",
+      "permitted_region": "`PostizStatusClient` / `PostizMetricsClient` read paths only.",
+      "forbidden_within_the_file": [
+        "*** The 5xx -> RuntimeError path (parked, never guessed `failed`). ***",
+        "*** The 401 -> ZernioAuthError halt. ***"
       ],
       "ratchets": {"swallow": "*** NOT IN BASELINE -> 0 allowed. ***", "print": "not scoped"}
     },
