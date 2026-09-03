@@ -6,7 +6,8 @@ import json
 from fanops.config import Config
 from fanops.digest import aggregate_by_dim
 from fanops.ledger import Ledger
-from fanops.models import (Post, Platform, PostState, Source, Moment, Clip, SourceState)
+from fanops.models import (Post, Platform, PostState)
+from tests.fixtures.variant_lineage import validate_learning as _validate, seed_lineage as _seed_lineage
 
 
 def _post(led, pid, *, reach=0.0, state=PostState.analyzed, **kw):
@@ -64,19 +65,6 @@ def test_crosspost_stamps_per_account_top_bias_seam(tmp_path, monkeypatch):
 # ======================================================================================
 # Task 2 — framing rides the EXISTING autonomous apply_p4_dim_bias (one line in _P4_DIMS).
 # ======================================================================================
-def _seed_lineage(led, *, source_id="s1", clip_id="c1", moment_id="m1"):
-    led.add_source(Source(id=source_id, source_path="x.mp4", state=SourceState.transcribed,
-                          duration=10.0, transcript=[], language="en"))
-    led.add_moment(Moment(id=moment_id, parent_id=source_id, start=0.0, end=4.0, reason="r",
-                          transcript_excerpt="ex"))
-    led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4"))
-
-
-def _validate(cfg):
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})
-
-
 def test_framing_is_a_p4_dim(tmp_path):
     # RED: top_bias is not in _P4_DIMS yet.
     from fanops.p4_dim_bias import _P4_DIMS

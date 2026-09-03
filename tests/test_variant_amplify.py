@@ -5,56 +5,17 @@ import pathlib
 from fanops.agentstep import request_path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState, Source, Moment, Clip, SourceState
+from fanops.models import PostState, SourceState
 from fanops.variant_amplify import update_streaks, amplify_candidates, apply_variant_amplify
 from fanops.variant_learning import _hook_for_post
-
-
-def _lineage(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
-    # P9: hook lives on the owner moment; each analyzed post needs its own moment/clip lineage.
-    from fanops.models import _POST_TERMINAL_REQUIRES_URL
-    clip_id, moment_id = f"c_{pid}", f"m_{pid}"
-    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
-    moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook,
-                    transcript_excerpt="ex")
-    clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
-    post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=state, metrics={"lift_score": lift}, public_url=url)
-    return moment, clip, post
-
-
-def _post(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="s1"):
-    return _lineage(pid, acct, hook, lift, state, src_id=src_id)
-
-
-def _add_lineage(led, triple, *, src_id="s1"):
-    m, c, p = triple
-    if not led.sources.get(src_id):
-        led.add_source(Source(id=src_id, source_path="x.mp4", state=SourceState.transcribed,
-                              duration=10.0, transcript=[], language="en"))
-    led.add_moment(m); led.add_clip(c); led.add_post(p)
-
-
-def _led(cfg, triples, *, src_id="s1"):
-    led = Ledger.load(cfg)
-    for t in triples:
-        _add_lineage(led, t, src_id=src_id)
-    return led
-
-
-def _winset(n, hook, lift, start=1):
-    # n analyzed posts of `hook` at `lift` + a runner-up far below so best_hooks fires.
-    posts = [_post(str(start + i), "a", hook, lift) for i in range(n)]
-    posts += [_post(str(start + n + i), "a", "LOSE", 1.0) for i in range(3)]
-    return posts
-
-
-def _seed_lineage(led, *, source_id="s1", clip_id="c1", moment_id="m1"):
-    led.add_source(Source(id=source_id, source_path="x.mp4", state=SourceState.transcribed,
-                          duration=10.0, transcript=[], language="en"))
-    led.add_moment(Moment(id=moment_id, parent_id=source_id, start=0.0, end=4.0, reason="r",
-                          transcript_excerpt="ex"))
-    led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4"))
+from tests.fixtures.variant_lineage import (
+    validate_learning as _validate,
+    seed_lineage as _seed_lineage,
+    variant_post as _post,
+    add_variant_lineage as _add_lineage,
+    ledger_with_triples as _led,
+    winset as _winset,
+)
 
 
 # ---- Task 4: update_streaks — deterministic, idempotent streak tracker ----------------------------
@@ -286,13 +247,6 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     before = _frozen(led)
     apply_variant_amplify(led, cfg)        # must NOT raise
     assert _frozen(led) == before
-
-
-def _validate(cfg):
-    # Phase 2: mark the live-validation precondition (a real metrics row reconciled by cutover) so
-    # the amplify actuator is allowed to act. Tests that exercise the amplify LOGIC must establish it.
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})
 
 
 def test_apply_amplify_inert_until_learning_validated(tmp_path, monkeypatch):

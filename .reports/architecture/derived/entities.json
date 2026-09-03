@@ -106,9 +106,9 @@
         "name": "SnapshotFreshness"
       }
     ],
-    "fanops.health_model": [
+    "fanops.health_types": [
       {
-        "line": 20,
+        "line": 12,
         "members": [
           "FAIL",
           "INFO",

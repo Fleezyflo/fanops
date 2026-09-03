@@ -8,6 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Moment, Clip, Source, SourceState
 from fanops.accounts import Account, Accounts, AccountStatus
 from fanops.variant_transfer import transferred_hooks
+from tests.fixtures.variant_lineage import validate_learning as _validate
 
 
 def _accounts(cfg, specs):
@@ -34,12 +35,6 @@ def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0
                     platform=platform, caption="x", state=PostState.analyzed,
                     metrics={"lift_score": lift}, public_url="dryrun://clip_1")
         led.add_moment(moment); led.add_clip(clip); led.add_post(post)
-
-
-def _validate(cfg):
-    # mark the live-validation precondition (mirrors test_variant_amplify._validate).
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})
 
 
 def test_transfer_is_validation_frozen_until_learning_validated(tmp_path, monkeypatch):

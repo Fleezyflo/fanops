@@ -5,24 +5,14 @@ import pathlib
 from fanops.agentstep import request_path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Post, Platform, PostState, Source, Moment, Clip, SourceState, MomentState)
+from fanops.models import (Post, Platform, PostState, SourceState, MomentState)
 from fanops.p4_dim_bias import dim_bias_candidates, apply_p4_dim_bias
+from tests.fixtures.variant_lineage import validate_learning as _validate, seed_lineage as _seed_lineage
 
 
 def _dim_post(led, pid, ffk, reach, state=PostState.analyzed):
     led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=state, first_frame_kind=ffk, metrics={"reach": reach}, public_url="dryrun://c1"))
-
-def _seed_lineage(led, *, source_id="s1", clip_id="c1", moment_id="m1"):
-    led.add_source(Source(id=source_id, source_path="x.mp4", state=SourceState.transcribed,
-                          duration=10.0, transcript=[], language="en"))
-    led.add_moment(Moment(id=moment_id, parent_id=source_id, start=0.0, end=4.0, reason="r",
-                          transcript_excerpt="ex"))
-    led.add_clip(Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4"))
-
-def _validate(cfg):
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})   # learning_validated precondition
 
 def _gated_led(cfg, *, visual_reach=1000.0, transcript_reach=100.0):
     # 8 visual + 8 transcript analyzed posts (clears enough_attributed_signal >=8/>=2); visual leads reach.

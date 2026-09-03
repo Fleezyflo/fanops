@@ -32,6 +32,7 @@
     "network_sites_literal_requests": [
       "fanops.cli",
       "fanops.health_model",
+      "fanops.health_probes",
       "fanops.ig_web_scrape",
       "fanops.post.metrics",
       "fanops.post.postiz",
@@ -53,6 +54,7 @@
       "fanops.discover",
       "fanops.health",
       "fanops.health_model",
+      "fanops.health_probes",
       "fanops.ig_hashtag_scrape",
       "fanops.ingest",
       "fanops.ingest_shard",
