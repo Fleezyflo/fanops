@@ -7,6 +7,7 @@ widened. Every drift here is CLASSIFIED, and the classification is what CI acts 
 from __future__ import annotations
 
 import shutil
+import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,15 +68,10 @@ def stale_artifacts(derived_dir: Path | None = None) -> list[Drift]:
                 out.append(Drift("generated_artifact_stale", _dimension_of(name), name,
                                  "committed bytes differ from regeneration — the file is STALE or "
                                  "was HAND-EDITED",
-                                 _explain(name, load_str(a), load_str(b))))
+                                 _explain(name, json.loads(a), json.loads(b))))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return out
-
-
-def load_str(text: str) -> dict:
-    import json
-    return json.loads(text)
 
 
 _DIM = {
