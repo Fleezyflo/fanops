@@ -23,6 +23,7 @@ from fanops.config import Config
 from fanops.digest import aggregate_by_dim
 from fanops.ledger import Ledger
 from fanops.log import get_logger
+from fanops.reach_ranking import comparative_reach_leader
 from fanops.validation_gate import p4_unlocked
 
 _DIM = "publish_hour"
@@ -36,13 +37,10 @@ def timing_bias_winner(led, cfg) -> "dict | None":
     if not p4_unlocked(led, cfg, _DIM):
         return None
     agg = aggregate_by_dim(led, _DIM)                    # {"18": {n, reach_sum, reach_mean, ...}, ...}
-    if len(agg) < 2:
-        return None                                      # need a runner-up to be comparative (no variance -> no-op)
-    ranked = sorted(agg.items(), key=lambda kv: (-kv[1]["reach_mean"], kv[0]))   # reach desc, hour asc
-    leader_hour, leader_row = ranked[0]
-    diff = leader_row["reach_mean"] - ranked[1][1]["reach_mean"]
-    if diff <= 0 or diff < cfg.p4_min_reach_gap:
-        return None                                      # not a clear lead (exact tie excluded)
+    leader = comparative_reach_leader(agg, cfg.p4_min_reach_gap)
+    if leader is None:
+        return None
+    leader_hour, leader_row = leader
     try:
         return {"publish_hour": int(leader_hour), "reach_mean": leader_row["reach_mean"]}
     except (ValueError, TypeError):

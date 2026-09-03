@@ -79,6 +79,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/reconcile_mirror.py": ("tests/test_reconcile.py", "tests/test_ig_liveness_gate.py",
                                          "tests/test_flock_violations_b04.py", "tests/test_imported_projection.py",
                                          "tests/test_zernio_metrics.py", "tests/test_channel_provider.py"),
+    "src/fanops/reach_ranking.py": ("tests/test_p4_dim_bias.py", "tests/test_culmination_coverage.py"),
     "src/fanops/reframe_vf.py": ("tests/test_smart_framing.py", "tests/test_clip.py",
                                  "tests/test_reframe_s2_d1a.py", "tests/test_reframe_s3_d1b.py"),
     "src/fanops/render_fingerprint.py": ("tests/test_clip.py", "tests/test_reframe.py",

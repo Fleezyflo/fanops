@@ -1100,6 +1100,7 @@
         "fanops.ledger",
         "fanops.log",
         "fanops.models",
+        "fanops.reach_ranking",
         "fanops.validation_gate"
       ],
       "lazy": [],
@@ -1426,6 +1427,12 @@
       "compile": [
         "fanops.prompts"
       ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
+    "fanops.reach_ranking": {
+      "compile": [],
       "lazy": [],
       "optional": [],
       "typing": []
@@ -2259,6 +2266,7 @@
         "fanops.digest",
         "fanops.ledger",
         "fanops.log",
+        "fanops.reach_ranking",
         "fanops.validation_gate"
       ],
       "lazy": [
@@ -2581,6 +2589,7 @@
     "fanops.produce": 1,
     "fanops.prompts": 2,
     "fanops.prompts_caption": 0,
+    "fanops.reach_ranking": 2,
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
     "fanops.reconcile_liveness": 1,
@@ -2723,7 +2732,7 @@
     "fanops.moments": 14,
     "fanops.overlay": 0,
     "fanops.overlay_reburn": 13,
-    "fanops.p4_dim_bias": 7,
+    "fanops.p4_dim_bias": 8,
     "fanops.paths_rebase": 3,
     "fanops.persona_directives": 3,
     "fanops.persona_levers": 0,
@@ -2747,6 +2756,7 @@
     "fanops.produce": 9,
     "fanops.prompts": 0,
     "fanops.prompts_caption": 1,
+    "fanops.reach_ranking": 0,
     "fanops.recaption": 9,
     "fanops.reconcile": 9,
     "fanops.reconcile_liveness": 4,
@@ -2801,7 +2811,7 @@
     "fanops.tagging": 2,
     "fanops.text": 0,
     "fanops.timeutil": 0,
-    "fanops.timing_bias": 5,
+    "fanops.timing_bias": 6,
     "fanops.track": 6,
     "fanops.transcribe": 3,
     "fanops.transcribe_engine": 7,
@@ -3993,6 +4003,7 @@
     "fanops.produce": 9,
     "fanops.prompts": 0,
     "fanops.prompts_caption": 1,
+    "fanops.reach_ranking": 0,
     "fanops.recaption": 6,
     "fanops.reconcile": 4,
     "fanops.reconcile_liveness": 2,
@@ -4083,6 +4094,7 @@
       "fanops.post.zernio_outcome",
       "fanops.postiz_lifecycle",
       "fanops.prompts",
+      "fanops.reach_ranking",
       "fanops.render_fingerprint",
       "fanops.secret_provider",
       "fanops.speech_trust",
@@ -4266,17 +4278,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 164,
+    "G1_sccs_total": 165,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
-    "G2_module_sccs_total": 96,
+    "G2_module_sccs_total": 97,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 683,
+    "compile_edges_G1": 685,
     "lazy_edges": 389,
     "lazy_edges_lateral": 51,
     "lazy_edges_strictly_upward": 83,
     "lazy_edges_to_equal_or_higher_level": 134,
-    "modules": 164,
+    "modules": 165,
     "optional_edges": 0,
     "typing_only_edges": 7
   }

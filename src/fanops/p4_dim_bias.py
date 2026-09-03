@@ -19,6 +19,7 @@ from fanops.adjust import amplify          # AMPLIFY-ONLY: import amplify, NEVER
 from fanops.digest import aggregate_by_dim
 from fanops.log import get_logger
 from fanops.models import PostState
+from fanops.reach_ranking import comparative_reach_leader
 from fanops.validation_gate import learning_validated, p4_unlocked
 
 # The creative dims P4 ranks by reach. Stamped at crosspost (first_frame_kind, clip_profile, top_bias). NOT
@@ -38,13 +39,10 @@ def dim_bias_candidates(led, cfg) -> list[dict]:
         if not p4_unlocked(led, cfg, dim):
             continue
         agg = aggregate_by_dim(led, dim)                     # {value: {n, reach_sum, reach_mean, ...}}
-        if len(agg) < 2:
-            continue                                         # need a runner-up to be comparative
-        ranked = sorted(agg.items(), key=lambda kv: (-kv[1]["reach_mean"], kv[0]))   # reach desc, value asc
-        leader_value, leader_row = ranked[0]
-        diff = leader_row["reach_mean"] - ranked[1][1]["reach_mean"]
-        if diff <= 0 or diff < cfg.p4_min_reach_gap:
-            continue                                         # not a clear lead (exact tie excluded)
+        leader = comparative_reach_leader(agg, cfg.p4_min_reach_gap)
+        if leader is None:
+            continue
+        leader_value, leader_row = leader
         reps = sorted(p.id for p in led.posts.values()
                       if p.state is PostState.analyzed and str(getattr(p, dim, None)) == leader_value)
         if not reps:
