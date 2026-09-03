@@ -44,7 +44,7 @@ def test_dryrun_stamps_no_synthetic_submission_id(tmp_path):
 
 
 def test_dryrun_preview_text_is_posted_text_for(tmp_path):
-    from fanops.caption import posted_text_for
+    from fanops.caption_compose import posted_text_for
     from fanops.models import Clip, ClipState, Moment, MomentState, Source
     from fanops.source_tags import source_tag_locks_path
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

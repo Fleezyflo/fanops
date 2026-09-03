@@ -20,6 +20,8 @@
     "fanops.batches",
     "fanops.canary",
     "fanops.caption",
+    "fanops.caption_compose",
+    "fanops.caption_ingest",
     "fanops.casting",
     "fanops.cli",
     "fanops.clip",
@@ -45,6 +47,7 @@
     "fanops.framing_outcomes",
     "fanops.gate_keys",
     "fanops.hashtag_hygiene",
+    "fanops.hashtag_scrape_policy",
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
@@ -162,7 +165,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -183,6 +186,8 @@
     "fanops.batches": "S05_ingestion",
     "fanops.canary": "S17_cli_daemon",
     "fanops.caption": "S10_caption_hashtag",
+    "fanops.caption_compose": null,
+    "fanops.caption_ingest": null,
     "fanops.casting": "S08_selection",
     "fanops.cli": "S17_cli_daemon",
     "fanops.clip": "S09_render",
@@ -208,6 +213,7 @@
     "fanops.framing_outcomes": "S06_media_analysis",
     "fanops.gate_keys": "S01_foundation",
     "fanops.hashtag_hygiene": "S10_caption_hashtag",
+    "fanops.hashtag_scrape_policy": null,
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
@@ -327,8 +333,12 @@
   "totals": {
     "assigned": 154,
     "ghosts": 0,
-    "modules": 154,
-    "unassigned": 0
+    "modules": 157,
+    "unassigned": 3
   },
-  "unassigned_modules": []
+  "unassigned_modules": [
+    "fanops.caption_compose",
+    "fanops.caption_ingest",
+    "fanops.hashtag_scrape_policy"
+  ]
 }

@@ -484,7 +484,7 @@ class ZernioPoster:
         if bad is not None:
             return bad                                   # ZERO network calls (I-10) — never fabricate an id
         rid = _request_id(post)
-        from fanops.caption import posted_text_for
+        from fanops.caption_compose import posted_text_for
         payload = build_zernio_payload(account_id=post.account_id, platform=post.platform.value,
                                        content=posted_text_for(self.cfg, led, post),
                                        media_urls=post.media_urls, scheduled_time=post.scheduled_time)

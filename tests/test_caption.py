@@ -5,8 +5,9 @@ from fanops.ledger import Ledger
 from fanops.models import (Clip, Moment, Source, SourceState, MomentState, ClipState, Platform,
                            CaptionSet, CaptionItem, Post, PostState)
 from fanops.agentstep import response_path, request_path, latest_request_id
-from fanops.caption import (brand_risk_flag, request_captions, ingest_captions, is_tags_only_caption,
-                            compose_posted_caption, posted_text_for)
+from fanops.caption import request_captions, ingest_captions
+from fanops.caption_compose import compose_posted_caption, posted_text_for
+from fanops.caption_ingest import brand_risk_flag, is_tags_only_caption
 from fanops.source_tags import source_tag_locks_path
 
 def _ensure_completed_lock(cfg, sid="src_1", lock=()):
@@ -622,14 +623,14 @@ def test_ingest_captions_no_accounts_is_byte_identical(tmp_path):
 
 # ---- MOL-168 / AGENT-6: caption platform is REQUEST-record-authoritative; no tail-parse or instagram-coerce ----
 def test_caption_platform_from_request_only():
-    from fanops.caption import _platform_for_surface
+    from fanops.caption_ingest import _platform_for_surface
     # the surface KEY tail says instagram, but the request recorded tiktok -> the request wins (vet truth)
     assert _platform_for_surface("a/instagram", {"a/instagram": "tiktok"}) == Platform.tiktok
     # a mangled model surface string is IRRELEVANT when the request carries the platform
     assert _platform_for_surface("a/nonsense", {"a/nonsense": "tiktok"}) == Platform.tiktok
 
 def test_caption_missing_platform_errors():
-    from fanops.caption import _platform_for_surface
+    from fanops.caption_ingest import _platform_for_surface
     with pytest.raises(ValueError, match="missing platform"):
         _platform_for_surface("a/tiktok", {})
     with pytest.raises(ValueError, match="invalid platform"):
