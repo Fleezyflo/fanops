@@ -123,8 +123,20 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/studio/views_common.py": ("tests/test_bulk_approve_spread.py",),
     "src/fanops/studio/views_library.py": ("tests/test_source_progress.py", "tests/test_studio_library.py"),
     "src/fanops/studio/views_live.py": ("tests/test_studio_live_library.py",),
+    "src/fanops/studio/views_posted.py": ("tests/test_studio_views.py",),
     "src/fanops/studio/views_results.py": ("tests/test_studio_views.py",),
+    "src/fanops/studio/views_schedule.py": ("tests/test_studio_views.py",),
     "src/fanops/studio/views_review.py": ("tests/test_studio_views.py",),
+    "src/fanops/studio/views_home.py": ("tests/test_studio_views.py", "tests/test_studio_workflow_spine.py",
+                                        "tests/test_attention_counts.py", "tests/test_studio_gaps_closure.py"),
+    "src/fanops/studio/views_golive.py": ("tests/test_studio_golive.py", "tests/test_studio_views.py"),
+    "src/fanops/studio/views_run.py": ("tests/test_studio_run.py", "tests/test_studio_views.py",
+                                       "tests/test_studio_library.py", "tests/test_studio_gates.py",
+                                       "tests/test_studio_stitches.py", "tests/test_studio_candidates.py",
+                                       "tests/test_publish_queue.py", "tests/test_studio_errored_sources.py",
+                                       "tests/test_source_lifecycle.py", "tests/test_run_activity.py",
+                                       "tests/test_ui_publish_truth_root.py", "tests/test_ui_publish_mode_label_truth.py",
+                                       "tests/test_responder.py"),
 }
 
 

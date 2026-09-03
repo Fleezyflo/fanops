@@ -149,7 +149,7 @@ def register_schedule_routes(app, cfg):
         if full:
             lift_view = views.lift_rows(led, cfg, accts, account=account)
             lift_view.variant_rows = views.lineage_stats(lift_view.variant_rows)   # S6: rank hooks within each clip's lineage
-            views.account_median_deltas(lift_view.variant_rows)                    # T-15: Δ vs the account's median lift
+            lift_view.variant_rows = views.account_median_deltas(lift_view.variant_rows)  # T-15: Δ vs the account's median lift
             lift_ctx = {"lift_view": lift_view, "lift_peaks": views.metric_peaks(lift_view.variant_rows),
                         "insights": views.whats_working_panel(led, cfg), "metrics_stale": views.metrics_stale_hint(cfg)}
         return render_template("posted.html" if full else "_posted_panel.html", rows=page.items, groups=groups,

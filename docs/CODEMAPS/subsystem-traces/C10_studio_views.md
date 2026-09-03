@@ -2,15 +2,22 @@
 
 # C10: Studio Views
 
-## Files covered (all 5 read in full)
+## Files covered (12 modules; frozen trace body predates the split — module list updated 2026-09-03)
 
-1. `src/fanops/studio/views.py` (824 lines) — read
-2. `src/fanops/studio/views_common.py` (293 lines) — read
-3. `src/fanops/studio/views_live.py` (56 lines) — read
-4. `src/fanops/studio/views_results.py` (724 lines) — read (note: file is 725 lines including trailing content; every line read)
-5. `src/fanops/studio/views_review.py` (698 lines) — read (699 lines including trailing content; every line read)
+1. `src/fanops/studio/views.py` (408 lines) — facade re-exports + `personas_page`, `build_system_strip`, `daemon_health`, `resolve_account_handle`, `schedule_auto_ship`
+2. `src/fanops/studio/views_common.py` (432 lines) — shared primitives
+3. `src/fanops/studio/views_home.py` (447 lines) — Home tab read-models (`home_status`, `home_batches`, `build_spine`, `zero_post_clips`, etc.)
+4. `src/fanops/studio/views_golive.py` (338 lines) — Go-Live tab read-models (`golive_status`, `golive_accounts`, onboarding cards)
+5. `src/fanops/studio/views_run.py` (321 lines) — Run/Make tab read-models (`pipeline_status`, `asset_catalog`, `gate_rows`, etc.)
+6. `src/fanops/studio/views_schedule.py` (498 lines) — Schedule tab read-models (`schedule_rows`, `schedule_cockpit`, `inflight_watch`, etc.)
+7. `src/fanops/studio/views_posted.py` (559 lines) — Posted/Lift read-models (`posted_library`, `lift_rows`, `lineage_stats`, `account_median_deltas`, etc.)
+8. `src/fanops/studio/views_results.py` (52 lines) — **backward-compat shim** re-exporting every public name from `views_schedule` and `views_posted` so `from fanops.studio.views_results import X` keeps working
+9. `src/fanops/studio/views_live.py` (56 lines) — Live library read-model (ImportedMedia only)
+10. `src/fanops/studio/views_review.py` (932 lines) — Review tab read-models
+11. `src/fanops/studio/views_library.py` (276 lines) — Library/source-pipeline read-models (`library_catalog`, `source_progress`)
+12. `src/fanops/studio/views_hashtags.py` (147 lines) — Hashtags page read-model
 
-Cross-checked against `.reports/call_graph.json` (filtered to the 5 `fanops.studio.views*` modules — 96 matching entries) and `.reports/structural_index.json`. `views.py` is explicitly documented (line 1-2, 16-24) as a **facade**: it re-exports every public name from `views_common`, `views_review`, `views_results`, and `views_live` so `fanops.studio.views.X` keeps resolving for templates/routes/tests that import the old flat module. Route files (`app.py`, `app_routes_run.py`, `app_routes_review.py`, `app_routes_schedule.py`, `app_routes_golive.py`, `app_routes_personas.py`, `app_routes_live.py`) are OUTSIDE this cluster but were grepped for `render_template(` call sites to build the view→template mapping — they are not read in full, only grepped for the specific mapping evidence.
+Cross-checked against `.reports/call_graph.json` (filtered to `fanops.studio.views*` modules) and `.reports/structural_index.json`. `views.py` is explicitly documented as a **facade**: it re-exports every public name from `views_common`, `views_home`, `views_golive`, `views_run`, `views_review`, `views_results` (shim), `views_live`, `views_library`, and `views_hashtags` so `fanops.studio.views.X` keeps resolving for templates/routes/tests that import the old flat module. `views_results.py` is itself a shim over `views_schedule` + `views_posted`. Route files (`app.py`, `app_routes_*.py`) are OUTSIDE this cluster but were grepped for `render_template(` call sites to build the view→template mapping — they are not read in full, only grepped for the specific mapping evidence.
 
 ## Pipeline/data-flow overview (route -> view function -> template)
 
@@ -29,17 +36,13 @@ Cross-checked against `.reports/call_graph.json` (filtered to the 5 `fanops.stud
         │                     Postiz-health-banner probe — cached 30s)         │
         │        ▲                    ▲                    ▲                  │
         │        │ imported by        │ imported by        │ imported by      │
-        │  views_review.py      views_results.py      views_live.py           │
-        │  (Review tab:         (Schedule/Posted/Lift  (Live library tab —    │
-        │   cards/matrix/       tabs: ScheduleRow,      ImportedMedia,         │
-        │   lanes/pivot)         PostedRow, LiftRow)     disjoint from Posts)  │
+        │  views_review.py      views_posted.py       views_live.py           │
+        │  views_schedule.py    views_home.py         views_library.py        │
+        │  views_golive.py      views_run.py          views_hashtags.py       │
         │        ▲                    ▲                                       │
         │        └──────────┬─────────┘                                       │
-        │                   │ re-exported + extended by                       │
-        │              views.py (facade: Home/Go-Live/Personas/Run/Library/   │
-        │                       Stitches/Gates read-models + the facade       │
-        │                       re-export block for views_common/_review/     │
-        │                       _results/_live)                               │
+        │                   │ re-exported via views_results shim +            │
+        │              views.py (facade: re-exports all views_* submodules)   │
         └─────────────────────────────┬───────────────────────────────────────┘
                                        │ returns dataclasses / dicts / lists
                                        ▼
@@ -51,7 +54,7 @@ Cross-checked against `.reports/call_graph.json` (filtered to the 5 `fanops.stud
                          └─────────────────────────────────────────────┘
 ```
 
-Each Studio tab loads a fresh `Ledger.load(cfg)` (lock-free read) inside its view-model builder and assembles dataclasses/dicts; the route then hands those straight to `render_template`. **Mutations are explicitly documented (views.py:2, views_results.py header docstring) as living in `actions*.py`**, a sibling module OUTSIDE this cluster — the views layer is designed as a pure read/query layer that routes call before rendering, and actions modules the routes call in response to POSTs.
+Each Studio tab loads a fresh `Ledger.load(cfg)` (lock-free read) inside its view-model builder and assembles dataclasses/dicts; the route then hands those straight to `render_template`. **Mutations are explicitly documented as living in `actions*.py`**, a sibling module OUTSIDE this cluster — the views layer is designed as a pure read/query layer that routes call before rendering, and actions modules the routes call in response to POSTs.
 
 ## View -> template mapping
 
@@ -81,9 +84,11 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 
 ## Per-file breakdown
 
-### `views.py` — the Home/Go-Live/Personas/Run/Library/Stitches/Gates read-models + facade
+### `views.py` — facade re-exports + Personas page, system strip, daemon health
 
-- `GoLiveChannel` (`@dataclass`) — one platform's Postiz integration id + optional backend override for a GoLiveAccount. Pure data holder.
+> **Split note (2026-09):** Home/Go-Live/Run read-models moved to `views_home.py`, `views_golive.py`, `views_run.py`. Schedule/Posted/Lift moved to `views_schedule.py` / `views_posted.py` (re-exported via `views_results.py` shim). The per-symbol breakdown below still cites the pre-split `views.py` locations where unchanged; trust the symbol and re-find the line.
+
+- `GoLiveChannel` (`@dataclass`) — one platform's Postiz integration id + optional backend override for a GoLiveAccount. Pure data holder. *(now in `views_golive.py`)*
 - `GoLiveAccount` (`@dataclass`) — one active account's Go-Live row: handle, persona, channels, persona_id, ig_user_id, `meta_token_set` (BOOL only — token itself never carried). Pure data holder.
 - `GoLiveStatus` (`@dataclass`) — the whole Go-Live tab read-model: mode/is_live/postiz_url/`key_set` (BOOL only)/accounts/checks/notes/zernio/learning_validated/creative_variation/account_casting/clip_profile/responder_mode/daemon/demoted/variant_* flags. Pure data holder — no secret value ever stored here (only booleans for "is it set").
 - `HomeStatus` (`@dataclass`) — the `/` status-home read-model: mode/is_live/counts/accounts/by_account. Pure data holder.
@@ -151,7 +156,17 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `live_library(led, cfg)` — **PURE-READ**. Lock-free read over `led.imported_media` ONLY (never `led.posts` — the module docstring is explicit that an `ImportedMedia` has no clip lineage and must never leak into the Posted library). Sorts newest-live-timestamp-first, unstamped last. Called by `app_routes_live.register_live_routes` (feeds `live_library.html`).
 - `live_library_scope(cfg)` — **PURE-READ**. Returns a human-readable scope label naming the single credentialed IG handle (`cfg.meta_ig_user_id`) or a "not connected" message; never blank. Called by `app_routes_live.register_live_routes`.
 
-### `views_results.py` — Schedule / Posted / Lift read-models
+### `views_results.py` — backward-compat shim (Schedule + Posted re-exports)
+
+Re-exports every public name from `views_schedule.py` and `views_posted.py` so existing `from fanops.studio.views_results import X` imports keep working. No logic lives here — see `views_schedule.py` and `views_posted.py` for the per-function breakdown.
+
+### `views_schedule.py` — Schedule tab read-models
+
+*(Symbols formerly documented under `views_results.py` — Schedule half.)*
+
+### `views_posted.py` — Posted / Lift read-models
+
+*(Symbols formerly documented under `views_results.py` — Posted/Lift half.)*
 
 - `ScheduleRow` (`@dataclass`) — the Schedule tab's per-post row: post_id/scheduled_time/account/platform/clip_id/state/imminent/editable/integration_id/lane/delivery/submission_id/backend/error_reason/suggested_time/batch_id/batch_title/caption/variant_hook/ready/ready_reason/why_suggested. Pure data holder.
 - `LiftRow` (`@dataclass`) — the Lift tab's per-variant row: variant_hook/account/platform/lift_score/loop_state/amplify_state/lift_degraded/lift_missing/scheduled_time/metric breakdown/clip_id/sibling_count/rank/delta_vs_best. Pure data holder.
@@ -183,7 +198,8 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 - `posted_library(led, cfg, *, account=None, batch=None, delivery=None, failure_kind=None)` — **PURE-READ**. The Posted library builder: filters by delivery class, sorts newest-first, builds `PostedRow`s. Called by `app_routes_schedule.register_schedule_routes`.
 - `posted_batch_rollup(rows)` — **PURE-READ** (pure aggregation over an already-built list). `{posted, with_lift, mean_lift}` for a batch's rows. Called by `app_routes_schedule.register_schedule_routes`.
 - `_BAR_METRICS` (module const) — the 4 metric names bar-chart-able (saves/shares/retention/reach).
-- `lineage_stats(rows)` — **PURE-READ, but MUTATES ITS ARGUMENT IN PLACE** — see purity audit below (this is the one function in the whole cluster that mutates objects it's handed, not the ledger). Called by `app_routes_schedule.register_schedule_routes`.
+- `lineage_stats(rows)` — **PURE-READ**. Returns a NEW list of rows annotated with `sibling_count` / `rank` / `delta_vs_best` via `dataclasses.replace` (MOL-70 parity — never mutates the caller's rows). Called by `app_routes_schedule.register_schedule_routes`.
+- `account_median_deltas(rows)` — **PURE-READ**. Returns a NEW list annotated with `delta_vs_account_median` via `dataclasses.replace` (same immutability contract as `lineage_stats`). Called by `app_routes_schedule.register_schedule_routes`.
 - `metric_peaks(rows)` — **PURE-READ** (pure aggregation). Column-max of each bar metric across rows, for proportional bar widths. Called by `app_routes_schedule.register_schedule_routes`.
 - `bar_pct(value, peak)` — **PURE-READ** (pure function). 0-100 bar width, fail-safe to 0. Called by (no in-repo Python caller found — template-only, see Anomalies).
 - `group_posted_by_day(rows)` — **PURE-READ** (pure function over an already-built list). Groups by publish day, newest-first, "undated" last. Called by `app_routes_schedule.register_schedule_routes`.
@@ -235,15 +251,15 @@ Note: `_result.html`, `_publish_outcome.html`, `error.html` are rendered from **
 
 ## Read/write purity audit
 
-**Verdict: the C10 views layer is overwhelmingly PURE-READ, as designed. Two narrow, deliberate, well-documented exceptions exist — neither is a ledger/control-file mutation, and neither is a layering violation on inspection, though one (the in-memory Postiz-health cache) is a genuine piece of mutable module state worth naming explicitly.**
+**Verdict: the C10 views layer is overwhelmingly PURE-READ, as designed. One narrow, deliberate, well-documented exception exists — not a ledger/control-file mutation, and not a layering violation on inspection, though the in-memory Postiz-health cache is a genuine piece of mutable module state worth naming explicitly.**
 
-Every function across all 5 files was individually classified. Zero functions call `led.set_*`, `led.add_*`, `led.reconcile_*`, `write_json_atomic`, `Personas`/`Accounts` writers (`add_persona`, `update_persona`, `link_persona`, `set_backend`, etc.), or any other ledger/control-file mutation primitive. Zero functions write to disk. The two exceptions:
+Every function across all modules was individually classified at generation time (pre-split). Zero functions call `led.set_*`, `led.add_*`, `led.reconcile_*`, `write_json_atomic`, `Personas`/`Accounts` writers (`add_persona`, `update_persona`, `link_persona`, `set_backend`, etc.), or any other ledger/control-file mutation primitive. Zero functions write to disk. The one exception:
 
-1. **`views_common.py:264-293` `postiz_health_for_banner(cfg, *, now=None)`** — performs a live network call (`post.postiz.postiz_health_probe`, an HTTP GET) when its 30-second cache is stale, and writes the result into the **module-level mutable dict `_postiz_health_cache`** (`views_common.py:243`, written at line 285: `_postiz_health_cache[key] = (t, health)`). This is explicitly flagged in the module docstring (lines 6-8) as "the ONE read-model here that touches the network." **Assessment: legitimate exception, not a layering violation.** It performs no ledger/control-file write — the only "mutation" is an in-process cache for an idempotent, side-effect-free health GET, which is a standard and appropriate optimization for a view-layer function that would otherwise hammer an external service on every page render. It does not persist anything across process restarts and does not affect ledger/pipeline state.
+1. **`views_common.py` `postiz_health_for_banner(cfg, *, now=None)`** — performs a live network call (`post.postiz.postiz_health_probe`, an HTTP GET) when its 30-second cache is stale, and writes the result into the **module-level mutable dict `_postiz_health_cache`**. This is explicitly flagged in the module docstring as "the ONE read-model here that touches the network." **Assessment: legitimate exception, not a layering violation.** It performs no ledger/control-file write — the only "mutation" is an in-process cache for an idempotent, side-effect-free health GET, which is a standard and appropriate optimization for a view-layer function that would otherwise hammer an external service on every page render. It does not persist anything across process restarts and does not affect ledger/pipeline state.
 
-2. **`views_results.py:581-606` `lineage_stats(rows) -> None`** — **mutates its own argument objects in place**: `r.sibling_count = n`, `r.rank = ...`, `r.delta_vs_best = ...` (lines 597, 603-604) on each `PostedRow`/`LiftRow` passed in. This is the ONE function anywhere in the cluster that performs an in-place mutation rather than returning a new value. **Assessment: not a layering violation** — it mutates only transient, request-scoped read-model dataclasses that were JUST constructed by `posted_library`/`lift_rows` in the same request and are about to be handed to a template; it never touches the `Ledger`, `Accounts`, `Personas`, or any control file. It is, however, a violation of the project's own stated coding-style hard rule ("ALWAYS create new objects, NEVER mutate existing ones" — `~/.claude/rules/ecc/common/coding-style.md`, "Immutability (CRITICAL)"). The function's own docstring calls this out as intentional ("IN-PLACE annotate") for performance (avoiding rebuilding N dataclasses), and is defensively wrapped in `try/except Exception: pass` so a mutation failure degrades to the additive fields staying at their `None` defaults rather than crashing the page. Flagged as a deliberate but rule-inconsistent pattern — worth a follow-up to return new objects via `dataclasses.replace` (the same pattern `account_pivot_rows` already uses one file over, in `views_review.py:659`) instead of mutating in place, for consistency with the rest of the cluster and the project's own immutability rule.
+~~2. **`views_posted.py` `lineage_stats(rows)` in-place mutation** — **CLOSED (MOL-70 parity, 2026-09).** Both `lineage_stats` and `account_median_deltas` now return new annotated lists via `dataclasses.replace`; fail-open paths log via `logger.warning` and return the input rows unchanged. The prior in-place mutation was the one immutability-style violation in the cluster; it is no longer present.
 
-No other function in any of the 5 files performs a write of any kind. Every "side effect" beyond these two is a `get_logger(cfg)(...)` call — a logging write, not a state mutation — used consistently across `views.py`'s fail-open branches (`asset_catalog`, `pending_stitches`, `pending_stitch_drafts`, `golive_accounts`, `golive_demoted_accounts`, `home_status`, `home_batches`, `golive_status`) to record a read failure without crashing the page. This is the correct, intentional pattern for a read-only surface that must never 500.
+No other function in any views module performs a write of any kind. Every "side effect" beyond this one is a `get_logger(cfg)(...)` call — a logging write, not a state mutation — used consistently across fail-open branches in `views_home.py`, `views_golive.py`, `views_run.py`, and `views.py` to record a read failure without crashing the page. This is the correct, intentional pattern for a read-only surface that must never 500.
 
 The mutation-layer functions actions.py/actions_approve.py/actions_common.py call INTO this cluster (`_imminent`, `suggest_time`, `suggest_times_for_batch`, `publish_readiness`, `classify_failure`, `classify_post_delivery`, `due_publish_plan`) are all themselves classified PURE-READ above — the mutation layer correctly reuses this cluster's pure predicates/classifiers rather than the views layer reaching into the mutation layer, confirming the dependency direction is one-way (actions → views, never views → actions for a write).
 
@@ -259,7 +275,7 @@ The mutation-layer functions actions.py/actions_approve.py/actions_common.py cal
 
 **Confirmed: the dependency is strictly one-directional — `actions*.py` (C9, outside this cluster) imports and calls INTO C10's pure helpers; C10 never imports from `actions*.py`.**
 
-Evidence from the call graph (section above) and direct reads of all 5 files:
+Evidence from the call graph (section above) and direct reads of all views_* modules:
 - `views.py`, `views_common.py`, `views_results.py`, `views_live.py` import ONLY from `fanops.*` core modules (`config`, `accounts`, `ledger`, `models`, `timeutil`, `personas`, `hashtags`, `meta_graph`, `doctor`, `validation_gate`, `digest`, `variant_amplify`, `post.compress`, `post.postiz`, `post.run`, `crosspost`, `agentstep`, `log`, `daemon`, `pipeline`) plus sibling `views_*` submodules — never `actions.py`/`actions_approve.py`/`actions_common.py`/`actions_casting.py`/`actions_run.py`.
 - The ONE exception is `views_review.py:19`: `from fanops.studio.actions_common import RENDER_PENDING_REASON` — this imports a single **string constant** (`"render unavailable — re-approve to retry the on-screen hook burn"`, `actions_common.py:16`), not a function or any mutating behavior. It is used read-only, as a sentinel to compare against `post.error_reason` (`views_review.py:406`) to flag a `MatrixCell.render_pending` badge. This is a legitimate shared-constant import, not a functional coupling to the mutation layer.
 - Conversely, `actions.py`/`actions_approve.py` (outside this cluster, confirmed via the call-graph "called_by_in_repo" lists above) import and call `views_common._imminent`, `views_common.suggest_time`, `views_common.suggest_times_for_batch`, `views_results.classify_failure`, `views_results.classify_post_delivery`, `views_results.due_publish_plan` — i.e., the **mutation layer reuses this cluster's pure predicates/classifiers/schedulers** rather than duplicating logic, which is the correct direction for a read/query layer that must remain safely reusable by writers without becoming a writer itself.
@@ -293,11 +309,11 @@ Given the high proportion of these landing in `views_review.py`/`views_results.p
 - `views.py:462` `build_system_strip`'s `postiz_down` computation — silent `except Exception: postiz_down = {"show": False}` (this one is defensive belt-and-braces since `postiz_health_for_banner` itself is already internally fail-open — acceptable double-guard, not a new gap).
 - `views.py:523`/`views.py:585` `review_handoff`, `account_work_counts` — bare `except Exception: pass`, undocumented-as-logged, but both are best-effort enrichments (a batch-affinity lookup, a per-post tally) where the function already has a sensible partial/empty result to fall back to — consistent with the cluster's general "never 500 the page" ethos, though also silent.
 - `views_review.py:183` `provenance_chips` — `except Exception: return chips` (returns whatever chips were built before the failure, not empty) — a genuinely benign partial-degrade, explicitly by design per its docstring ("NEVER raises").
-- `views_results.py:605` `lineage_stats` — `except Exception: pass`, silent, but as noted in the purity audit this only risks leaving additive fields at their already-set `None` defaults, never corrupting the base row.
+- `views_posted.py` `lineage_stats` / `account_median_deltas` — fail-open paths log via `logger.warning` and return the input rows unchanged (additive fields stay at their `None` defaults).
 - `views_results.py:718-721` `lift_rows`'s amplify-candidates block — `except Exception as exc:` DOES log via `get_logger(cfg)("lift", "-", "amplify_error", ...)` before degrading — the correctly-logged sibling of the pattern above.
 - `views_results.py:656-664` `_loop_state` — logs once per request via a cache-flag dedup (`_loop_state_logged`), explicitly noting in-comment that this used to be a genuinely silent fail-open bug ("ECC fix #5: was a SILENT fail-open").
 
-**No TODO/FIXME/XXX markers** found in any of the 5 files (manual scan during full read; no such comments present).
+**No TODO/FIXME/XXX markers** found in any views_* module (manual scan during full read; no such comments present).
 
 **No bare `except:`** anywhere in the cluster — every handler is typed `except Exception` (broad but typed) or narrower (`except (ValueError, TypeError)`, `except (TypeError, ValueError, AttributeError)`, `except OSError`). Consistent with the discipline observed in C2/C4.
 

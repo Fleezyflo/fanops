@@ -317,46 +317,55 @@ def _lr(account, lift, hook="h"):
 def test_account_median_deltas_stamps_delta_vs_group_median():
     # median of [10, 30, 50] = 30 -> deltas -20 / 0 / +20 for the same account.
     rows = [_lr("a", 10.0), _lr("a", 30.0), _lr("a", 50.0)]
-    account_median_deltas(rows)
-    assert [r.delta_vs_account_median for r in rows] == [-20.0, 0.0, 20.0]
+    out = account_median_deltas(rows)
+    assert [r.delta_vs_account_median for r in out] == [-20.0, 0.0, 20.0]
 
 def test_account_median_deltas_even_count_uses_mean_of_middle_two():
     # statistics.median of [10, 20, 30, 40] = 25 -> matches stdlib semantics, not a pick-one.
     rows = [_lr("a", 10.0), _lr("a", 20.0), _lr("a", 30.0), _lr("a", 40.0)]
-    account_median_deltas(rows)
-    assert [r.delta_vs_account_median for r in rows] == [-15.0, -5.0, 5.0, 15.0]
+    out = account_median_deltas(rows)
+    assert [r.delta_vs_account_median for r in out] == [-15.0, -5.0, 5.0, 15.0]
 
 def test_account_median_deltas_single_row_account_stays_none():
     # a median vs a single data point is degenerate -> no chip (mirrors lineage_stats' measured guard).
     rows = [_lr("solo", 42.0)]
-    account_median_deltas(rows)
-    assert rows[0].delta_vs_account_median is None
+    out = account_median_deltas(rows)
+    assert out[0].delta_vs_account_median is None
 
 def test_account_median_deltas_groups_are_per_account():
     # @a has 2 rows (median 15), @b has 1 row -> @b stays None, @a is deltated against ITS own median.
     a1, a2, b1 = _lr("a", 10.0), _lr("a", 20.0), _lr("b", 99.0)
-    account_median_deltas([a1, a2, b1])
-    assert [a1.delta_vs_account_median, a2.delta_vs_account_median] == [-5.0, 5.0]
-    assert b1.delta_vs_account_median is None
+    out = account_median_deltas([a1, a2, b1])
+    oa1, oa2, ob1 = out
+    assert [oa1.delta_vs_account_median, oa2.delta_vs_account_median] == [-5.0, 5.0]
+    assert ob1.delta_vs_account_median is None
 
 def test_account_median_deltas_excludes_unmeasured_rows_from_median_and_delta():
     # a None lift_score is excluded from the median AND never stamped; a group needs >=2 MEASURED rows.
     measured1, measured2 = _lr("a", 10.0), _lr("a", 30.0)
     unmeasured = LiftRow(variant_hook="u", account="a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
-    account_median_deltas([measured1, unmeasured, measured2])
-    assert [measured1.delta_vs_account_median, measured2.delta_vs_account_median] == [-10.0, 10.0]  # median 20
-    assert unmeasured.delta_vs_account_median is None
+    out = account_median_deltas([measured1, unmeasured, measured2])
+    om1, ou, om2 = out
+    assert [om1.delta_vs_account_median, om2.delta_vs_account_median] == [-10.0, 10.0]  # median 20
+    assert ou.delta_vs_account_median is None
 
 def test_account_median_deltas_one_measured_plus_unmeasured_stays_none():
     # only ONE measured row in the group (the other is None) -> degenerate, no delta.
     measured = _lr("a", 50.0)
     unmeasured = LiftRow(variant_hook="u", account="a", platform="instagram", lift_score=None, loop_state="s")  # type: ignore[arg-type]
-    account_median_deltas([measured, unmeasured])
-    assert measured.delta_vs_account_median is None
+    out = account_median_deltas([measured, unmeasured])
+    assert out[0].delta_vs_account_median is None
+
+def test_account_median_deltas_returns_new_rows_originals_untouched():
+    originals = [_lr("a", 10.0), _lr("a", 30.0), _lr("a", 50.0)]
+    out = account_median_deltas(originals)
+    assert all(r.delta_vs_account_median is None for r in originals)
+    assert [r.delta_vs_account_median for r in out] == [-20.0, 0.0, 20.0]
+    assert all(o is not n for o, n in zip(originals, out))
 
 def test_account_median_deltas_fail_open_on_bad_input():
     # mirrors lineage_stats' blanket fail-open: a non-iterable / attribute-less arg must not raise.
-    account_median_deltas(None)          # no exception
+    assert account_median_deltas(None) is None          # no exception
     account_median_deltas([object()])    # rows without .account/.lift_score are skipped, not fatal
 
 def test_lift_row_carries_account_median_delta_field():
