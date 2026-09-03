@@ -27,6 +27,7 @@ from fanops.ig_safari_shell import (
     RateLimitError,
     SentryBlock,
     WebThrottled,
+    _LAST_REQUEST_MONO,  # noqa: F401 — tests patch/clear via ig_web_scrape
     pace_live_safari,
     safari_fetch,
     safari_logged_in,
@@ -204,6 +205,7 @@ __all__ = [
     "RateLimitError",
     "SentryBlock",
     "WebThrottled",
+    "_LAST_REQUEST_MONO",
     "open_web_session",
     "safari_logged_in",
     "safari_profile_auth",
