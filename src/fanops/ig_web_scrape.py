@@ -12,6 +12,7 @@ Never dump_settings. Never 9222/9223. Never system Chrome.
 """
 from __future__ import annotations
 
+import time  # noqa: F401 — tests monkeypatch time.sleep via ig_web_scrape facade
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
