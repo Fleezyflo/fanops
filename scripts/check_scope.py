@@ -112,6 +112,7 @@ _OVERRIDES: dict[str, tuple[str, ...]] = {
     "src/fanops/studio/views_review.py": ("tests/test_studio_views.py",),
     "src/fanops/studio/views_home.py": ("tests/test_studio_views.py", "tests/test_studio_workflow_spine.py",
                                         "tests/test_attention_counts.py", "tests/test_studio_gaps_closure.py"),
+    "src/fanops/studio/views_golive.py": ("tests/test_studio_golive.py", "tests/test_studio_views.py"),
 }
 
 
