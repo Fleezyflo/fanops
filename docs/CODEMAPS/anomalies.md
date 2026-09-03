@@ -47,7 +47,6 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - `vocals.py:35-36` `_demucs_env` — `except Exception: pass` around an `import certifi`. Swallows any exception, not just `ImportError`; low-risk but should be narrowed.
 - `discover.py:59-62` `candidate_meta` — `except Exception as e: logger.debug(...)`. Intentionally broad per module docstring ("fail-soft — list it anyway"), but logs only at debug level — a real bug could go unnoticed in production logs.
-- `ingest.py:download_source` — dead code, zero callers; own docstring says "kept for any direct caller/test." Real CLI `pull` composes `download_url`+`ingest_drops` separately.
 - `discover.py:discover`/`intake` — zero-caller per call graph; likely a CLI-dispatch-table blind spot, not genuine dead code.
 - `transcribe.py:real_transcript_signal` — zero-caller; documented test-support helper.
 

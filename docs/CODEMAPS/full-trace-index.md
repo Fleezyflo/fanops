@@ -112,8 +112,8 @@ callbacks). Outcome:
 - **Confirmed genuinely dead** (no caller anywhere — re-verified against source with an alias-and-lazy-import sweep):
   - `accounts.py:set_channel_routing`, `set_framing` (C4) — two unwired account-mutation primitives; `set_channel_routing` is notable as "the documented fix for the cisumwolfhom incident" per its own docstring, never actually wired into a route.
   - `persona_levers.py:is_exempt`, `channels` (C4) — the latter's own docstring claim of being read by "the M4 manifest" is inaccurate (manifest calls `channels_of` instead).
-  - `ingest.py:download_source` (C2) — own docstring says "kept for any direct caller/test"; the real CLI path composes `download_url`+`ingest_drops` separately.
 - **Already removed from `src/`** (do not re-list as present dead code; Wave 3 re-verified absent):
+  - `ingest.py:download_source`, `ingest.py:_catalogue_file` (C2) — production path is `stage_inbox_candidates` → `ingest_staged` (`_stage_candidate` + `_mint_candidate`).
   - `learn_doctor.load_verdict`, `timing_bias.timing_prior_hour` (C7)
   - `caption.normalize_variation_axis`, `caption.coherent_variation` (C5)
   - `timeutil.is_past_due` (C8) — live sibling remains `is_due_or_past`

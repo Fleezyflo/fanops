@@ -317,7 +317,7 @@ class Source(BaseModel):
                                                 # source_origin (channel) and P1 provenance (attribution). WRITE-ONCE
                                                 # at catalogue (add_source setdefault); old ledgers load native.
     batch_id: Optional[str] = None              # Account-First Studio: the named ingest Batch this source belongs to.
-                                                # WRITE-ONCE at _catalogue_file (mirrors origin_kind); None == ungrouped.
+                                                # WRITE-ONCE at _mint_candidate (mirrors origin_kind); None == ungrouped.
     title: Optional[str] = None                 # U1: pipeline-generated descriptive title, write-once at first moment ingest.
     sha256: Optional[str] = None
     duration: Optional[float] = None
@@ -332,7 +332,7 @@ class Source(BaseModel):
                                                 # fan-to-all fallback — so a silent collapse is never invisible.
     meta: dict = Field(default_factory=dict)
     created_at: Optional[str] = None            # content-lifecycle: ISO-8601 UTC ingest day, set at
-                                                # _catalogue_file / rebuild discovered. None on old ledgers ->
+                                                # _mint_candidate / rebuild discovered. None on old ledgers ->
                                                 # migration v2->v3 backfill (file mtime, else stamp). The Review
                                                 # day-anchor ("clips I dropped in").
 

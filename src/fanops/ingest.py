@@ -433,14 +433,6 @@ def ingest_staged(led: Ledger, cfg: Config, staged: StagedInbox, *, batch_id: st
     return led, counts
 
 
-def _catalogue_file(led: Ledger, cfg: Config, f: Path, *, origin: str, now_iso: str,
-                    origin_kind: Literal["native", "third_party"] = "native",
-                    batch_id: str | None = None, counts: IngestCounts | None = None) -> bool:
-    """Legacy single-call catalogue (stage+mint). Prefer stage_inbox_candidates + ingest_staged for flock safety."""
-    c = _stage_candidate(cfg, f, origin=origin, origin_kind=origin_kind, batch_id=batch_id)
-    if c is None: return False
-    return _mint_candidate(led, cfg, c, now_iso=now_iso, counts=counts)
-
 def _inbox_media(inbox: Path) -> set[Path]:
     """Resolved paths of the media files currently in `inbox` — the snapshot domain for per-file origin
     correlation (audit c0-f1). Mirrors ingest_drops' own symlink/MEDIA_EXT filter so a before/after delta

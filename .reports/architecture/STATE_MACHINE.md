@@ -248,7 +248,7 @@ The documented invariant is two gates. Both exist; **the second does not do what
 | From → To | Writer | Guard | Notes |
 |---|---|---|---|
 | *(birth)* → `pending` | ingest, when `cfg.queue_gate` ON (**default ON**, [config.py:592-596](src/fanops/config.py:592)) | — | Invisible to every pipeline reducer (they key on `catalogued`+) |
-| *(birth)* → `catalogued` | `_catalogue_file` (queue-gate OFF) | — | |
+| *(birth)* → `catalogued` | `_mint_candidate` via `ingest_staged` (queue-gate OFF) | — | |
 | *(birth)* → `discovered` | [ledger.py:757](src/fanops/ledger.py:757) `rebuild_catalog` | orphan file matching `_SID_RE` [ledger.py:234](src/fanops/ledger.py:234) | **Inert** until promoted |
 | `pending` → `catalogued` | [actions_run.py:116,136](src/fanops/studio/actions_run.py:116) | operator release | The U4 queue gate |
 | `catalogued` → `transcribed` | [transcribe.py:338,486](src/fanops/transcribe.py:338) | — | |
