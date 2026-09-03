@@ -1,11 +1,6 @@
 {
   "$schema": "fanops-arch/derived/dependencies",
-  "G1_non_trivial_sccs": [
-    [
-      "fanops.persona_store",
-      "fanops.personas"
-    ]
-  ],
+  "G1_non_trivial_sccs": [],
   "G2_non_trivial_sccs": [
     [
       "fanops.accounts",
@@ -18,7 +13,6 @@
       "fanops.compose",
       "fanops.config",
       "fanops.control",
-      "fanops.controlio",
       "fanops.crosspost",
       "fanops.cutover",
       "fanops.cutover_postiz",
@@ -74,7 +68,6 @@
       "fanops.source_tags",
       "fanops.source_tags_scrape",
       "fanops.source_tags_shortlist",
-      "fanops.source_tags_sidecar",
       "fanops.source_tags_walk",
       "fanops.stage_lock",
       "fanops.stitch_render",
@@ -135,6 +128,7 @@
       ],
       "lazy": [
         "fanops.errors",
+        "fanops.ledger",
         "fanops.personas"
       ],
       "optional": [],
@@ -428,9 +422,7 @@
       "compile": [
         "fanops.errors"
       ],
-      "lazy": [
-        "fanops.ledger"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -1094,11 +1086,12 @@
         "fanops.config",
         "fanops.controlio",
         "fanops.hashtags",
-        "fanops.personas"
+        "fanops.persona_levers"
       ],
       "lazy": [
         "fanops.accounts",
         "fanops.hashtag_hygiene",
+        "fanops.ledger",
         "fanops.personas"
       ],
       "optional": [],
@@ -2439,10 +2432,10 @@
     "fanops.p4_dim_bias": 1,
     "fanops.paths_rebase": 0,
     "fanops.persona_directives": 1,
-    "fanops.persona_levers": 3,
+    "fanops.persona_levers": 4,
     "fanops.persona_research": 1,
     "fanops.persona_store": 1,
-    "fanops.personas": 8,
+    "fanops.personas": 7,
     "fanops.pipeline": 2,
     "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 0,
@@ -2681,14 +2674,14 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 250,
+  "lazy_downward_count": 249,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
       "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.personas",
+      "to": "fanops.ledger",
       "to_level": 2
     },
     {
@@ -2706,6 +2699,14 @@
       "same_scc": false,
       "to": "fanops.daemon",
       "to_level": 1
+    },
+    {
+      "from": "fanops.canary",
+      "from_level": 3,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
     },
     {
       "from": "fanops.cli",
@@ -2801,14 +2802,6 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.ledger",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.fanops_hashtags",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.personas",
       "to_level": 2
     },
     {
@@ -2911,8 +2904,8 @@
       "from": "fanops.persona_store",
       "from_level": 2,
       "jump": 0,
-      "same_scc": true,
-      "to": "fanops.personas",
+      "same_scc": false,
+      "to": "fanops.ledger",
       "to_level": 2
     },
     {
@@ -3430,6 +3423,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.accounts",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
+      "to_level": 3
+    },
+    {
       "from": "fanops.artifacts",
       "from_level": 3,
       "jump": 1,
@@ -3454,14 +3455,6 @@
       "to_level": 1
     },
     {
-      "from": "fanops.controlio",
-      "from_level": 1,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.ledger",
-      "to_level": 2
-    },
-    {
       "from": "fanops.daemon",
       "from_level": 1,
       "jump": 1,
@@ -3483,6 +3476,14 @@
       "jump": 1,
       "same_scc": false,
       "to": "fanops.ig_web_scrape",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.fanops_hashtags",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
       "to_level": 3
     },
     {
@@ -3539,6 +3540,14 @@
       "jump": 1,
       "same_scc": false,
       "to": "fanops.ledger_bridge",
+      "to_level": 3
+    },
+    {
+      "from": "fanops.persona_store",
+      "from_level": 2,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.personas",
       "to_level": 3
     },
     {
@@ -3786,7 +3795,7 @@
     "fanops.persona_levers": 0,
     "fanops.persona_research": 1,
     "fanops.persona_store": 2,
-    "fanops.personas": 2,
+    "fanops.personas": 3,
     "fanops.pipeline": 10,
     "fanops.pipeline_run": 2,
     "fanops.pipeline_status": 11,
@@ -3962,7 +3971,6 @@
       "fanops.ledger",
       "fanops.meta_graph",
       "fanops.persona_store",
-      "fanops.personas",
       "fanops.pipeline_run",
       "fanops.post.compress",
       "fanops.router",
@@ -3981,6 +3989,7 @@
       "fanops.ledger_bridge",
       "fanops.ledger_wipe",
       "fanops.moment_hook_learning",
+      "fanops.personas",
       "fanops.post",
       "fanops.post.dryrun",
       "fanops.post.media",
@@ -4062,17 +4071,17 @@
     "src/fanops/**/*.py"
   ],
   "totals": {
-    "G1_non_trivial_sccs": 1,
-    "G1_sccs_total": 153,
+    "G1_non_trivial_sccs": 0,
+    "G1_sccs_total": 154,
     "G1c_levels": 14,
-    "G2_largest_scc_size": 82,
-    "G2_module_sccs_total": 65,
+    "G2_largest_scc_size": 80,
+    "G2_module_sccs_total": 67,
     "G2_non_trivial_sccs": 4,
     "compile_edges_G1": 640,
-    "lazy_edges": 378,
+    "lazy_edges": 379,
     "lazy_edges_lateral": 49,
-    "lazy_edges_strictly_upward": 79,
-    "lazy_edges_to_equal_or_higher_level": 128,
+    "lazy_edges_strictly_upward": 81,
+    "lazy_edges_to_equal_or_higher_level": 130,
     "modules": 154,
     "optional_edges": 0,
     "typing_only_edges": 7
