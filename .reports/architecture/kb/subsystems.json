@@ -91,7 +91,8 @@
         "llm_json",
         "prompts",
         "prompts_caption",
-        "responder"
+        "responder",
+        "responder_policy"
       ]
     },
     "S08_selection": {
@@ -165,6 +166,8 @@
         "fanops_account_stats",
         "metrics_schedule",
         "reconcile",
+        "reconcile_liveness",
+        "reconcile_mirror",
         "track"
       ]
     },

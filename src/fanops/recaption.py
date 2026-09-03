@@ -155,7 +155,7 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
     accts = Accounts.load(cfg)
     resp = responder if responder is not None else get_responder(cfg)
     pass_recent: dict[str, list[str]] = {}               # ONE shared dict, schedule order — mirrors _stage_ingest_captions
-    from fanops.pipeline import _owner_caption_surfaces  # the same owner gate the pipeline requests with (P10)
+    from fanops.crosspost import owner_caption_surfaces  # the same owner gate the pipeline requests with (P10)
 
     # --- phase 1: open EVERY caption gate (no LLM) ---
     work: list[tuple[str, list[str]]] = []
@@ -171,7 +171,7 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
                 continue
             if clip.state is not ClipState.captions_requested:       # crash-resume: an in-flight request stands
                 m = led2.moments.get(clip.parent_id)
-                want = _owner_caption_surfaces(cfg, m, accts) if m is not None else []
+                want = owner_caption_surfaces(cfg, m, accts) if m is not None else []
                 if not want:
                     journal["notes"][cid] = "no_owner_surfaces"; journal["done"].append(cid); _save_journal(cfg, journal)
                     continue

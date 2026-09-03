@@ -117,7 +117,7 @@ def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeyp
             return _GATE_PARK
         return _GATE_FAILOPEN
 
-    mocker.patch("fanops.reconcile._ig_rest_verdict", side_effect=fake_ig_verdict)
+    mocker.patch("fanops.reconcile_liveness._ig_rest_verdict", side_effect=fake_ig_verdict)
     reconcile_due(cfg)
     assert seen["lock_free"] and all(seen["lock_free"])
     again = Ledger.load(cfg)

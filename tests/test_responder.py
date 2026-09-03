@@ -746,7 +746,8 @@ def test_context_limit_marks_source_degraded_for_captions_gate(tmp_path):
                           state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued))
     led.save()
-    LlmResponder(cfg)._mark_context_limit(cfg, "captions", "clip_1", "payload too big")
+    LlmResponder(cfg)._mark_gate_degraded(
+        cfg, "captions", "clip_1", "agent gate captions over context limit: payload too big")
     src = Ledger.load(cfg).sources["src_1"]
     assert src.degraded_reason and "captions" in src.degraded_reason and "context limit" in src.degraded_reason
 
