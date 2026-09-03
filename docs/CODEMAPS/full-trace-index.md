@@ -47,7 +47,7 @@ module added since is in no cluster; re-run the extractor rather than trusting t
 | C7 | Metrics, reconcile & learning | reconcile, track, meta_graph, metrics_schedule, validation_gate, learn_doctor, moment_hook_learning, variant_learning, variant_amplify, variant_transfer, p4_dim_bias, timing_bias (12) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
 | C8 | Ops, CLI & daemon | cli, daemon, doctor, cutover, cutover_postiz, health, digest, audit, timeutil, _fwrun, __init__ (11) | [C8_ops_cli_daemon.md](subsystem-traces/C8_ops_cli_daemon.md) | 320 |
 | C9 | Studio backend (Flask routes + actions) | studio/{__init__,app,app_routes_golive,app_routes_live,app_routes_personas,app_routes_review,app_routes_run,app_routes_schedule,actions,actions_approve,actions_casting,actions_common,actions_run,actions_wipe,golive,personas,preview_media} (17) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
-| C10 | Studio views (read-only projections) | studio/{views,views_common,views_live,views_results,views_review} (5) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
+| C10 | Studio views (read-only projections) | studio/{views,views_common,views_home,views_golive,views_run,views_schedule,views_posted,views_results,views_live,views_review,views_library,views_hashtags} (12; `views_results` is a backward-compat shim) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
 
 **Every module present at generation time is covered; 3,646 total lines of per-function trace documentation.**
 The tree has grown since — `git ls-files 'src/fanops/**/*.py'` is the live count, and any module added after
@@ -92,7 +92,7 @@ full anomaly ledger.
 | `cutover.py`/`cutover_postiz.py` never touch the ledger | C8 | **HOLDS, grep-proven.** `grep -n "Ledger\|led\." cutover.py cutover_postiz.py` returns zero matches; sole write path is `cutover.py:38 write_json_atomic(cfg.cutover_path, ...)`. |
 | Upload ingestion path is traversal-safe and size-capped | C9 | **HOLDS, verified beyond the CLAUDE.md summary.** Extension validation, secure_filename + raw-and-sanitized traversal check, inbox-bound `is_relative_to` resolve (independent second check), atomic `.uploadpart`→`os.replace`, `MAX_CONTENT_LENGTH` cap, filename-collision discriminator, failed-probe cleanup — all confirmed at cited lines. |
 | Timezone resolution fails closed to UTC, never silently wrong-zone | C8 | **HOLDS.** `timeutil.py:38-39 _operator_zone` — confirmed exactly matching CLAUDE.md's claim. |
-| Studio views layer is pure-read (no ledger/control-file mutation) | C10 | **HOLDS, with two narrow documented exceptions**, neither a layering violation: (1) `views_common.postiz_health_for_banner` performs one live network GET behind a 30s module-level cache; (2) `views_results.lineage_stats` mutates its own transient argument objects in place (never ledger/control-file state) — this second one **does violate the project's own immutability coding-style rule**, flagged as a follow-up, not a safety issue. |
+| Studio views layer is pure-read (no ledger/control-file mutation) | C10 | **HOLDS, with one narrow documented exception**, not a layering violation: `views_common.postiz_health_for_banner` performs one live network GET behind a 30s module-level cache. `lineage_stats` and `account_median_deltas` (`views_posted.py`) return new annotated lists via `dataclasses.replace` (MOL-70 parity — the prior in-place mutation anomaly is closed). |
 
 ## Dead-code candidates (55 raw leads → triaged)
 
@@ -177,7 +177,7 @@ are low-traffic paths (wipe-safety check, preview rendering, one persona-store l
 | C7 | 12 | ~68 |
 | C8 | 11 | ~85 (37-verb CLI inventory) |
 | C9 | 17 | ~150 (largest single cluster by trace length, 892 lines) |
-| C10 | 5 | ~60 |
+| C10 | 12 | ~60 |
 
 Totals reconcile against the deterministic count AT GENERATION TIME: 889 top-level functions + 178 class
 methods (113 classes) = 1,067 callables in `call_graph.json`, matching the AST extractor's structural index
