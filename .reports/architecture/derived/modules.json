@@ -107,8 +107,15 @@
     "fanops.post.dryrun",
     "fanops.post.media",
     "fanops.post.metrics",
+    "fanops.post.metrics.common",
+    "fanops.post.metrics.postiz_read",
+    "fanops.post.metrics.zernio_read",
     "fanops.post.postiz",
     "fanops.post.providers",
+    "fanops.post.publish_archive",
+    "fanops.post.publish_dryrun",
+    "fanops.post.publish_errors",
+    "fanops.post.publish_requeue",
     "fanops.post.run",
     "fanops.post.zernio",
     "fanops.post.zernio_outcome",
@@ -197,7 +204,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": true,
+  "partition_is_total": false,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -305,8 +312,15 @@
     "fanops.post.dryrun": "S12_publish",
     "fanops.post.media": "S12_publish",
     "fanops.post.metrics": "S12_publish",
+    "fanops.post.metrics.common": null,
+    "fanops.post.metrics.postiz_read": null,
+    "fanops.post.metrics.zernio_read": null,
     "fanops.post.postiz": "S12_publish",
     "fanops.post.providers": "S12_publish",
+    "fanops.post.publish_archive": null,
+    "fanops.post.publish_dryrun": null,
+    "fanops.post.publish_errors": null,
+    "fanops.post.publish_requeue": null,
     "fanops.post.run": "S12_publish",
     "fanops.post.zernio": "S12_publish",
     "fanops.post.zernio_outcome": "S12_publish",
@@ -397,8 +411,16 @@
   "totals": {
     "assigned": 189,
     "ghosts": 0,
-    "modules": 189,
-    "unassigned": 0
+    "modules": 196,
+    "unassigned": 7
   },
-  "unassigned_modules": []
+  "unassigned_modules": [
+    "fanops.post.metrics.common",
+    "fanops.post.metrics.postiz_read",
+    "fanops.post.metrics.zernio_read",
+    "fanops.post.publish_archive",
+    "fanops.post.publish_dryrun",
+    "fanops.post.publish_errors",
+    "fanops.post.publish_requeue"
+  ]
 }

@@ -31,7 +31,6 @@ from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
 _MAX_RETRIES = 4
-_PUBLISH_TRANSIENT_MAX = _MAX_RETRIES   # MOL-115: connection/timeout retries before parking needs_reconcile
 _PUBLIC = "/public/v1"
 _YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
 _POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouTube settings DTO accepts (@IsDefined post_type)
