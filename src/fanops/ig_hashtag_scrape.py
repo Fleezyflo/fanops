@@ -217,24 +217,50 @@ def _safari_osascript(script: str, *args: str) -> str:
     return (out or "").strip()
 
 
-def safari_open_instagram(user: str) -> None:
-    """Focus THIS account's Safari profile window on instagram.com."""
+def _safari_window_matches_script() -> str:
+    return (
+        "      set wn to name of w as string\n"
+        "      if wn starts with (prefix & \" —\") or wn starts with (prefix & \" -\") "
+        "or wn is prefix then\n"
+    )
+
+
+def safari_profile_window_open(user: str) -> bool:
+    """True when THIS account's Safari profile window is already open."""
+    prefix = safari_profile_name(user)
+    if not prefix:
+        return False
+    script = (
+        "on run argv\n"
+        "  set prefix to item 1 of argv\n"
+        "  tell application \"Safari\"\n"
+        "    repeat with w in windows\n"
+        + _safari_window_matches_script()
+        + "        return \"yes\"\n"
+        "      end if\n"
+        "    end repeat\n"
+        "  end tell\n"
+        "  return \"no\"\n"
+        "end run\n"
+    )
+    try:
+        return _safari_osascript(script, prefix) == "yes"
+    except RuntimeError:
+        return False
+
+
+def safari_open_profile_window(user: str) -> None:
+    """Open THIS account's Safari profile window. Never sets a URL (reload kills IG)."""
     prefix = safari_profile_name(user)
     if not prefix:
         raise RuntimeError("no safari profile")
+    if safari_profile_window_open(user):
+        return
     script = (
         "on run argv\n"
         "  set prefix to item 1 of argv\n"
         "  tell application \"Safari\"\n"
         "    activate\n"
-        "    repeat with w in windows\n"
-        "      set wn to name of w as string\n"
-        "      if wn starts with (prefix & \" —\") or wn starts with (prefix & \" -\") "
-        "or wn is prefix then\n"
-        "        set URL of current tab of w to \"https://www.instagram.com/\"\n"
-        "        return \"ok\"\n"
-        "      end if\n"
-        "    end repeat\n"
         "  end tell\n"
         "  tell application \"System Events\"\n"
         "    tell process \"Safari\"\n"
@@ -242,14 +268,59 @@ def safari_open_instagram(user: str) -> None:
         "menu item \"New Window\" of menu 1 of menu bar item \"File\" of menu bar 1\n"
         "    end tell\n"
         "  end tell\n"
-        "  delay 0.8\n"
-        "  tell application \"Safari\"\n"
-        "    set URL of current tab of front window to \"https://www.instagram.com/\"\n"
-        "  end tell\n"
         "  return \"opened\"\n"
         "end run\n"
     )
     _safari_osascript(script, prefix)
+
+
+def _safari_set_instagram_if_missing(user: str) -> None:
+    """Point the profile window at Instagram only when it has no instagram.com tab."""
+    prefix = safari_profile_name(user)
+    if not prefix:
+        raise RuntimeError("no safari profile")
+    script = (
+        "on run argv\n"
+        "  set prefix to item 1 of argv\n"
+        "  tell application \"Safari\"\n"
+        "    repeat with w in windows\n"
+        + _safari_window_matches_script()
+        + "        repeat with t in tabs of w\n"
+        "          if (URL of t as string) contains \"instagram.com\" then\n"
+        "            return \"have\"\n"
+        "          end if\n"
+        "        end repeat\n"
+        "        set URL of current tab of w to \"https://www.instagram.com/\"\n"
+        "        return \"set\"\n"
+        "      end if\n"
+        "    end repeat\n"
+        "  end tell\n"
+        "  return \"none\"\n"
+        "end run\n"
+    )
+    _safari_osascript(script, prefix)
+
+
+def safari_open_instagram(user: str) -> None:
+    """Restore THIS account's Safari profile window onto Instagram.
+
+    A live instagram.com tab is left alone — reloading it is a session-kill.
+    A missing profile window is created via File → New {profile} Window so
+    Safari can restore that profile's last tabs. Only a window with no
+    Instagram tab gets a URL set.
+    """
+    try:
+        if safari_eval("1+1", user) in {"2", "2.0"}:
+            return
+    except RuntimeError:
+        pass
+    safari_open_profile_window(user)
+    try:
+        if safari_eval("1+1", user) in {"2", "2.0"}:
+            return
+    except RuntimeError:
+        pass
+    _safari_set_instagram_if_missing(user)
 
 
 def safari_eval(expr: str, user: str | None = None) -> str:
@@ -286,9 +357,14 @@ def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool 
                          navigate: bool = True) -> bool:
     """THIS account's Safari Instagram tab. Kills leftover FanOps Chrome. Never Chrome.
 
-    Unattended tick passes navigate=False: never activate Safari, never reload
-    instagram.com (that is a session-kill). scrape-login keeps navigate=True."""
+    A live Instagram tab is used as-is. Missing profile windows are restored
+    (`safari_open_instagram`) — that is the unattended seat, not scrape-login.
+    Reloading a tab that already contains instagram.com is the session-kill
+    and is not done. `navigate` is kept for callers; False no longer skips
+    window restore (that was why the tick died until an agent drove login).
+    """
     import time
+    del navigate
     _enable_safari_apple_events()
     for u in scrape_users(cfg) or ((user,) if user else ()):
         stop_scrape_chrome(cfg, u)
@@ -300,8 +376,6 @@ def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool 
                 return True
         except RuntimeError:
             pass
-    if not navigate:
-        return False
     try:
         safari_open_instagram(user)
     except RuntimeError:
