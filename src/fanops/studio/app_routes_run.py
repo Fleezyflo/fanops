@@ -6,8 +6,8 @@ create_app calls it. The 413 errorhandler re-renders the Run panel at HTTP 200 s
 from __future__ import annotations
 from flask import jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
-from fanops.ledger import Ledger
-from fanops.studio import actions, views, actions_wipe
+from fanops.studio import actions, views
+from fanops.studio.views_live import live_library_page_context
 
 
 def register_run_routes(app, cfg):
@@ -144,11 +144,7 @@ def register_run_routes(app, cfg):
         # reusing the SAME read-models the retired /live-library page used. No ?view= (or any other value) ->
         # the byte-identical asset catalog.
         if request.args.get("view") == "live":
-            led = Ledger.load(cfg)
-            return render_template("library.html", view="live", catalog=views.library_catalog(cfg),
-                                   rows=views.live_library(led, cfg), scope=views.live_library_scope(cfg),
-                                   confirm_word=actions_wipe.CONFIRM_WORD, preview=None, wipe_result=None,
-                                   tab="library")
+            return render_template("library.html", **live_library_page_context(cfg))
         return render_template("library.html", catalog=views.library_catalog(cfg), tab="library")
 
     @app.get("/library/<source_id>")

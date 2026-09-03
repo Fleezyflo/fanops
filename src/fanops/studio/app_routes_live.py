@@ -6,8 +6,8 @@ library view is a pure ledger read (the M2 projection / M3 insights fill the dat
 snapshot-first + code-gated."""
 from __future__ import annotations
 from flask import redirect, render_template, request, url_for
-from fanops.ledger import Ledger
-from fanops.studio import views, actions_wipe
+from fanops.studio import actions_wipe
+from fanops.studio.views_live import live_library_page_context
 
 
 def register_live_routes(app, cfg):
@@ -15,11 +15,8 @@ def register_live_routes(app, cfg):
         # U13: the wipe POSTs re-render on the FOLDED surface — library.html under the live lens. It carries
         # the same live-library context the /library?view=live GET builds, so htmx swaps the #wipe-panel
         # fragment out of the folded page exactly as before (the standalone live-library page is retired).
-        led = Ledger.load(cfg)
-        return render_template("library.html", view="live", catalog=views.library_catalog(cfg),
-                               rows=views.live_library(led, cfg), scope=views.live_library_scope(cfg),
-                               tab="library", preview=preview, wipe_result=result,
-                               confirm_word=actions_wipe.CONFIRM_WORD)
+        return render_template("library.html", **live_library_page_context(cfg, preview=preview,
+                                                                           wipe_result=result))
 
     @app.get("/live-library")
     def live_library():

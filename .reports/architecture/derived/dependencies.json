@@ -78,6 +78,7 @@
       "fanops.studio.views_golive",
       "fanops.studio.views_home",
       "fanops.studio.views_library",
+      "fanops.studio.views_live",
       "fanops.studio.views_run"
     ],
     [
@@ -2049,6 +2050,7 @@
         "fanops.personas",
         "fanops.studio",
         "fanops.studio.actions",
+        "fanops.studio.preview_media",
         "fanops.studio.views",
         "fanops.timeutil"
       ],
@@ -2064,7 +2066,6 @@
         "fanops.studio.app_routes_review",
         "fanops.studio.app_routes_run",
         "fanops.studio.app_routes_schedule",
-        "fanops.studio.preview_media",
         "fanops.studio.thumb_media",
         "fanops.timeutil"
       ],
@@ -2100,10 +2101,9 @@
     },
     "fanops.studio.app_routes_live": {
       "compile": [
-        "fanops.ledger",
         "fanops.studio",
         "fanops.studio.actions_wipe",
-        "fanops.studio.views"
+        "fanops.studio.views_live"
       ],
       "lazy": [],
       "optional": [],
@@ -2135,11 +2135,10 @@
     },
     "fanops.studio.app_routes_run": {
       "compile": [
-        "fanops.ledger",
         "fanops.studio",
         "fanops.studio.actions",
-        "fanops.studio.actions_wipe",
-        "fanops.studio.views"
+        "fanops.studio.views",
+        "fanops.studio.views_live"
       ],
       "lazy": [
         "fanops.studio.app"
@@ -2208,6 +2207,7 @@
     "fanops.studio.preview_media": {
       "compile": [
         "fanops.config",
+        "fanops.errors",
         "fanops.ledger",
         "fanops.post.media"
       ],
@@ -2361,7 +2361,11 @@
         "fanops.ledger",
         "fanops.models"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.studio",
+        "fanops.studio.actions_wipe",
+        "fanops.studio.views_library"
+      ],
       "optional": [],
       "typing": []
     },
@@ -2750,7 +2754,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 49,
+    "fanops.errors": 50,
     "fanops.escalation": 5,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
@@ -2780,7 +2784,7 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 70,
+    "fanops.ledger": 68,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
@@ -2857,7 +2861,7 @@
     "fanops.studio.actions_run": 1,
     "fanops.studio.actions_schedule": 1,
     "fanops.studio.actions_segments": 1,
-    "fanops.studio.actions_wipe": 2,
+    "fanops.studio.actions_wipe": 1,
     "fanops.studio.app": 4,
     "fanops.studio.app_routes_golive": 0,
     "fanops.studio.app_routes_hashtags": 0,
@@ -2868,15 +2872,15 @@
     "fanops.studio.app_routes_schedule": 0,
     "fanops.studio.golive": 1,
     "fanops.studio.personas": 1,
-    "fanops.studio.preview_media": 0,
+    "fanops.studio.preview_media": 1,
     "fanops.studio.thumb_media": 0,
-    "fanops.studio.views": 10,
+    "fanops.studio.views": 9,
     "fanops.studio.views_common": 8,
     "fanops.studio.views_golive": 1,
     "fanops.studio.views_hashtags": 1,
     "fanops.studio.views_home": 1,
     "fanops.studio.views_library": 1,
-    "fanops.studio.views_live": 1,
+    "fanops.studio.views_live": 3,
     "fanops.studio.views_posted": 2,
     "fanops.studio.views_results": 2,
     "fanops.studio.views_review": 2,
@@ -3039,17 +3043,17 @@
     "fanops.studio.actions_schedule": 9,
     "fanops.studio.actions_segments": 5,
     "fanops.studio.actions_wipe": 6,
-    "fanops.studio.app": 8,
+    "fanops.studio.app": 9,
     "fanops.studio.app_routes_golive": 5,
     "fanops.studio.app_routes_hashtags": 3,
-    "fanops.studio.app_routes_live": 4,
+    "fanops.studio.app_routes_live": 3,
     "fanops.studio.app_routes_personas": 4,
     "fanops.studio.app_routes_review": 6,
-    "fanops.studio.app_routes_run": 5,
+    "fanops.studio.app_routes_run": 4,
     "fanops.studio.app_routes_schedule": 6,
     "fanops.studio.golive": 14,
     "fanops.studio.personas": 7,
-    "fanops.studio.preview_media": 3,
+    "fanops.studio.preview_media": 4,
     "fanops.studio.thumb_media": 3,
     "fanops.studio.views": 13,
     "fanops.studio.views_common": 4,
@@ -4263,6 +4267,22 @@
       "to_level": 4
     },
     {
+      "from": "fanops.studio.views_live",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.actions_wipe",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.studio.views_live",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.studio.views_library",
+      "to_level": 4
+    },
+    {
       "from": "fanops.studio.views_posted",
       "from_level": 4,
       "jump": 1,
@@ -4439,7 +4459,7 @@
     "fanops.studio.app": 12,
     "fanops.studio.app_routes_golive": 13,
     "fanops.studio.app_routes_hashtags": 8,
-    "fanops.studio.app_routes_live": 8,
+    "fanops.studio.app_routes_live": 5,
     "fanops.studio.app_routes_personas": 13,
     "fanops.studio.app_routes_review": 13,
     "fanops.studio.app_routes_run": 12,
@@ -4653,6 +4673,7 @@
       "fanops.learn_doctor",
       "fanops.responder",
       "fanops.source_tags_walk",
+      "fanops.studio.app_routes_live",
       "fanops.studio.thumb_media",
       "fanops.studio.views_run",
       "fanops.studio.views_schedule",
@@ -4674,8 +4695,7 @@
       "fanops.clip",
       "fanops.studio.actions_approve",
       "fanops.studio.actions_edit",
-      "fanops.studio.app_routes_hashtags",
-      "fanops.studio.app_routes_live"
+      "fanops.studio.app_routes_hashtags"
     ],
     "9": [
       "fanops.crosspost",
@@ -4701,13 +4721,13 @@
     "G1_sccs_total": 179,
     "G1c_levels": 14,
     "G2_largest_scc_size": 33,
-    "G2_module_sccs_total": 106,
+    "G2_module_sccs_total": 105,
     "G2_non_trivial_sccs": 7,
     "compile_edges_G1": 763,
-    "lazy_edges": 426,
+    "lazy_edges": 428,
     "lazy_edges_lateral": 57,
-    "lazy_edges_strictly_upward": 94,
-    "lazy_edges_to_equal_or_higher_level": 151,
+    "lazy_edges_strictly_upward": 96,
+    "lazy_edges_to_equal_or_higher_level": 153,
     "modules": 179,
     "optional_edges": 0,
     "typing_only_edges": 8

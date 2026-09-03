@@ -307,7 +307,7 @@
     },
     "FANOPS_STUDIO_GENERATION": {
       "read_at": [
-        "fanops.studio.app:43"
+        "fanops.studio.app:44"
       ],
       "reader_count": 1
     },
