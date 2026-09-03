@@ -817,28 +817,33 @@ def lineage_stats(rows) -> list:
         return rows
 
 
-def account_median_deltas(rows) -> None:
-    """T-15 — IN-PLACE annotate each row with delta_vs_account_median = round(lift_score - account_median, 4),
-    so the operator reads 'this variant beat/trailed its ACCOUNT's typical lift'. This is a DIFFERENT statistic
-    from lineage_stats' delta_vs_best (best-in-clip-lineage): here the baseline is statistics.median over the
-    account's MEASURED lift scores. Groups by `account`; a group with <2 measured rows is degenerate (a median
-    vs a single point) and left at None — mirroring lineage_stats' judgment of only ranking within `measured`.
-    An unmeasured row (lift None/non-numeric) is excluded from the median AND never stamped. Pure over the
-    already-built list — NO ledger read. Fail-open: any error leaves the additive field at its None default."""
+def account_median_deltas(rows) -> list:
+    """T-15 — return a NEW list of rows annotated with delta_vs_account_median = round(lift_score - account_median, 4),
+    so the operator reads 'this variant beat/trailed its ACCOUNT's typical lift'. Never mutates the caller's rows:
+    an annotated row is a dataclasses.replace copy; an unstamped row passes through as the same object. This is a
+    DIFFERENT statistic from lineage_stats' delta_vs_best (best-in-clip-lineage): here the baseline is
+    statistics.median over the account's MEASURED lift scores. Groups by `account`; a group with <2 measured rows
+    is degenerate (a median vs a single point) and left at None — mirroring lineage_stats' judgment of only
+    ranking within `measured`. An unmeasured row (lift None/non-numeric) is excluded from the median AND never
+    stamped. Pure over the already-built list — NO ledger read. Fail-open: any error returns the input rows
+    unchanged (additive fields stay at their None defaults). Same order and length as the input."""
     try:
         groups: dict = {}
         for r in rows:
             acct = getattr(r, "account", None)
             if acct: groups.setdefault(acct, []).append(r)
+        ann: dict = {}
         for grp in groups.values():
             measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
                         and not isinstance(r.lift_score, bool)]
             if len(measured) < 2: continue     # a median vs a single data point is degenerate
             med = statistics.median(r.lift_score for r in measured)
-            for r in measured: r.delta_vs_account_median = round(r.lift_score - med, 4)
+            for r in measured:
+                ann[id(r)] = {"delta_vs_account_median": round(r.lift_score - med, 4)}
+        return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
     except Exception as exc:
         logger.warning("delta_vs_account_median: stats pass failed (%s)", exc)
-        return   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
+        return rows   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
 
 
 def metric_peaks(rows) -> dict:
