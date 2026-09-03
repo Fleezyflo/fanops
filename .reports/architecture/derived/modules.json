@@ -42,6 +42,7 @@
     "fanops.escalation",
     "fanops.fanops_account_stats",
     "fanops.fanops_hashtags",
+    "fanops.field_shape",
     "fanops.frames",
     "fanops.framing",
     "fanops.framing_outcomes",
@@ -173,7 +174,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -216,6 +217,7 @@
     "fanops.escalation": "S07_agent_gate",
     "fanops.fanops_account_stats": "S13_reconcile_metrics",
     "fanops.fanops_hashtags": "S10_caption_hashtag",
+    "fanops.field_shape": "S14_learning",
     "fanops.frames": "S01_foundation",
     "fanops.framing": "S06_media_analysis",
     "fanops.framing_outcomes": "S06_media_analysis",
@@ -279,7 +281,7 @@
     "fanops.produce": "S09_render",
     "fanops.prompts": "S07_agent_gate",
     "fanops.prompts_caption": "S07_agent_gate",
-    "fanops.reach_ranking": null,
+    "fanops.reach_ranking": "S14_learning",
     "fanops.recaption": "S15_orchestration",
     "fanops.reconcile": "S13_reconcile_metrics",
     "fanops.reconcile_liveness": "S13_reconcile_metrics",
@@ -347,12 +349,10 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 164,
+    "assigned": 166,
     "ghosts": 0,
-    "modules": 165,
-    "unassigned": 1
+    "modules": 166,
+    "unassigned": 0
   },
-  "unassigned_modules": [
-    "fanops.reach_ranking"
-  ]
+  "unassigned_modules": []
 }

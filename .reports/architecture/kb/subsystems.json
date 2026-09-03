@@ -175,9 +175,11 @@
       "modules": [
         "adjust",
         "digest",
+        "field_shape",
         "learn_doctor",
         "moment_hook_learning",
         "p4_dim_bias",
+        "reach_ranking",
         "timing_bias",
         "validation_gate",
         "variant_amplify",

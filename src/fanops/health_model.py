@@ -493,8 +493,8 @@ def build_field_shape(cfg: Config, *, led=None, list_posts=None) -> dict | None:
     """Learning field-shape verdict — None when not applicable (no postiz key). Fail-open on fetch errors."""
     if not cfg.backend_has_creds("postiz"):
         return None
+    from fanops.field_shape import _field_shape_report_core
     from fanops.ledger import Ledger
-    from fanops.learn_doctor import _field_shape_report_core
     led = led or Ledger.load(cfg)
     try:
         return _field_shape_report_core(led, cfg, list_posts=list_posts)
