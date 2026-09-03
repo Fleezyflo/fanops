@@ -150,7 +150,7 @@ def register_run_routes(app, cfg):
     @app.get("/library/<source_id>")
     def library_source(source_id):
         from flask import abort
-        from fanops.studio.app import _offset_arg
+        from fanops.studio.app_request import _offset_arg
         detail = views.source_pipeline_map(cfg, source_id, offset=_offset_arg())
         if detail is None:
             abort(404)
@@ -159,7 +159,7 @@ def register_run_routes(app, cfg):
     @app.get("/library/<source_id>/live")
     def library_source_live(source_id):
         from flask import abort
-        from fanops.studio.app import _offset_arg
+        from fanops.studio.app_request import _offset_arg
         detail = views.source_pipeline_map(cfg, source_id, offset=_offset_arg())
         if detail is None:
             abort(404)

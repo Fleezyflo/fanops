@@ -464,18 +464,18 @@
     {
       "decorator": "app.get",
       "handler": "index",
-      "line": 390,
+      "line": 14,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": false,
       "path": "/"
     },
     {
       "decorator": "app.get",
       "handler": "fingerprint",
-      "line": 369,
+      "line": 223,
       "methods": [
         "GET"
       ],
@@ -486,7 +486,7 @@
     {
       "decorator": "app.get",
       "handler": "candidates",
-      "line": 463,
+      "line": 282,
       "methods": [
         "GET"
       ],
@@ -497,7 +497,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_candidate",
-      "line": 468,
+      "line": 287,
       "methods": [
         "POST"
       ],
@@ -552,29 +552,29 @@
     {
       "decorator": "app.get",
       "handler": "clip_thumb",
-      "line": 604,
+      "line": 94,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/clip-thumb/<clip_id>"
     },
     {
       "decorator": "app.get",
       "handler": "clip_media",
-      "line": 552,
+      "line": 44,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/clips/<clip_id>"
     },
     {
       "decorator": "app.get",
       "handler": "gates",
-      "line": 514,
+      "line": 327,
       "methods": [
         "GET"
       ],
@@ -585,7 +585,7 @@
     {
       "decorator": "app.post",
       "handler": "do_answer_gate",
-      "line": 520,
+      "line": 333,
       "methods": [
         "POST"
       ],
@@ -596,7 +596,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_gate",
-      "line": 532,
+      "line": 345,
       "methods": [
         "POST"
       ],
@@ -970,7 +970,7 @@
     {
       "decorator": "app.get",
       "handler": "healthz",
-      "line": 363,
+      "line": 217,
       "methods": [
         "GET"
       ],
@@ -981,88 +981,88 @@
     {
       "decorator": "app.get",
       "handler": "home_daemon_health",
-      "line": 421,
+      "line": 44,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": false,
       "path": "/home/daemon-health"
     },
     {
       "decorator": "app.get",
       "handler": "home_gallery",
-      "line": 399,
+      "line": 23,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": false,
       "path": "/home/gallery"
     },
     {
       "decorator": "app.post",
       "handler": "do_home_pull_metrics",
-      "line": 405,
+      "line": 28,
       "methods": [
         "POST"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": true,
       "path": "/home/pull-metrics"
     },
     {
       "decorator": "app.post",
       "handler": "do_home_reconcile",
-      "line": 409,
+      "line": 32,
       "methods": [
         "POST"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": true,
       "path": "/home/reconcile"
     },
     {
       "decorator": "app.post",
       "handler": "do_home_retry_oversize",
-      "line": 417,
+      "line": 40,
       "methods": [
         "POST"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": true,
       "path": "/home/retry-oversize"
     },
     {
       "decorator": "app.post",
       "handler": "do_home_retry_rate_limit",
-      "line": 413,
+      "line": 36,
       "methods": [
         "POST"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_home",
       "mutating": true,
       "path": "/home/retry-rate-limit"
     },
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 578,
+      "line": 69,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/keyframe/<source_id>/<name>"
     },
     {
       "decorator": "app.get",
       "handler": "keyframe",
-      "line": 578,
+      "line": 69,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/keyframe/<source_id>/<whash>/<name>"
     },
@@ -1190,29 +1190,29 @@
     {
       "decorator": "app.get",
       "handler": "media_preview",
-      "line": 545,
+      "line": 37,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/media-preview/<post_id>"
     },
     {
       "decorator": "app.get",
       "handler": "media",
-      "line": 538,
+      "line": 30,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/media/<post_id>"
     },
     {
       "decorator": "app.get",
       "handler": "metrics",
-      "line": 383,
+      "line": 237,
       "methods": [
         "GET"
       ],
@@ -1520,7 +1520,7 @@
     {
       "decorator": "app.get",
       "handler": "publish_panel",
-      "line": 481,
+      "line": 294,
       "methods": [
         "GET"
       ],
@@ -1531,7 +1531,7 @@
     {
       "decorator": "app.post",
       "handler": "do_publish_now",
-      "line": 500,
+      "line": 313,
       "methods": [
         "POST"
       ],
@@ -1542,7 +1542,7 @@
     {
       "decorator": "app.post",
       "handler": "do_mark_posted",
-      "line": 495,
+      "line": 308,
       "methods": [
         "POST"
       ],
@@ -1564,7 +1564,7 @@
     {
       "decorator": "app.get",
       "handler": "reconcile_strip_partial",
-      "line": 508,
+      "line": 321,
       "methods": [
         "GET"
       ],
@@ -1630,11 +1630,11 @@
     {
       "decorator": "app.get",
       "handler": "review_thumb",
-      "line": 472,
+      "line": 19,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/review-thumb/<eid>"
     },
@@ -2004,18 +2004,18 @@
     {
       "decorator": "app.get",
       "handler": "source_media",
-      "line": 563,
+      "line": 55,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/source-media/<source_id>"
     },
     {
       "decorator": "app.get",
       "handler": "stitches",
-      "line": 440,
+      "line": 259,
       "methods": [
         "GET"
       ],
@@ -2026,7 +2026,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_stitches",
-      "line": 450,
+      "line": 269,
       "methods": [
         "POST"
       ],
@@ -2037,7 +2037,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_stitches",
-      "line": 454,
+      "line": 273,
       "methods": [
         "POST"
       ],
@@ -2048,7 +2048,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_stitches",
-      "line": 458,
+      "line": 277,
       "methods": [
         "POST"
       ],
@@ -2059,22 +2059,22 @@
     {
       "decorator": "app.get",
       "handler": "thumb_clip",
-      "line": 599,
+      "line": 89,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/thumb/clip/<clip_id>"
     },
     {
       "decorator": "app.get",
       "handler": "thumb_source",
-      "line": 594,
+      "line": 84,
       "methods": [
         "GET"
       ],
-      "module": "fanops.studio.app",
+      "module": "fanops.studio.app_routes_media",
       "mutating": false,
       "path": "/thumb/source/<source_id>"
     },

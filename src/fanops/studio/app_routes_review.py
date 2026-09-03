@@ -2,7 +2,7 @@
 matrix/pivot/list views + the approve_* bulk actions) and the per-surface editor (reschedule /
 clear-time / caption / regenerate / re-burn-hook / snooze / unhold). register_review_routes(app, cfg)
 registers them under their ORIGINAL endpoint names (url_for byte-identical); create_app calls it.
-Shared arg-parsers + the card-chip helper come from app (loaded before create_app runs, so cycle-free)."""
+Shared arg-parsers + the card-chip helper come from app_request (cycle-free)."""
 from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from flask import render_template, request
 from fanops.accounts import Accounts
 from fanops.studio import actions, views
 from fanops.studio.views_common import REVIEW_FEED_SLICE
-from fanops.studio.app import _account_all_arg, _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
+from fanops.studio.app_request import _account_all_arg, _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
 
 
 def register_review_routes(app, cfg):

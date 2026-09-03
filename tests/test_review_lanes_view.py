@@ -44,7 +44,8 @@ def _client(cfg):
 
 def test_view_arg_accepts_lanes(tmp_path):
     # the wiring linchpin: ?view=lanes must survive _view_arg, else the lanes branch is dead.
-    from fanops.studio.app import create_app, _view_arg
+    from fanops.studio.app import create_app
+    from fanops.studio.app_request import _view_arg
     app = create_app(Config(root=tmp_path))
     with app.test_request_context("/review?view=lanes"):
         assert _view_arg() == "lanes"

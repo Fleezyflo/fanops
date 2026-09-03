@@ -116,18 +116,19 @@ def test_preview_media_returns_none_when_no_artifact(tmp_path):
     assert result is None
 
 
-# ── 7. studio/app._account_arg — except -> pass (cfg NOT reliably in scope: module logger) ──
+# ── 7. studio/app_request._account_arg — except -> pass (cfg NOT reliably in scope: module logger) ──
 def test_account_arg_logs_on_resolve_error(tmp_path, monkeypatch, caplog):
     from fanops.studio import app as studio_app
+    from fanops.studio import app_request
     cfg = _cfg(tmp_path)
     flask_app = studio_app.create_app(cfg)
     monkeypatch.setattr("fanops.studio.views.resolve_account_handle",
                         lambda v, c: (_ for _ in ()).throw(RuntimeError("resolve boom")))
     with flask_app.test_request_context("/?account=someone"):
-        with caplog.at_level(logging.WARNING, logger="fanops.studio.app"):
-            out = studio_app._account_arg()
+        with caplog.at_level(logging.WARNING, logger="fanops.studio.app_request"):
+            out = app_request._account_arg()
     assert out == "someone"                                        # fallback: returns the raw handle unchanged
-    assert any(r.name == "fanops.studio.app" for r in caplog.records)
+    assert any(r.name == "fanops.studio.app_request" for r in caplog.records)
 
 
 # ── 8. doctor.doctor_report half_live — except -> not solid LIVE (ok=False) ──
