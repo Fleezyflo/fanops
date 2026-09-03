@@ -3,7 +3,9 @@
   "confidence": "CERTAIN",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
-  "ghost_modules": [],
+  "ghost_modules": [
+    "fanops.hashtag_hygiene"
+  ],
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "modules": [
     "fanops",
@@ -46,8 +48,6 @@
     "fanops.framing",
     "fanops.framing_outcomes",
     "fanops.gate_keys",
-    "fanops.hashtag_hygiene",
-    "fanops.hashtag_scrape_policy",
     "fanops.hashtags",
     "fanops.health",
     "fanops.health_model",
@@ -69,6 +69,8 @@
     "fanops.ledger_wipe",
     "fanops.lever_docs",
     "fanops.llm",
+    "fanops.llm_errors",
+    "fanops.llm_json",
     "fanops.log",
     "fanops.media_probe",
     "fanops.meta_graph",
@@ -212,8 +214,6 @@
     "fanops.framing": "S06_media_analysis",
     "fanops.framing_outcomes": "S06_media_analysis",
     "fanops.gate_keys": "S01_foundation",
-    "fanops.hashtag_hygiene": "S10_caption_hashtag",
-    "fanops.hashtag_scrape_policy": null,
     "fanops.hashtags": "S10_caption_hashtag",
     "fanops.health": "S18_health_diag",
     "fanops.health_model": "S18_health_diag",
@@ -235,6 +235,8 @@
     "fanops.ledger_wipe": "S19_maintenance",
     "fanops.lever_docs": "S19_maintenance",
     "fanops.llm": "S07_agent_gate",
+    "fanops.llm_errors": null,
+    "fanops.llm_json": null,
     "fanops.log": "S01_foundation",
     "fanops.media_probe": "S05_ingestion",
     "fanops.meta_graph": "S10_caption_hashtag",
@@ -331,14 +333,15 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 154,
-    "ghosts": 0,
+    "assigned": 153,
+    "ghosts": 1,
     "modules": 157,
-    "unassigned": 3
+    "unassigned": 4
   },
   "unassigned_modules": [
     "fanops.caption_compose",
     "fanops.caption_ingest",
-    "fanops.hashtag_scrape_policy"
+    "fanops.llm_errors",
+    "fanops.llm_json"
   ]
 }
