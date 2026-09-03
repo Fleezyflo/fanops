@@ -207,87 +207,87 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 192
+        "line": 193
       },
       {
         "call": "Ledger.transaction",
-        "line": 230
+        "line": 231
       },
       {
         "call": "Ledger.transaction",
-        "line": 336
+        "line": 337
       },
       {
         "call": "Ledger.transaction",
-        "line": 398
+        "line": 399
       },
       {
         "call": "Ledger.transaction",
-        "line": 465
+        "line": 466
       },
       {
         "call": "Ledger.transaction",
-        "line": 544
+        "line": 545
       },
       {
         "call": "Ledger.transaction",
-        "line": 567
+        "line": 568
       },
       {
         "call": "Ledger.transaction",
-        "line": 679
+        "line": 680
       },
       {
         "call": "Ledger.transaction",
-        "line": 777
+        "line": 778
       },
       {
         "call": "Ledger.transaction",
-        "line": 813
+        "line": 814
       },
       {
         "call": "Ledger.transaction",
-        "line": 857
+        "line": 858
       },
       {
         "call": "Ledger.transaction",
-        "line": 968
+        "line": 969
       },
       {
         "call": "Ledger.transaction",
-        "line": 1008
+        "line": 1009
       },
       {
         "call": "Ledger.transaction",
-        "line": 1043
+        "line": 1044
       },
       {
         "call": "Ledger.transaction",
-        "line": 1131
+        "line": 1132
       },
       {
         "call": "Ledger.transaction",
-        "line": 1164
+        "line": 1165
       },
       {
         "call": "Ledger.transaction",
-        "line": 1199
+        "line": 1200
       },
       {
         "call": "Ledger.transaction",
-        "line": 1246
+        "line": 1247
       },
       {
         "call": "Ledger.transaction",
-        "line": 1257
+        "line": 1258
       },
       {
         "call": "Ledger.transaction",
-        "line": 1268
+        "line": 1269
       },
       {
         "call": "Ledger.transaction",
-        "line": 1294
+        "line": 1295
       }
     ],
     "fanops.studio.actions_approve": [
@@ -721,11 +721,11 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 274
+        "line": 196
       },
       {
         "call": "subprocess.run",
-        "line": 412
+        "line": 334
       }
     ],
     "fanops.media_probe": [
