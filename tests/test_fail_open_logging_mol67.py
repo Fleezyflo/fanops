@@ -157,7 +157,7 @@ def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
     assert "postiz_down" in log_text
 
 
-# ── 10. studio/views_results.lineage_stats — except -> pass (cfg-less: module logger) ──
+# ── 10. studio/views_posted.lineage_stats — except -> pass (cfg-less: module logger) ──
 def test_lineage_stats_logs_on_error(tmp_path, caplog):
     from fanops.studio import views_results
 
@@ -168,10 +168,10 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
             raise RuntimeError("lift boom")
 
     rows = [_BadRow(), _BadRow()]
-    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_results"):
+    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_posted"):
         result = views_results.lineage_stats(rows)
     assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
-    assert any(r.name == "fanops.studio.views_results" for r in caplog.records)
+    assert any(r.name == "fanops.studio.views_posted" for r in caplog.records)
 
 
 def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):
