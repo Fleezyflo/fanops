@@ -146,6 +146,7 @@
         "fanops_account_stats",
         "metrics_schedule",
         "reconcile",
+        "reconcile_liveness",
         "track"
       ]
     },
