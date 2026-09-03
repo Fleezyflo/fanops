@@ -416,7 +416,7 @@ def test_transcribe_source_force_bypasses_idempotent_cache(tmp_path, mocker):
     def fake(led, cfg, source_id, src, out_dir, model):
         called.append(source_id)
         return led
-    mocker.patch("fanops.transcribe._produce_transcript", side_effect=fake)
+    mocker.patch("fanops.transcribe_engine._produce_transcript", side_effect=fake)
     transcribe_source(led, cfg, "s1")
     assert called == []                                    # transcribed=True, no force
     transcribe_source(led, cfg, "s1", force=True)

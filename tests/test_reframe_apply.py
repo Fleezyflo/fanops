@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from fanops import clip as clipmod
-from fanops import render_fingerprint as rfp
 from fanops import reframe_apply as ra
 from fanops.config import Config
 from fanops.reframe import ReframePaths
@@ -87,8 +86,8 @@ def _stub_render(monkeypatch, out_bytes=b"NEW-PIXELS", rc=0):
     monkeypatch.setattr(clipmod, "render_reframed", fake)
     monkeypatch.setattr(ra, "ffprobe_json", _good_probe)
     monkeypatch.setattr(ra, "decodes", lambda *_a, **_k: True)
-    monkeypatch.setattr(rfp, "fingerprint_of_payload", lambda _p: "fpnew")
-    monkeypatch.setattr(rfp, "_render_fingerprint_payload",
+    monkeypatch.setattr(ra, "fingerprint_of_payload", lambda _p: "fpnew")
+    monkeypatch.setattr(ra, "_render_fingerprint_payload",
                         lambda *a, **k: {"src": a[0], "ass": "ASS-TEXT", "focus": [0.5, 0.4], "geom": 4})
 
 
@@ -342,7 +341,7 @@ def test_unchanged_pixels_keeps_the_original_and_its_sidecar(tmp_path, monkeypat
 def test_non_framing_drift_REFUSES(tmp_path, monkeypatch):
     cfg, paths, src = _corpus(tmp_path); row = _row(cfg, src); d = _dirs(cfg)
     _stub_render(monkeypatch)
-    monkeypatch.setattr(rfp, "_render_fingerprint_payload",
+    monkeypatch.setattr(ra, "_render_fingerprint_payload",
                         lambda *a, **k: {"src": a[0], "ass": "A DIFFERENT HOOK", "focus": [0.5, 0.4], "geom": 4})
     out = ra.apply_clip(paths, d, _FakeLed(), row, run_id="rf_d")
     assert out["status"] == "NON_FRAMING_DRIFT"
@@ -353,7 +352,7 @@ def test_non_framing_drift_REFUSES(tmp_path, monkeypatch):
 def test_fingerprint_divergence_REFUSES_before_rendering(tmp_path, monkeypatch):
     cfg, paths, src = _corpus(tmp_path); row = _row(cfg, src); d = _dirs(cfg)
     _stub_render(monkeypatch)
-    monkeypatch.setattr(rfp, "fingerprint_of_payload", lambda _p: "NOT-fpnew")
+    monkeypatch.setattr(ra, "fingerprint_of_payload", lambda _p: "NOT-fpnew")
     out = ra.apply_clip(paths, d, _FakeLed(), row, run_id="rf_f")
     assert out["status"] == "FINGERPRINT_DIVERGED"
     assert Path(row["media_path"]).read_bytes() == b"OLD-PIXELS"
