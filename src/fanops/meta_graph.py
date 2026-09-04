@@ -470,8 +470,8 @@ def resolve_ig_media(cfg: Config, media_id, *, handle: Optional[str] = None, get
 
 
 def confirm_post_live(cfg: Config, post, *, reported_username: Optional[str] = None, get=None) -> dict:
-    """MOL-113 — the ONE seam that confirms a post against ITS platform's own API and returns
-    {"confirmed": bool, "owner": Optional[str]}. Routes by platform, NEVER guesses:
+    """CLI-only seam (`fanops verify-live`): confirms a post against its platform API and returns
+    {"confirmed": bool, "owner": Optional[str]}. Not used by reconcile, track, or publish paths.
       IG     -> resolve_ig_media on the captured media_id (Post.media_id, stamped from the Postiz releaseId at
                 reconcile — the stable per-object input). Confirmed iff the object resolves; owner is the
                 Graph-reported username. No media_id / a removed object -> {confirmed:False, owner:None}.
@@ -491,19 +491,6 @@ def confirm_post_live(cfg: Config, post, *, reported_username: Optional[str] = N
         ok = bool(verify_tiktok_permalink(cfg, post.public_url, reported_username, get=get))
         return {"confirmed": ok, "owner": (reported_username if ok else None)}
     return {"confirmed": False, "owner": None}                   # no per-object liveness notion on other surfaces
-
-
-def credentialed_ig_handles(cfg: Config) -> list[str]:
-    """The active IG-carrying account handles that have their OWN per-account ig_user_id configured — the
-    set of handles reconcile must enumerate media for (the per-handle-creds gap: live-linking capped at the
-    single global handle). EMPTY when no account is per-account-credentialed -> the caller falls back to the
-    single global enumeration (byte-identical to before). NEVER raises: a torn accounts.json degrades to []
-    (mirrors load_accounts_safe), so a read path is never crashed by config."""
-    from fanops.accounts import load_accounts_safe
-    from fanops.models import Platform
-    accts, _err = load_accounts_safe(cfg)
-    return [a.handle for a in accts.active()
-            if Platform.instagram in a.platforms and (a.ig_user_id or "").strip()]
 
 
 def enumerate_scoped_media(cfg: Config, handles, *, get=None) -> list[tuple]:

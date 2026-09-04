@@ -3,7 +3,7 @@
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, SourceState
-from fanops.reconcile import _GATE_FAILOPEN, _GATE_PARK, _GATE_REST, reconcile_due
+from fanops.reconcile import reconcile_due
 from tests.conftest import ledger_lock_is_free
 
 
@@ -87,15 +87,14 @@ def test_m05_ingest_stage_hash_copy_lock_free_and_dedup(tmp_path, monkeypatch, m
 
 
 def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeypatch, mocker):
-    """M04: IG rest / park / fail_open liveness computed lock-free; verdict applied in txn."""
+    """M04: liveness enrichment runs lock-free; IG rests on Postiz confirmation only."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    for pid, plat in (("ig_rest", Platform.instagram), ("ig_park", Platform.instagram),
-                      ("ig_failopen", Platform.instagram)):
-        led.add_post(Post(id=pid, parent_id="c", account="@cred", account_id="1", platform=plat,
+    for pid in ("ig_rest", "ig_park", "ig_failopen"):
+        led.add_post(Post(id=pid, parent_id="c", account="@cred", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.needs_reconcile, submission_id=f"sub_{pid}",
                           public_url="https://instagram.com/p/x"))
     led.save()
@@ -108,19 +107,8 @@ def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeyp
                 "releaseId": f"mid_{pid}"}
 
     mocker.patch("fanops.reconcile._default_get_status", return_value=poll)
-    mocker.patch("fanops.meta_graph.credentialed_ig_handles", return_value=["@cred"])
-
-    def fake_ig_verdict(cfg, post, media_id, cred_ig, confirm, graph_get, **_kw):
-        if post.id == "ig_rest":
-            return _GATE_REST
-        if post.id == "ig_park":
-            return _GATE_PARK
-        return _GATE_FAILOPEN
-
-    mocker.patch("fanops.reconcile_liveness._ig_rest_verdict", side_effect=fake_ig_verdict)
     reconcile_due(cfg)
     assert seen["lock_free"] and all(seen["lock_free"])
     again = Ledger.load(cfg)
-    assert again.posts["ig_rest"].state is PostState.published
-    assert again.posts["ig_park"].state is PostState.needs_reconcile
-    assert again.posts["ig_failopen"].state is PostState.needs_reconcile
+    for pid in ("ig_rest", "ig_park", "ig_failopen"):
+        assert again.posts[pid].state is PostState.published

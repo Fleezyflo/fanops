@@ -44,7 +44,8 @@
     "tests/test_cli_retire_source.py",
     "tests/test_source_lifecycle.py",
     "tests/test_cli.py",
-    "tests/test_daemon_keeper.py"
+    "tests/test_daemon_keeper.py",
+    "tests/test_imported_projection.py"
   ],
   "src/fanops/cli_dispatch.py": [
     "tests/test_cli.py",
@@ -257,21 +258,11 @@
   ],
   "src/fanops/reconcile.py": [
     "tests/test_reconcile.py",
-    "tests/test_ig_liveness_gate.py",
-    "tests/test_flock_violations_b04.py",
-    "tests/test_imported_projection.py"
-  ],
-  "src/fanops/reconcile_liveness.py": [
-    "tests/test_reconcile.py",
-    "tests/test_ig_liveness_gate.py",
-    "tests/test_flock_violations_b04.py",
-    "tests/test_imported_projection.py"
+    "tests/test_flock_violations_b04.py"
   ],
   "src/fanops/reconcile_mirror.py": [
     "tests/test_reconcile.py",
-    "tests/test_ig_liveness_gate.py",
     "tests/test_flock_violations_b04.py",
-    "tests/test_imported_projection.py",
     "tests/test_zernio_metrics.py",
     "tests/test_channel_provider.py"
   ],

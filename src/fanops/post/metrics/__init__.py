@@ -6,9 +6,7 @@ from __future__ import annotations
 import requests
 
 from fanops.post.metrics.common import (
-    GraphInsightsClient,
     _json_or_raise,
-    _retention_fraction,
     _safe,
     poster_fail_reason,
 )
@@ -44,7 +42,6 @@ from fanops.post.metrics.zernio_read import (
 )
 
 __all__ = [
-    "GraphInsightsClient",
     "PostizMetricsClient",
     "PostizStatusClient",
     "ZernioMetricsClient",
@@ -69,7 +66,6 @@ __all__ = [
     "_map_analytics",
     "_map_zernio_analytics",
     "_oembed_author_key",
-    "_retention_fraction",
     "_safe",
     "_zernio_analytics_payload",
     "_zernio_num",

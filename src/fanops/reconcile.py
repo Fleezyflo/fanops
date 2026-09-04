@@ -49,22 +49,9 @@ from fanops.config import Config
 from fanops.errors import AuthError
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import ErrorKind, Platform, PostState, is_real_submission_id, ImportedMedia
+from fanops.models import ErrorKind, Platform, PostState, is_real_submission_id
 from fanops.text import safe_public_url
 from fanops.timeutil import parse_iso, iso_z, publish_buckets
-from fanops.reconcile_liveness import (
-    _capture_publish_fields,
-    _enrich_poll_liveness,
-    _ig_rest_verdict,
-    _ig_username_for_handle,
-    _norm_permalink,
-    _owner_matches,
-    _requests_get,
-    _tiktok_url_confirmed,
-    _GATE_FAILOPEN,
-    _GATE_PARK,
-    _GATE_REST,
-)
 from fanops.reconcile_mirror import (
     GetStatus,
     _MIRROR_ABSENT,
@@ -86,15 +73,7 @@ from datetime import datetime, timezone, timedelta
 __all__ = [
     "_capture_publish_fields",
     "_enrich_poll_liveness",
-    "_ig_rest_verdict",
-    "_ig_username_for_handle",
-    "_norm_permalink",
-    "_owner_matches",
-    "_requests_get",
     "_tiktok_url_confirmed",
-    "_GATE_FAILOPEN",
-    "_GATE_PARK",
-    "_GATE_REST",
     "_default_get_status",
     "_mirror_info",
     "_mirror_update",
@@ -116,6 +95,59 @@ __all__ = [
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
 # Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
+
+
+def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str],
+                          reported_username: Optional[str], *, get=None) -> bool:
+    """REST-gate for TikTok: real submission_id + safe_public_url + oEmbed author == Zernio-reported username."""
+    ok = safe_public_url(url)
+    if not (ok and is_real_submission_id(sub)):
+        return False
+    if not (reported_username or "").strip():
+        return False
+    try:
+        from fanops.post.metrics import verify_tiktok_permalink
+        return bool(verify_tiktok_permalink(cfg, ok, reported_username, get=get))
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "tiktok_verify_error", err=str(exc)[:120])
+        return False
+
+
+def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
+    """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
+    real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
+                 if is_real_submission_id(info.get(k))), None)
+    new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
+    captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
+    reported_username = info.get("tiktokUsername")
+    _rid = info.get("releaseId")
+    _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
+    return captured_url, reported_username, new_sub, _rid
+
+
+def _enrich_poll_liveness(cfg: Config, post, info: dict) -> None:
+    """Pre-compute liveness verdicts during the lock-free poll (network allowed). Mutates `info` with a
+    `liveness` dict the apply path reads without further network I/O."""
+    from fanops.models import Platform as _Plat
+    captured_url, reported_username, new_sub, _rid = _capture_publish_fields(info, post)
+    if not (captured_url or "").strip() and post.platform is _Plat.tiktok:
+        try:
+            from fanops.post.metrics import zernio_analytics_url_and_username
+            _u, _un = zernio_analytics_url_and_username(cfg, post.submission_id, post.account_id)
+            captured_url = _u or captured_url
+            reported_username = reported_username or _un
+        except Exception as exc:
+            get_logger(cfg)("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
+    liv: dict = {"captured_url": captured_url, "reported_username": reported_username,
+                 "new_sub": new_sub, "release_id": _rid}
+    if not (captured_url or "").strip():
+        liv["published_no_url"] = True
+        info["liveness"] = liv
+        return
+    liv["published_no_url"] = False
+    if post.platform is _Plat.tiktok:
+        liv["tiktok_ok"] = _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username)
+    info["liveness"] = liv
 
 
 def _parked_age(post, now: datetime):
@@ -183,89 +215,13 @@ def _apply_age_terminal(post, now) -> dict | None:
 
 # Prefix on error_reason marking a TikTok post the REST gate refused to let rest in a terminal-positive
 # state (published/analyzed) because its LIVENESS is NOT confirmed — no live-verifiable url (oEmbed author
-# != reported username) / no real submission_id. IG does NOT use this prefix: IG liveness is confirmed by
-# Postiz (status==published + a real releaseURL) or by resolve_ig_media / confirm_post_live; media_id arrives
-# at promotion from Postiz releaseId and post_type is declared at mint. It is now the ONLY prefix reconcile
-# writes to error_reason — the give-up terminal and the "stuck …" breadcrumb that once shared the field are
-# gone (the mirror answers what they guessed at). A TikTok post carrying it is QUARANTINED to needs_reconcile:
-# reconcile_posts refuses to re-promote it while still unconfirmed, and the digest surfaces it.
+# != reported username) / no real submission_id. IG rests on Postiz confirmation only (no Graph gate).
+# It is now the ONLY prefix reconcile writes to error_reason. A TikTok post carrying it is QUARANTINED to
+# needs_reconcile: reconcile_posts refuses to re-promote it while still unconfirmed, and the digest surfaces it.
 _UNVERIFIED_PREFIX = "unverified:"
-# (The former _UNVERIFIED_IG_MEDIA quarantine reason and the ig_media_id_unresolved enrichment note were
-# REMOVED: IG liveness is not gated on feed enumeration, and the authored-post feed-match leg is gone.)
 _UNVERIFIED_TIKTOK = (_UNVERIFIED_PREFIX + " TikTok post not live-verified — needs a real backend "
                       "submission_id AND a public_url proven live for this handle (oEmbed author==handle). "
                       "Backend reported published but the URL/id could not be confirmed; parked, not rested.")
-# MOL-117 — the CREDENTIALED-account IG identity park. A quarantine (the _UNVERIFIED_PREFIX sentinel), so
-# reconcile_posts keeps re-polling it (needs_reconcile ∈ _RECONCILABLE) and re-confirms next pass — a
-# post that later resolves on the platform recovers, one that never does stays visibly parked. Reached
-# ONLY for an account with its OWN ig_user_id: the Graph gave a DEFINITIVE verdict (object absent, or
-# resolved to a DIFFERENT owner than the intended handle) — never on a transport hiccup (that fails OPEN).
-_UNVERIFIED_IG = (_UNVERIFIED_PREFIX + " IG post not platform-confirmed live — this account carries its "
-                  "own ig_user_id, so liveness is gated on the Meta Graph: the captured media object must "
-                  "resolve AND its owner username must match the intended account handle. The Graph gave a "
-                  "definitive verdict that it does NOT (object absent or owned by a different handle); parked, "
-                  "not rested on Postiz's self-report. Re-polled next pass — recovers if the object resolves.")
-
-
-# ---- ledger-rebuild M2 (Instagram is the source of truth): import live-only media ------------------
-# project_imported_media: a live media matched to NO ledger post is IMPORTED as an ImportedMedia record
-# ("viewed there, not authored here"). Authored posts are skipped by permalink; their media_id/post_type
-# are minted at publish time, not by feed match.
-
-def project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
-    """Iterate the live /{ig_user}/media inventory; a media whose permalink matches an EXISTING ledger post
-    (any post carrying that public_url — "authored here") is SKIPPED; every OTHER live media is UPSERTED as
-    an ImportedMedia (keyed by its Graph media_id). IDEMPOTENT — a re-run over the same media OVERWRITES the
-    identity fields (latest live snapshot wins) but PRESERVES any metrics/metrics_series the insights read
-    (M3) already filled (the /media list carries no insights). SINGLE-HANDLE scope: META_IG_USER_ID is one
-    credential, so this enumerates ONE handle's media and stamps that credentialed handle on every record
-    (the Live library / wipe-preview scope label). FAIL-OPEN (no creds / empty list / transport failure ->
-    imports nobody, never crashes). fan-accounts-repost-freely: an ImportedMedia MIRRORS live — it never
-    blocks reposting; there is no supersede/dedupe here."""
-    from fanops import meta_graph
-    from datetime import datetime, timezone
-    log = get_logger(cfg)
-    # Per-account creds (the per-handle-creds gap): enumerate EVERY per-account-credentialed IG handle's
-    # media, each with its own creds — no longer capped at the single global handle. Empty handle set ->
-    # [None] -> the single global enumeration (byte-identical). Each pair carries WHICH handle it came from
-    # so the imported record is stamped with its true handle, not the one global scope label.
-    handles = meta_graph.credentialed_ig_handles(cfg) or [None]
-    scoped = meta_graph.enumerate_scoped_media(cfg, handles, get=get)
-    if not scoped:
-        return led                                               # no creds / empty / transport -> import nobody (fail-open)
-    now_z = iso_z(datetime.now(timezone.utc))                    # audit birth stamp for a first-time import
-    # the set of live permalinks we ALREADY author (a ledger post points at them) — shadowed, never imported.
-    authored: set[str] = set()
-    for p in led.posts.values():
-        k = _norm_permalink(p.public_url)
-        if k: authored.add(k)
-    imported = 0
-    for src_handle, m in scoped:
-        # the scope label: the real handle this media was enumerated under, or the global ig id for the
-        # None (global-creds) enumeration — preserves the single-handle scope label byte-for-byte.
-        handle = src_handle if src_handle is not None else cfg.meta_ig_user_id
-        mid = m.get("id")
-        if not mid:
-            continue                                             # a media with no id is un-keyable -> skip (defensive)
-        if _norm_permalink(m.get("permalink")) in authored:
-            continue                                             # authored here -> the Post is the record, not an import
-        prior = led.imported_media.get(mid)
-        # UPSERT: refresh identity fields from the live snapshot; PRESERVE prior metrics/metrics_series + the
-        # original imported_at (a re-pull must not erase what the insights read filled, nor reset the audit birth).
-        led.add_imported_media(ImportedMedia(
-            media_id=mid,
-            permalink=m.get("permalink"),
-            product_type=m.get("media_product_type"),
-            timestamp=m.get("timestamp"),
-            caption=m.get("caption"),
-            account=handle,
-            metrics=(prior.metrics if prior else {}),
-            metrics_series=(prior.metrics_series if prior else []),
-            error_reason=(prior.error_reason if prior else None),
-            imported_at=(prior.imported_at if prior and prior.imported_at else now_z)))
-        imported += 1
-    log("reconcile", "-", "imported_media_projected", imported=imported, live=len(scoped), handles=len(handles))
-    return led
 
 
 def heal_stranded_submitting(cfg: Config, *, now: Optional[datetime] = None) -> int:
@@ -334,10 +290,9 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     leave the row alone) stays where the rest of the per-post logic lives.
 
     Fetch = mirrored / polled (network). Visit = token_only + local apply (no network). Age
-    ladder and husk reject run even when fetch is empty. Unpollable is not invisible. Graph
-    username lookup after a token is the same seam as confirm-transport: hiccup is not a verdict.
+    ladder and husk reject run even when fetch is empty. Unpollable is not invisible.
 
-    Empty fetch -> local-only transaction (husk reject); no ensure_up, no Graph. Caller gates on
+    Empty fetch -> local-only transaction (husk reject); no ensure_up. Caller gates on
     backend/key. Returns the resolved counts."""
     snapshot = Ledger.load(cfg)
     healed = heal_stranded_submitting(cfg)
@@ -351,14 +306,11 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                 "healed_submitting": healed}
     from fanops.postiz_lifecycle import ensure_up        # work exists: bring the local Postiz stack up to read
     ensure_up(cfg)
-    from fanops.meta_graph import credentialed_ig_handles, confirm_post_live
-    _cred_ig = credentialed_ig_handles(cfg)
     polled_as: dict[str, str] = {}                       # post_id -> submission_id at read time (stale guard)
     mirror: dict[str, dict] = {}                         # sid -> the observation reconcile_posts applies
     # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
     # apply writes nothing on its behalf. A successful window overwrites that with the real observation. A
     # failed window therefore degrades to exactly this: visited, un-mirrored, un-written.
-    _ig_names: dict[str, tuple[Optional[str], str]] = {}
     for p in mirrored + token_only:
         if p.state in _RECONCILABLE or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)):
             mirror[p.submission_id] = {"status": "unknown"}
@@ -377,8 +329,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                 info = _mirror_info(window.get(p.submission_id))
                 if info["status"] == "published" and (
                         p.state in _RECONCILABLE or p.state in _MIRROR_HELD):
-                    _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
-                                          graph_get=None, ig_usernames=_ig_names)
+                    _enrich_poll_liveness(cfg, p, info)
                 mirror[p.submission_id] = info
             log("reconcile", "-", "mirror_window", rows=len(window), posts=len(mirrored))
     results: dict[str, object] = {}                      # sid -> info dict OR captured Exception
@@ -389,8 +340,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
             try:
                 info = poll(p.submission_id) or {}       # network, NO lock held
                 if (info.get("status") or "").lower() == "published":
-                    _enrich_poll_liveness(cfg, p, info, cred_ig=_cred_ig, confirm=confirm_post_live,
-                                          graph_get=None, ig_usernames=_ig_names)
+                    _enrich_poll_liveness(cfg, p, info)
                 results[p.submission_id] = info
             except AuthError:
                 raise                                    # bad key (Zernio): every poll fails -> halt
@@ -408,7 +358,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
 
 
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
-                    confirm=None, graph_get=None, now: Optional[datetime] = None,
+                    now: Optional[datetime] = None,
                     polled_as: dict[str, str] | None = None,
                     mirror: dict[str, dict] | None = None) -> Ledger:
     """The in-lock APPLY. `mirror` is the caller's pre-fetched Postiz observations, keyed by submission
@@ -419,14 +369,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
     now = now or datetime.now(timezone.utc)               # clock injected by tests; real callers default to UTC now
     log = get_logger(cfg)
     mirror = mirror or {}
-    # MOL-117: the IG liveness confirmation seam (confirm_post_live) + the Graph getter, both injectable so
-    # tests never touch the network. The credentialed-handle set is read ONCE per pass (a torn accounts.json
-    # degrades to [] -> every IG post treated as uncredentialed -> Postiz-rest unchanged, never stranded).
-    if confirm is None:
-        from fanops.meta_graph import confirm_post_live as confirm
-    from fanops.meta_graph import credentialed_ig_handles
-    _cred_ig = credentialed_ig_handles(cfg)
-    _ig_names: dict[str, tuple[Optional[str], str]] = {}
     _reject_exhausted_husks(led, cfg, log)
     # RESTING posts (published/analyzed) the caller mirrored. The ONLY thing that may happen to one of them
     # here is the postiz_state snapshot: a row that changed, or vanished, is RECORDED and nothing more. It
@@ -505,16 +447,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 if post.platform is Platform.tiktok:
                     if not liv.get("tiktok_ok"):
                         _reason = _UNVERIFIED_TIKTOK
-                elif post.platform is Platform.instagram:
-                    _verdict = liv.get("ig_verdict")
-                    if _verdict == _GATE_PARK:
-                        _reason = _UNVERIFIED_IG
-                    elif _verdict == _GATE_FAILOPEN:
-                        if (_u := safe_public_url(captured_url)):
-                            post = post.model_copy(update={"public_url": _u})
-                            led.posts[post.id] = post
-                        log("reconcile", post.id, "ig_confirm_transport_failopen")
-                        continue
                 if _reason is not None:
                     if (_u := safe_public_url(captured_url)):
                         post = post.model_copy(update={"public_url": _u})
@@ -551,17 +483,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 if post.platform is Platform.tiktok:
                     if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
                         _reason = _UNVERIFIED_TIKTOK
-                elif post.platform is Platform.instagram:
-                    _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get,
-                                                ig_usernames=_ig_names)
-                    if _verdict == _GATE_PARK:
-                        _reason = _UNVERIFIED_IG
-                    elif _verdict == _GATE_FAILOPEN:
-                        if (_u := safe_public_url(captured_url)):
-                            post = post.model_copy(update={"public_url": _u})
-                            led.posts[post.id] = post
-                        log("reconcile", post.id, "ig_confirm_transport_failopen")
-                        continue
                 if _reason is not None:
                     if (_u := safe_public_url(captured_url)):
                         post = post.model_copy(update={"public_url": _u})

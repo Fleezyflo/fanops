@@ -168,62 +168,7 @@ def test_card_cta_anchor_for_persona_blocker(tmp_path, monkeypatch):
     assert card.next_anchor == "#persona-ig"
 
 
-# ---- insights row (DISPLAY-ONLY): IG creds state, TikTok ceiling, YT/other omitted ----
-def test_insights_ig_missing_creds(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    card = _card(views.onboarding_account_cards(cfg), "ig")
-    ig = next(r for r in card.insights_rows if r["platform"] == "instagram")
-    assert ig["ok"] is False
-    assert "Meta" in ig["label"] and "Instagram" in ig["label"]   # the IG-creds fix line
-
-
-def test_insights_ig_present_creds(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    monkeypatch.setenv(per_account_token_env_key("ig"), "EAAtoken")   # per-handle Graph token set
-    _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active",
-                 "ig_user_id": "17841400000000000"}])                 # + per-handle IG user id
-    card = _card(views.onboarding_account_cards(cfg), "ig")
-    ig = next(r for r in card.insights_rows if r["platform"] == "instagram")
-    assert ig["ok"] is True
-
-
-def test_insights_tiktok_ceiling(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
-    _seed(cfg, [{"handle": "tk", "account_id": "", "platforms": ["tiktok"], "status": "active",
-                 "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}, "persona": "v"}])
-    card = _card(views.onboarding_account_cards(cfg), "tk")
-    tk = next(r for r in card.insights_rows if r["platform"] == "tiktok")
-    assert tk["ok"] is False
-    assert tk["label"] == "Insights not available via Zernio"     # red-flag 3's honest ceiling, verbatim
-
-
-def test_insights_youtube_row_omitted(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    _seed(cfg, [{"handle": "yt", "account_id": "", "platforms": ["youtube"], "status": "active"}])
-    card = _card(views.onboarding_account_cards(cfg), "yt")
-    assert [r for r in card.insights_rows if r["platform"] == "youtube"] == []   # no false insights parity for YT
-
-
-# ---- insights NEVER gates ready or the live-arming count ----
-def test_insights_do_not_block_ready(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
-    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
-    # a fully live-ready IG channel with NO Meta creds: publish path green, insights blind.
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active",
-                 "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}, "persona": "v"}])
-    card = _card(views.onboarding_account_cards(cfg), "ig")
-    ig_ch = _ch_of(card, "instagram")
-    ig_insights = next(r for r in card.insights_rows if r["platform"] == "instagram")
-    assert ig_ch.ready is True and ig_insights["ok"] is False     # ready DESPITE blind insights
-    # and the live-arming readiness count (channels with ready) still sees it as ready
-    st = views.golive_status(cfg)
-    assert len([c for c in st.channels if c.ready]) == 1
-    assert golive.go_live(cfg, confirmed=True).ok is True         # insights never gates the live flip
-
-
-# ---- account_cards wired into golive_status so every panel render carries them (no route edits) ----
+# ---- rendered pages: card markup present + NO secret VALUE echo, write-only inputs stay password ----
 def test_golive_status_carries_account_cards(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active"}])
@@ -244,27 +189,11 @@ def test_rendered_pages_no_secret_echo(tmp_path, monkeypatch):
     r = cli.post("/golive/config", data={"url": "https://p.example.com", "key": "sk_TOPSECRET_postiz"})
     body = r.get_data(as_text=True)
     assert "sk_TOPSECRET_postiz" not in body
-    # POST a per-account Meta token -> the token VALUE is never echoed
-    r2 = cli.post("/golive/account/meta-creds",
-                  data={"handle": "ig", "ig_user_id": "17841400000000000", "token": "EAAsecrettoken"})
-    body2 = r2.get_data(as_text=True)
-    assert "EAAsecrettoken" not in body2
     # every rendered password input is EMPTY (write-only: no secret pre-filled as a value)
-    for chunk in body2.split("<input")[1:]:
+    for chunk in body.split("<input")[1:]:
         head = chunk.split(">")[0]
         if 'type="password"' in head:
             assert 'value="' not in head or 'value=""' in head
-
-
-def test_ig_user_id_is_shown_but_token_is_not(tmp_path, monkeypatch):
-    # the IG user id is NON-secret (accounts.json) — safe to render as the current value; the token is a SECRET.
-    cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    monkeypatch.setenv(per_account_token_env_key("ig"), "EAAlivetoken")
-    _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active",
-                 "ig_user_id": "17841499999999999"}])
-    html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "17841499999999999" in html          # the non-secret id is rendered
-    assert "EAAlivetoken" not in html            # the secret token is NEVER rendered
 
 
 # ---- fresh workspace: add-account affordance appears first (no dead-end, "no sorcery" path) ----

@@ -59,42 +59,6 @@ def _env_settings_check(cfg: Config) -> dict:
         return _check(lbl, False, hint)
 
 
-def _ig_user_id_check(cfg: Config) -> tuple[bool, str]:
-    """T3: (ok, hint) for 'every active IG account resolves to its OWN ig_user_id'. Loads accounts FAIL-CLOSED
-    (a torn accounts.json -> ok=False, never a silent pass). BORROWERS = active IG-carrying accounts with no
-    own ig_user_id while >=2 active IG accounts exist (each falls back to the single global -> unverifiable
-    against its own media). DUPES = two active handles sharing the SAME non-None id. A single active IG on the
-    global is legitimate (not flagged). Reads only accounts.json (the OWN id) -- not resolve_meta_creds -- so
-    the global env id is never treated as an account's own; that separation is the demote-to-bootstrap point."""
-    from fanops.accounts import Accounts
-    from fanops.models import Platform
-    try:
-        active_ig = [a for a in Accounts.load(cfg).active() if Platform.instagram in a.platforms]
-    except Exception as e:                                # corrupt/unreadable accounts.json -> fail CLOSED (unknown != pass)
-        if decide("operator", 0) is EscalationPosture.nonzero:
-            logging.getLogger("fanops.doctor").debug("ig_user_id accounts read failed: %s", e)
-            return False, f"accounts.json unreadable -- cannot verify per-account ig_user_id ({str(e)[:120]}); fix it in the Studio Go-Live tab"
-        raise
-    own = {a.handle: ((a.ig_user_id or "").strip() or None) for a in active_ig}
-    borrowers = [h for h, i in own.items() if i is None]
-    borrow_bad = borrowers if len(active_ig) >= 2 else []   # a lone active IG on the global is fine; borrow only harms once >=2 share one id
-    dupes: list[str] = []; seen: dict[str, str] = {}
-    for h, i in own.items():
-        if i is None: continue
-        if i in seen: dupes.extend([seen[i], h])         # both handles that collide on this id
-        else: seen[i] = h
-    dupes = sorted(set(dupes))
-    if not borrow_bad and not dupes:
-        return True, ""
-    parts = []
-    if borrow_bad:
-        parts.append("set a per-account ig_user_id for: " + ", ".join(sorted(borrow_bad))
-                     + " (they fall back to the single global META_IG_USER_ID and can't be verified against their own media)")
-    if dupes:
-        parts.append("duplicate ig_user_id shared by: " + ", ".join(dupes) + " (each active handle needs a distinct IG Business id)")
-    return False, "; ".join(parts) + " -- set it per account in the Studio Go-Live tab (accounts.json ig_user_id)"
-
-
 _META_TOKEN_LEAD_DAYS = 10                                # WARN this many days before a Meta token expires
 
 
@@ -576,15 +540,6 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     checks.append(_check("IG insights readable (Meta Graph media insights)", not blocked,
                          "grant the instagram_manage_insights token scope — IG performance (reach/retention) "
                          "is frozen at its last snapshot until then; identification still works on instagram_basic"))
-
-    # T3: per-account ig_user_id required for ACTIVE IG accounts (the shared/borrowed-id root bug). With ≥2
-    # active IG accounts, one lacking its OWN ig_user_id silently BORROWS the global META_IG_USER_ID (another
-    # handle's id) -> it can never be verified against its own media, and its insights attribute to the wrong
-    # account. FAIL naming every borrower + any two handles resolving to the SAME non-None id. A single active
-    # IG account legitimately using the global is fine. FAIL CLOSED: a corrupt/unreadable accounts.json is
-    # reported failing (unknown != silent pass) — the whole point is that this class of drift stays LOUD.
-    ig_ok, ig_hint = _ig_user_id_check(cfg)
-    checks.append(_check("active IG accounts have their OWN ig_user_id (no shared/borrowed Meta id)", ig_ok, ig_hint))
 
     # Hashtag Layer A scrape session (instagrapi) — omit when setup incomplete (N/A, not green PASS).
     htag = _hashtag_scrape_check(cfg)

@@ -81,22 +81,6 @@ def test_set_zernio_config_routes_key_to_keyring(tmp_path, monkeypatch):
     assert "sk_SECRETKEY" not in json.dumps(res.detail)
 
 
-def test_set_meta_creds_routes_per_handle_token_to_keyring(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "@stan", "account_id": "", "platforms": ["instagram"], "status": "active"},
-    ]}))
-    res = golive.set_meta_creds(cfg, "stan", "ig-stan-99", "pa-tok")
-    assert res.ok is True
-    env = (tmp_path / ".env").read_text() if (tmp_path / ".env").exists() else ""
-    assert "META_GRAPH_TOKEN__STAN" not in env
-    assert "pa-tok" not in env
-    assert MemKeyring.get_password("fanops", "META_GRAPH_TOKEN__STAN") == "pa-tok"
-    assert os.environ["META_GRAPH_TOKEN__STAN"] == "pa-tok"
-    assert "pa-tok" not in repr(res)
-
-
 def test_keyring_write_round_trip_via_config(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)

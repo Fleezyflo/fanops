@@ -8,7 +8,6 @@ from typing import Literal
 from fanops.config import Config
 from fanops.health_probes import (
     _STAGE_HANG_CEILING_S,
-    _bounded_live_confirm_check,
     build_field_shape,
     daemon_liveness_check,
     daemon_progress,
@@ -168,10 +167,6 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
     checks = _assemble_doctor_checks(
         cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth,
         daemon_status=daemon_status, probe_policy=probe_policy)
-    if probe_policy != "observe":
-        live_chk = _bounded_live_confirm_check(cfg, get=live_get or get)
-        if live_chk is not None:
-            checks.append(live_chk)
     notes = _doctor_notes(cfg)
     if probe_policy == "observe":
         deps = deps_from_snapshot(cfg)
