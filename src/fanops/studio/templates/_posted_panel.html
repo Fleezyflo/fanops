@@ -19,7 +19,7 @@
     {% if failure_rollup.buckets.get(kind) %}<a class="button{{ ' active' if active_failure == kind else '' }}" href="{{ url_for('posted', delivery='failed', failure=kind, account=active, batch=active_batch|default(none), source=active_source|default(none)) }}">{{ label }} ({{ failure_rollup.buckets[kind] }})</a>{% endif %}
     {% endfor %}
   </nav>
-  <div id="posted-action-dock" class="approve-bar-sticky posted-action-dock"><span id="posted-sel-count" class="sel-count muted">Select failed posts to recover</span><button type="button" class="ghost" data-posted-action="clear">Clear</button><form class="recover-bar inline" id="recover-bulk" hx-post="{{ url_for('do_recover_posts', account=active, batch=active_batch|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML" hx-include="#posted-body input[name='ids']">
+  <div id="posted-action-dock" class="approve-bar-sticky posted-action-dock"><span id="posted-sel-count" class="sel-count muted">Select failed posts to recover</span><button type="button" class="ghost" data-posted-action="clear">Clear</button><form class="recover-bar inline" id="recover-bulk" hx-post="{{ url_for('do_recover_posts', account=active, batch=active_batch|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML" hx-include="#posted-body input[name='ids']:checked">
     <input type="hidden" name="reason" value="posted_failed_recovery">
     <button type="submit" name="recover_action" value="retry">Retry selected</button>
     <button type="submit" name="recover_action" value="review">Send to review</button>
