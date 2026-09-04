@@ -228,7 +228,7 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
     """S1 recovery cockpit: retry (failed→queued, retryable buckets only), review (→awaiting_approval),
     or discard (failed→rejected). Atomic per batch; unknown ids reported; oversize retried after auto-shrink."""
     from fanops.studio.views_results import classify_failure, _RETRYABLE_FAILURES
-    ids = [str(i) for i in (post_ids or []) if i]
+    ids = list(dict.fromkeys(str(i) for i in (post_ids or []) if i))
     if not ids:
         return ActionResult(ok=True, detail={"retried": 0, "discarded": 0, "reviewed": 0, "skipped": 0, "unknown": []})
     action = (action or "").strip().lower()
