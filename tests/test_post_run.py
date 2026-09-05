@@ -888,6 +888,24 @@ def test_ensure_media_reuploads_foreign_https(tmp_path, monkeypatch, mocker):
     assert "uploads.postiz.com" in led.posts["m1"].media_urls[0]
 
 
+def test_ensure_media_reuploads_zernio_temp_https(tmp_path, monkeypatch, mocker):
+    _live(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _queued(led, cfg, pid="m1", cid="c_m1", when="2020-01-01T00:00:00Z")
+    led.posts["m1"].media_urls = [
+        "https://storage.zernio.com/temp/1752_abc_v.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256"]
+    led.save()
+    mocker.patch("fanops.post.run.get_media_uploader",
+                 return_value=lambda *a, **k: "https://media.zernio.com/m/fresh.mp4")
+    from fanops.post.run import _ensure_media
+    led = Ledger.load(cfg)
+    _ensure_media(led, cfg, led.posts["m1"], "zernio")
+    assert "/temp/" not in led.posts["m1"].media_urls[0]
+    assert "media.zernio.com/m/" in led.posts["m1"].media_urls[0]
+
+
 def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, mocker):
     # F6-I PIN: missing / unknown handle → do not apply this guard (empty-registry parity).
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)

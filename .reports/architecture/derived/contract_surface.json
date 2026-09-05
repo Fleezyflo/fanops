@@ -260,7 +260,7 @@
         "swallow": "baseline 4 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 14,
+      "function_count": 15,
       "is_partitioned": false,
       "missing": false,
       "owners": [

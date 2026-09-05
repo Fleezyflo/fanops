@@ -690,6 +690,22 @@ def test_media_cache_hit_zernio_temp_not_reused():
     assert _media_cache_hit("https://media.zernio.com/m/1752_abc_v.mp4", "zernio") is True
 
 
+def test_ensure_clip_media_does_not_persist_zernio_temp(tmp_path, monkeypatch, mocker):
+    from fanops.models import Clip, ClipState
+    from fanops.ledger import Ledger
+    from fanops.post.media import ensure_clip_media
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = Ledger.load(cfg)
+    f = cfg.clips / "clip_1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    led.add_clip(Clip(id="clip_1", parent_id="m", path=str(f), state=ClipState.queued))
+    temp = "https://storage.zernio.com/temp/1752_abc_v.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+    mocker.patch("fanops.post.get_media_uploader", return_value=lambda c, p, **_kw: temp)
+    u = ensure_clip_media(led, cfg, "clip_1", backend="zernio")
+    assert u == temp
+    assert led.clips["clip_1"].media_url is None
+
+
 def test_publish_posts_image_path_is_the_minted_public_url(tmp_path, monkeypatch, mocker):
     r2 = "https://pub.r2.dev/fanops/fanops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4"
     cfg = _cfg(tmp_path, monkeypatch)
