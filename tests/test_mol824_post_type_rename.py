@@ -1,13 +1,10 @@
 # MOL-824: Post.product_type → Post.post_type with SCHEMA_VERSION 11→12 key migration.
 # P5: a row persisted under the old key keeps its declaration after load. Second migration is a no-op.
-# P4: GraphInsightsClient.list_posts reads "post_type" with no getattr default (missed rename must raise).
 import json
-import pytest
 import fanops.models as models_mod
 from fanops.config import Config
 from fanops.ledger import Ledger, SCHEMA_VERSION, _migrate_v12_rename_post_type
-from fanops.models import Post, Platform, PostState, ImportedMedia
-from fanops.post.metrics import GraphInsightsClient
+from fanops.models import Post, ImportedMedia
 
 
 def _write_legacy_json(cfg, raw):
@@ -79,27 +76,3 @@ def test_v11_ledger_preserves_declaration_on_load(tmp_path):
     assert saved["posts"]["p1"].get("post_type") == "post"
     assert "product_type" not in saved["posts"]["p1"]
     assert saved["imported_media"]["M1"]["product_type"] == "REELS"
-
-
-def test_list_posts_requires_post_type_attribute(tmp_path):
-    cfg = Config(root=tmp_path)
-    class Bare:
-        media_id = "M1"
-        submission_id = "s1"
-        account = "a"
-        cut_seconds = 10.0
-    with pytest.raises(AttributeError):
-        GraphInsightsClient(cfg, posts=[Bare()], insights_fn=lambda mid, pt: {"reach": 1}).list_posts()
-
-
-def test_list_posts_forwards_post_type(tmp_path):
-    cfg = Config(root=tmp_path)
-    post = Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.published, media_id="M1", submission_id="s1",
-                post_type="post", public_url="https://www.instagram.com/reel/p1/", cut_seconds=10.0)
-    seen = []
-    def spy(mid, pt):
-        seen.append((mid, pt)); return {"reach": 3}
-    rows = GraphInsightsClient(cfg, posts=[post], insights_fn=spy).list_posts()
-    assert seen == [("M1", "post")]
-    assert rows[0]["metrics"]["reach"] == 3

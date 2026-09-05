@@ -148,3 +148,22 @@ def test_tiktok_park_is_stable_across_two_passes(tmp_path):
     assert polled == []
     assert first.state is PostState.needs_reconcile and second.state is PostState.needs_reconcile
     assert second.error_reason == first.error_reason     # identical -> stable, not thrash
+
+
+def test_ig_with_meta_creds_rests_on_postiz_only(tmp_path):
+    # Credentialed account (ig_user_id set) still rests on Postiz confirmation — no Graph gate.
+    import json
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@cred", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "ig_user_id": "ig-cred-99"}]}))
+    led = Ledger.load(cfg)
+    url = "https://www.instagram.com/reel/CRED/"
+    _post(led, "cred", PostState.needs_reconcile, sub="postiz_cred", account="@cred",
+          url=url, media_id=None, error_reason=None)
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "published", "publicUrl": url, "releaseId": "mid_cred"})
+    p = led.posts["cred"]
+    assert p.state is PostState.published
+    assert p.error_reason is None

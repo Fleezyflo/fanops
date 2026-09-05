@@ -3,7 +3,7 @@
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Source, SourceState
-from fanops.reconcile import _GATE_FAILOPEN, _GATE_PARK, _GATE_REST, reconcile_due
+from fanops.reconcile import reconcile_due
 from tests.conftest import ledger_lock_is_free
 
 
@@ -87,15 +87,14 @@ def test_m05_ingest_stage_hash_copy_lock_free_and_dedup(tmp_path, monkeypatch, m
 
 
 def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeypatch, mocker):
-    """M04: IG rest / park / fail_open liveness computed lock-free; verdict applied in txn."""
+    """M04: liveness enrichment runs lock-free; IG rests on Postiz confirmation only."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    for pid, plat in (("ig_rest", Platform.instagram), ("ig_park", Platform.instagram),
-                      ("ig_failopen", Platform.instagram)):
-        led.add_post(Post(id=pid, parent_id="c", account="@cred", account_id="1", platform=plat,
+    for pid in ("ig_rest", "ig_park", "ig_failopen"):
+        led.add_post(Post(id=pid, parent_id="c", account="@cred", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.needs_reconcile, submission_id=f"sub_{pid}",
                           public_url="https://instagram.com/p/x"))
     led.save()
@@ -108,67 +107,8 @@ def test_m04_reconcile_liveness_branches_lock_free_and_applied(tmp_path, monkeyp
                 "releaseId": f"mid_{pid}"}
 
     mocker.patch("fanops.reconcile._default_get_status", return_value=poll)
-    mocker.patch("fanops.meta_graph.credentialed_ig_handles", return_value=["@cred"])
-
-    def fake_ig_verdict(cfg, post, media_id, cred_ig, confirm, graph_get, **_kw):
-        if post.id == "ig_rest":
-            return _GATE_REST
-        if post.id == "ig_park":
-            return _GATE_PARK
-        return _GATE_FAILOPEN
-
-    mocker.patch("fanops.reconcile_liveness._ig_rest_verdict", side_effect=fake_ig_verdict)
     reconcile_due(cfg)
     assert seen["lock_free"] and all(seen["lock_free"])
     again = Ledger.load(cfg)
-    assert again.posts["ig_rest"].state is PostState.published
-    assert again.posts["ig_park"].state is PostState.needs_reconcile
-    assert again.posts["ig_failopen"].state is PostState.needs_reconcile
-
-
-def test_m04_ig_failopen_escalates_to_published_after_n_passes(tmp_path, monkeypatch, mocker):
-    """IG _GATE_FAILOPEN escalates to Postiz-rest publish after N consecutive passes."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")
-    monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    led.add_post(Post(id="ig_failopen_esc", parent_id="c", account="@cred", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile,
-                      submission_id="sub_esc", public_url="https://instagram.com/p/x"))
-    led.save()
-    mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {
-        "status": "published", "publicUrl": "https://instagram.com/p/esc", "releaseId": "mid_esc"})
-    mocker.patch("fanops.meta_graph.credentialed_ig_handles", return_value=["@cred"])
-    mocker.patch("fanops.reconcile_liveness._ig_rest_verdict", return_value=_GATE_FAILOPEN)
-    for i in range(2):
-        reconcile_due(cfg)
-        p = Ledger.load(cfg).posts["ig_failopen_esc"]
-        assert p.state is PostState.needs_reconcile
-        assert int(getattr(p, "ig_confirm_failopen_count", 0) or 0) == i + 1
-    reconcile_due(cfg)
-    final = Ledger.load(cfg).posts["ig_failopen_esc"]
-    assert final.state is PostState.published
-    assert int(getattr(final, "ig_confirm_failopen_count", 0) or 0) == 0
-
-
-def test_m04_ig_park_resets_failopen_counter(tmp_path, monkeypatch, mocker):
-    """IG _GATE_PARK clears accumulated fail-open counter so escalation stays consecutive."""
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")
-    monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    led.add_post(Post(id="ig_park_cnt", parent_id="c", account="@cred", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile,
-                      submission_id="sub_park", public_url="https://instagram.com/p/x",
-                      ig_confirm_failopen_count=2))
-    led.save()
-    mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {
-        "status": "published", "publicUrl": "https://instagram.com/p/park", "releaseId": "mid_park"})
-    mocker.patch("fanops.meta_graph.credentialed_ig_handles", return_value=["@cred"])
-    mocker.patch("fanops.reconcile_liveness._ig_rest_verdict", return_value=_GATE_PARK)
-    reconcile_due(cfg)
-    p = Ledger.load(cfg).posts["ig_park_cnt"]
-    assert p.state is PostState.needs_reconcile
-    assert int(getattr(p, "ig_confirm_failopen_count", 0) or 0) == 0
+    for pid in ("ig_rest", "ig_park", "ig_failopen"):
+        assert again.posts[pid].state is PostState.published

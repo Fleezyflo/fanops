@@ -39,10 +39,6 @@ class GoLiveAccount:
     channels: list[GoLiveChannel]    # one per platform this handle posts to
     persona_id: Optional[str] = None # S8: the linked first-class Persona record id (Account.persona_id) — None
                                      # when the account uses only inline text. Drives the linked/no-persona badge.
-    ig_user_id: str = ""             # per-account Meta IG Business user id (accounts.json, non-secret) — safe to
-                                     # render as the current value; "" == unset (falls back to global META_IG_USER_ID).
-    meta_token_set: bool = False     # whether a per-handle Graph access token is set (a per-handle .env key). BOOL
-                                     # only — the token value is a SECRET, NEVER carried in this read-model.
 
 
 @dataclass
@@ -90,13 +86,11 @@ class AccountOnboardingCard:
     of channel_readiness re-grouped by account, so onboarding one account never means hopping stations. It
     NEVER recomputes readiness: `channels` is the subset of channel_readiness for this handle, `next_blocker`
     is that handle's WORST channel first_blocker (same _blocker_priority order the fleet next_blocker uses),
-    `next_anchor` deep-links the CTA to the existing form that clears it, and `insights_rows` is the
-    display-only IG-creds / TikTok-ceiling capability read (it must NOT feed ChannelReadiness.ready)."""
+    `next_anchor` deep-links the CTA to the existing form that clears it."""
     account: GoLiveAccount            # active or demoted (the header + persona chip source)
     channels: list[ChannelReadiness]  # subset of channel_readiness for this handle ([] for a demoted account)
     next_blocker: str                 # worst-channel first_blocker (fleet order), "" when the account is ready
     next_anchor: str                  # in-page fragment id the single CTA deep-links to ("" when ready)
-    insights_rows: list[dict]         # display-only: [{platform, ok, label}] — capability, NOT a readiness gate
 
 
 def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
@@ -108,8 +102,6 @@ def golive_accounts(cfg: Config) -> list[GoLiveAccount]:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
-            ig_user_id=(a.ig_user_id or ""),               # per-account Meta id (non-secret) — render current value
-            meta_token_set=cfg.meta_token_set_for(a.handle),  # BOOL only; token is SECRET
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")
@@ -129,8 +121,6 @@ def golive_demoted_accounts(cfg: Config) -> list:
         return [GoLiveAccount(
             handle=a.handle, persona=a.persona,
             persona_id=getattr(a, "persona_id", None),     # S8: the linked first-class Persona (badge), additive
-            ig_user_id=(a.ig_user_id or ""),               # U12: parity with golive_accounts so a demoted IG card
-            meta_token_set=cfg.meta_token_set_for(a.handle),  # can still show its insights row (BOOL only; SECRET)
             channels=[GoLiveChannel(platform=p.value,
                                     integration_id=a.integrations.get(p.value) or a.account_id or "",
                                     backend=a.backends.get(p.value) or "")
@@ -239,26 +229,6 @@ def _card_next_anchor(handle: str, blocker: str, channels: list[ChannelReadiness
     return "#golive-connect"
 
 
-def _card_insights_rows(account: "GoLiveAccount") -> list[dict]:
-    """DISPLAY-ONLY per-platform insights capability for a card — it MUST NOT feed ChannelReadiness.ready (the
-    live-arming gate is publish-only). instagram: ✓ when the handle carries BOTH its own ig_user_id and a
-    per-handle Graph token (meta_token_set); ✗ names the Meta-creds fix (MOL-112 blindness made visible).
-    tiktok: always ✗ — Zernio exposes publish but no per-account insights parity (red-flag 3). youtube/other:
-    OMITTED entirely (no false parity). Order follows the account's channels."""
-    rows: list[dict] = []
-    for ch in account.channels:
-        p = ch.platform
-        if p == "instagram":
-            ok = bool((account.ig_user_id or "").strip() and account.meta_token_set)
-            label = ("Instagram insights connected" if ok
-                     else "Connect Meta creds for Instagram insights (metrics + followers blind otherwise)")
-            rows.append({"platform": p, "ok": ok, "label": label})
-        elif p == "tiktok":
-            rows.append({"platform": p, "ok": False, "label": "Insights not available via Zernio"})
-        # youtube / any other platform: no insights row (no false IG-parity)
-    return rows
-
-
 def onboarding_account_cards(cfg: Config) -> list[AccountOnboardingCard]:
     """U12: the account-centric onboarding read-model — one AccountOnboardingCard per handle (active first,
     then demoted). A pure DISPLAY projection: it RE-GROUPS channel_readiness(cfg) by handle (never a second
@@ -275,12 +245,10 @@ def onboarding_account_cards(cfg: Config) -> list[AccountOnboardingCard]:
         blocker = _card_worst_blocker(ladder)
         cards.append(AccountOnboardingCard(
             account=acct, channels=ladder, next_blocker=blocker,
-            next_anchor=_card_next_anchor(acct.handle, blocker, ladder),
-            insights_rows=_card_insights_rows(acct)))
+            next_anchor=_card_next_anchor(acct.handle, blocker, ladder)))
     for acct in golive_demoted_accounts(cfg):             # demoted (planned) accounts — promotable, empty ladder
         cards.append(AccountOnboardingCard(
-            account=acct, channels=[], next_blocker="", next_anchor="",
-            insights_rows=_card_insights_rows(acct)))
+            account=acct, channels=[], next_blocker="", next_anchor=""))
     return cards
 
 

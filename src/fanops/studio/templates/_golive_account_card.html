@@ -30,9 +30,6 @@
       <span class="ladder-rung {{ 'ok' if ch.creds else 'err' }}">{{ '✓' if ch.creds else '✗' }} creds</span>
       <span class="ladder-rung {{ 'ok' if ch.persona else 'err' }}">{{ '✓' if ch.persona else '✗' }} persona</span>
       <span class="ladder-rung {{ 'ok' if ch.window else 'err' }}">{{ '✓' if ch.window else '✗' }} window</span>
-      {% for ins in card.insights_rows if ins.platform == ch.platform %}
-      <span class="ladder-rung insights {{ 'ok' if ins.ok else 'ro' }}" title="{{ ins.label }}">{{ '✓' if ins.ok else '✗' }} insights</span>
-      {% endfor %}
     </li>
     {% endfor %}
   </ul>
@@ -118,17 +115,6 @@
         <button type="submit" class="danger">Remove</button>
       </form>
     </div>
-
-    {# per-account Meta creds — the IG-insights fix path (anchor: #meta-<handle>). id is NON-secret; token WRITE-ONLY #}
-    <form class="meta-creds-row meta" id="meta-{{ a.handle }}" hx-post="{{ url_for('do_golive_account_meta_creds') }}" hx-target="#golive-panel" hx-swap="outerHTML">
-      <input type="hidden" name="handle" value="{{ a.handle }}">
-      <span><strong>{{ a.handle }}</strong> Meta creds
-        {% if a.meta_token_set %}<span class="chip ok" title="A per-handle Graph access token is set">✦ token set</span>
-        {% else %}<span class="chip ro" title="No per-handle token — uses the global META_GRAPH_TOKEN">○ global token</span>{% endif %}</span>
-      <label>IG user id <input type="text" name="ig_user_id" value="{{ a.ig_user_id }}" placeholder="global" size="18" aria-label="Meta IG user id for {{ a.handle }}"></label>
-      <label>access token <input type="password" name="token" placeholder="{{ 'unchanged' if a.meta_token_set else 'global' }}" size="18" autocomplete="off" aria-label="Meta access token for {{ a.handle }} (write-only)"></label>
-      <button type="submit">Save Meta creds</button>
-    </form>
   </details>
   {% endif %}
 </article>

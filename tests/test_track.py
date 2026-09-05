@@ -261,22 +261,19 @@ def test_default_list_posts_postiz_no_ids_yields_empty(tmp_path, monkeypatch, mo
     assert list(_default_list_posts(cfg)("30d")) == []          # positional → submission_ids=None → [] no-op
     spy.assert_not_called()
 
-def test_default_list_posts_routes_ig_to_graph_not_postiz(tmp_path, monkeypatch, mocker):
-    # Leg 2: Meta Graph is the SOLE IG performance source. An IG post's metrics now come from
-    # GraphInsightsClient (media insights), NOT PostizMetricsClient — even though Postiz PUBLISHES it.
+def test_default_list_posts_routes_ig_to_postiz(tmp_path, monkeypatch, mocker):
+    # IG metrics route through Postiz like other backends (retention unavailable via Postiz).
     from fanops.track import _default_list_posts
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
     igp = Post(id="ig1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-               caption="x", state=PostState.published, submission_id="s_ig", media_id="M1",
-               cut_seconds=20.0, public_url="https://www.instagram.com/reel/AAA/")
-    # media insights injected; Postiz analytics endpoint must NOT be called for an IG post.
-    postiz_spy = mocker.patch("fanops.post.metrics.requests.get")
-    mocker.patch("fanops.meta_graph.media_insights",
-                 return_value={"reach": 1000, "saves": 40, "shares": 12, "avg_watch_ms": 8000})
+               caption="x", state=PostState.published, submission_id="s_ig",
+               public_url="https://www.instagram.com/reel/AAA/")
+    graph_spy = mocker.patch("fanops.meta_graph.media_insights")
+    mocker.patch("fanops.post.metrics.requests.get",
+                 return_value=type("R", (), {"status_code": 200, "json": lambda s: [{"reach": 1000}]})())
     rows = list(_default_list_posts(cfg, posts=[igp])("30d"))
     assert len(rows) == 1 and rows[0]["postSubmissionId"] == "s_ig"
-    assert abs(rows[0]["metrics"]["retention"] - 0.40) < 1e-9   # Graph-derived, not Postiz
-    postiz_spy.assert_not_called()                              # IG never hits the Postiz analytics reader
+    graph_spy.assert_not_called()
 
 def test_default_list_posts_tiktok_still_routes_to_zernio(tmp_path, monkeypatch, mocker):
     # Non-IG is UNCHANGED: a TikTok post still routes to its zernio metrics reader, never to Graph.

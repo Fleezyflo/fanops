@@ -123,6 +123,11 @@ protocol (`publish(led, post_id) -> Ledger`). `postiz.py` / `dryrun.py` do not i
   dead without grepping for its lazy-import site. `DryRunPoster.publish` is effectively unreached post-M1 but is
   RETAINED as the `Poster`-protocol fallback — keep it.
 
+## Credential lanes
+
+Publish, reconcile, and track metrics use **Postiz / Zernio / YouTube only**. Meta Graph (`META_GRAPH_TOKEN`) is
+operator diagnostics only: `fanops verify-live` and `fanops map-media` — never reconcile, track, or Go-Live.
+
 ## Failure posture
 
 `AuthError` HALTS the run (never burns the queue); every other publish error → per-post `failed` (re-queueable)

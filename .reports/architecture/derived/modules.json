@@ -126,7 +126,6 @@
     "fanops.reach_ranking",
     "fanops.recaption",
     "fanops.reconcile",
-    "fanops.reconcile_liveness",
     "fanops.reconcile_mirror",
     "fanops.reframe",
     "fanops.reframe_apply",
@@ -331,7 +330,6 @@
     "fanops.reach_ranking": "S14_learning",
     "fanops.recaption": "S15_orchestration",
     "fanops.reconcile": "S13_reconcile_metrics",
-    "fanops.reconcile_liveness": "S13_reconcile_metrics",
     "fanops.reconcile_mirror": "S13_reconcile_metrics",
     "fanops.reframe": "S18_health_diag",
     "fanops.reframe_apply": "S19_maintenance",
@@ -409,9 +407,9 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 196,
+    "assigned": 195,
     "ghosts": 0,
-    "modules": 196,
+    "modules": 195,
     "unassigned": 0
   },
   "unassigned_modules": []

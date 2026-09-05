@@ -167,11 +167,68 @@ def cmd_reconcile(cfg: Config, *, report_terminals: bool = False) -> int:
     print(f"reconciled; needs_reconcile={r['needs_reconcile']} published={r['published']}")
     return 0
 
+
+def _norm_permalink(url) -> str | None:
+    """Canonical key for matching a stored public_url to a Graph media permalink."""
+    from fanops.text import safe_public_url
+    ok = safe_public_url(url)
+    if ok is None:
+        return None
+    from urllib.parse import urlparse
+    u = urlparse(ok)
+    host = u.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = u.path.rstrip("/")
+    return f"{host}{path}" if host else None
+
+
+def _project_imported_media(led: Ledger, cfg: Config, *, get=None) -> Ledger:
+    """Operator-only map-media: enumerate live IG /media and upsert non-authored rows as ImportedMedia."""
+    from fanops import meta_graph
+    from fanops.log import get_logger
+    from fanops.models import ImportedMedia
+    from fanops.timeutil import iso_z
+    from datetime import datetime, timezone
+    log = get_logger(cfg)
+    scoped = meta_graph.enumerate_scoped_media(cfg, [None], get=get)
+    if not scoped:
+        return led
+    now_z = iso_z(datetime.now(timezone.utc))
+    authored: set[str] = set()
+    for p in led.posts.values():
+        k = _norm_permalink(p.public_url)
+        if k:
+            authored.add(k)
+    imported = 0
+    for _src_handle, m in scoped:
+        handle = cfg.meta_ig_user_id
+        mid = m.get("id")
+        if not mid:
+            continue
+        if _norm_permalink(m.get("permalink")) in authored:
+            continue
+        prior = led.imported_media.get(mid)
+        led.add_imported_media(ImportedMedia(
+            media_id=mid,
+            permalink=m.get("permalink"),
+            product_type=m.get("media_product_type"),
+            timestamp=m.get("timestamp"),
+            caption=m.get("caption"),
+            account=handle,
+            metrics=(prior.metrics if prior else {}),
+            metrics_series=(prior.metrics_series if prior else []),
+            error_reason=(prior.error_reason if prior else None),
+            imported_at=(prior.imported_at if prior and prior.imported_at else now_z)))
+        imported += 1
+    log("reconcile", "-", "imported_media_projected", imported=imported, live=len(scoped), handles=1)
+    return led
+
+
 def cmd_map_media(cfg: Config) -> int:
     # Mirror live-only IG media into ImportedMedia (project_imported_media) and fill their insights.
     # READ-ONLY w.r.t. Instagram (GET /{ig_user}/media). Authored-post media_id/post_type arrive at
     # publish time — this verb does not feed-match authored rows. Fail-open (no creds -> imports nobody).
-    from fanops.reconcile import project_imported_media
     from fanops.track import pull_imported_insights
     led0 = Ledger.load(cfg)
     recorded: list = []
@@ -185,11 +242,11 @@ def cmd_map_media(cfg: Config) -> int:
         r = recorded[idx[0]] if idx[0] < len(recorded) else None
         idx[0] += 1
         return r
-    project_imported_media(led0, cfg, get=recording_get)
+    _project_imported_media(led0, cfg, get=recording_get)
     pull_imported_insights(led0, cfg, get=recording_get)
     with Ledger.transaction(cfg) as led:
         idx[0] = 0
-        project_imported_media(led, cfg, get=replay_get)
+        _project_imported_media(led, cfg, get=replay_get)
         pull_imported_insights(led, cfg, get=replay_get)
         mapped = sum(1 for p in led.posts.values() if p.media_id)
         ig = sum(1 for p in led.posts.values()

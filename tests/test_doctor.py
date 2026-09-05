@@ -195,56 +195,6 @@ def test_doctor_insights_check_passes_when_not_blocked(tmp_path):
     assert ic is not None and ic["ok"] is True
 
 
-# --- T3: per-account ig_user_id required for active IG accounts (demote global to bootstrap-only) ---
-
-def _ig_accts_cfg(tmp_path, rows):
-    """Config with ACTIVE IG accounts from `rows` = [(handle, ig_user_id_or_None), ...]. Each carries the
-    instagram platform + an id so accounts.validate() is happy (the ig-id check is orthogonal to mapping)."""
-    cfg = Config(root=tmp_path)
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    accts = [{"handle": h, "platforms": ["instagram"], "status": "active", "access": "postiz",
-              "integrations": {"instagram": "ig_map_" + h.lstrip("@")}, "backends": {"instagram": "postiz"},
-              "ig_user_id": iid} for h, iid in rows]
-    cfg.accounts_path.write_text(json.dumps({"accounts": accts}))
-    return cfg
-
-def _igid_check(rep):
-    return next((c for c in rep["checks"] if "ig_user_id" in c["label"].lower() or "ig user id" in c["label"].lower()), None)
-
-
-def test_doctor_requires_distinct_ig_user_id_per_active_account(tmp_path, monkeypatch):
-    # (i) CURRENT PROD STATE: 3 active IG accts, all ig_user_id=None, one global id -> all 3 borrow the
-    # global (markmakmouly's) -> FAIL, naming the two SILENT borrowers (perca.late + cisumwolfhom).
-    monkeypatch.setenv("META_IG_USER_ID", "17841400000000001")   # the single global id (markmakmouly's, historically)
-    cfg = _ig_accts_cfg(tmp_path, [("markmakmouly", None), ("@perca.late", None), ("cisumwolfhom", None)])
-    c = _igid_check(doctor.doctor_report(cfg))
-    assert c is not None and c["ok"] is False
-    assert "perca.late" in c["hint"] and "cisumwolfhom" in c["hint"]
-
-    # (ii) 3 DISTINCT non-null ids -> every account is verified against its OWN media -> OK.
-    cfg2 = _ig_accts_cfg(tmp_path, [("markmakmouly", "111"), ("@perca.late", "222"), ("cisumwolfhom", "333")])
-    c2 = _igid_check(doctor.doctor_report(cfg2))
-    assert c2 is not None and c2["ok"] is True
-
-    # (iii) CORRUPT accounts.json -> FAIL CLOSED (unknown != silent pass), no crash.
-    cfg3 = Config(root=tmp_path)
-    cfg3.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg3.accounts_path.write_text("{ this is not json ]")
-    c3 = _igid_check(doctor.doctor_report(cfg3))         # must not raise
-    assert c3 is not None and c3["ok"] is False
-
-    # (iv) a SINGLE active IG account legitimately using the global -> NOT a violation (no false positive).
-    cfg4 = _ig_accts_cfg(tmp_path, [("markmakmouly", None)])
-    c4 = _igid_check(doctor.doctor_report(cfg4))
-    assert c4 is not None and c4["ok"] is True
-
-    # (v) explicit DUPLICATE: two active handles resolve to the SAME non-None id -> FAIL naming both.
-    cfg5 = _ig_accts_cfg(tmp_path, [("markmakmouly", "999"), ("@perca.late", "999"), ("cisumwolfhom", "333")])
-    c5 = _igid_check(doctor.doctor_report(cfg5))
-    assert c5 is not None and c5["ok"] is False
-    assert "markmakmouly" in c5["hint"] and "perca.late" in c5["hint"]
-
-
 # --- T9: Meta token expiry preflight (debug_token) + rotation runbook ---
 
 class _FakeResp:

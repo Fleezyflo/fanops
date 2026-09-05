@@ -629,7 +629,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_backend",
-      "line": 111,
+      "line": 102,
       "methods": [
         "POST"
       ],
@@ -640,7 +640,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_demote",
-      "line": 134,
+      "line": 125,
       "methods": [
         "POST"
       ],
@@ -650,19 +650,8 @@
     },
     {
       "decorator": "app.post",
-      "handler": "do_golive_account_meta_creds",
-      "line": 102,
-      "methods": [
-        "POST"
-      ],
-      "module": "fanops.studio.app_routes_golive",
-      "mutating": true,
-      "path": "/golive/account/meta-creds"
-    },
-    {
-      "decorator": "app.post",
       "handler": "do_golive_account_persona",
-      "line": 119,
+      "line": 110,
       "methods": [
         "POST"
       ],
@@ -673,7 +662,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_promote",
-      "line": 124,
+      "line": 115,
       "methods": [
         "POST"
       ],
@@ -684,7 +673,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_account_remove",
-      "line": 129,
+      "line": 120,
       "methods": [
         "POST"
       ],
@@ -695,7 +684,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_accounts_page",
-      "line": 193,
+      "line": 184,
       "methods": [
         "GET"
       ],
@@ -706,7 +695,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_adopt",
-      "line": 150,
+      "line": 141,
       "methods": [
         "POST"
       ],
@@ -750,7 +739,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_connect",
-      "line": 188,
+      "line": 179,
       "methods": [
         "GET"
       ],
@@ -783,7 +772,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_discover",
-      "line": 143,
+      "line": 134,
       "methods": [
         "POST"
       ],
@@ -794,7 +783,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_dryrun",
-      "line": 232,
+      "line": 223,
       "methods": [
         "POST"
       ],
@@ -805,7 +794,7 @@
     {
       "decorator": "app.get",
       "handler": "do_golive_health",
-      "line": 161,
+      "line": 152,
       "methods": [
         "GET"
       ],
@@ -849,7 +838,7 @@
     {
       "decorator": "app.get",
       "handler": "golive_live_page",
-      "line": 198,
+      "line": 189,
       "methods": [
         "GET"
       ],
@@ -860,7 +849,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_live",
-      "line": 225,
+      "line": 216,
       "methods": [
         "POST"
       ],
@@ -882,7 +871,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_map",
-      "line": 203,
+      "line": 194,
       "methods": [
         "POST"
       ],
@@ -904,7 +893,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_refresh",
-      "line": 139,
+      "line": 130,
       "methods": [
         "POST"
       ],
@@ -937,7 +926,7 @@
     {
       "decorator": "app.post",
       "handler": "do_golive_validate",
-      "line": 236,
+      "line": 227,
       "methods": [
         "POST"
       ],
@@ -2096,8 +2085,8 @@
   "totals": {
     "cli_add_parser_sites": 75,
     "cli_verbs_unique": 70,
-    "route_endpoints": 148,
-    "route_endpoints_mutating": 106,
-    "route_unique_paths": 147
+    "route_endpoints": 147,
+    "route_endpoints_mutating": 105,
+    "route_unique_paths": 146
   }
 }

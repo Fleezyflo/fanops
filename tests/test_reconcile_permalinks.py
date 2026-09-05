@@ -72,8 +72,8 @@ def test_advance_same_tick_publish_then_reconcile_url(tmp_path, monkeypatch, moc
     assert p.public_url == url
 
 
-def test_reconcile_keeps_https_url_when_ig_liveness_parked(tmp_path, monkeypatch):
-    """Credentialed IG identity gate may park the post, but the captured releaseURL must persist."""
+def test_reconcile_promotes_credentialed_ig_on_postiz_confirmation(tmp_path, monkeypatch):
+    """IG with per-account ig_user_id rests on Postiz confirmation — Graph gate removed."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,38 +86,10 @@ def test_reconcile_keeps_https_url_when_ig_liveness_parked(tmp_path, monkeypatch
                       state=PostState.needs_reconcile, submission_id="postiz_1"))
     led = reconcile_posts(led, cfg, get_status=lambda sid: {
         "status": "published", "publicUrl": url, "releaseId": "17841456789012345",
-    }, confirm=lambda *a, **k: {"confirmed": False, "owner": None})
+    })
     p = led.posts["p1"]
-    assert p.state is PostState.needs_reconcile
+    assert p.state is PostState.published
     assert p.public_url == url
-    assert "unverified" in (p.error_reason or "").lower()
-
-
-def test_reconcile_keeps_https_url_on_ig_transport_failopen(tmp_path, monkeypatch):
-    """Graph transport hiccup is fail-open — permalink captured from Postiz must still land on the row."""
-    import requests
-    monkeypatch.setenv("META_GRAPH_TOKEN", "tok-global")
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "@markmakmouly", "account_id": "1", "platforms": ["instagram"],
-         "status": "active", "ig_user_id": "ig-mark-99"}]}))
-    url = "https://www.instagram.com/reel/DaY8y2DCiuf/"
-    led.add_post(Post(id="p1", parent_id="c", account="@markmakmouly", account_id="1",
-                      platform=Platform.instagram, caption="x",
-                      state=PostState.needs_reconcile, submission_id="postiz_1"))
-
-    def graph_get(url_, params=None, timeout=None):
-        raise requests.exceptions.RequestException("boom")
-
-    led = reconcile_posts(led, cfg, get_status=lambda sid: {
-        "status": "published", "publicUrl": url, "releaseId": "17841456789012345",
-    }, graph_get=graph_get)
-    p = led.posts["p1"]
-    assert p.state is PostState.needs_reconcile
-    assert p.public_url == url
-    assert "unverified" not in (p.error_reason or "").lower()
 
 
 def test_postiz_publish_persists_releaseurl_from_body_not_invented(tmp_path, monkeypatch, mocker):

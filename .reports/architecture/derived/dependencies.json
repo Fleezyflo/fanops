@@ -27,7 +27,6 @@
       "fanops.post.dryrun",
       "fanops.post.media",
       "fanops.post.metrics",
-      "fanops.post.metrics.common",
       "fanops.post.metrics.postiz_read",
       "fanops.post.metrics.zernio_read",
       "fanops.post.postiz",
@@ -375,6 +374,7 @@
         "fanops.init_flow",
         "fanops.ledger_wipe",
         "fanops.llm",
+        "fanops.log",
         "fanops.meta_graph",
         "fanops.models",
         "fanops.overlay_reburn",
@@ -390,6 +390,8 @@
         "fanops.studio.views",
         "fanops.studio.views_results",
         "fanops.studio_desktop",
+        "fanops.text",
+        "fanops.timeutil",
         "fanops.track"
       ],
       "optional": [],
@@ -667,7 +669,6 @@
       ],
       "lazy": [
         "fanops",
-        "fanops.accounts",
         "fanops.daemon",
         "fanops.errors",
         "fanops.fanops_hashtags",
@@ -864,8 +865,6 @@
         "fanops.field_shape",
         "fanops.health",
         "fanops.ledger",
-        "fanops.meta_graph",
-        "fanops.models",
         "fanops.pipeline_run",
         "fanops.post.postiz"
       ],
@@ -1462,15 +1461,9 @@
     },
     "fanops.post.metrics.common": {
       "compile": [
-        "fanops.config",
-        "fanops.errors",
-        "fanops.log"
+        "fanops.errors"
       ],
-      "lazy": [
-        "fanops",
-        "fanops.errors",
-        "fanops.meta_graph"
-      ],
+      "lazy": [],
       "optional": [],
       "typing": []
     },
@@ -1702,35 +1695,16 @@
         "fanops.ledger",
         "fanops.log",
         "fanops.models",
-        "fanops.reconcile_liveness",
         "fanops.reconcile_mirror",
         "fanops.text",
         "fanops.timeutil"
       ],
       "lazy": [
-        "fanops",
         "fanops.accounts",
-        "fanops.meta_graph",
         "fanops.models",
         "fanops.post.metrics",
         "fanops.post.run",
         "fanops.postiz_lifecycle"
-      ],
-      "optional": [],
-      "typing": []
-    },
-    "fanops.reconcile_liveness": {
-      "compile": [
-        "fanops.config",
-        "fanops.log",
-        "fanops.models",
-        "fanops.text"
-      ],
-      "lazy": [
-        "fanops.accounts",
-        "fanops.meta_graph",
-        "fanops.models",
-        "fanops.post.metrics"
       ],
       "optional": [],
       "typing": []
@@ -2412,7 +2386,6 @@
         "fanops",
         "fanops.daemon",
         "fanops.ledger",
-        "fanops.meta_graph",
         "fanops.models",
         "fanops.pipeline_run",
         "fanops.timeutil"
@@ -2753,7 +2726,6 @@
         "fanops.accounts",
         "fanops.cutover",
         "fanops.meta_graph",
-        "fanops.models",
         "fanops.post.metrics",
         "fanops.validation_gate"
       ],
@@ -2978,7 +2950,7 @@
     "fanops.clip": 7,
     "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 124,
+    "fanops.config": 122,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 14,
@@ -3029,11 +3001,11 @@
     "fanops.llm": 1,
     "fanops.llm_errors": 1,
     "fanops.llm_json": 1,
-    "fanops.log": 62,
+    "fanops.log": 60,
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 68,
+    "fanops.models": 67,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -3072,7 +3044,6 @@
     "fanops.reach_ranking": 2,
     "fanops.recaption": 0,
     "fanops.reconcile": 2,
-    "fanops.reconcile_liveness": 1,
     "fanops.reconcile_mirror": 1,
     "fanops.reframe": 2,
     "fanops.reframe_apply": 1,
@@ -3135,7 +3106,7 @@
     "fanops.studio.views_schedule": 1,
     "fanops.studio_desktop": 0,
     "fanops.tagging": 1,
-    "fanops.text": 5,
+    "fanops.text": 4,
     "fanops.timeutil": 27,
     "fanops.timing_bias": 1,
     "fanops.track": 3,
@@ -3251,7 +3222,7 @@
     "fanops.post.dryrun": 3,
     "fanops.post.media": 2,
     "fanops.post.metrics": 3,
-    "fanops.post.metrics.common": 3,
+    "fanops.post.metrics.common": 1,
     "fanops.post.metrics.postiz_read": 5,
     "fanops.post.metrics.zernio_read": 6,
     "fanops.post.postiz": 5,
@@ -3269,8 +3240,7 @@
     "fanops.prompts_caption": 1,
     "fanops.reach_ranking": 0,
     "fanops.recaption": 9,
-    "fanops.reconcile": 9,
-    "fanops.reconcile_liveness": 4,
+    "fanops.reconcile": 8,
     "fanops.reconcile_mirror": 4,
     "fanops.reframe": 9,
     "fanops.reframe_apply": 11,
@@ -3350,7 +3320,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 282,
+  "lazy_downward_count": 276,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3485,14 +3455,6 @@
       "from_level": 2,
       "jump": 0,
       "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.health_probes",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
       "to": "fanops.pipeline_run",
       "to_level": 2
     },
@@ -3593,14 +3555,6 @@
       "to_level": 3
     },
     {
-      "from": "fanops.post.metrics.common",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 2
-    },
-    {
       "from": "fanops.post.postiz",
       "from_level": 3,
       "jump": 0,
@@ -3639,22 +3593,6 @@
       "same_scc": false,
       "to": "fanops.post.run",
       "to_level": 4
-    },
-    {
-      "from": "fanops.reconcile_liveness",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.accounts",
-      "to_level": 2
-    },
-    {
-      "from": "fanops.reconcile_liveness",
-      "from_level": 2,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.meta_graph",
-      "to_level": 2
     },
     {
       "from": "fanops.signals",
@@ -4105,14 +4043,6 @@
       "same_scc": false,
       "to": "fanops.crosspost",
       "to_level": 9
-    },
-    {
-      "from": "fanops.reconcile_liveness",
-      "from_level": 2,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.post.metrics",
-      "to_level": 5
     },
     {
       "from": "fanops.studio.actions_approve",
@@ -4833,7 +4763,7 @@
     "fanops.post.dryrun": 3,
     "fanops.post.media": 3,
     "fanops.post.metrics": 5,
-    "fanops.post.metrics.common": 2,
+    "fanops.post.metrics.common": 1,
     "fanops.post.metrics.postiz_read": 4,
     "fanops.post.metrics.zernio_read": 4,
     "fanops.post.postiz": 3,
@@ -4852,7 +4782,6 @@
     "fanops.reach_ranking": 0,
     "fanops.recaption": 6,
     "fanops.reconcile": 4,
-    "fanops.reconcile_liveness": 2,
     "fanops.reconcile_mirror": 3,
     "fanops.reframe": 9,
     "fanops.reframe_apply": 10,
@@ -4983,6 +4912,7 @@
       "fanops.models",
       "fanops.persona_directives",
       "fanops.persona_research",
+      "fanops.post.metrics.common",
       "fanops.post.providers",
       "fanops.post.publish_errors",
       "fanops.prompts_caption",
@@ -5038,9 +4968,7 @@
       "fanops.persona_store",
       "fanops.pipeline_run",
       "fanops.post.compress",
-      "fanops.post.metrics.common",
       "fanops.post.publish_dryrun",
-      "fanops.reconcile_liveness",
       "fanops.router",
       "fanops.source_tags_sidecar",
       "fanops.variant_learning",
@@ -5168,17 +5096,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 196,
+    "G1_sccs_total": 195,
     "G1c_levels": 14,
-    "G2_largest_scc_size": 36,
+    "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 113,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 826,
-    "lazy_edges": 454,
-    "lazy_edges_lateral": 60,
-    "lazy_edges_strictly_upward": 112,
-    "lazy_edges_to_equal_or_higher_level": 172,
-    "modules": 196,
+    "compile_edges_G1": 819,
+    "lazy_edges": 443,
+    "lazy_edges_lateral": 56,
+    "lazy_edges_strictly_upward": 111,
+    "lazy_edges_to_equal_or_higher_level": 167,
+    "modules": 195,
     "optional_edges": 0,
     "typing_only_edges": 9
   }

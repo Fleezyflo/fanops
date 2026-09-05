@@ -170,33 +170,6 @@ def build_field_shape(cfg: Config, *, led=None, list_posts=None) -> dict | None:
         return None
 
 
-def _bounded_live_confirm_check(cfg: Config, *, get=None) -> dict | None:
-    """Bounded really-live sample: confirm ONE recent published IG/TikTok post (fail-open)."""
-    if not cfg.is_live:
-        return None
-    from fanops.ledger import Ledger
-    from fanops.models import PostState, Platform
-    from fanops.meta_graph import confirm_post_live
-    try:
-        led = Ledger.load(cfg)
-        candidates = [p for p in led.posts.values()
-                      if p.state in (PostState.published, PostState.analyzed) and p.public_url]
-        if not candidates:
-            return None
-        p = candidates[-1]
-        if p.platform not in (Platform.instagram, Platform.tiktok):
-            return None
-        res = confirm_post_live(cfg, p, reported_username=p.account, get=get)
-        ok = bool(res.get("confirmed"))
-        from fanops.doctor import _check
-        return _check(
-            "recent publish still live on platform (bounded sample)", ok,
-            "" if ok else "the most recent published post could not be confirmed live — check platform / creds")
-    except Exception as exc:
-        _log.warning("_bounded_live_confirm_check: live confirm failed (%s)", exc)
-        return None
-
-
 def snapshot_postiz_probe(cfg: Config):
     """Observe-mode Postiz probe: deps_health.json only — never calls postiz_health_probe."""
     from fanops.health import SnapshotFreshness, read_dep_snapshot

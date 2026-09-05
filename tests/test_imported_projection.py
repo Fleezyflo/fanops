@@ -6,7 +6,7 @@
 from fanops.config import Config
 from fanops.models import Post, PostState, Platform
 from fanops.ledger import Ledger
-from fanops import reconcile
+from fanops import cli
 
 _TOKEN = "SECRET-meta-token-xyz"
 
@@ -54,7 +54,7 @@ def test_unmatched_live_media_becomes_imported(tmp_path, monkeypatch):
     # "viewed there, not authored here" case (the whole point of the projection).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [])                                   # empty ledger — every live media is unmatched
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/", "media_product_type": "REELS",
          "timestamp": "2026-06-30T10:00:00+0000"}])]))
     assert "M1" in led.imported_media
@@ -69,7 +69,7 @@ def test_live_media_matching_a_post_is_NOT_imported(tmp_path, monkeypatch):
     # an ImportedMedia (that post is the authoritative record; import would duplicate meaning).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/AAA/")])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/", "media_product_type": "REELS"}])]))
     assert led.imported_media == {}                       # matched -> authored here -> not imported
 
@@ -79,7 +79,7 @@ def test_match_normalizes_scheme_and_trailing_slash(tmp_path, monkeypatch):
     # post stored without the slash still shadows a live media WITH it (no spurious import of our own post).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [_post("p1", "https://instagram.com/reel/AAA")])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/", "media_product_type": "REELS"}])]))
     assert led.imported_media == {}
 
@@ -89,9 +89,9 @@ def test_projection_is_idempotent_upsert_no_duplicate(tmp_path, monkeypatch):
     # pull with fresher fields (a new product_type) OVERWRITES (the latest live snapshot wins).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": None}])]))
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS"}])]))
     assert list(led.imported_media) == ["M1"]             # exactly ONE row (no dup)
     assert led.imported_media["M1"].product_type == "REELS"   # latest snapshot won
@@ -103,12 +103,12 @@ def test_projection_preserves_metrics_on_reimport(tmp_path, monkeypatch):
     # projection updates identity fields, it does NOT erase the metrics the insights read landed).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS"}])]))
     # simulate M3 having filled metrics on the imported row
     led.imported_media["M1"] = led.imported_media["M1"].model_copy(
         update={"metrics": {"reach": 500}, "metrics_series": [{"offset": "P1D", "reach": 500}]})
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS"}])]))
     assert led.imported_media["M1"].metrics == {"reach": 500}          # metrics survived the re-import
     assert led.imported_media["M1"].metrics_series[0]["reach"] == 500
@@ -118,7 +118,7 @@ def test_projection_fail_open_no_creds(tmp_path, monkeypatch):
     # No creds -> list_user_media returns [] -> nothing imported, no crash (fail-open).
     cfg = _cfg(tmp_path, monkeypatch, token=None, ig=None)
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS"}])]))
     assert led.imported_media == {}
 
@@ -127,7 +127,7 @@ def test_projection_fail_open_empty_media(tmp_path, monkeypatch):
     # Creds present but the live media list is empty (or a transport failure) -> nothing imported, no crash.
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([])]))
+    cli._project_imported_media(led, cfg, get=_media_get([_page([])]))
     assert led.imported_media == {}
 
 
@@ -136,7 +136,7 @@ def test_imported_media_carries_credentialed_handle_scope(tmp_path, monkeypatch)
     # is stamped with that credentialed handle (the scope label the Live library + wipe preview must show).
     cfg = _cfg(tmp_path, monkeypatch, ig="ig-777")
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS"}])]))
     assert led.imported_media["M1"].account == "ig-777"                # the credentialed handle scope
     assert led.imported_media["M1"].imported_at is not None            # audit stamp set
@@ -146,7 +146,7 @@ def test_projection_captures_caption_when_present(tmp_path, monkeypatch):
     # When the live /media record carries a caption, mirror it (display-only). Absent -> None (no crash).
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [])
-    reconcile.project_imported_media(led, cfg, get=_media_get([_page([
+    cli._project_imported_media(led, cfg, get=_media_get([_page([
         {"id": "M1", "permalink": "https://ig/reel/AAA/", "media_product_type": "REELS",
          "caption": "live caption text"}])]))
     assert led.imported_media["M1"].caption == "live caption text"
