@@ -626,8 +626,12 @@ class Ledger:
     def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET, error_kind=_UNSET,
                        daemon_transient_retry=_UNSET) -> None:
         upd: dict = {"state": st}
-        if error_reason is not _UNSET: upd["error_reason"] = error_reason
-        if error_kind is not _UNSET: upd["error_kind"] = error_kind
+        if st is PostState.published:
+            upd["error_reason"] = None                  # terminal success: failure latches must not survive (MOL-781)
+            upd["error_kind"] = None
+        else:
+            if error_reason is not _UNSET: upd["error_reason"] = error_reason
+            if error_kind is not _UNSET: upd["error_kind"] = error_kind
         if daemon_transient_retry is not _UNSET: upd["daemon_transient_retry"] = daemon_transient_retry
         self.posts[uid] = self.posts[uid].model_copy(update=upd)
     def set_batch_state(self, uid: str, st: BatchState, *, error_reason=_UNSET) -> None:

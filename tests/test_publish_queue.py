@@ -74,6 +74,18 @@ def test_mark_published_accepts_error_state(tmp_path):
     assert p.state is PostState.published
     assert p.public_url == "https://www.instagram.com/p/abc/"
 
+
+def test_mark_published_clears_error_reason(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed(cfg, state=PostState.failed)
+    led = Ledger.load(cfg)
+    led.posts["p1"] = led.posts["p1"].model_copy(
+        update={"error_reason": "publish_missing_url: no media_urls"})
+    led.save()
+    assert actions.mark_published(cfg, "p1", url="https://www.instagram.com/p/abc/").ok
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published and p.error_reason is None
+
 def test_unscheduled_post_sorts_last(tmp_path):
     # ecc:python-review: a None scheduled_time must sort AFTER a future-dated post, not as most urgent.
     cfg = Config(root=tmp_path)

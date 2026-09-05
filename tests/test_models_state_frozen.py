@@ -74,6 +74,21 @@ def test_ledger_set_state_owners_still_work(tmp_path):
     assert led.clips["clip_1"].state is ClipState.retired
 
 
+def test_set_post_state_published_clears_failure_latches(tmp_path):
+    from fanops.models import ErrorKind
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(_source())
+    led.add_moment(_moment())
+    led.add_clip(_clip())
+    p = _post().model_copy(update={"state": PostState.failed, "error_reason": "bad payload",
+                                   "error_kind": ErrorKind.bad_payload})
+    led.add_post(p)
+    led.set_post_state("post_1", PostState.published)
+    assert led.posts["post_1"].error_reason is None
+    assert led.posts["post_1"].error_kind is None
+
+
 def test_non_state_assignment_still_allowed():
     """Field-level freeze must not freeze the whole model (Moment.validate_assignment still useful)."""
     m = _moment()

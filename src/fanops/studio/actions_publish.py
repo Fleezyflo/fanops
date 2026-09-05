@@ -42,7 +42,7 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
         # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
         # the next ledger save (Pydantic re-validates the modified instance on serialization).
         p.public_url = url.strip()
-        led.set_post_state(post_id, PostState.published)
+        led.set_post_state(post_id, PostState.published, error_kind=None, error_reason=None)
     # R3/D17: audit the SUCCESS — 'I posted by hand' is the most opaque action; the audit gives the operator a breadcrumb.
     write_audit(cfg, "mark_published", [post_id], reason="studio_mark_published", url=url.strip())
     return ActionResult(ok=True, detail={"post_id": post_id, "url": url})

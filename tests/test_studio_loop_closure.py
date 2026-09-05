@@ -45,6 +45,17 @@ def test_resolve_post_mark_published_requires_url(tmp_path):
     res = actions.resolve_post(cfg, "p1", "published", url="https://www.instagram.com/p/abc/")
     assert res.ok and Ledger.load(cfg).posts["p1"].state is PostState.published
 
+def test_resolve_post_published_clears_error_reason(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed_inflight(cfg)
+    led = Ledger.load(cfg)
+    led.posts["p1"] = led.posts["p1"].model_copy(
+        update={"error_reason": "publish_missing_url: no media_urls"})
+    led.save()
+    res = actions.resolve_post(cfg, "p1", "published", url="https://www.instagram.com/p/abc/")
+    assert res.ok
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published and p.error_reason is None
+
 def _seed_queued(cfg, pid="p1", state=PostState.queued):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "c0.mp4").write_bytes(b"V")

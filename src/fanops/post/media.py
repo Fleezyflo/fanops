@@ -5,6 +5,7 @@ hosted-URL upload is dispatched per backend via get_media_uploader (Postiz uploa
 dryrun file://)."""
 from __future__ import annotations
 from pathlib import Path
+from urllib.parse import urlparse
 from fanops.config import Config
 from fanops.ledger import Ledger
 
@@ -53,6 +54,8 @@ def _media_cache_hit(url: str, backend: str) -> bool:
             return False
         if "localhost" in low or "127.0.0.1" in low:
             return False
+        if urlparse(low).path.startswith("/temp/"):
+            return False
         return True
     if backend == "postiz":
         if "|" not in url:
@@ -80,7 +83,8 @@ def ensure_render_media(led: Ledger, cfg: Config, render_id: str, local_path: st
     aid = kw.get("account_id")
     path = resolve_media_path(cfg, local_path, "render") or Path(local_path)
     url = get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid))
-    if r is not None: r.media_url = url                 # persisted in run.py's finalize txn (mirrors clip_media)
+    if r is not None and _media_cache_hit(url, backend):
+        r.media_url = url                             # persisted in run.py's finalize txn (mirrors clip_media)
     return url
 
 def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str, backend: str | None = None, *, account_id: str | None = None) -> str:
@@ -95,5 +99,6 @@ def ensure_clip_media(led: Ledger, cfg: Config, clip_id: str, backend: str | Non
     kw = _uploader_kwargs(b, account_id)
     path = resolve_media_path(cfg, clip.path, "clip") or Path(clip.path)
     url = get_media_uploader(cfg, b)(cfg, path, **kw)
-    clip.media_url = url
+    if _media_cache_hit(url, b):
+        clip.media_url = url
     return url

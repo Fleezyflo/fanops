@@ -111,6 +111,20 @@ def _resolve_publish_account_id(accounts: Accounts, post: Post, *, cfg: Config |
         return None
 
 
+def _local_media_path(led: Ledger, post: Post) -> Path | None:
+    """Resolve the on-disk clip/render file for a post when a cached https URL must be re-uploaded."""
+    path = None
+    if post.render_id:
+        r = led.get_render(post.render_id)
+        if r is not None and getattr(r, "path", None):
+            path = Path(r.path)
+    if path is None:
+        clip = led.clips.get(post.parent_id)
+        if clip is not None and clip.path:
+            path = Path(clip.path)
+    return path
+
+
 def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account_id: str | None = None) -> None:
     """Resolve post.media_urls to network-fetchable URLs (FIX F44 cache on the Clip). In-memory only;
     runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
@@ -141,17 +155,21 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
                 if media_host_postiz_can_fetch(u):
                     new.append(u)
                     continue
-                clip = led.clips.get(post.parent_id)
-                path = None
-                if post.render_id:
-                    r = led.get_render(post.render_id)
-                    if r is not None and getattr(r, "path", None):
-                        path = Path(r.path)
-                if path is None and clip is not None and clip.path:
-                    path = Path(clip.path)
+                path = _local_media_path(led, post)
                 if path is None or not path.is_file():
                     raise ValueError(
                         f"{post.platform.value} post {post.id} media host is unreachable from Postiz "
+                        f"and no local file remains to re-upload")
+                new.append(get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid)))
+            elif backend == "zernio":
+                from fanops.post.media import _media_cache_hit
+                if _media_cache_hit(u, "zernio"):
+                    new.append(u)
+                    continue
+                path = _local_media_path(led, post)
+                if path is None or not path.is_file():
+                    raise ValueError(
+                        f"{post.platform.value} post {post.id} media URL is not cacheable for Zernio "
                         f"and no local file remains to re-upload")
                 new.append(get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid)))
             else:

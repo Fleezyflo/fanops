@@ -713,6 +713,25 @@ def test_recover_posts_discard_terminal(tmp_path):
     assert Ledger.load(cfg).posts["gone"].state is PostState.rejected
 
 
+def test_recover_posts_bad_payload_clears_remote_media_cache(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(
+        update={"media_url": "https://cdn.example.com/stale-clip.mp4"})
+    p = _fail_post("bad", "postiz 400 bad media url", kind=ErrorKind.bad_payload)
+    p.media_urls = ["https://cdn.example.com/stale-post.mp4", "file:///local/clip.mp4"]
+    led.add_post(p)
+    led.save()
+    res = recover_posts(cfg, ["bad"], action="retry", reason="studio_retry")
+    assert res.ok and res.detail["retried"] == 1
+    led2 = Ledger.load(cfg)
+    assert led2.posts["bad"].state is PostState.queued
+    assert led2.posts["bad"].media_urls == ["file:///local/clip.mp4"]
+    assert led2.clips["clip_1"].media_url is None
+
+
 def test_recover_posts_review_clears_publish_fields(tmp_path):
     from fanops.studio.actions import recover_posts
     cfg = Config(root=tmp_path)

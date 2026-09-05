@@ -116,6 +116,26 @@ __all__ = [
 _SUBMITTING_ESCALATE_AFTER = timedelta(hours=24)
 # Sprint 4: submitting with no submission_id cannot be polled — park needs_reconcile after grace (H02).
 _SUBMITTING_HEAL_AFTER = timedelta(minutes=15)
+# MOL-117: after this many consecutive IG confirm transport fail-opens on a Postiz-published row with a
+# safe URL, reconcile escalates to Postiz-rest promotion (same as _GATE_REST) instead of retrying forever.
+IG_CONFIRM_FAILOPEN_ESCALATE_AFTER = 3
+
+
+def _ig_failopen_maybe_escalate(post, led: Ledger, captured_url, log) -> tuple:
+    """IG _GATE_FAILOPEN: persist safe URL, count consecutive fail-opens, escalate after cap.
+    Returns (post, escalate) — escalate=True falls through to Postiz-rest promotion."""
+    safe_url = safe_public_url(captured_url)
+    if not safe_url:
+        log("reconcile", post.id, "ig_confirm_transport_failopen")
+        return post, False
+    n = int(getattr(post, "ig_confirm_failopen_count", 0) or 0) + 1
+    post = post.model_copy(update={"public_url": safe_url, "ig_confirm_failopen_count": n})
+    led.posts[post.id] = post
+    if n >= IG_CONFIRM_FAILOPEN_ESCALATE_AFTER:
+        log("reconcile", post.id, "ig_confirm_failopen_postiz_rest_fallback")
+        return post, True
+    log("reconcile", post.id, "ig_confirm_transport_failopen")
+    return post, False
 
 
 def _parked_age(post, now: datetime):
@@ -508,13 +528,14 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 elif post.platform is Platform.instagram:
                     _verdict = liv.get("ig_verdict")
                     if _verdict == _GATE_PARK:
+                        if int(getattr(post, "ig_confirm_failopen_count", 0) or 0):
+                            post = post.model_copy(update={"ig_confirm_failopen_count": 0})
+                            led.posts[post.id] = post
                         _reason = _UNVERIFIED_IG
                     elif _verdict == _GATE_FAILOPEN:
-                        if (_u := safe_public_url(captured_url)):
-                            post = post.model_copy(update={"public_url": _u})
-                            led.posts[post.id] = post
-                        log("reconcile", post.id, "ig_confirm_transport_failopen")
-                        continue
+                        post, _escalate = _ig_failopen_maybe_escalate(post, led, captured_url, log)
+                        if not _escalate:
+                            continue
                 if _reason is not None:
                     if (_u := safe_public_url(captured_url)):
                         post = post.model_copy(update={"public_url": _u})
@@ -555,13 +576,14 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     _verdict = _ig_rest_verdict(cfg, post, _rid, _cred_ig, confirm, graph_get,
                                                 ig_usernames=_ig_names)
                     if _verdict == _GATE_PARK:
+                        if int(getattr(post, "ig_confirm_failopen_count", 0) or 0):
+                            post = post.model_copy(update={"ig_confirm_failopen_count": 0})
+                            led.posts[post.id] = post
                         _reason = _UNVERIFIED_IG
                     elif _verdict == _GATE_FAILOPEN:
-                        if (_u := safe_public_url(captured_url)):
-                            post = post.model_copy(update={"public_url": _u})
-                            led.posts[post.id] = post
-                        log("reconcile", post.id, "ig_confirm_transport_failopen")
-                        continue
+                        post, _escalate = _ig_failopen_maybe_escalate(post, led, captured_url, log)
+                        if not _escalate:
+                            continue
                 if _reason is not None:
                     if (_u := safe_public_url(captured_url)):
                         post = post.model_copy(update={"public_url": _u})
@@ -574,7 +596,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                    # polled `published` and passed the platform liveness gate above, on evidence that never
                    # touched the candidate. Spent evidence must not outlive the ambiguity it described, or a
                    # resolved row keeps showing the operator an unverified pointer to some other post.
-                   "reconcile_candidate_id": None}
+                   "reconcile_candidate_id": None,
+                   "ig_confirm_failopen_count": 0}
             if post.platform is Platform.instagram and _rid:
                 upd["media_id"] = _rid                    # MOL-112: IG object id from Postiz row — no feed match required
             if not (post.published_at or "").strip():
