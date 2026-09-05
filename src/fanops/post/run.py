@@ -14,7 +14,7 @@ from fanops.errors import redact
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, PostState, is_real_submission_id, validate_account_handle
 from fanops.post import get_poster, get_media_uploader
-from fanops.post.media import ensure_clip_media, _uploader_kwargs
+from fanops.post.media import ensure_clip_media, _uploader_kwargs, _media_cache_hit
 from fanops.post.publish_archive import _archive_published
 from fanops.post.publish_dryrun import _handle_dryrun_boundary
 from fanops.post.publish_errors import _is_fatal_auth_error, _is_transient_publish_error
@@ -111,6 +111,20 @@ def _resolve_publish_account_id(accounts: Accounts, post: Post, *, cfg: Config |
         return None
 
 
+def _local_media_path(led: Ledger, post: Post) -> Path | None:
+    """Resolve the on-disk clip/render file for a post when a cached https URL must be re-uploaded."""
+    path = None
+    if post.render_id:
+        r = led.get_render(post.render_id)
+        if r is not None and getattr(r, "path", None):
+            path = Path(r.path)
+    if path is None:
+        clip = led.clips.get(post.parent_id)
+        if clip is not None and clip.path:
+            path = Path(clip.path)
+    return path
+
+
 def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account_id: str | None = None) -> None:
     """Resolve post.media_urls to network-fetchable URLs (FIX F44 cache on the Clip). In-memory only;
     runs in the LOCK-FREE network phase. `backend` is the POST's resolved backend (per-account routing),
@@ -141,17 +155,21 @@ def _ensure_media(led: Ledger, cfg: Config, post: Post, backend: str, *, account
                 if media_host_postiz_can_fetch(u):
                     new.append(u)
                     continue
-                clip = led.clips.get(post.parent_id)
-                path = None
-                if post.render_id:
-                    r = led.get_render(post.render_id)
-                    if r is not None and getattr(r, "path", None):
-                        path = Path(r.path)
-                if path is None and clip is not None and clip.path:
-                    path = Path(clip.path)
+                path = _local_media_path(led, post)
                 if path is None or not path.is_file():
                     raise ValueError(
                         f"{post.platform.value} post {post.id} media host is unreachable from Postiz "
+                        f"and no local file remains to re-upload")
+                new.append(get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid)))
+            elif backend == "zernio":
+                from fanops.post.media import _media_cache_hit
+                if _media_cache_hit(u, "zernio"):
+                    new.append(u)
+                    continue
+                path = _local_media_path(led, post)
+                if path is None or not path.is_file():
+                    raise ValueError(
+                        f"{post.platform.value} post {post.id} media URL is not cacheable for Zernio "
                         f"and no local file remains to re-upload")
                 new.append(get_media_uploader(cfg, backend)(cfg, path, **_uploader_kwargs(backend, aid)))
             else:
@@ -364,11 +382,13 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             led.posts[post_id] = p.model_copy(update=upd)
             p = led.posts[post_id]
         c = led.clips.get(p.parent_id)
-        if c is not None and clip_media and not c.media_url:
-            c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)
+        if c is not None and clip_media and _media_cache_hit(clip_media, backend):
+            if not c.media_url or not _media_cache_hit(c.media_url, backend):
+                c.media_url = clip_media                   # persist/replace once-per-clip upload (FIX F44)
         r = led.get_render(p.render_id) if p.render_id else None
-        if r is not None and render_media and not r.media_url:
-            r.media_url = render_media                 # CULM-2: persist the once-per-render upload (FIX-F44 parity)
+        if r is not None and render_media and _media_cache_hit(render_media, backend):
+            if not r.media_url or not _media_cache_hit(r.media_url, backend):
+                r.media_url = render_media                 # CULM-2: persist/replace once-per-render upload
         if p.render_id and render_path:
             r2 = led.get_render(p.render_id)
             if r2 is not None and r2.path != render_path:

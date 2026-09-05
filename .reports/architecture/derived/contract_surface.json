@@ -72,7 +72,7 @@
         "swallow": "baseline 3 — SHARED across S08/S09/S10. NONE may raise it."
       },
       "exists": true,
-      "function_count": 59,
+      "function_count": 61,
       "is_partitioned": true,
       "missing": false,
       "owners": [
@@ -125,7 +125,7 @@
         "swallow": "baseline 8 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 20,
+      "function_count": 19,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -260,7 +260,7 @@
         "swallow": "baseline 4 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 14,
+      "function_count": 15,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -275,7 +275,7 @@
         "swallow": "baseline 9 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 11,
+      "function_count": 14,
       "is_partitioned": false,
       "missing": false,
       "owners": [

@@ -665,6 +665,23 @@ def test_recover_posts_retry_requeues_retryable(tmp_path):
     assert res.detail["retried"] == 1 and res.detail["skipped"] == 1
 
 
+def test_recover_posts_retry_dedupes_duplicate_ids(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    for pid in ("a", "b", "c"):
+        led.add_post(_fail_post(pid, "postiz 429", kind=ErrorKind.rate_limit))
+    led.save()
+    dupes = ["a", "b", "c", "a", "b", "c"]
+    res = recover_posts(cfg, dupes, action="retry", reason="studio_retry")
+    assert res.ok
+    led2 = Ledger.load(cfg)
+    for pid in ("a", "b", "c"):
+        assert led2.posts[pid].state is PostState.queued
+    assert res.detail["retried"] == 3 and res.detail["skipped"] == 0
+
+
 def test_recover_posts_retry_lands_a_schedule_when_timeless(tmp_path):
     # timeless-queued: recover_posts (retry) set queued but never guaranteed scheduled_time. A recovered post
     # whose scheduled_time was cleared/corrupt lands in queued but TIMELESS -> _due_or_fail parks it forever
@@ -694,6 +711,25 @@ def test_recover_posts_discard_terminal(tmp_path):
     res = recover_posts(cfg, ["gone"], action="discard", reason="oversize discard")
     assert res.ok
     assert Ledger.load(cfg).posts["gone"].state is PostState.rejected
+
+
+def test_recover_posts_bad_payload_strips_post_media_urls(tmp_path):
+    from fanops.studio.actions import recover_posts
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    stale_clip = "https://cdn.example.com/stale-clip.mp4"
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"media_url": stale_clip})
+    p = _fail_post("bad", "postiz 400 bad media url", kind=ErrorKind.bad_payload)
+    p.media_urls = ["https://cdn.example.com/stale-post.mp4", "file:///local/clip.mp4"]
+    led.add_post(p)
+    led.save()
+    res = recover_posts(cfg, ["bad"], action="retry", reason="studio_retry")
+    assert res.ok and res.detail["retried"] == 1
+    led2 = Ledger.load(cfg)
+    assert led2.posts["bad"].state is PostState.queued
+    assert led2.posts["bad"].media_urls == ["file:///local/clip.mp4"]
+    assert led2.clips["clip_1"].media_url == stale_clip  # clip cache healed on next publish finalize
 
 
 def test_recover_posts_review_clears_publish_fields(tmp_path):

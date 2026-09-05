@@ -462,11 +462,11 @@ def cmd_resolve(cfg: Config, args) -> int:
             if st is PostState.failed:
                 led.set_post_state(args.post_id, st, error_kind=ErrorKind.unknown)
             else:
-                led.set_post_state(args.post_id, st, error_kind=None)
+                led.set_post_state(args.post_id, st)
         except ValueError:
             # Unknown status string — back-compat: map "published" -> published, else "failed"
             if args.status == "published":
-                led.set_post_state(args.post_id, PostState.published, error_kind=None)
+                led.set_post_state(args.post_id, PostState.published)
             else:
                 led.set_post_state(args.post_id, PostState.failed, error_kind=ErrorKind.unknown)
     print(f"resolved {args.post_id} -> {args.status}"); return 0
