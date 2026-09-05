@@ -14,7 +14,7 @@ from fanops.errors import redact
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, PostState, is_real_submission_id, validate_account_handle
 from fanops.post import get_poster, get_media_uploader
-from fanops.post.media import ensure_clip_media, _uploader_kwargs
+from fanops.post.media import ensure_clip_media, _uploader_kwargs, _media_cache_hit
 from fanops.post.publish_archive import _archive_published
 from fanops.post.publish_dryrun import _handle_dryrun_boundary
 from fanops.post.publish_errors import _is_fatal_auth_error, _is_transient_publish_error
@@ -382,11 +382,13 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             led.posts[post_id] = p.model_copy(update=upd)
             p = led.posts[post_id]
         c = led.clips.get(p.parent_id)
-        if c is not None and clip_media and not c.media_url:
-            c.media_url = clip_media                   # persist the once-per-clip upload (FIX F44)
+        if c is not None and clip_media and _media_cache_hit(clip_media, backend):
+            if not c.media_url or not _media_cache_hit(c.media_url, backend):
+                c.media_url = clip_media                   # persist/replace once-per-clip upload (FIX F44)
         r = led.get_render(p.render_id) if p.render_id else None
-        if r is not None and render_media and not r.media_url:
-            r.media_url = render_media                 # CULM-2: persist the once-per-render upload (FIX-F44 parity)
+        if r is not None and render_media and _media_cache_hit(render_media, backend):
+            if not r.media_url or not _media_cache_hit(r.media_url, backend):
+                r.media_url = render_media                 # CULM-2: persist/replace once-per-render upload
         if p.render_id and render_path:
             r2 = led.get_render(p.render_id)
             if r2 is not None and r2.path != render_path:

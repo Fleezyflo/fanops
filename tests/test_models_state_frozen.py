@@ -89,6 +89,25 @@ def test_set_post_state_published_clears_failure_latches(tmp_path):
     assert led.posts["post_1"].error_kind is None
 
 
+def test_set_post_state_analyzed_clears_failure_latches(tmp_path):
+    from fanops.models import ErrorKind
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(_source())
+    led.add_moment(_moment())
+    led.add_clip(_clip())
+    p = _post().model_copy(update={
+        "state": PostState.published,
+        "public_url": "https://www.instagram.com/p/abc/",
+        "error_reason": "old poll error",
+        "error_kind": ErrorKind.unknown,
+    })
+    led.add_post(p)
+    led.set_post_state("post_1", PostState.analyzed)
+    assert led.posts["post_1"].error_reason is None
+    assert led.posts["post_1"].error_kind is None
+
+
 def test_non_state_assignment_still_allowed():
     """Field-level freeze must not freeze the whole model (Moment.validate_assignment still useful)."""
     m = _moment()
