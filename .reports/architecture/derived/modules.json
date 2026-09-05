@@ -3,9 +3,7 @@
   "confidence": "CERTAIN",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
-  "ghost_modules": [
-    "fanops.reconcile_liveness"
-  ],
+  "ghost_modules": [],
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "modules": [
     "fanops",
@@ -205,7 +203,7 @@
     "fanops.window_math"
   ],
   "note": "The subsystem partition is DECLARED in kb/subsystems.json (an analytic overlay imposed by Cycle 5, enforced by nothing in the code). The MODULE SET is DERIVED. Totality is therefore a CHECKABLE property, and this is where it is checked.",
-  "partition_is_total": false,
+  "partition_is_total": true,
   "regeneration_command": "python -m tools.arch regen",
   "source_inputs": [
     ".reports/architecture/kb/subsystems.json",
@@ -410,7 +408,7 @@
   },
   "totals": {
     "assigned": 195,
-    "ghosts": 1,
+    "ghosts": 0,
     "modules": 195,
     "unassigned": 0
   },

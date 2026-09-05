@@ -245,7 +245,11 @@ def test_default_list_posts_mixed_routes_each_post_to_its_backend(tmp_path, monk
     cfg = Config(root=tmp_path); led = _mixed_ledger(cfg)
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"saves": 40})                  # the TikTok post -> Zernio analytics
-        if "postiz" in url or "analytics" in url: return _R(200, [{"reach": 500, "saves": 9}])
+        if "postiz" in url or "analytics" in url:
+            return _R(200, [
+                {"label": "Reach", "data": [{"total": "500", "date": "2026-06-12"}]},
+                {"label": "Saves", "data": [{"total": "9", "date": "2026-06-12"}]},
+            ])
         return _R(200, [])
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
     rows = _default_list_posts(cfg, posts=list(led.posts.values()))("30d")
@@ -261,7 +265,8 @@ def test_pull_metrics_mixed_backends_analyzes_both(tmp_path, monkeypatch, mocker
     cfg = Config(root=tmp_path); led = _mixed_ledger(cfg)
     def by_url(url, **kw):
         if "zernio" in url: return _R(200, {"saves": 50})
-        if "postiz" in url or "analytics" in url: return _R(200, [{"saves": 20}])
+        if "postiz" in url or "analytics" in url:
+            return _R(200, [{"label": "Saves", "data": [{"total": "20", "date": "2026-06-12"}]}])
         return _R(200, [])
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
     led = pull_metrics(led, cfg)

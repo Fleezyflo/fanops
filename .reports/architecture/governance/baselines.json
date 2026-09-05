@@ -21,7 +21,9 @@
     "module fanops.hashtag_vocab was REMOVED — every KB claim about it is now about nothing",
     "module fanops.tag_outcomes was REMOVED — every KB claim about it is now about nothing",
     "module fanops.hashtag_hygiene was REMOVED — every KB claim about it is now about nothing",
-    "LAZY IMPORT HOISTED TO MODULE LEVEL: fanops.hookscore -> fanops.log. The layer DAG holds only because this was deferred to call time. This can break the process at START (GB-1 / ARCH-007)."
+    "LAZY IMPORT HOISTED TO MODULE LEVEL: fanops.hookscore -> fanops.log. The layer DAG holds only because this was deferred to call time. This can break the process at START (GB-1 / ARCH-007).",
+    "module fanops.reconcile_liveness was REMOVED — every KB claim about it is now about nothing",
+    "route REMOVED: POST /golive/account/meta-creds"
   ],
   "approved_breaking_changes_note": "Breaking facts a REVIEWED PR declared on purpose — each line is the reason string `impact` itself printed, verbatim. `impact --strict` fails on the breaking facts NOT listed here, so DELETING is allowed and deleting SILENTLY is not. UNKNOWN_IMPACT is never declarable. Entries self-retire: a removal reason can only be produced by the diff that performs the removal, so a stale line cannot mask a later change — it remains as the record of a deliberate break. THE ONLY AUTHOR-DECLARED KEY IN THIS FILE; every other one is derived, and `baseline --accept` carries this one forward.",
   "approved_compile_cycles": [],
