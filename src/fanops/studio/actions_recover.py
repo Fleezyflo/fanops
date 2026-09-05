@@ -45,14 +45,8 @@ def _strip_remote_media_urls(p) -> None:
 
 
 def _reset_media_for_retry(led: Ledger, p) -> None:
-    """Drop stale hosted URLs so bad_payload retry re-uploads from local bytes."""
+    """Drop stale hosted URLs on the post row so bad_payload retry re-uploads from local bytes."""
     _strip_remote_media_urls(p)
-    clip = led.clips.get(p.parent_id)
-    if clip is not None:
-        led.clips[p.parent_id] = clip.model_copy(update={"media_url": None})
-    r = led.get_render(p.render_id) if p.render_id else None
-    if r is not None:
-        led.renders[p.render_id] = r.model_copy(update={"media_url": None})
 
 
 def _shrink_oversize_for_retry(cfg: Config, led: Ledger, p, *, require_cap: bool = False) -> bool:
@@ -92,7 +86,7 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
                 led.set_post_state(post_id, st, error_kind=ErrorKind.unknown,
                                   error_reason=p.error_reason or "marked failed by operator")
             else:
-                led.set_post_state(post_id, st, error_kind=None, error_reason=None)
+                led.set_post_state(post_id, st)
     except Exception as exc:
         get_logger(cfg)("resolve", post_id, "resolve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")

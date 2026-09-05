@@ -906,6 +906,42 @@ def test_ensure_media_reuploads_zernio_temp_https(tmp_path, monkeypatch, mocker)
     assert "media.zernio.com/m/" in led.posts["m1"].media_urls[0]
 
 
+def test_finalize_overwrites_legacy_invalid_clip_cache(tmp_path, monkeypatch, mocker):
+    """Pre-fix ledgers may carry poison clip.media_url; finalize must replace it with a cacheable upload."""
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _queued(led, cfg, pid="m1", cid="c_m1", when="2020-01-01T00:00:00Z")
+    stale = "https://storage.zernio.com/temp/1752_abc_v.mp4"
+    fresh = "img1|https://cdn.postiz.test/fresh.mp4"
+    led.clips["c_m1"].media_url = stale
+    led.posts["m1"].media_urls = []
+    led.save()
+    mocker.patch("fanops.post.get_media_uploader", return_value=lambda *a, **k: fresh)
+    _stub_ok_poster(mocker, cfg)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.posts["m1"].state is PostState.published
+    assert led.clips["c_m1"].media_url == fresh
+
+
+def test_publish_one_clears_error_reason_on_success(tmp_path, monkeypatch, mocker):
+    """Successful publish must clear failure latches left on a queued row (ledger owner via set_post_state)."""
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _queued(led, cfg, pid="m1", cid="c_m1", when="2020-01-01T00:00:00Z")
+    led.posts["m1"] = led.posts["m1"].model_copy(
+        update={"error_reason": "publish failed: stale media", "error_kind": ErrorKind.bad_payload})
+    _http_media(led, "m1")
+    _stub_ok_poster(mocker, cfg)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    p = Ledger.load(cfg).posts["m1"]
+    assert p.state is PostState.published
+    assert p.error_reason is None
+    assert p.error_kind is None
+
+
 def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, mocker):
     # F6-I PIN: missing / unknown handle → do not apply this guard (empty-registry parity).
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)

@@ -626,7 +626,7 @@ class Ledger:
     def set_post_state(self, uid: str, st: PostState, *, error_reason=_UNSET, error_kind=_UNSET,
                        daemon_transient_retry=_UNSET) -> None:
         upd: dict = {"state": st}
-        if st is PostState.published:
+        if st in (PostState.published, PostState.analyzed):
             upd["error_reason"] = None                  # terminal success: failure latches must not survive (MOL-781)
             upd["error_kind"] = None
         else:
