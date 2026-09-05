@@ -275,7 +275,7 @@
         "swallow": "baseline 9 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 11,
+      "function_count": 12,
       "is_partitioned": false,
       "missing": false,
       "owners": [

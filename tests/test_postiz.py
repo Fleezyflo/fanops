@@ -682,6 +682,14 @@ def test_media_cache_hit_postiz_rejects_tailscale():
     assert _media_cache_hit("id|https://cdn.example/v.mp4", "postiz") is True
 
 
+def test_media_cache_hit_zernio_temp_not_reused():
+    from fanops.post.media import _media_cache_hit
+    assert _media_cache_hit("https://media.zernio.com/temp/foo.mp4", "zernio") is False
+    assert _media_cache_hit(
+        "https://storage.zernio.com/temp/1752_abc_v.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256", "zernio") is False
+    assert _media_cache_hit("https://media.zernio.com/m/1752_abc_v.mp4", "zernio") is True
+
+
 def test_publish_posts_image_path_is_the_minted_public_url(tmp_path, monkeypatch, mocker):
     r2 = "https://pub.r2.dev/fanops/fanops/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4"
     cfg = _cfg(tmp_path, monkeypatch)

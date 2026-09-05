@@ -44,6 +44,17 @@ def _strip_remote_media_urls(p) -> None:
     p.media_urls = [u for u in (p.media_urls or []) if not u.startswith("http")]
 
 
+def _reset_media_for_retry(led: Ledger, p) -> None:
+    """Drop stale hosted URLs so bad_payload retry re-uploads from local bytes."""
+    _strip_remote_media_urls(p)
+    clip = led.clips.get(p.parent_id)
+    if clip is not None:
+        led.clips[p.parent_id] = clip.model_copy(update={"media_url": None})
+    r = led.get_render(p.render_id) if p.render_id else None
+    if r is not None:
+        led.renders[p.render_id] = r.model_copy(update={"media_url": None})
+
+
 def _shrink_oversize_for_retry(cfg: Config, led: Ledger, p, *, require_cap: bool = False) -> bool:
     """Shrink oversize media in-place and strip remote media_urls. Returns False when shrink cannot proceed."""
     if require_cap:
@@ -81,7 +92,7 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
                 led.set_post_state(post_id, st, error_kind=ErrorKind.unknown,
                                   error_reason=p.error_reason or "marked failed by operator")
             else:
-                led.set_post_state(post_id, st, error_kind=None)
+                led.set_post_state(post_id, st, error_kind=None, error_reason=None)
     except Exception as exc:
         get_logger(cfg)("resolve", post_id, "resolve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
@@ -252,6 +263,8 @@ def recover_posts(cfg: Config, post_ids: list[str], *, action: str, reason: str 
                     if classify_failure(p) == "oversize":
                         if not _shrink_oversize_for_retry(cfg, led, p, require_cap=True):
                             skipped.append(pid); continue
+                    if classify_failure(p) == "bad_payload":
+                        _reset_media_for_retry(led, p)
                     if not (p.scheduled_time or "").strip():   # timeless-queued: a recovered post with no schedule (cleared/corrupt) parks FOREVER in _due_or_fail (silent). Land a time so the daemon publishes it, never never.
                         p.scheduled_time = iso_z(_now(None) + timedelta(minutes=cfg.publish_lead_minutes))
                     _rearm_to_queued(led, pid)

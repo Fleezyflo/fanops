@@ -5,6 +5,7 @@ hosted-URL upload is dispatched per backend via get_media_uploader (Postiz uploa
 dryrun file://)."""
 from __future__ import annotations
 from pathlib import Path
+from urllib.parse import urlparse
 from fanops.config import Config
 from fanops.ledger import Ledger
 
@@ -52,6 +53,8 @@ def _media_cache_hit(url: str, backend: str) -> bool:
         if not low.startswith("https://"):
             return False
         if "localhost" in low or "127.0.0.1" in low:
+            return False
+        if urlparse(low).path.startswith("/temp/"):
             return False
         return True
     if backend == "postiz":
