@@ -507,8 +507,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             upd["publish_hour"], upd["publish_dow"] = _ph, _pd
             if new_sub: upd["submission_id"] = new_sub
             led.posts[post.id] = post.model_copy(update=upd)
-            # state + clear error_reason via owner (MOL-779); a transient poll-error reason must not survive a successful publish
-            led.set_post_state(post.id, PostState.published, error_reason=None, error_kind=None)
+            # ledger.set_post_state clears failure latches on published (MOL-781)
+            led.set_post_state(post.id, PostState.published)
             if new_sub is None:                           # published but still no real id -> attribution can't bind
                 log("reconcile", post.id, "published_no_real_id")   # first-class: a logged outcome, not silence
             try:                                          # CULM-Q3: archive includes reconcile-recovered posts
