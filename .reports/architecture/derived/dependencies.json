@@ -2720,6 +2720,7 @@
         "fanops.log",
         "fanops.metrics_schedule",
         "fanops.models",
+        "fanops.post.metrics",
         "fanops.timeutil"
       ],
       "lazy": [
@@ -3025,7 +3026,7 @@
     "fanops.post.compress": 1,
     "fanops.post.dryrun": 0,
     "fanops.post.media": 3,
-    "fanops.post.metrics": 0,
+    "fanops.post.metrics": 1,
     "fanops.post.metrics.common": 3,
     "fanops.post.metrics.postiz_read": 1,
     "fanops.post.metrics.zernio_read": 1,
@@ -3307,7 +3308,7 @@
     "fanops.text": 0,
     "fanops.timeutil": 0,
     "fanops.timing_bias": 6,
-    "fanops.track": 6,
+    "fanops.track": 7,
     "fanops.transcribe": 3,
     "fanops.transcribe_engine": 7,
     "fanops.validation_gate": 1,
@@ -3321,7 +3322,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 277,
+  "lazy_downward_count": 280,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -3354,22 +3355,6 @@
       "same_scc": false,
       "to": "fanops.secret_provider",
       "to_level": 0
-    },
-    {
-      "from": "fanops.cutover",
-      "from_level": 4,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.cutover_postiz",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.cutover_postiz",
-      "from_level": 4,
-      "jump": 0,
-      "same_scc": false,
-      "to": "fanops.cutover",
-      "to_level": 4
     },
     {
       "from": "fanops.daemon",
@@ -3814,6 +3799,14 @@
       "to_level": 11
     },
     {
+      "from": "fanops.cli_dispatch",
+      "from_level": 1,
+      "jump": 7,
+      "same_scc": false,
+      "to": "fanops.learn_doctor",
+      "to_level": 8
+    },
+    {
       "from": "fanops.digest",
       "from_level": 4,
       "jump": 7,
@@ -3918,6 +3911,14 @@
       "to_level": 6
     },
     {
+      "from": "fanops.health_probes",
+      "from_level": 2,
+      "jump": 5,
+      "same_scc": false,
+      "to": "fanops.field_shape",
+      "to_level": 7
+    },
+    {
       "from": "fanops.stitch_render",
       "from_level": 3,
       "jump": 5,
@@ -3955,14 +3956,6 @@
       "jump": 4,
       "same_scc": false,
       "to": "fanops.fanops_hashtags",
-      "to_level": 5
-    },
-    {
-      "from": "fanops.cli_dispatch",
-      "from_level": 1,
-      "jump": 4,
-      "same_scc": false,
-      "to": "fanops.learn_doctor",
       "to_level": 5
     },
     {
@@ -4004,6 +3997,14 @@
       "same_scc": false,
       "to": "fanops.paths_rebase",
       "to_level": 4
+    },
+    {
+      "from": "fanops.cutover_postiz",
+      "from_level": 4,
+      "jump": 3,
+      "same_scc": false,
+      "to": "fanops.cutover",
+      "to_level": 7
     },
     {
       "from": "fanops.doctor",
@@ -4194,14 +4195,6 @@
       "from_level": 2,
       "jump": 2,
       "same_scc": false,
-      "to": "fanops.field_shape",
-      "to_level": 4
-    },
-    {
-      "from": "fanops.health_probes",
-      "from_level": 2,
-      "jump": 2,
-      "same_scc": false,
       "to": "fanops.health",
       "to_level": 4
     },
@@ -4318,14 +4311,6 @@
       "to_level": 7
     },
     {
-      "from": "fanops.track",
-      "from_level": 3,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.post.metrics",
-      "to_level": 5
-    },
-    {
       "from": "fanops.window_math",
       "from_level": 2,
       "jump": 2,
@@ -4435,14 +4420,6 @@
       "jump": 1,
       "same_scc": false,
       "to": "fanops.fanops_hashtags",
-      "to_level": 5
-    },
-    {
-      "from": "fanops.field_shape",
-      "from_level": 4,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.post.metrics",
       "to_level": 5
     },
     {
@@ -4647,11 +4624,11 @@
     },
     {
       "from": "fanops.track",
-      "from_level": 3,
+      "from_level": 6,
       "jump": 1,
       "same_scc": false,
       "to": "fanops.cutover",
-      "to_level": 4
+      "to_level": 7
     },
     {
       "from": "fanops.transcribe_engine",
@@ -4694,7 +4671,7 @@
     "fanops.control": 1,
     "fanops.controlio": 1,
     "fanops.crosspost": 9,
-    "fanops.cutover": 4,
+    "fanops.cutover": 7,
     "fanops.cutover_postiz": 4,
     "fanops.daemon": 2,
     "fanops.daemon_siblings": 1,
@@ -4706,7 +4683,7 @@
     "fanops.escalation": 3,
     "fanops.fanops_account_stats": 3,
     "fanops.fanops_hashtags": 5,
-    "fanops.field_shape": 4,
+    "fanops.field_shape": 7,
     "fanops.frames": 0,
     "fanops.framing": 5,
     "fanops.framing_outcomes": 0,
@@ -4731,7 +4708,7 @@
     "fanops.init_flow": 5,
     "fanops.intro_match": 3,
     "fanops.keyframes": 1,
-    "fanops.learn_doctor": 5,
+    "fanops.learn_doctor": 8,
     "fanops.ledger": 2,
     "fanops.ledger_bridge": 3,
     "fanops.ledger_sqlite": 1,
@@ -4848,7 +4825,7 @@
     "fanops.text": 0,
     "fanops.timeutil": 0,
     "fanops.timing_bias": 5,
-    "fanops.track": 3,
+    "fanops.track": 6,
     "fanops.transcribe": 4,
     "fanops.transcribe_engine": 3,
     "fanops.validation_gate": 1,
@@ -5011,7 +4988,6 @@
       "fanops.studio.views_golive",
       "fanops.studio.views_live",
       "fanops.tagging",
-      "fanops.track",
       "fanops.transcribe_engine",
       "fanops.variant_transfer"
     ],
@@ -5019,12 +4995,10 @@
       "fanops.canary",
       "fanops.caption",
       "fanops.cli_run",
-      "fanops.cutover",
       "fanops.cutover_postiz",
       "fanops.digest",
       "fanops.discover",
       "fanops.doctor",
-      "fanops.field_shape",
       "fanops.hashtag_refresh",
       "fanops.health",
       "fanops.ig_web_scrape",
@@ -5046,7 +5020,6 @@
       "fanops.fanops_hashtags",
       "fanops.framing",
       "fanops.init_flow",
-      "fanops.learn_doctor",
       "fanops.post.metrics",
       "fanops.responder",
       "fanops.source_tags_walk",
@@ -5060,16 +5033,20 @@
       "fanops.recaption",
       "fanops.reframe_vf",
       "fanops.source_tags_scrape",
-      "fanops.studio.views_results"
+      "fanops.studio.views_results",
+      "fanops.track"
     ],
     "7": [
       "fanops.clip_ffmpeg",
+      "fanops.cutover",
+      "fanops.field_shape",
       "fanops.source_tags",
       "fanops.studio.views",
       "fanops.studio.views_hashtags"
     ],
     "8": [
       "fanops.clip",
+      "fanops.learn_doctor",
       "fanops.studio.actions_approve",
       "fanops.studio.actions_edit",
       "fanops.studio.app_request",
@@ -5102,11 +5079,11 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 113,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 819,
+    "compile_edges_G1": 820,
     "lazy_edges": 444,
-    "lazy_edges_lateral": 56,
-    "lazy_edges_strictly_upward": 111,
-    "lazy_edges_to_equal_or_higher_level": 167,
+    "lazy_edges_lateral": 54,
+    "lazy_edges_strictly_upward": 110,
+    "lazy_edges_to_equal_or_higher_level": 164,
     "modules": 195,
     "optional_edges": 0,
     "typing_only_edges": 9
