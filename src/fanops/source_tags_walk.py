@@ -4,7 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fanops.ig_hashtag_scrape import ScrapeUnavailable
-from fanops.ig_web_scrape import open_web_session
 from fanops.log import get_logger
 from fanops.source_tags_shortlist import (_prose, _transcript_file_prose, _transcript_json_path)
 from fanops.source_tags_sidecar import (_has_catalog, _in_progress, _researched,
@@ -37,10 +36,12 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     if client is not None:
         yield client
         return
+    from fanops.fanops_hashtags import (_freeze_for, _persist_cooldown)
     from fanops.ig_safari_shell import mark_safari_tick_slot, safari_tick_slot_claimed
     if safari_tick_slot_claimed():
         return
-    opener = open_client_fn or open_web_session
+    from fanops.ig_hashtag_scrape import open_client
+    opener = open_client_fn or open_client
     from fanops.ig_web_scrape import _lock_web_users
     now = now or datetime.now(timezone.utc)
     marked = False
@@ -48,6 +49,12 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
         try:
             cli = _call_opener(opener, cfg, user=user)
         except ScrapeUnavailable:
+            continue
+        except Exception as e:                                  # noqa: BLE001 — platform errors from the opener
+            reason, delay_s = _freeze_for(e)
+            cd = _persist_cooldown(cfg, now, reason=reason, delay_s=delay_s, user=user)
+            get_logger(cfg)("source_tags", user, "scrape_cooldown", level="error",
+                            reason=reason, until=(cd or {}).get("until"), err=str(e)[:160])
             continue
         if cli is not None:
             if not getattr(cli, "_fanops_scrape_user", None):
