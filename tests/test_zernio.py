@@ -4,6 +4,8 @@
 # GET /accounts -> {accounts:[{_id, platform}]}. The create-post response id key + accounts shape are
 # INTEGRATION CHECKPOINTS (locked by SHAPE here, like the Postiz/Blotato posters); verified live by the
 # operator at connect/publish. publishNow:true because FanOps already gated the schedule.
+import json
+from pathlib import Path
 import pytest
 from fanops.config import Config
 from fanops.errors import ZernioAuthError, AuthError
@@ -70,6 +72,17 @@ def test_payload_shape():
     assert plat["platform"] == "tiktok" and plat["accountId"] == "acc_abc"
     assert p["mediaItems"] == [{"type": "video", "url": "https://media.zernio.com/x.mp4"}]
     assert plat["platformSpecificData"]["tiktokSettings"]["content_preview_confirmed"] is True
+
+
+def test_recorded_http_body_matches_fixture():
+    fixture = json.loads(
+        (Path(__file__).resolve().parent / "fixtures/wire/zernio_tiktok_create.body.json").read_text()
+    )
+    built = build_zernio_payload(account_id="acc_abc", platform="tiktok", content="fire",
+                                 media_urls=["https://media.zernio.com/x.mp4"],
+                                 scheduled_time="2099-01-01T00:00:00Z")
+    assert built == fixture
+
 
 def test_payload_omits_media_when_none():
     with pytest.raises(ValueError, match="no media"):

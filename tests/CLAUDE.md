@@ -17,7 +17,8 @@ operator-only override from a human terminal. What CI runs (reference, not for r
   `@pytest.mark.slow` or `integration` test you add is unproven until the nightly. It runs
   `python -m pytest -q -m integration -rs` (real ffmpeg/whisper/TTS; `FANOPS_REQUIRE_E2E=1` turns a skip into a
   FAILURE) plus the `-m slow` cross-face UNIT proofs: `test_account_first_e2e.py`,
-  `test_hashtag_lifecycle_e2e.py`, `test_review_lanes_e2e.py`, `test_per_persona_e2e.py`.
+  `test_review_lanes_e2e.py`, `test_per_persona_e2e.py`. S06 hashtag rotation is a fast unit
+  proof in `test_hashtag_page.py` (`test_rotation_*`), not a slow cross-face test.
 
 ## Hard rules
 

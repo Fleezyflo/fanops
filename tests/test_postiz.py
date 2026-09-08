@@ -2,6 +2,8 @@
 # offline (mocked requests). REST contract confirmed vs docs.postiz.com/public-api: Authorization:
 # {key} header, POST /public/v1/upload(-from-url), POST /public/v1/posts. The exact response id key
 # + image-ref shape are INTEGRATION CHECKPOINTS (locked by SHAPE here, like the Blotato posters).
+import json
+from pathlib import Path
 import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
@@ -65,6 +67,16 @@ def test_payload_shape():
     assert body["settings"]["__type"] == "instagram"
     assert body["value"][0]["content"] == "fire"
     assert body["value"][0]["image"][0]["path"] == "https://uploads.postiz.com/x.mp4"
+
+
+def test_recorded_http_body_matches_fixture():
+    fixture = json.loads(
+        (Path(__file__).resolve().parent / "fixtures/wire/postiz_instagram_schedule.body.json").read_text()
+    )
+    built = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                                 media_urls=["https://uploads.postiz.com/x.mp4"],
+                                 scheduled_time="2099-01-01T00:00:00Z", post_type="post")
+    assert built == fixture
 
 
 def test_payload_image_carries_id_and_path_and_post_type():
