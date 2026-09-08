@@ -686,6 +686,32 @@ def test_lock_walk_unfrozen_peer_not_loginrequired_freeze(tmp_path, monkeypatch)
     assert seen == ["cisum"]
 
 
+def test_lock_walk_platform_error_freezes_and_rotates(tmp_path, monkeypatch):
+    """Envelope probe ChallengeRequired must freeze that user and keep walking the peer."""
+    from datetime import datetime, timezone, timedelta
+    from instagrapi.exceptions import ChallengeRequired
+    from fanops.fanops_hashtags import _cooldown_path, _AUTH_DEATH_DELAY_S
+    from fanops.source_tags import _iter_lock_clients
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
+    cfg = _cfg(tmp_path)
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    seen = []
+
+    def opener(_cfg, user=None, **_k):
+        seen.append(user)
+        if user == "u1":
+            raise ChallengeRequired("challenge_required")
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    opened = [getattr(c, "_fanops_scrape_user", None)
+              for c in _iter_lock_clients(cfg, client=None, open_client_fn=opener, now=t0)]
+    assert seen == ["u1", "u2"]
+    assert opened == ["u2"]
+    rec = json.loads(_cooldown_path(cfg).read_text())["accounts"]["u1"]
+    assert rec["reason"] == "auth_death"
+    assert rec["until"] == (t0 + timedelta(seconds=_AUTH_DEATH_DELAY_S)).isoformat()
+
+
 def _write_whisper(cfg, stem, text="hello world"):
     p = cfg.agent_io / "transcripts"
     p.mkdir(parents=True, exist_ok=True)
@@ -739,11 +765,35 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
 
     def opener(_cfg, user=None, **_k):
         seen.append(user)
-        raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
+        raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
 
     lock_ready_sources(cfg, open_client_fn=opener,
                        research_fn=lambda *_a: (_ for _ in ()).throw(AssertionError("no LLM without a seat")))
     assert seen == ["mark", "wolf"]
+
+
+def test_lock_default_opener_is_open_client(tmp_path, monkeypatch):
+    """Default lock opener (open_client_fn is None) is open_client, not open_web_session."""
+    import inspect
+    from types import SimpleNamespace
+    import fanops.ig_hashtag_scrape as igs
+    import fanops.source_tags as st
+    from fanops.source_tags import _iter_lock_clients
+    src = inspect.getsource(st._iter_lock_clients)
+    assert "open_client" in src
+    assert "open_web_session" not in src
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    cfg = _cfg(tmp_path)
+    seen = []
+
+    def fake_open(_cfg, user=None, **_k):
+        seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    monkeypatch.setattr(igs, "open_client", fake_open)
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=None))
+    assert seen == ["mark"]
+    assert [c._fanops_scrape_user for c in opened] == ["mark"]
 
 
 

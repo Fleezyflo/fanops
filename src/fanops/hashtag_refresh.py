@@ -322,7 +322,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     peers keep the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
     (LRU head) remains for cooldown gates.
 
-    All runtime network opens via `open_web_session(cfg, user=u)` — Safari profile map as lock.
+    All runtime network opens via `open_client(cfg, user=u)` — disk envelope, never allow_reauth.
     Default harvest without injected client aborts `safari_only`; operator refresh remesures sidecar.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
@@ -542,9 +542,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         return cd
 
     def _open_pass_client(user=None):
-        """Safari web session only. Never instagrapi / Chrome cookie inject."""
-        from fanops.ig_web_scrape import open_web_session
-        return open_web_session(cfg) if user is None else open_web_session(cfg, user=user)
+        from fanops.ig_hashtag_scrape import open_client
+        return open_client(cfg) if user is None else open_client(cfg, user=user)
 
     def _open_single_fallback() -> tuple[str, str] | None:
         """Open one client when no session-ready walk list (inject-like / password-only classify)."""
@@ -700,7 +699,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     (`refreshed: False`), not `discovery_skip_no_niche`. Exact-name quota ≤30 unique / 7 days.
 
     Configured = FANOPS_IG_SCRAPE_USER listed. Password / Chrome dumps / envelope json do not
-    count. Safari authority is the opener (`open_web_session`), not this gate — probing Safari
+    count. Envelope authority is the opener (`open_client`), not this gate — probing on every
     on every tick would hit Instagram when the cache is still fresh. FAIL-OPEN: any error -> a
     reason, NEVER raises. Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening
     scrape — never sleeps.
@@ -794,24 +793,17 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
-    """`fanops hashtags scrape-login` — open Safari on Instagram, promote the envelope.
+    """`fanops hashtags scrape-login` — envelope promote. No Safari. No password.
 
-    The operator escape hatch: it deliberately IGNORES an active cooldown (an explicit human act, run
-    after clearing a challenge in the app — the freeze exists to stop the unattended pump, not the
-    operator) and CLEARS it on success, so a fixed account resumes on the next tick instead of sitting
-    out the remaining 12h (MOL-699).
+    Operator hatch: ignores an active cooldown and CLEARS it on success (MOL-699).
+    Sole `allow_reauth=True` call site. Loop every FANOPS_IG_SCRAPE_USER, probe the
+    on-disk envelope, dump if live. Dead/missing envelope fails that user
+    (`ScrapeUnavailable`). Unattended lock + remesure load the envelope via
+    `open_client` (no allow_reauth). Never password login. Never opens a browser.
 
-    Sole `allow_reauth=True` call site. Opens Safari to instagram.com (never Google Chrome —
-    a FanOps Chrome instance hijacks the Dock). Waits until Safari's Instagram tab is
-    logged in, then best-effort promotes the device envelope. Lock scrape fetch()es inside
-    that Safari tab. Never password login.
-
-    Multi-account (MOL-857/858): loop every FANOPS_IG_SCRAPE_USER, promote each envelope. Clears THAT
-    user's freeze on success — peers keep their own cooldown."""
-    from fanops.ig_hashtag_scrape import (
-        ensure_scrape_chrome, open_client, scrape_chrome_profile_dir,
-        scrape_session_path, scrape_users, wait_for_scrape_profile_auth,
-    )
+    Multi-account (MOL-857/858): clears THAT user's freeze on success — peers keep
+    their own cooldown."""
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path, scrape_users
     users = scrape_users(cfg)
     if not users:
         get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
@@ -819,21 +811,12 @@ def cmd_hashtags_scrape_login(cfg: Config) -> int:
         return 2
     ok_n = 0
     for user in users:
-        profile = scrape_chrome_profile_dir(cfg, user)
-        profile.mkdir(parents=True, exist_ok=True)
-        if not ensure_scrape_chrome(cfg, user, restart=True):
-            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason="safari-missing")
-            continue
-        if wait_for_scrape_profile_auth(cfg, user) is None:
-            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
-                            user=user[:40], reason="no profile session")
-            continue
         try:
             open_client(cfg, allow_reauth=True, user=user)
-        except Exception as e:                                  # noqa: BLE001 — envelope is best-effort
-            get_logger(cfg)("hashtags", "-", "scrape_login_envelope",
+        except Exception as e:                                  # noqa: BLE001 — envelope hatch
+            get_logger(cfg)("hashtags", "-", "scrape_login_failed", level="error",
                             user=user[:40], reason=str(e)[:160])
+            continue
         _clear_cooldown(cfg, user=user)                    # MOL-858: clear THIS user only
         ok_n += 1
         get_logger(cfg)("hashtags", "-", "scrape_login_ok", user=user[:40],

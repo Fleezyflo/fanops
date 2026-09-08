@@ -100,26 +100,11 @@ def test_safari_xhr_sends_www_claim(monkeypatch):
     assert "X-IG-WWW-Claim" in expr
 
 
-def test_ensure_scrape_safari_unattended_restores_profile_window(tmp_path, monkeypatch):
-    """Closed Safari windows are the unattended failure. Restore them; do not wait for scrape-login."""
+def test_file_menu_profile_window_helpers_are_gone():
+    """Unattended does not File-menu restore Safari windows (#1182)."""
     import fanops.ig_hashtag_scrape as igs
-    opened = []
-    n = {"i": 0}
-
-    def ev(*_a, **_k):
-        n["i"] += 1
-        if n["i"] == 1:
-            raise RuntimeError("no instagram tab")
-        return "2"
-
-    monkeypatch.setattr(igs, "_enable_safari_apple_events", lambda: None)
-    monkeypatch.setattr(igs, "stop_scrape_chrome", lambda *_a, **_k: None)
-    monkeypatch.setattr(igs, "scrape_users", lambda _cfg: ["u"])
-    monkeypatch.setattr(igs, "safari_eval", ev)
-    monkeypatch.setattr(igs, "safari_open_instagram", lambda u: opened.append(u))
-    cfg = Config(root=tmp_path)
-    assert igs.ensure_scrape_safari(cfg, "u", navigate=False) is True
-    assert opened == ["u"]
+    assert not hasattr(igs, "safari_open_profile_window")
+    assert not hasattr(igs, "safari_profile_window_open")
 
 
 def test_safari_open_instagram_does_not_reload_live_tab(monkeypatch):
@@ -131,23 +116,6 @@ def test_safari_open_instagram_does_not_reload_live_tab(monkeypatch):
                         lambda script, *args: scripts.append(script) or "ok")
     igs.safari_open_instagram("markmakmouly")
     assert scripts == []
-
-
-def test_safari_open_profile_window_script_does_not_set_url(monkeypatch):
-    import fanops.ig_hashtag_scrape as igs
-    scripts = []
-
-    def osa(script, *args):
-        scripts.append(script)
-        if "return \"yes\"" in script:
-            return "no"
-        return "opened"
-
-    monkeypatch.setattr(igs, "_safari_osascript", osa)
-    igs.safari_open_profile_window("markmakmouly")
-    assert scripts
-    assert all("set URL" not in s for s in scripts)
-    assert any("New \" & prefix & \" Window" in s for s in scripts)
 
 
 def test_safari_set_instagram_skips_existing_tab(monkeypatch):

@@ -434,28 +434,16 @@ def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch)
     assert "9222" not in joined and "9223" not in joined
     assert "remote-debugging" not in joined
     assert "Application Support/Google/Chrome" not in joined
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
-    from fanops.fanops_hashtags import cmd_hashtags_scrape_login
-    monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: object())
-    assert cmd_hashtags_scrape_login(cfg) == 0
-    assert igs.scrape_chrome_profile_dir(cfg, "perca.late").is_dir()
 
 
 def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
-    """Wait timeout → no open_client, no dump, no password."""
-    import fanops.ig_hashtag_scrape as igs
+    """Missing envelope is open_client's hatch; no dump, no tab wait, no password."""
     from fanops.fanops_hashtags import cmd_hashtags_scrape_login
+    from fanops.ig_hashtag_scrape import scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: None)
-    opened = []
-    monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: opened.append(1))
     assert cmd_hashtags_scrape_login(cfg) == 2
-    assert opened == []
-    from fanops.ig_hashtag_scrape import scrape_session_path
     assert not scrape_session_path(cfg, "u").exists()
 
 

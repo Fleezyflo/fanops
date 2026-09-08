@@ -3,7 +3,7 @@
   "artifacts": {
     "configuration.json": "87f3084909342c87",
     "contract_surface.json": "11d6356ede2bf7a6",
-    "dependencies.json": "360bfeb3937acd43",
+    "dependencies.json": "a4e0ab0f92ed50a1",
     "entities.json": "ca0779e62e35d286",
     "modules.json": "3e522f6e57f60d8a",
     "ratchets.json": "818f0099234e2f24",
@@ -13,7 +13,7 @@
   },
   "confidence": "CERTAIN",
   "determinism_contract": "Regenerating with no source change MUST reproduce these digests byte-for-byte. Nothing here stamps a wall-clock time: a generated artifact that changes on every run trains reviewers to ignore its diff.",
-  "fingerprint": "edae80d102afe750",
+  "fingerprint": "ceb28232c0fc956c",
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",

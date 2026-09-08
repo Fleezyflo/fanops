@@ -225,55 +225,6 @@ def _safari_window_matches_script() -> str:
     )
 
 
-def safari_profile_window_open(user: str) -> bool:
-    """True when THIS account's Safari profile window is already open."""
-    prefix = safari_profile_name(user)
-    if not prefix:
-        return False
-    script = (
-        "on run argv\n"
-        "  set prefix to item 1 of argv\n"
-        "  tell application \"Safari\"\n"
-        "    repeat with w in windows\n"
-        + _safari_window_matches_script()
-        + "        return \"yes\"\n"
-        "      end if\n"
-        "    end repeat\n"
-        "  end tell\n"
-        "  return \"no\"\n"
-        "end run\n"
-    )
-    try:
-        return _safari_osascript(script, prefix) == "yes"
-    except RuntimeError:
-        return False
-
-
-def safari_open_profile_window(user: str) -> None:
-    """Open THIS account's Safari profile window. Never sets a URL (reload kills IG)."""
-    prefix = safari_profile_name(user)
-    if not prefix:
-        raise RuntimeError("no safari profile")
-    if safari_profile_window_open(user):
-        return
-    script = (
-        "on run argv\n"
-        "  set prefix to item 1 of argv\n"
-        "  tell application \"Safari\"\n"
-        "    activate\n"
-        "  end tell\n"
-        "  tell application \"System Events\"\n"
-        "    tell process \"Safari\"\n"
-        "      click menu item (\"New \" & prefix & \" Window\") of menu 1 of "
-        "menu item \"New Window\" of menu 1 of menu bar item \"File\" of menu bar 1\n"
-        "    end tell\n"
-        "  end tell\n"
-        "  return \"opened\"\n"
-        "end run\n"
-    )
-    _safari_osascript(script, prefix)
-
-
 def _safari_set_instagram_if_missing(user: str) -> None:
     """Point the profile window at Instagram only when it has no instagram.com tab."""
     prefix = safari_profile_name(user)
@@ -302,19 +253,12 @@ def _safari_set_instagram_if_missing(user: str) -> None:
 
 
 def safari_open_instagram(user: str) -> None:
-    """Restore THIS account's Safari profile window onto Instagram.
+    """Attach to THIS account's existing Safari Instagram tab (scrape-login).
 
     A live instagram.com tab is left alone — reloading it is a session-kill.
-    A missing profile window is created via File → New {profile} Window so
-    Safari can restore that profile's last tabs. Only a window with no
-    Instagram tab gets a URL set.
+    Does not File-menu restore closed profile windows. Only an already-open
+    window with no Instagram tab gets a URL set.
     """
-    try:
-        if safari_eval("1+1", user) in {"2", "2.0"}:
-            return
-    except RuntimeError:
-        pass
-    safari_open_profile_window(user)
     try:
         if safari_eval("1+1", user) in {"2", "2.0"}:
             return

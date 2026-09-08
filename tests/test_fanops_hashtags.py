@@ -354,7 +354,6 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     until scrape-login clears (not a 12h auto-resume)."""
     from datetime import datetime, timezone, timedelta
     import fanops.ig_hashtag_scrape as igs
-    import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import (refresh_store_if_due, _cooldown_path, _AUTH_DEATH_DELAY_S)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u"); monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -365,10 +364,7 @@ def test_checkpoint_freezes_layer_a_and_stops_reopening_scrape(tmp_path, monkeyp
     def locked(_cfg, user=None, **_k):
         opens["n"] += 1
         raise ChallengeRequired("challenge_required")
-    def boom_client(*_a, **_k):
-        raise AssertionError("tick remesure must open Safari, not open_client")
-    monkeypatch.setattr(iws, "open_web_session", locked)
-    monkeypatch.setattr(igs, "open_client", boom_client)
+    monkeypatch.setattr(igs, "open_client", locked)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is False and out["aborted"] == "auth_death"
     assert opens["n"] == 1
@@ -630,8 +626,6 @@ def test_scrape_login_loops_comma_users(tmp_path, monkeypatch):
         seen.append(user)
         return object()
     monkeypatch.setattr(igs, "open_client", fake_open)
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0
     assert seen == ["a", "b"]
 
@@ -648,8 +642,6 @@ def test_scrape_login_ignores_and_clears_an_active_freeze(tmp_path, monkeypatch)
                       reason="checkpoint", delay_s=_CHECKPOINT_DELAY_S)
     assert _cooldown_path(cfg).exists()
     monkeypatch.setattr(igs, "open_client", lambda _c, **_k: object())
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", lambda *_a, **_k: ("sid", "1"))
     assert cmd_hashtags_scrape_login(cfg) == 0              # NOT blocked by the freeze
     # Streak/until/reason cleared; day/used/accounts may remain (MOL-854 day budget).
     if _cooldown_path(cfg).exists():
@@ -1021,7 +1013,7 @@ def test_open_client_missing_session_refuses_on_default_path(tmp_path, monkeypat
 
 
 def test_open_client_callers_keep_reauth_default(tmp_path):
-    """HT3 doctor offline + HT4 Safari-only runtime; scrape-login alone uses allow_reauth."""
+    """Doctor offline; unattended remesure uses open_client without allow_reauth; scrape-login alone reauths."""
     import inspect
     import fanops.doctor as doctor
     import fanops.fanops_hashtags as fh
@@ -1030,10 +1022,13 @@ def test_open_client_callers_keep_reauth_default(tmp_path):
     src_login = inspect.getsource(fh.cmd_hashtags_scrape_login)
     assert "resolve_hashtag_scrape" not in src_doc
     assert "from fanops.ig_hashtag_scrape import open_client" not in src_doc
-    assert "open_client" not in src_ref
-    assert "open_web_session" in src_ref
+    assert "open_client" in src_ref
+    assert "open_web_session" not in src_ref
     assert "allow_reauth=True" not in src_ref
     assert "allow_reauth=True" in src_login
+    assert "ensure_scrape_chrome" not in src_login
+    assert "ensure_scrape_safari" not in src_login
+    assert "wait_for_scrape_profile_auth" not in src_login
 
 
 
@@ -1710,8 +1705,8 @@ def test_read_active_cooldown_used_peer_is_healthy(tmp_path, monkeypatch):
 
 
 def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
-    """HT3: day budget exhausted → remesure skips (cooldown/budget), does not open Safari."""
-    import fanops.ig_web_scrape as iws
+    """HT3: day budget exhausted → remesure skips (cooldown/budget), does not open_client."""
+    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, _remesure_sidecar)
     from fanops.controlio import write_json_atomic
@@ -1726,8 +1721,8 @@ def test_refresh_store_opens_when_used_is_high(tmp_path, monkeypatch):
     seen = []
     def fake(*_a, **_k):
         seen.append(1)
-        raise AssertionError("budget exhausted must not open Safari")
-    monkeypatch.setattr(iws, "open_web_session", fake)
+        raise AssertionError("budget exhausted must not open_client")
+    monkeypatch.setattr(igs, "open_client", fake)
     out = _remesure_sidecar(cfg, names=["#alpha"], now=t0)
     assert seen == []
     assert out.get("aborted") == "cooldown"
@@ -1776,12 +1771,10 @@ def test_scrape_login_clears_only_that_user_freeze(tmp_path, monkeypatch):
     _persist_cooldown(cfg, t0, reason="throttle", user="b")
     def fake_open(_cfg, *, allow_reauth=False, user=None, **_k):
         assert allow_reauth is True
+        if user != "a":
+            raise igs.ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
         return object()
-    def fake_wait(_cfg, user, **_k):
-        return ("sid", "1") if user == "a" else None
     monkeypatch.setattr(igs, "open_client", fake_open)
-    monkeypatch.setattr(igs, "ensure_scrape_chrome", lambda *_a, **_k: True)
-    monkeypatch.setattr(igs, "wait_for_scrape_profile_auth", fake_wait)
     assert cmd_hashtags_scrape_login(cfg) == 0
     blob = json.loads(_cooldown_path(cfg).read_text())
     assert "until" not in blob.get("accounts", {}).get("a", {})
@@ -1834,8 +1827,8 @@ def test_per_account_throttle_persists_under_accounts_user(tmp_path, monkeypatch
 
 
 def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
-    """MOL-900: remesure walk opens ≥2 Safari peers on the same sidecar queue."""
-    import fanops.ig_web_scrape as iws
+    """MOL-900: remesure walk opens ≥2 envelope peers on the same sidecar queue."""
+    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import _remesure_sidecar
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u1,u2")
@@ -1857,7 +1850,7 @@ def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
         c._fanops_scrape_user = user
         return c
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     out = _remesure_sidecar(cfg, names=names, now=t0)
     assert out.get("written") is True and out["measured"] >= 2
@@ -1867,7 +1860,7 @@ def test_refresh_pass_two_ready_users_both_charged(tmp_path, monkeypatch):
 
 def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
     """MOL-900: head in-loop throttle freezes head; peer continues same queue cursor."""
-    import fanops.ig_web_scrape as iws
+    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from instagrapi.exceptions import RateLimitError
     from fanops.fanops_hashtags import _remesure_sidecar, _cooldown_path
@@ -1900,7 +1893,7 @@ def test_refresh_pass_head_throttle_peer_continues(tmp_path, monkeypatch):
         c._fanops_scrape_user = user
         return c
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     out = _remesure_sidecar(cfg, names=names, now=t0)
     assert out["measured"] >= 1
@@ -1931,7 +1924,7 @@ def test_platform_error_from_open_client_in_multi_account_walk_arms_cooldown(tmp
     """MOL-913 escape path: bare Exception from open_client in the multi-account walk arms cooldown
     via `_freeze_for` (B7). Without except Exception, platform errors skip freeze entirely."""
     from datetime import datetime, timezone, timedelta
-    import fanops.ig_web_scrape as iws
+    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import scrape_session_path
     from fanops.fanops_hashtags import _remesure_sidecar, _cooldown_path, _AUTH_DEATH_DELAY_S
     from instagrapi.exceptions import ChallengeRequired
@@ -1952,7 +1945,7 @@ def test_platform_error_from_open_client_in_multi_account_walk_arms_cooldown(tmp
         c._fanops_scrape_user = user
         return c
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     out = _remesure_sidecar(cfg, names=["#hiphop"], now=t0)
     assert "u1" in opens and "u2" in opens, "walk must continue to peer after platform stop"
     assert out.get("written") is True and out.get("measured", 0) >= 1
@@ -2137,12 +2130,11 @@ def _web_fetch_for(tag: str, *, hid=None, media_count=50_000, like=10, play=100)
 
 
 def _boom_chrome_tick(monkeypatch):
-    """Tick remesure must not touch instagrapi / Chrome dumps / Chrome launch."""
+    """Tick remesure must not touch Chrome dumps / Chrome launch / Safari ensure."""
     import fanops.ig_hashtag_scrape as igs
 
     def boom(*_a, **_k):
-        raise AssertionError("tick remesure must not use open_client / Chrome dumps")
-    monkeypatch.setattr(igs, "open_client", boom)
+        raise AssertionError("tick remesure must not use Chrome dumps / Safari ensure")
     monkeypatch.setattr(igs, "launch_scrape_chrome", boom)
     monkeypatch.setattr(igs, "ensure_scrape_chrome", boom)
     monkeypatch.setattr(igs, "ensure_scrape_safari", boom)
@@ -2150,24 +2142,25 @@ def _boom_chrome_tick(monkeypatch):
 
 
 def test_ht4_cmd_hashtags_refresh_uses_safari_remesure(tmp_path, monkeypatch):
-    """Manual refresh must open Safari web session, never open_client / cookie inject."""
+    """Manual refresh must open_client (disk envelope), never open_web_session / cookie inject."""
     import fanops.ig_hashtag_scrape as igs
     import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import cmd_hashtags_refresh
     from fanops.hashtags import load_measurements
-    from fanops.ig_web_scrape import IgWebSession
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
-    monkeypatch.setattr(igs, "open_client", lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("cmd_hashtags_refresh must not call open_client")))
+    monkeypatch.setattr(iws, "open_web_session", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("cmd_hashtags_refresh must not call open_web_session")))
     opened = []
 
     def fake_open(_cfg, user=None, **_k):
         opened.append(user)
-        return IgWebSession(user or "u", fetch=_web_fetch_for("alpha"))
+        c = _FakeClient({"#alpha": 100.0})
+        c._fanops_scrape_user = user or "u"
+        return c
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     assert cmd_hashtags_refresh(cfg) == 0
     assert opened == ["u"]
     assert "#alpha" in load_measurements(cfg)
@@ -2184,44 +2177,28 @@ def test_ht4_refresh_store_harvest_without_client_refuses_instagrapi(tmp_path, m
 
 
 def test_tick_remesure_safari_no_envelope_not_no_scrape(tmp_path, monkeypatch):
-    """HV1-LAYERA: sidecar + Safari stub, no chrome dumps, no envelope → remesure writes."""
+    """No envelope file → remesure aborts no_scrape (scrape-login hatch); does not write."""
     from datetime import datetime, timezone
-    import fanops.ig_web_scrape as iws
     from fanops.fanops_hashtags import refresh_store_if_due
-    from fanops.hashtags import RECORD_NUM_FIELDS, RECORD_STR_FIELDS, load_measurements
-    from fanops.ig_web_scrape import IgWebSession
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")  # must not steer the opener
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     _boom_chrome_tick(monkeypatch)
-    opened = []
-
-    def fake_open(_cfg, user=None, **_k):
-        opened.append(user)
-        return IgWebSession(user or "u", fetch=_web_fetch_for("alpha"))
-
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
-    assert out.get("aborted") != "no_scrape"
-    assert out["refreshed"] is True
-    assert opened == ["u"]
-    rec = load_measurements(cfg)["#alpha"]
-    assert rec["graph_id"] == "id-alpha" and rec["measured_at"]
-    assert rec["media_count"] == 50_000.0
-    assert rec["play_count"] == 100.0 and rec["like_count"] == 10.0
-    extra = set(rec) - {"graph_id", "measured_at", "from"}
-    assert extra <= set(RECORD_NUM_FIELDS) | set(RECORD_STR_FIELDS)
+    assert out.get("aborted") == "no_scrape"
+    assert out.get("refreshed") is False
+    assert "scrape-login" in (out.get("reason") or "")
+    assert not cfg.hashtags_path.exists()
 
 
 def test_tick_remesure_dumps_and_envelope_still_use_safari(tmp_path, monkeypatch):
-    """Chrome dumps + session json present must not open_client or launch Chrome on the tick."""
+    """Envelope present uses open_client; Chrome dumps / ensure_scrape_safari / launch must not run."""
     from datetime import datetime, timezone
-    import fanops.ig_web_scrape as iws
+    import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import refresh_store_if_due
     from fanops.ig_hashtag_scrape import scrape_chrome_profile_dir, scrape_session_path
-    from fanops.ig_web_scrape import IgWebSession
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
@@ -2233,11 +2210,18 @@ def test_tick_remesure_dumps_and_envelope_still_use_safari(tmp_path, monkeypatch
     (chrome / "Cookies").write_text("not-a-real-dump")
     t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     _boom_chrome_tick(monkeypatch)
-    monkeypatch.setattr(iws, "open_web_session",
-                        lambda _c, user=None, **_k: IgWebSession(user or "u",
-                                                                 fetch=_web_fetch_for("alpha")))
+    opened = []
+
+    def fake_open(_cfg, user=None, **_k):
+        opened.append(user)
+        c = _FakeClient({"#alpha": 100.0})
+        c._fanops_scrape_user = user or "u"
+        return c
+
+    monkeypatch.setattr(igs, "open_client", fake_open)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is True and out.get("aborted") != "no_scrape"
+    assert opened == ["u"]
 
 
 def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, monkeypatch):
@@ -2258,14 +2242,14 @@ def test_refresh_store_if_due_password_does_not_count_as_configured(tmp_path, mo
 
 
 def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
-    """HT3: used≥day budget blocks remesure cooldown and the Safari lock picker."""
+    """HT3: used≥day budget blocks remesure cooldown and the lock picker."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
-    import fanops.ig_web_scrape as iws
+    import fanops.ig_hashtag_scrape as igs
     from fanops.controlio import write_json_atomic
     from fanops.fanops_hashtags import (_SCRAPE_DAY_BUDGET, _cooldown_path, refresh_store_if_due,
                                        scrape_user_blocked)
-    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.ig_hashtag_scrape import ScrapeUnavailable, scrape_session_path
     from fanops.source_tags import _iter_lock_clients
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
@@ -2280,10 +2264,10 @@ def test_tick_remesure_used_does_not_block_lock_walk(tmp_path, monkeypatch):
     opens = []
 
     def fake_open(_cfg, user=None, **_k):
-        opens.append(("web", user))
-        raise iws.ScrapeUnavailable("no scrape profile session")
+        opens.append(("client", user))
+        raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     _boom_chrome_tick(monkeypatch)
     skip = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert skip.get("reason") == "cooldown"
@@ -2318,11 +2302,12 @@ def test_lock_then_remesure_still_runs(tmp_path, monkeypatch):
 
 
 def test_tick_remesure_source_has_no_dump_login_or_chrome():
-    """Tick path source must not dump_settings, login(), or name Google Chrome."""
+    """Tick path source uses open_client; must not dump_settings, login(), or name Google Chrome."""
     import inspect
     import fanops.fanops_hashtags as fh
     src = inspect.getsource(fh._refresh_pass) + inspect.getsource(fh.refresh_store_if_due)
-    assert "open_web_session" in src
+    assert "open_client" in src
+    assert "open_web_session" not in src
     assert "dump_settings" not in src
     assert "login(" not in src
     assert "Google Chrome" not in src
@@ -2350,11 +2335,10 @@ def test_tick_remesure_igwebsession_fetch_writes_measurement_fields(tmp_path, mo
 
 
 def test_tick_remesure_opens_web_session_per_listed_user(tmp_path, monkeypatch):
-    """#1029 profile map: tick remesure calls open_web_session(cfg, user=u)."""
+    """Tick remesure calls open_client(cfg, user=u) for listed users."""
     from datetime import datetime, timezone
-    import fanops.ig_web_scrape as iws
+    import fanops.ig_hashtag_scrape as igs
     from fanops.fanops_hashtags import refresh_store_if_due
-    from fanops.ig_web_scrape import IgWebSession
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "markmakmouly,cisumwolfhom")
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#alpha"])
@@ -2364,9 +2348,11 @@ def test_tick_remesure_opens_web_session_per_listed_user(tmp_path, monkeypatch):
 
     def fake_open(_cfg, user=None, **_k):
         seen.append(user)
-        return IgWebSession(user or "markmakmouly", fetch=_web_fetch_for("alpha"))
+        c = _FakeClient({"#alpha": 100.0})
+        c._fanops_scrape_user = user or "markmakmouly"
+        return c
 
-    monkeypatch.setattr(iws, "open_web_session", fake_open)
+    monkeypatch.setattr(igs, "open_client", fake_open)
     out = refresh_store_if_due(cfg, max_age_s=1, now=t0)
     assert out["refreshed"] is True
     assert seen == ["markmakmouly"]
