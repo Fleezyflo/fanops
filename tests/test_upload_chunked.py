@@ -119,11 +119,11 @@ def test_upload_resume_after_partial(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     cfg = Config(root=tmp_path)
-    data = b"D" * (2 * 1024 * 1024)
+    data = b"D" * (512 * 1024)   # 512 KB — within 1 MB cap; resume after partial still exercised
     digest = _sha(data)
     init1 = actions.upload_init(cfg, "resume.mp4", len(data), digest)
     uid1 = init1.detail["upload_id"]
-    half = 1024 * 1024
+    half = 256 * 1024
     actions.upload_chunk(cfg, uid1, 0, data[:half])
     init2 = actions.upload_init(cfg, "resume.mp4", len(data), digest)
     assert init2.ok and init2.detail["upload_id"] == uid1 and init2.detail["offset"] == half
