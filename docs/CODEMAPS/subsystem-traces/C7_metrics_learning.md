@@ -33,7 +33,7 @@ All 12 files were read in full via the Read tool (not from memory), and cross-ch
    project_imported_media()      (ledger-rebuild M2) live-media-not-authored-here → ImportedMedia rows
 
 3. PULL METRICS (track.py)
-   pull_metrics()                 → _default_list_posts() (postiz/zernio/Graph per-platform)
+   pull_metrics()                 → _default_list_posts() (Postiz/Zernio per routed backend)
                                      → record_metrics() per matched row (due_offset gates time-series append)
    pull_imported_insights()       → same shape for ImportedMedia rows (Graph media_insights, sole IG source)
 
@@ -90,7 +90,7 @@ Purpose: pull per-post analytics, score lift, merge into ledger, and auto-valida
 - **`record_metrics(led, post_id, metrics, *, weights=None, offset=None, captured_at=None)`** — merges metrics (carry-forward), stamps lift_score/degraded flags, appends time-series row, flips published→analyzed. Mutates `led.posts` in-memory. Callers: `pull_metrics`.
 - **`pull_imported_insights(led, cfg, *, get=None, now=None)`** — same pattern for `ImportedMedia`. Network (Graph). Callers: `cli.cmd_map_media`.
 - **`_metrics_client_for(cfg, backend, submission_ids)`** — lazy factory for Postiz/Zernio metrics clients. Callers: `_default_list_posts`.
-- **`_default_list_posts(cfg, *, submission_ids=None, posts=None)`** — composite per-platform fetcher (IG always via Graph). Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`, `pull_metrics`.
+- **`_default_list_posts(cfg, *, submission_ids=None, posts=None)`** — composite fetcher: Postiz/Zernio per `effective_provider`. Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`, `pull_metrics`.
 - **`pull_metrics(led, cfg, *, list_posts=None, window="30d", now=None)`** — orchestrator: fetch → match → record_metrics → auto-validate. Network + mutation + log. Callers: `cli._learn_pass`, `cli.cmd_track`, `studio.actions.pull_metrics_studio`.
 - **`_auto_validate_metrics_shape(led, cfg)`** — auto-unfreeze: first proving analyzed row on a live backend stamps `cutover.json["metrics_confirmed"]=True`. Callers: `pull_metrics` (always, at end).
 
@@ -99,7 +99,7 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 
 - **`_env_slug(handle)`** — handle→env-slug. Pure. Callers: `per_account_token_env_key`.
 - **`per_account_token_env_key(handle)`** — per-handle Graph token env key name. Callers: `resolve_meta_creds`, `studio.golive.set_meta_creds`, `studio.views.golive_accounts`.
-- **`resolve_meta_creds(cfg, *, handle=None)`** — resolves per-handle creds with global fallback; never raises. Disk read (accounts). Callers: `enumerate_scoped_media`, `list_user_media`, `media_insights`, `post.metrics.GraphInsightsClient._default_insights`, `track.pull_imported_insights`.
+- **`resolve_meta_creds(cfg, *, handle=None)`** — resolves per-handle creds with global fallback; never raises. Disk read (accounts). Callers: `enumerate_scoped_media`, `list_user_media`, `media_insights`, `track.pull_imported_insights`.
 - **`_graph_get(cfg, path, params, *, get=None, token=None)`** — shared GET wrapper, fail-soft to `None`. Network. Callers: `harvest_cooccurring`, `hashtag_id`, `list_user_media`, `trend_score`.
 - **`hashtag_id(cfg, tag, *, get=None)`** — resolves `#tag`→Graph node id. Callers: `harvest_cooccurring`, `trend_score`.
 - **`trend_score(cfg, tag, *, get=None)`** — sums engagement over top_media. Callers: `discover_candidates`, `sample_trends`, `tag_metrics`.
@@ -109,9 +109,9 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`enumerate_scoped_media(cfg, handles, *, get=None)`** — flattens media across handles, fail-open per-handle. Callers: `reconcile.project_imported_media`.
 - **`insights_metrics_for(product_type)`** — metric-list builder by product type. Pure. Callers: `media_insights`.
 - **`_is_scope_error(body)`** — classifies permission-refusal vs transient. Pure. Callers: `media_insights`.
-- **`media_insights(cfg, media_id, product_type, *, get=None, creds=None)`** — the sole IG analytics read; raises `MetaInsightsScopeError` on real permission refusal. Callers: `post.metrics.GraphInsightsClient._default_insights`, `track.pull_imported_insights`.
+- **`media_insights(cfg, media_id, product_type, *, get=None, creds=None)`** — the sole IG analytics read; raises `MetaInsightsScopeError` on real permission refusal. Callers: `track.pull_imported_insights`.
 - **`insights_blocked_signal(cfg)`** — reads persisted scope-blocked breadcrumb. Callers: `doctor.doctor_report`, `studio.views.build_system_strip`.
-- **`_set_insights_blocked(cfg)`/`_clear_insights_blocked(cfg)`** — write/delete the breadcrumb. Callers: `post.metrics.GraphInsightsClient.list_posts`.
+- **`_set_insights_blocked(cfg)`/`_clear_insights_blocked(cfg)`** — write/delete the breadcrumb. Callers: `pull_imported_insights` / operator Graph paths only — not authored `pull_metrics` (#1196).
 
 ### `metrics_schedule.py` — pure cadence selector, no I/O
 - **`offset_seconds(offset)`** — `'4h'`→14400. Pure. Callers: `due_offset`.
