@@ -38,18 +38,20 @@ def _seed_captioned_clip(led, cfg, moment, surfaces=None):
     led.add_clip(clip)
 
 
-def test_render_reads_moment_cut_spec(tmp_path):
+def test_render_reads_account_cut_spec(tmp_path):
+    from fanops.accounts import Account
     cfg = Config(root=tmp_path)
     m = _moment(clip_profile="long", framing="top")
     clip = _clip_stub()
-    rid, wants_cut, profile, top_bias = render_spec(cfg, clip=clip, hook="H", moment=m)
+    acct_long = Account(handle="a", account_id="1", clip_profile="long", framing="top")
+    rid, wants_cut, profile, top_bias = render_spec(cfg, clip=clip, hook="H", moment=m, acct=acct_long)
     assert wants_cut is True and profile == "long" and top_bias is True
-    m2 = _moment(clip_profile=cfg.clip_profile, framing="center")
-    _, wants2, prof2, top2 = render_spec(cfg, clip=clip, hook="H", moment=m2)
+    acct_talk = Account(handle="b", account_id="2", framing="center")
+    _, wants2, prof2, top2 = render_spec(cfg, clip=clip, hook="H", moment=m, acct=acct_talk)
     assert wants2 is True and prof2 == cfg.clip_profile and top2 is False
 
 
-def test_post_stamp_from_moment_not_account(tmp_path, monkeypatch):
+def test_post_stamp_from_account_not_moment(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.setattr("fanops.config.Config.resolve_clip_profile", lambda self, acct=None: "short")
     monkeypatch.setattr("fanops.config.Config.resolve_top_bias", lambda self, acct=None: True)
@@ -60,13 +62,14 @@ def test_post_stamp_from_moment_not_account(tmp_path, monkeypatch):
     led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     p = next(iter(led.posts.values()))
-    assert p.clip_profile == "long" and p.top_bias is True
+    assert p.clip_profile == "short" and p.top_bias is True
 
 
 def test_no_approval_reclip_stamp(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "clip_profile": "long", "framing": "top"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(clip_profile="long", framing="top", hook="H"))
     led.save()

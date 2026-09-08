@@ -23,7 +23,7 @@
     <div class="meta clip-reason">{{ card.reason }}</div>
     {# Face 4 follow-up (C3): which accounts this moment was cast to (read-only). Empty/casting-OFF -> "all
        accounts" (a moment with no cast affinity reaches every account). Non-interactive spans, group aria-label. #}
-    {% if card.affinities %}<div class="meta cast-affinity" aria-label="cast to {{ card.affinities|join(', ') }}">cast to {% for h in card.affinities %}<span class="chip ro">{{ h }}</span>{% endfor %}</div>{% else %}<div class="meta cast-affinity muted">all accounts</div>{% endif %}
+    {% if card.affinities %}<div class="meta cast-affinity" aria-label="cast to {{ card.affinities|join(', ') }}">cast to {% for h in card.affinities %}<span class="chip ro">{{ h }}</span>{% endfor %}</div>{% else %}<div class="meta cast-affinity"><span class="chip warn" title="no specific cast — every moment fans to all accounts">fans to all accounts</span></div>{% endif %}
 
     {# P5: lineage context so the operator knows WHICH source + WHERE in it this clip came from, plus an
        optional transcript peek (collapsed) — the data was already on the card, just never surfaced. #}

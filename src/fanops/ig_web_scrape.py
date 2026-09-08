@@ -90,7 +90,7 @@ class IgWebSession:
         data = self._json(
             "POST",
             url,
-            body="include_persistent=0&max_id=&page=0&surface=grid&tab=recent",
+            body="include_persistent=0&max_id=&page=0&surface=grid&tab=top",
         )
         return _collect_medias(data)[: max(int(amount), 0)]
 
