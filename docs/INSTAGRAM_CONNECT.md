@@ -32,8 +32,9 @@ Publishing to an account needs **all three**:
 3. **Mapped** — `accounts.json integrations['instagram'] = <postiz_channel_id>` so FanOps knows which
    channel to target.
 
-**FanOps publishes through Postiz ONLY.** The `META_GRAPH_TOKEN` in `.env` is trends-only (hashtag
-search); it has no publishing path.
+**FanOps publishes through Postiz ONLY.** The `META_GRAPH_TOKEN` in `.env` is for operator-only Graph
+reads (imported-media insights, verify-live) — not publishing. Hashtag Layer A is Safari scrape
+(`FANOPS_IG_SCRAPE_USER`), not Graph.
 
 ---
 

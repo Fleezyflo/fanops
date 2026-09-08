@@ -616,7 +616,7 @@ is a product change, never a "cleanup".
 | **Route a channel live** | `golive.set_account_backend(confirmed=True)` (creds present + confirm); `golive.adopt_channels(confirmed=True)`; `golive.validate_learning(confirmed=True)` posts ONE operator-selected throwaway, never auto-picked. | Each maps a REAL account to a live provider — creds alone are not consent. |
 | **Wipe ledger** | `actions_wipe.confirm_wipe` — typed `CONFIRM_WORD = "REMOVE"` → mandatory snapshot → `snapshot_is_restorable` → `execute_wipe` (re-checks confirm). | Ledger state is production data; a typed word + restorable snapshot is the floor. |
 | **Hashtag scrape login** | `fanops hashtags scrape-login` → `cmd_hashtags_scrape_login` opens **Safari** to instagram.com (never Google Chrome), waits until that tab is logged in, then best-effort promotes the device envelope. Lock produce and remesure (`ig_web_scrape.open_web_session`) XHR inside that Safari tab. Never `login()`. | Google Chrome is the operator's daily / DevTools browser. A FanOps Chrome instance hijacks the Dock. Safari is the scrape client. |
-| **Meta token mint / rotation** | Off-platform + Studio Go-Live write (`META_GRAPH_TOKEN` / `META_GRAPH_TOKEN__<slug>`, write-only). See `docs/META_CREDS_OPS.md`. | Minting/rotating a Graph token is a human credential act; the doctor only WARNs before expiry (it cannot rotate). |
+| **Meta token mint / rotation** | Off-platform + Studio Go-Live write (`META_GRAPH_TOKEN` / `META_GRAPH_TOKEN__<slug>`, write-only). See `docs/META_CREDS_OPS.md`. | Minting/rotating a Graph token is a human credential act; `fanops doctor` does not introspect token expiry (no `debug_token` check). |
 | **Release parked footage / re-opens** | `FANOPS_QUEUE_GATE` (default ON) holds new footage pending and PARKS machine-origin re-opens (`adjust.amplify`); the operator releases via the Studio **Make** tab (`actions_run.release_reopens` / `release_batch` / `release_all_held`, live path requires `confirmed=True`). | Auto-ingest and machine re-opens are held so a human decides what enters production. |
 | **Cutover to a real account** | `cutover` requires `CONFIRM_FLAG = "--i-understand-this-posts-to-a-real-account"` (`cutover_postiz` refuses without it). | It posts to a real channel to confirm lift-field shape; the flag is the explicit acknowledgment. |
 
@@ -731,7 +731,7 @@ Confirm these via `fanops doctor` and the Studio Go-Live readiness panel:
 
 - **Postiz connectivity** — `POSTIZ_URL` + `POSTIZ_API_KEY` set; Save & test succeeds in Go-Live.
 - **Per-channel mapping** — every active channel has an integration id (Postiz) or zernio backend (TikTok).
-- **Meta Graph (IG insights)** — `META_GRAPH_TOKEN` / per-handle tokens for lift feedback.
+- **Meta Graph (imported-media insights)** — optional: `META_GRAPH_TOKEN` / per-handle tokens for `fanops map-media` and imported-row insights (`pull_imported_insights`). Authored-post lift metrics come from Postiz/Zernio, not Graph. Scope blocks surface on the Studio Home strip (`insights_blocked.json`), not in `fanops doctor`.
 - **Metrics field shape** — IG reach/engagement keys match `track._W`; re-weight via `tuning.json` if needed.
 
 Historical Blotato MCP/rest integration notes were removed — those backends no longer exist in `src/`.

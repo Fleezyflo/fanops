@@ -7,7 +7,7 @@
 
 1. `src/fanops/cli.py` (957 lines) — read
 2. `src/fanops/daemon.py` (264 lines) — read
-3. `src/fanops/doctor.py` (107 lines) — read
+3. `src/fanops/doctor.py` (632 lines) — read
 4. `src/fanops/cutover.py` (91 lines) — read
 5. `src/fanops/cutover_postiz.py` (92 lines) — read
 6. `src/fanops/health.py` (115 lines) — read
@@ -107,8 +107,8 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 | `cutover metrics <submission_id>` | `cmd_cutover` → `cutover.cutover_metrics` | Step 3: pull the real metrics row for the cutover post | **LIVE** (network read) |
 | `cutover lift <submission_id>` | `cmd_cutover` → `cutover.cutover_lift` | Step 4: compute lift_score from the captured row | READ-ONLY (pure computation on already-captured local data) |
 | `learn doctor` | inline (`learn_doctor.cmd_learn_doctor`) | Gated assay: does live analytics carry the reach signal lift_score needs; may write `learn_doctor` sidecar | `assay.dangerous` (not doctor observe) |
-| `hashtags refresh` | inline (`fanops_hashtags.cmd_hashtags_refresh`) | Rebuild hashtag store from live Meta Graph reach (harvest→measure→rank) | **LIVE** (Meta Graph reads; fail-open without creds) |
-| `hashtags discover` | inline (`fanops_hashtags.cmd_hashtags_discover`) | Report fresh per-persona hashtags from live category top_media | **LIVE** (Meta Graph reads; read-only, never writes the menu) |
+| `hashtags refresh` | inline (`hashtag_refresh.cmd_hashtags_refresh`) | Safari remesure of sidecar pile∪lock names (`_remesure_sidecar`) | **LIVE** (Safari `ig_web_scrape` XHR; needs `FANOPS_IG_SCRAPE_USER` + scrape session) |
+| `hashtags discover` | inline (`fanops_hashtags.cmd_hashtags_discover`) | Report each native source's lock from `source_tag_locks.json` | READ-ONLY (zero network) |
 | `run` | inline in `_dispatch` | The unattended loop: respond+advance to convergence, then learning passes, then heartbeat | **LIVE** — this is THE verb that autonomously publishes due posts (via `advance`→`publish_due`), calls the LLM responder if configured, and runs all gated learning-bias passes on a live backend |
 | `daemon install [--interval] [--responder]` | `cmd_daemon` → `daemon.install` | Write + load a macOS launchd LaunchAgent that fires `fanops run` on a cadence | **LIVE** side effect (installs an OS-level recurring job that will itself execute LIVE `run` cycles unattended); the install call itself is local (writes plist, calls `launchctl`) |
 | `daemon status` | `cmd_daemon` → `daemon.status` | Report whether the agent is loaded and its last heartbeat age | READ-ONLY |
@@ -173,10 +173,11 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 - `tail_logs(cfg, n=40)` — READ-ONLY: reads the last `n` lines of `cfg.log_path` via a bounded `collections.deque` (never loads the whole file). Returns `"no logs yet"` if absent. Called by `cli.cmd_daemon`.
 - `_heartbeat_age_s(cfg)` — READ-ONLY: scans `run.log` for the most recent `\theartbeat\t` line, parses its leading ISO timestamp, returns age in seconds (or `None` on no log/no heartbeat/unparseable). Called by `status`.
 
-### `doctor.py` — read-only first-run health screen
+### `doctor.py` — read-only first-run health screen (checks assembled here; sole constructor is `health_model.build_health_report`)
 
-- `_check(label, ok, hint="")` — pure: builds one `{label, ok, hint}` result dict (hint blanked when ok). Called by `doctor_report`.
-- `doctor_report(cfg)` — the single composed check: media toolchain presence (ffmpeg/ffprobe/whisper/yt-dlp), `claude` on PATH (only if `FANOPS_RESPONDER=llm`), brand-brief (`context.md`) non-empty, `accounts.json` validity, Postiz key+URL consistency + learning-readiness (booleans only, key never echoed), live-route coherence (`FANOPS_LIVE=1` but nothing actually routes live — the "half-live" trap), plus informational notes (poster backend + dryrun/live, learning-validated state, review-queue depth). Reads `learning_validated(cfg)` **once** and reuses it in both the Postiz-readiness check and the notes block. Performs no writes/mutations — pure diagnosis. Called by `autopilot.autopilot`, `cli.cmd_doctor`, `studio.views.golive_status`.
+- `_check(label, ok, hint="", *, severity=None)` — builds one `{label, ok, severity, hint}` check dict. Called by `_assemble_doctor_checks` and operational sensors.
+- `_assemble_doctor_checks(cfg, …)` — setup-gate checks: strict Settings, media toolchain, `FANOPS_RESPONDER` + LLM CLI on PATH (WARN when present — not proof of login), brand brief, accounts/personas validity, Postiz learning readiness, half-live coherence (`health_model.half_live_state`), hashtag Layer A scrape session (presence only — no live IG probe), Postiz/Zernio reach, daemon liveness (heartbeat + drainable past-due backlog), launchd keeper + Studio resident. **No Meta Graph token / insights-scope / hashtag-quota checks.** Operational sensors (stale gates, scrape cooldown, …) append via `_operational_sensor_checks`. Called by `health_model.build_health_report`.
+- `doctor_report(cfg, …)` — thin `build_health_report(...).as_dict()` compatibility view. Called by `cli.cmd_doctor`, `autopilot.autopilot`, `studio.views.golive_status`.
 
 ### `cutover.py` — the manual live-cutover validation harness (writes ONLY `cutover.json`)
 
