@@ -135,6 +135,7 @@
       ],
       "lazy": [
         "fanops.errors",
+        "fanops.ledger",
         "fanops.personas"
       ],
       "optional": [],
@@ -677,12 +678,11 @@
         "fanops.ig_hashtag_scrape",
         "fanops.ledger",
         "fanops.llm",
-        "fanops.meta_graph",
         "fanops.models",
         "fanops.pipeline_status",
+        "fanops.post.run",
         "fanops.post.zernio",
         "fanops.settings",
-        "fanops.source_tags",
         "fanops.timeutil",
         "fanops.transcribe"
       ],
@@ -2015,12 +2015,14 @@
     },
     "fanops.studio.actions_approve": {
       "compile": [
+        "fanops.accounts",
         "fanops.audit",
         "fanops.config",
         "fanops.errors",
         "fanops.ledger",
         "fanops.log",
         "fanops.models",
+        "fanops.post.run",
         "fanops.studio.actions_common",
         "fanops.studio.views",
         "fanops.studio.views_common",
@@ -2398,6 +2400,7 @@
         "fanops.ledger",
         "fanops.models",
         "fanops.pipeline_run",
+        "fanops.post.run",
         "fanops.timeutil"
       ],
       "optional": [],
@@ -2735,6 +2738,7 @@
         "fanops",
         "fanops.accounts",
         "fanops.cutover",
+        "fanops.errors",
         "fanops.meta_graph",
         "fanops.post.metrics",
         "fanops.validation_gate"
@@ -2937,7 +2941,7 @@
   "fan_in_compile": {
     "fanops": 17,
     "fanops._fwrun": 0,
-    "fanops.accounts": 20,
+    "fanops.accounts": 21,
     "fanops.adjust": 3,
     "fanops.agentstep": 11,
     "fanops.apply_common": 2,
@@ -3046,7 +3050,7 @@
     "fanops.post.publish_dryrun": 1,
     "fanops.post.publish_errors": 1,
     "fanops.post.publish_requeue": 1,
-    "fanops.post.run": 1,
+    "fanops.post.run": 2,
     "fanops.post.zernio": 2,
     "fanops.post.zernio_outcome": 1,
     "fanops.postiz_lifecycle": 0,
@@ -3276,7 +3280,7 @@
     "fanops.stranded_posts": 2,
     "fanops.studio": 0,
     "fanops.studio.actions": 16,
-    "fanops.studio.actions_approve": 10,
+    "fanops.studio.actions_approve": 12,
     "fanops.studio.actions_casting": 4,
     "fanops.studio.actions_common": 0,
     "fanops.studio.actions_crosspost": 8,
@@ -3333,8 +3337,16 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 279,
+  "lazy_downward_count": 280,
   "lazy_lateral": [
+    {
+      "from": "fanops.accounts",
+      "from_level": 2,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
     {
       "from": "fanops.artifacts",
       "from_level": 3,
@@ -3421,6 +3433,14 @@
       "jump": 0,
       "same_scc": false,
       "to": "fanops.reconcile",
+      "to_level": 4
+    },
+    {
+      "from": "fanops.doctor",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.run",
       "to_level": 4
     },
     {
@@ -4152,14 +4172,6 @@
       "same_scc": false,
       "to": "fanops.meta_graph",
       "to_level": 2
-    },
-    {
-      "from": "fanops.doctor",
-      "from_level": 4,
-      "jump": 2,
-      "same_scc": false,
-      "to": "fanops.source_tags",
-      "to_level": 6
     },
     {
       "from": "fanops.hashtag_refresh",
@@ -5116,11 +5128,11 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 819,
-    "lazy_edges": 446,
-    "lazy_edges_lateral": 55,
-    "lazy_edges_strictly_upward": 112,
-    "lazy_edges_to_equal_or_higher_level": 167,
+    "compile_edges_G1": 821,
+    "lazy_edges": 448,
+    "lazy_edges_lateral": 57,
+    "lazy_edges_strictly_upward": 111,
+    "lazy_edges_to_equal_or_higher_level": 168,
     "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9

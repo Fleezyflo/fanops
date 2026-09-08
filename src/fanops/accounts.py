@@ -559,6 +559,10 @@ def set_status(cfg: Config, handle: str, status: str) -> str:
         if not found:
             raise KeyError(handle)
         write_json_atomic(p, raw)
+    if status != AccountStatus.active.value:
+        from fanops.ledger import Ledger
+        with Ledger.transaction(cfg) as led:
+            led.unapprove_queued_for_account(handle)
     return handle
 
 

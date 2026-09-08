@@ -337,6 +337,26 @@ def test_set_status_demotes_ALL_duplicate_rows(tmp_path):
     set_status(cfg, "@dup", "planned")
     assert [x["status"] for x in json.loads(cfg.accounts_path.read_text())["accounts"]] == ["planned", "planned"]
 
+def test_set_status_demote_unapproves_queued_posts(tmp_path):
+    """Demoting an account sends its queued bucket back to awaiting_approval — parked posts must not ship."""
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Fmt, Moment, MomentState, Platform, Post, PostState, Source
+    cfg = Config(root=tmp_path)
+    _seed(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
+        led.add_post(Post(id="p_q", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="c", state=PostState.queued, scheduled_time="2026-08-01T12:00:00Z"))
+        led.add_post(Post(id="p_other", parent_id="clip_1", account="b", account_id="2", platform=Platform.instagram,
+                          caption="c", state=PostState.queued, scheduled_time="2026-08-01T12:00:00Z"))
+    set_status(cfg, "@a", "planned")
+    again = Ledger.load(cfg)
+    assert again.posts["p_q"].state is PostState.awaiting_approval
+    assert again.posts["p_other"].state is PostState.queued
+
 def test_remove_account_drops_only_target_preserves_siblings(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [

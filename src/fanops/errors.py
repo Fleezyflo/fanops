@@ -96,10 +96,10 @@ class MetaInsightsScopeError(Exception):
     """Leg 2 (Insight): the Meta Graph media-insights read was REFUSED for lack of the
     `instagram_manage_insights` token scope (a permission error, not a transport blip). Deliberately NOT an
     AuthError — a missing INSIGHTS scope must not halt the PUBLISH queue (publishing uses a different
-    Postiz/Zernio credential entirely). It fails the insights pass CLOSED + LOUD: GraphInsightsClient sets an
-    `insights_blocked` signal (doctor check + Home banner) and every post keeps its PRIOR snapshot — there is
-    no silent degrade and never a wrong number written. Granting the one scope is the single unblock. Body
-    WITHHELD from the message (the access_token can appear in a Graph error echo)."""
+    Postiz/Zernio credential entirely). It fails the insights pass CLOSED + LOUD: pull_imported_insights
+    catches this, sets the `insights_blocked` breadcrumb (Home strip + imported pull), and every row keeps its
+    PRIOR snapshot — there is no silent degrade and never a wrong number written. Granting the one scope is
+    the single unblock. Body WITHHELD from the message (the access_token can appear in a Graph error echo)."""
 
 
 def redact(text: "str | None", *secrets: "str | None", limit: int = 200) -> str:

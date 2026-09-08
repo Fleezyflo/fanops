@@ -214,7 +214,7 @@
     {
       "workflow_id": "W10",
       "name": "Learning, variants, personas, selection",
-      "data_origin": "track.pull_metrics is the SOLE writer of Post.metrics / metrics_series / published->analyzed. IG reach: Meta Graph (GraphInsightsClient), the SOLE IG metric reader. Lift = track._W {saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05}; any weight >= 1.0 is PRIMARY, and a missing primary stamps lift_degraded rather than trusting a partial scalar.",
+      "data_origin": "track.pull_metrics is the SOLE writer of Post.metrics / metrics_series / published->analyzed. Authored-post IG/TikTok reach: PostizMetricsClient / ZernioMetricsClient per channel routing (#1196). Imported-media reach: pull_imported_insights -> meta_graph.media_insights (operator CLI only). Lift = track._W {saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05}; any weight >= 1.0 is PRIMARY, and a missing primary stamps lift_degraded rather than trusting a partial scalar.",
       "actuators": [
         {"name": "adjust.amplify", "reversible": true, "gate": "_learn_pass -> cfg.is_live_backend", "validation_frozen": false, "cap": "MAX_AMPLIFY_PER_SOURCE = 3", "verdict": "safe"},
         {"name": "p4_dim_bias", "reversible": true, "gate": "DEFAULT-OFF + learning_validated + p4_unlocked", "validation_frozen": true},

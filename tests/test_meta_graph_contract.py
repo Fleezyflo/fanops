@@ -82,19 +82,3 @@ def test_does_not_exist_error_is_NOT_a_scope_error():
     assert _is_scope_error(body) is False, (
         "REGRESSION TARGET: _is_scope_error must not map a GraphMethodException 'does not exist' to "
         "'missing instagram_manage_insights'. That false-positive is what froze IG insights.")
-
-
-@pytest.mark.vcr
-def test_debug_token_real_shape():
-    """CONTRACT: /debug_token returns {"data": {"is_valid": bool, "scopes": [...], "expires_at": int}}.
-    Pins the shape debug_token_expiry() and the scope-audit read against reality — including the presence
-    of `instagram_manage_insights` in the granted scopes (the ground truth doctor should trust)."""
-    cfg = _cfg()
-    creds = resolve_meta_creds(cfg)
-    resp = requests.get(f"{cfg.meta_graph_url}/debug_token",
-                        params={"input_token": creds.token, "access_token": creds.token}, timeout=20)
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert isinstance(data.get("is_valid"), bool)
-    assert isinstance(data.get("scopes"), list), "debug_token exposes the granted scope list"
-    assert "expires_at" in data, "expires_at drives the near-expiry preflight"

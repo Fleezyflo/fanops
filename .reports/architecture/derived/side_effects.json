@@ -14,6 +14,12 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "known_blind_spot": "meta_graph uses an INJECTABLE `get` (so tests never touch the network). It is a real network seam and a literal `requests.*` census does NOT see it. Recorded here so the census is not mistaken for the whole truth.",
   "ledger_transaction": {
+    "fanops.accounts": [
+      {
+        "call": "Ledger.transaction",
+        "line": 564
+      }
+    ],
     "fanops.canary": [
       {
         "call": "Ledger.transaction",
@@ -227,27 +233,27 @@
     "fanops.studio.actions_approve": [
       {
         "call": "Ledger.transaction",
-        "line": 68
+        "line": 70
       },
       {
         "call": "Ledger.transaction",
-        "line": 125
+        "line": 134
       },
       {
         "call": "Ledger.transaction",
-        "line": 145
+        "line": 154
       },
       {
         "call": "Ledger.transaction",
-        "line": 163
+        "line": 172
       },
       {
         "call": "Ledger.transaction",
-        "line": 196
+        "line": 205
       },
       {
         "call": "Ledger.transaction",
-        "line": 331
+        "line": 340
       }
     ],
     "fanops.studio.actions_casting": [
@@ -831,7 +837,7 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 83,
+    "ledger_transaction_sites": 84,
     "lock_sites": 21,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,

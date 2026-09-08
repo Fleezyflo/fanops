@@ -6,6 +6,7 @@
       "fanops.studio.golive"
     ],
     "ledger_transaction_sites": [
+      "fanops.accounts",
       "fanops.canary",
       "fanops.cli_run",
       "fanops.cli",

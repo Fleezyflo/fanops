@@ -199,9 +199,11 @@ def pull_imported_insights(led: Ledger, cfg: Config, *, get=None,
     product_type and refuses PRE-FLIGHT (returns None, NO HTTP, NO scope-block) when the type is
     unresolved/None — so an ImportedMedia with unknown product_type NEVER builds an empty `metric=` request
     (the row stays re-resolvable). FAIL-OPEN per row: a None (transient: no creds / 5xx / unresolved type)
-    preserves the prior metrics, never crashes; a LOUD scope refusal raises out of media_insights (the one
-    external gate), same as the Post path. Injectable `get` for hermetic tests."""
+    preserves the prior metrics, never crashes; a LOUD scope refusal is caught here (sets the
+    insights_blocked breadcrumb, preserves the row's prior snapshot, continues the loop). Injectable `get`
+    for hermetic tests."""
     from fanops import meta_graph
+    from fanops.errors import MetaInsightsScopeError
     now = now or datetime.now(timezone.utc)
     weights = cfg.tuning().get("lift_weights")
     log = get_logger(cfg)
@@ -211,9 +213,15 @@ def pull_imported_insights(led: Ledger, cfg: Config, *, get=None,
         # enumerating handle; a global-scope label (an ig id, no matching account) resolves to the global
         # creds — byte-identical to before.
         creds = meta_graph.resolve_meta_creds(cfg, handle=im.account)
-        vals = meta_graph.media_insights(cfg, mid, im.product_type, get=get, creds=creds)   # None on transient/unresolved; refuses empty-metric pre-flight
+        try:
+            vals = meta_graph.media_insights(cfg, mid, im.product_type, get=get, creds=creds)   # None on transient/unresolved; refuses empty-metric pre-flight
+        except MetaInsightsScopeError:
+            meta_graph._set_insights_blocked(cfg)
+            log("imported_insights", mid, "scope_blocked")
+            continue
         if not vals:
             continue                                             # transient / unresolved product_type -> preserve prior, re-poll next pass
+        meta_graph._clear_insights_blocked(cfg)
         prior_metrics = {k: v for k, v in (im.metrics or {}).items()
                          if k not in (LIFT_SCORE, "lift_degraded", "lift_missing_keys")}
         # MOL-84 half 2 (13e-1=YES): thread the platform into the weighting calls EXACTLY as record_metrics

@@ -16,8 +16,8 @@
 - **Postiz** (self-hosted; the headline live publish path for IG):
   `GET /public/v1/integrations` (list connected platforms) -> `POST /public/v1/posts` (schedule with integration_id).
   Auth: `x-api-key` header from env `POSTIZ_API_KEY`; failures -> typed PostizAuthError.
-  Schema: account → integration_id stored in `accounts.json`. Publishing feeds the learning loop; IG
-  performance is read separately from the Meta Graph (see Insight / `GraphInsightsClient`, the sole IG metric reader).
+  Schema: account → integration_id stored in `accounts.json`. Publishing feeds the learning loop; authored-post IG
+  performance is read via Postiz analytics (`PostizMetricsClient`). Meta Graph (`media_insights`) is for imported-media / operator CLI only.
 
 - **Zernio** (hosted TikTok poster; no learning loop):
   `ZERNIO_API_URL` (default `https://zernio.com/api/v1`) upload + schedule.

@@ -110,7 +110,7 @@ Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, p
 - **`insights_metrics_for(product_type)`** — metric-list builder by product type. Pure. Callers: `media_insights`.
 - **`_is_scope_error(body)`** — classifies permission-refusal vs transient. Pure. Callers: `media_insights`.
 - **`media_insights(cfg, media_id, product_type, *, get=None, creds=None)`** — the sole IG analytics read; raises `MetaInsightsScopeError` on real permission refusal. Callers: `track.pull_imported_insights`.
-- **`insights_blocked_signal(cfg)`** — reads persisted scope-blocked breadcrumb. Callers: `doctor.doctor_report`, `studio.views.build_system_strip`.
+- **`insights_blocked_signal(cfg)`** — reads persisted scope-blocked breadcrumb. Callers: `studio.views.build_system_strip`.
 - **`_set_insights_blocked(cfg)`/`_clear_insights_blocked(cfg)`** — write/delete the breadcrumb. Callers: `pull_imported_insights` / operator Graph paths only — not authored `pull_metrics` (#1196).
 
 ### `metrics_schedule.py` — pure cadence selector, no I/O

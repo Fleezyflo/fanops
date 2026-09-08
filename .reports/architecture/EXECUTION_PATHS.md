@@ -420,7 +420,9 @@ requires the operator to *know* it is stranded, and **nothing tells them**.
 ## W10 — Learning, variants, personas, selection
 
 **Where learning data originates.** `track.pull_metrics` (sole writer of `Post.metrics`, `metrics_series`,
-`published → analyzed`). IG reach: **Meta Graph** (`GraphInsightsClient`) — the sole IG metric reader. Lift is
+`published → analyzed`). Authored-post reach: **Postiz** (`PostizMetricsClient`) / **Zernio** (`ZernioMetricsClient`)
+per channel routing (#1196). Imported-media reach: `pull_imported_insights` → `meta_graph.media_insights`
+(operator CLI only). Lift is
 `track._W` = `{saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05}`; **any weight ≥ 1.0 is
 primary**, and a missing primary stamps `lift_degraded` rather than trusting a partial scalar.
 

@@ -1,10 +1,10 @@
 # Meta Graph credentials — rotation & ops runbook
 
-FanOps reads Instagram performance (reach, retention, saves) and verifies live-linked media through
-the **Meta Graph API**. Publishing goes through **Postiz's own OAuth**, so when a Graph token lapses
-**Postiz keeps posting while Graph verification + metrics silently go dark** — the exact failure this
-runbook prevents. `fanops doctor` now flags an expired/near-expiry token (`debug_token` preflight,
-WARN ≤10 days out, FAIL when expired); rotate on the WARN, never wait for the FAIL.
+FanOps uses the **Meta Graph API** for operator-only paths: imported-media insights (`fanops map-media`),
+live-link verification, and hashtag research. **Publishing and authored-post metrics go through Postiz/Zernio**
+— a lapsed Graph token does not block the ship route.
+
+No doctor command introspects token expiry (`debug_token` was removed).
 
 ## The two credential kinds
 
@@ -14,27 +14,20 @@ WARN ≤10 days out, FAIL when expired); rotate on the WARN, never wait for the 
 | **Access token** | the Graph token (`META_GRAPH_TOKEN`, or per-handle `META_GRAPH_TOKEN__<SLUG>`) | **Yes — write-only** | `.env` + `os.environ`, **never** echoed/logged/returned |
 
 `<SLUG>` = the handle uppercased with `@`/punctuation stripped (e.g. `@perca.late` → `META_GRAPH_TOKEN__PERCALATE`).
-A handle with no per-handle token falls back to the global — see the sibling doctor check that FAILS when
-≥2 active IG accounts share one id (each account must carry its **own** `ig_user_id`, not borrow the global).
+A handle with no per-handle token falls back to the global.
 
 ## Mint a long-lived token
 
 Meta short-lived tokens last ~1 hour; long-lived ones last ~60 days and must be re-minted before they lapse.
 
 1. In the Meta App (developers.facebook.com → your app), confirm the token grants **`instagram_basic`**
-   (identification) and **`instagram_manage_insights`** (reach/retention — without it insights freeze at the
+   (identification) and **`instagram_manage_insights`** (reach/retention — without it imported insights freeze at the
    last snapshot). For hashtag discovery also grant the *Instagram Public Content Access* App-Review feature.
 2. Get a short-lived **User** token from the Graph API Explorer (or your login flow) for the IG-linked user.
 3. Exchange it for a long-lived token:
    `GET https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=<APP_ID>&client_secret=<APP_SECRET>&fb_exchange_token=<SHORT_LIVED_TOKEN>`
    → the response `access_token` is the long-lived token (~60 days).
-4. (Optional, recommended) Derive a **never-expiring Page token** from the long-lived User token via
-   `GET /me/accounts` — `debug_token` reports `expires_at: 0` for these, and the doctor check treats `0` as
-   "does not expire" (no WARN). Use only if your setup supports Page-token insights.
-
-Verify before wiring it in:
-`GET https://graph.facebook.com/v21.0/debug_token?input_token=<NEW_TOKEN>&access_token=<NEW_TOKEN>`
-→ check `data.is_valid == true` and read `data.expires_at`. (This is the same call the doctor preflight makes.)
+4. (Optional) Derive a **never-expiring Page token** from the long-lived User token via `GET /me/accounts`.
 
 ## Set it in FanOps
 
@@ -44,6 +37,8 @@ Verify before wiring it in:
 
 ## After rotating
 
-Run `fanops doctor` — the *Meta Graph token valid + not near expiry* check should be green (no WARN/FAIL).
-The token value never appears in the doctor report, logs, or any ActionResult by construction; only the
-handle label and the human expiry date are shown.
+1. Confirm `00_control/insights_blocked.json` is absent (or delete it after granting scope).
+2. Open Studio Home — the system strip should not show an IG-insights-blocked danger badge.
+3. (Optional) Run an imported-media insights pull (`fanops map-media` / reconcile path) to confirm scope on a live row.
+
+The token value never appears in doctor output, logs, or any ActionResult.

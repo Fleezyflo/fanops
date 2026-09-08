@@ -156,7 +156,7 @@ Product policy that stays:
 | Scrape cooldown (no healthy peer) | doctor WARN; run.log severity ladder | WARN; Studio hashtag UI **omits** reason |
 | Scrape soft-stall (creds, no session) | `_hashtag_scrape_check` soft-ok | PASS with hint |
 | Credentials soft-stall (Meta/Postiz/Zernio/LLM) | doctor reach/expiry/PATH; digest/runbook | Mixed FAIL/WARN/PASS |
-| IG insights blocked | doctor FAIL; strip danger | FAIL / danger |
+| IG insights blocked | strip danger | danger |
 | ROOT divergence | `daemon.root_divergence` CLI WARN | stderr only |
 | Setup ladder | `SetupState` / `setup_state` / `setup_next_action` | Parallel vocab ≠ HealthReport |
 | Bring-up planes | `daemon.up` READY | Orthogonal channel |

@@ -125,7 +125,7 @@
         "swallow": "baseline 8 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 19,
+      "function_count": 16,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -155,7 +155,7 @@
         "swallow": "*** NOT IN THE BASELINE -> 0 allowed. ANY new silent broad `except` here FAILS CI IMMEDIATELY (`new_files != []`). ***"
       },
       "exists": true,
-      "function_count": 80,
+      "function_count": 81,
       "is_partitioned": false,
       "missing": false,
       "owners": [
