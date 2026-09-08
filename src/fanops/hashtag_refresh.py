@@ -322,7 +322,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     peers keep the pass. Injected `scrape_client` keeps the single-client path. `_pick_healthy_scrape_user`
     (LRU head) remains for cooldown gates.
 
-    All runtime network opens via `open_web_session(cfg, user=u)` — Safari profile map as lock.
+    All runtime network opens via `open_client(cfg, user=u)` — disk envelope, never allow_reauth.
     Default harvest without injected client aborts `safari_only`; operator refresh remesures sidecar.
 
     Layer B runs ONCE, when the pass ENDS (complete or early-stopped) and only when `measured>0`
@@ -699,7 +699,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     (`refreshed: False`), not `discovery_skip_no_niche`. Exact-name quota ≤30 unique / 7 days.
 
     Configured = FANOPS_IG_SCRAPE_USER listed. Password / Chrome dumps / envelope json do not
-    count. Safari authority is the opener (`open_web_session`), not this gate — probing Safari
+    count. Envelope authority is the opener (`open_client`), not this gate — probing on every
     on every tick would hit Instagram when the cache is still fresh. FAIL-OPEN: any error -> a
     reason, NEVER raises. Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening
     scrape — never sleeps.
