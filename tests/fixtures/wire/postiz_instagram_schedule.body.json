@@ -1,0 +1,27 @@
+{
+  "type": "schedule",
+  "date": "2099-01-01T00:00:00Z",
+  "shortLink": false,
+  "tags": [],
+  "posts": [
+    {
+      "integration": {
+        "id": "intg_1"
+      },
+      "value": [
+        {
+          "content": "fire",
+          "image": [
+            {
+              "path": "https://uploads.postiz.com/x.mp4"
+            }
+          ]
+        }
+      ],
+      "settings": {
+        "__type": "instagram",
+        "post_type": "post"
+      }
+    }
+  ]
+}

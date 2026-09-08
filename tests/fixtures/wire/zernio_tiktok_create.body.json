@@ -1,0 +1,26 @@
+{
+  "content": "fire",
+  "publishNow": true,
+  "platforms": [
+    {
+      "platform": "tiktok",
+      "accountId": "acc_abc",
+      "platformSpecificData": {
+        "tiktokSettings": {
+          "privacy_level": "PUBLIC_TO_EVERYONE",
+          "allow_comment": true,
+          "allow_duet": true,
+          "allow_stitch": true,
+          "content_preview_confirmed": true,
+          "express_consent_given": true
+        }
+      }
+    }
+  ],
+  "mediaItems": [
+    {
+      "type": "video",
+      "url": "https://media.zernio.com/x.mp4"
+    }
+  ]
+}
