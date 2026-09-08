@@ -12,7 +12,6 @@ from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
 from fanops.models import LIFT_SCORE, Platform, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
-from fanops.post.metrics import _POSTIZ_LABEL_MAP, _ZERNIO_LABEL_MAP
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
 # NOTE: reach at 0.001 can dominate lift for very high-reach posts (reach=100k -> +100);
@@ -41,8 +40,8 @@ _HIGH_WEIGHT = 1.0
 # Comments/Shares per instagram.provider.ts); TikTok via Zernio (_ZERNIO_LABEL_MAP). A metric the map
 # cannot emit is NOT a required primary for that platform and is NOT a lift_missing_keys gap. Add a label
 # to the map once; capability follows. Reach-only / likes-only noise still fails everywhere.
-_POSTIZ_LIFT_KEYS = frozenset(_POSTIZ_LABEL_MAP.values())
-_ZERNIO_LIFT_KEYS = frozenset(_ZERNIO_LABEL_MAP.values())
+_POSTIZ_LIFT_KEYS = frozenset({"likes", "shares", "comments", "reach", "saves", "views"})
+_ZERNIO_LIFT_KEYS = frozenset({"likes", "comments", "shares", "saves", "reach", "views"})
 _PLATFORM_METRICS: dict[Platform, frozenset[str]] = {
     Platform.instagram: _POSTIZ_LIFT_KEYS,
     Platform.tiktok:    _ZERNIO_LIFT_KEYS,
