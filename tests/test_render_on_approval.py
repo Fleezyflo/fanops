@@ -11,7 +11,8 @@ from fanops.studio.actions_approve import approve_posts
 def _accounts(cfg):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [{"handle": "@a", "account_id": "1",
-                                                            "platforms": ["instagram"], "status": "active"}]}))
+                                                            "platforms": ["instagram"], "status": "active",
+                                                            "clip_profile": "long", "framing": "top"}]}))
 
 def _seed(led, cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920))

@@ -524,9 +524,11 @@ def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch, mo
     from fanops.accounts import Accounts, Account, AccountStatus
     from fanops.models import Source, Moment, Clip, MomentState, ClipState, Fmt, Platform, Post
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    accts = Accounts(cfg); accts.accounts = [
-        Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active),
-        Account(handle="b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active)]
+    accts = Accounts(cfg);     accts.accounts = [
+        Account(handle="a", account_id="1", platforms=[Platform.instagram], status=AccountStatus.active,
+                clip_profile="long", framing="top"),
+        Account(handle="b", account_id="2", platforms=[Platform.instagram], status=AccountStatus.active,
+                clip_profile="long", framing="top")]
     led.add_source(Source(id="s1", source_path=str(tmp_path/"s.mp4"), width=1080, height=1920))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-5", start=0, end=5, reason="r",
                           state=MomentState.clipped, hook="SHARED", clip_profile="long", framing="top"))
