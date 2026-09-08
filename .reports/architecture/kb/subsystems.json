@@ -157,6 +157,7 @@
         "post.metrics.postiz_read",
         "post.metrics.zernio_read",
         "post.postiz",
+        "post.postiz_errors",
         "post.providers",
         "post.publish_archive",
         "post.publish_dryrun",

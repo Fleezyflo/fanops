@@ -1510,6 +1510,14 @@
       "optional": [],
       "typing": []
     },
+    "fanops.post.postiz_errors": {
+      "compile": [
+        "fanops.models"
+      ],
+      "lazy": [],
+      "optional": [],
+      "typing": []
+    },
     "fanops.post.providers": {
       "compile": [
         "fanops.config"
@@ -1705,6 +1713,7 @@
         "fanops.accounts",
         "fanops.models",
         "fanops.post.metrics",
+        "fanops.post.postiz_errors",
         "fanops.post.run",
         "fanops.postiz_lifecycle"
       ],
@@ -2837,6 +2846,7 @@
     "compile": [
       "__future__",
       "argparse",
+      "base64",
       "calendar",
       "collections",
       "concurrent",
@@ -3007,7 +3017,7 @@
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 67,
+    "fanops.models": 68,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -3031,6 +3041,7 @@
     "fanops.post.metrics.postiz_read": 1,
     "fanops.post.metrics.zernio_read": 1,
     "fanops.post.postiz": 3,
+    "fanops.post.postiz_errors": 0,
     "fanops.post.providers": 0,
     "fanops.post.publish_archive": 1,
     "fanops.post.publish_dryrun": 1,
@@ -3228,6 +3239,7 @@
     "fanops.post.metrics.postiz_read": 5,
     "fanops.post.metrics.zernio_read": 6,
     "fanops.post.postiz": 5,
+    "fanops.post.postiz_errors": 1,
     "fanops.post.providers": 1,
     "fanops.post.publish_archive": 5,
     "fanops.post.publish_dryrun": 3,
@@ -3322,7 +3334,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 277,
+  "lazy_downward_count": 278,
   "lazy_lateral": [
     {
       "from": "fanops.artifacts",
@@ -4777,6 +4789,7 @@
     "fanops.post.metrics.postiz_read": 4,
     "fanops.post.metrics.zernio_read": 4,
     "fanops.post.postiz": 3,
+    "fanops.post.postiz_errors": 2,
     "fanops.post.providers": 1,
     "fanops.post.publish_archive": 3,
     "fanops.post.publish_dryrun": 2,
@@ -4978,6 +4991,7 @@
       "fanops.persona_store",
       "fanops.pipeline_run",
       "fanops.post.compress",
+      "fanops.post.postiz_errors",
       "fanops.post.publish_dryrun",
       "fanops.router",
       "fanops.source_tags_sidecar",
@@ -5106,17 +5120,17 @@
   ],
   "totals": {
     "G1_non_trivial_sccs": 0,
-    "G1_sccs_total": 195,
+    "G1_sccs_total": 196,
     "G1c_levels": 14,
     "G2_largest_scc_size": 35,
-    "G2_module_sccs_total": 113,
+    "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 819,
-    "lazy_edges": 445,
+    "compile_edges_G1": 820,
+    "lazy_edges": 446,
     "lazy_edges_lateral": 57,
     "lazy_edges_strictly_upward": 111,
     "lazy_edges_to_equal_or_higher_level": 168,
-    "modules": 195,
+    "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9
   }
