@@ -188,6 +188,7 @@
       {
         "line": 162,
         "members": [
+          "auth",
           "bad_payload",
           "oversize",
           "rate_limit",
@@ -197,7 +198,7 @@
         "name": "ErrorKind"
       },
       {
-        "line": 184,
+        "line": 185,
         "members": [
           "analyzed",
           "awaiting_approval",
@@ -214,7 +215,7 @@
         "name": "PostState"
       },
       {
-        "line": 262,
+        "line": 263,
         "members": [
           "facebook",
           "instagram",
@@ -225,7 +226,7 @@
         "name": "Platform"
       },
       {
-        "line": 272,
+        "line": 273,
         "members": [
           "r16x9",
           "r1x1",
@@ -234,7 +235,7 @@
         "name": "Fmt"
       },
       {
-        "line": 579,
+        "line": 580,
         "members": [
           "none",
           "per_account",
@@ -243,7 +244,7 @@
         "name": "HookSource"
       },
       {
-        "line": 641,
+        "line": 642,
         "members": [
           "approved",
           "dismissed",
@@ -254,7 +255,7 @@
         "name": "StitchState"
       },
       {
-        "line": 670,
+        "line": 671,
         "members": [
           "closed",
           "error",
@@ -335,7 +336,7 @@
           "transcript",
           "width"
         ],
-        "line": 309,
+        "line": 310,
         "name": "Source"
       },
       {
@@ -361,7 +362,7 @@
           "state",
           "transcript_excerpt"
         ],
-        "line": 344,
+        "line": 345,
         "name": "Moment"
       },
       {
@@ -381,7 +382,7 @@
           "state",
           "tagged_artist"
         ],
-        "line": 415,
+        "line": 416,
         "name": "Clip"
       },
       {
@@ -423,7 +424,7 @@
           "top_bias",
           "variation_axis"
         ],
-        "line": 436,
+        "line": 437,
         "name": "Post"
       },
       {
@@ -442,7 +443,7 @@
           "state",
           "surface_key"
         ],
-        "line": 585,
+        "line": 586,
         "name": "Render"
       },
       {
@@ -459,7 +460,7 @@
           "state",
           "strategy_key"
         ],
-        "line": 645,
+        "line": 646,
         "name": "StitchPlan"
       },
       {
@@ -472,7 +473,7 @@
           "state",
           "target_accounts"
         ],
-        "line": 673,
+        "line": 674,
         "name": "Batch"
       },
       {
@@ -488,7 +489,7 @@
           "product_type",
           "timestamp"
         ],
-        "line": 691,
+        "line": 692,
         "name": "ImportedMedia"
       },
       {
@@ -505,7 +506,7 @@
           "transcript",
           "transcript_total"
         ],
-        "line": 719,
+        "line": 720,
         "name": "MomentRequest"
       },
       {
@@ -518,7 +519,7 @@
           "start",
           "transcript_excerpt"
         ],
-        "line": 737,
+        "line": 738,
         "name": "MomentPick"
       },
       {
@@ -528,7 +529,7 @@
           "source_id",
           "source_title"
         ],
-        "line": 778,
+        "line": 779,
         "name": "MomentDecision"
       },
       {
@@ -549,7 +550,7 @@
           "token",
           "transcript_excerpt"
         ],
-        "line": 789,
+        "line": 790,
         "name": "MomentHookRequest"
       },
       {
@@ -558,7 +559,7 @@
           "hook_frames_unread",
           "request_id"
         ],
-        "line": 806,
+        "line": 807,
         "name": "MomentHookDecision"
       },
       {
@@ -570,7 +571,7 @@
           "surfaces",
           "transcript_excerpt"
         ],
-        "line": 813,
+        "line": 814,
         "name": "CaptionRequest"
       },
       {
@@ -580,7 +581,7 @@
           "language",
           "surface"
         ],
-        "line": 821,
+        "line": 822,
         "name": "CaptionItem"
       },
       {
@@ -588,7 +589,7 @@
           "items",
           "request_id"
         ],
-        "line": 832,
+        "line": 833,
         "name": "CaptionSet"
       },
       {
@@ -599,7 +600,7 @@
           "rationale",
           "tease_text"
         ],
-        "line": 841,
+        "line": 842,
         "name": "IntroMatchItem"
       },
       {
@@ -607,7 +608,7 @@
           "items",
           "request_id"
         ],
-        "line": 848,
+        "line": 849,
         "name": "IntroMatchDecision"
       }
     ],
