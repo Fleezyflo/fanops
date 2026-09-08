@@ -98,7 +98,50 @@ def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
     return requeued
 
 
+def _heal_obsolete_failed_for_daemon(cfg: Config) -> int:
+    """Re-arm failed rows the current publisher would now accept (I8). Dual of publisher_refuses."""
+    from fanops.post.postiz import publisher_refuses
+    healed = 0
+    led = Ledger.load(cfg)
+    candidates = [p for p in led.posts_in_state(PostState.failed)
+                  if not is_real_submission_id(p.submission_id)
+                  and getattr(p, "error_kind", None) is ErrorKind.bad_payload
+                  and int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX
+                  and publisher_refuses(p) is None]
+    if not candidates:
+        return 0
+    now = datetime.now(timezone.utc)
+    try:
+        with Ledger.transaction(cfg) as lg:
+            for p in candidates:
+                cur = lg.posts.get(p.id)
+                if cur is None or cur.state is not PostState.failed:
+                    continue
+                if is_real_submission_id(cur.submission_id):
+                    continue
+                if getattr(cur, "error_kind", None) is not ErrorKind.bad_payload:
+                    continue
+                if publisher_refuses(cur) is not None:
+                    continue
+                if not lg.can_promote(cur):
+                    continue
+                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
+                if n > _DAEMON_TRANSIENT_MAX:
+                    continue
+                cur.submission_id = None
+                if not (cur.scheduled_time or "").strip():
+                    cur.scheduled_time = iso_z(now)
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
+                                  daemon_transient_retry=n)
+                healed += 1
+    except Exception as exc:
+        get_logger(cfg)("publish", "-", "heal_obsolete_failed", err=str(exc)[:120], healed=healed)
+        return healed
+    return healed
+
+
 def _requeue_failed_posts(cfg: Config) -> None:
     """Daemon prep before publish_due: bounded re-queue for transient and rate-limited failures."""
     _requeue_transient_failed_for_daemon(cfg)
+    _heal_obsolete_failed_for_daemon(cfg)
     _requeue_rate_limited_for_daemon(cfg)

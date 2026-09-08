@@ -1061,10 +1061,12 @@ def test_inflight_headline_from_token_provenance():
     assert inflight_headline(none) == "No backend id — cannot fetch a link"
 
 
-def test_operator_error_no_permalink_is_not_published_waiting():
+def test_operator_error_submitted_awaiting_is_not_published_waiting():
     from fanops.studio.views_results import operator_error
-    raw = "publish_missing_url: backend returned submitted without a permalink — reconcile will back-fill"
-    assert operator_error(raw) != "Published — waiting for link."
+    parked = ("submitted_awaiting_permalink: backend accepted without a public URL — "
+              "reconcile will back-fill")
+    assert operator_error(parked) == "Accepted — waiting for Postiz."
+    assert "Published" not in operator_error(parked)
     assert operator_error("published_no_url parked") == "Published — waiting for link."
 
 

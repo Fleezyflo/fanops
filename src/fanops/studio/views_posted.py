@@ -82,6 +82,8 @@ def operator_error(msg: str | None, *, kind: str | None = None) -> str:
         return ""
     clean = msg.strip()
     low = clean.lower()
+    if low.startswith("submitted_awaiting_permalink"):
+        return "Accepted — waiting for Postiz."
     if "published_no_url" in low:
         return "Published — waiting for link."
     if "not live" in low or "dryrun" in low:
