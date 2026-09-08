@@ -15,8 +15,9 @@ clip --crosspost--> Post(account_id = accounts.json integrations['instagram'])
 ```
 
 - Only publish backend in use: **Postiz** (self-hosted `localhost:4007`, public via Tailscale funnel).
-- `meta_graph.py` (`META_GRAPH_TOKEN`) is **trends-only** — no publish path, not referenced in `post/`
-  or `crosspost.py`. A Meta token that can publish does NOT make FanOps publish.
+- `meta_graph.py` (`META_GRAPH_TOKEN`) is **operator-only** (imported-media insights, verify-live) —
+  no publish path, not referenced in `post/` or `crosspost.py`. A Meta token that can publish does NOT
+  make FanOps publish. Hashtag Layer A is Safari scrape, not Graph.
 
 ## "Connected" = THREE states (publishing needs all three)
 

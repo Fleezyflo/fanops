@@ -120,7 +120,7 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `CONTENT_FOCUS`, `ENERGY_LEVELS`, `HOOK_ANGLES` — module-level constants, `frozenset` projections of `persona_levers.vocab(...)` (via aliased import `_lever_vocab`).
 - `Persona` (pydantic `BaseModel`) — fields: `id`, `name`, `voice`, `hashtag_corpus`, `intake`, `content_focus`, `energy`, `hook_angle`. Note the docstring records that per-persona `clip_profile`/`framing` pins and the 3 freeform directive overrides (`casting_directive`/`hook_directive`/`caption_directive` as persona fields) were **retired in M3/M3e** — they no longer exist on the model; cut length now derives from `content_focus`, framing from `energy`.
 - `Personas.__init__(cfg)` — trivial init, `self.personas = []`.
-- `Personas.load(cfg)` (classmethod) — reads `cfg.personas_path`, parses JSON, builds `Persona` list; raises `ControlFileError` (chained from the original exception) on a corrupt file rather than a raw traceback. Called by `accounts._hydrate_from_personas`, `persona_research.research_corpus`/`discover_corpus`, `persona_store.link_personas_by_voice`/`migrate_from_accounts`, CLI (`cli._check_accounts`, `_dispatch`, `_learn_pass`, `cmd_adjust`).
+- `Personas.load(cfg)` (classmethod) — reads `cfg.personas_path`, parses JSON, builds `Persona` list; raises `ControlFileError` (chained from the original exception) on a corrupt file rather than a raw traceback. Called by `accounts._hydrate_from_personas`, `persona_research.niche_terms` / `persona_terms`, `persona_store.link_personas_by_voice`/`migrate_from_accounts`, CLI (`cli._check_accounts`, `_dispatch`, `_learn_pass`, `cmd_adjust`).
 - `Personas.get(pid)` — linear lookup by id, `None` if `pid` falsy or not found.
 - `Personas.all()` — returns a copy of the list.
 - `_slug(s)` — pure: lowercase, strip leading `@`, collapse non-alphanumerics to `-`. Called by `persona_store.add_persona`/`migrate_from_accounts`.
@@ -165,10 +165,11 @@ The lever engine (`persona_levers.py`) is the single upstream declaration. `pers
 - `energy_framing_map()` — pure. Called by `persona_directives._ENERGY_FRAMING` at import time (same caveat).
 - `build_catalog()` — pure, lazy-imports `bands.band_for`. Called by `persona_directives.lever_catalog`.
 
-### `persona_research.py` — per-persona hashtag corpus research + live discovery
+### `persona_research.py` — declared persona niche terms (not caption hashtags)
 
-- `research_corpus(cfg, pid, *, limit=8)` — budget-free offline re-rank: reach-ranked store minus the persona's current corpus, capped at `limit`. Raises `KeyError` on unknown `pid`. Reads `cfg.personas_path` via `Personas.load`; no writes. Called by `discover_corpus` (fallback), Studio's `research_corpus` route action.
-- `discover_corpus(cfg, pid, *, limit=8, measure_k=0, get=None)` — live per-persona discovery via `meta_graph.discover_candidates` (Meta Graph co-occurrence harvest), seeded from the persona's corpus + `intake["genre"]`, excluding known tags (`VETTED ∪ store ∪ corpus`). **Fail-open**: `except Exception: cands = []` (line 56, catches "any Graph/transport error") then falls back to `research_corpus` wrapped as evidence-less dicts. Raises `KeyError` on unknown `pid`. No disk writes — read-only research. Called by `fanops_hashtags.cmd_hashtags_discover`, Studio's `research_corpus`.
+- `_seed_token(raw)` — normalize one candidate tag body; `None` if empty / not structurally curatable. Called by `niche_terms`.
+- `niche_terms(per)` — operator-declared `Persona.niche` bodies, deduped, order preserved. Called by `persona_terms`.
+- `persona_terms(per, cfg=None)` — alias of `niche_terms`; `cfg` retained for call-site compat and unread. Caption hashtags come from the source lock (`ship_from_lock`), not these terms.
 
 ### `persona_store.py` — persona WRITERS + account→persona migration
 
@@ -251,7 +252,6 @@ bare name and every `<name> as <alias>` binding across `src/`:
 
 **Fail-open exception handlers (all intentional per surrounding comments, not silent-failure bugs — cited for completeness):**
 - `src/fanops/persona_directives.py:287` `except Exception: store = None` in `persona_facts` — silently swallows any hashtag-store load error with no logging (the one handler in this cluster with zero trace on failure — worth flagging since every other fail-open path in this cluster logs via `get_logger` before swallowing).
-- `src/fanops/persona_research.py:56` `except Exception: cands = []` in `discover_corpus` — documented fail-open to the offline `research_corpus` re-rank.
 - `src/fanops/accounts.py:250` `except Exception: return` in `_hydrate_from_personas` — documented fail-open leaving inline account values untouched.
 
 **No TODO/FIXME/XXX markers** found in any of the 10 files (grep confirmed zero hits).

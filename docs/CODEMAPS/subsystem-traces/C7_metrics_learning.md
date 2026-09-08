@@ -8,7 +8,7 @@ All 12 files were read in full via the Read tool (not from memory), and cross-ch
 
 1. `src/fanops/reconcile.py` (509 lines) — read
 2. `src/fanops/track.py` (350 lines) — read
-3. `src/fanops/meta_graph.py` (537 lines) — read
+3. `src/fanops/meta_graph.py` (619 lines) — read
 4. `src/fanops/metrics_schedule.py` (57 lines) — read
 5. `src/fanops/validation_gate.py` (47 lines) — read
 6. `src/fanops/learn_doctor.py` (117 lines) — read
@@ -95,17 +95,18 @@ Purpose: pull per-post analytics, score lift, merge into ledger, and auto-valida
 - **`_auto_validate_metrics_shape(led, cfg)`** — auto-unfreeze: first proving analyzed row on a live backend stamps `cutover.json["metrics_confirmed"]=True`. Callers: `pull_metrics` (always, at end).
 
 ### `meta_graph.py`
-Purpose: read-only, budget-aware Meta Graph client — hashtag trend sampling, per-account creds, sole-source IG media/insights read path.
+Purpose: read-only Meta Graph client for operator-only paths — imported-media insights (`media_insights` ← `pull_imported_insights`), verify-live (`confirm_post_live`), media enumeration (`enumerate_scoped_media`). Hashtag Layer A refresh is Safari/instagrapi (`ig_hashtag_scrape`), not live Graph harvest. Authored-post metrics are Postiz/Zernio (#1196), not Graph.
 
 - **`_env_slug(handle)`** — handle→env-slug. Pure. Callers: `per_account_token_env_key`.
 - **`per_account_token_env_key(handle)`** — per-handle Graph token env key name. Callers: `resolve_meta_creds`, `studio.golive.set_meta_creds`, `studio.views.golive_accounts`.
 - **`resolve_meta_creds(cfg, *, handle=None)`** — resolves per-handle creds with global fallback; never raises. Disk read (accounts). Callers: `enumerate_scoped_media`, `list_user_media`, `media_insights`, `track.pull_imported_insights`.
-- **`_graph_get(cfg, path, params, *, get=None, token=None)`** — shared GET wrapper, fail-soft to `None`. Network. Callers: `harvest_cooccurring`, `hashtag_id`, `list_user_media`, `trend_score`.
-- **`hashtag_id(cfg, tag, *, get=None)`** — resolves `#tag`→Graph node id. Callers: `harvest_cooccurring`, `trend_score`.
-- **`trend_score(cfg, tag, *, get=None)`** — sums engagement over top_media. Callers: `discover_candidates`, `sample_trends`, `tag_metrics`.
+- **`_graph_get(cfg, path, params, *, get=None, token=None)`** — shared GET wrapper, fail-soft to `None`. Network. Callers: `list_user_media`, `resolve_ig_media`, `media_insights`.
+- **`resolve_hashtag(cfg, tag, *, get=None)`** — deferred Graph hashtag lookup (`#tag`→node id); Layer A live path is Safari scrape. Callers: `measure_and_harvest` (deferred helpers only).
+- **`measure_and_harvest(cfg, hid, *, get=None)`** — deferred Graph hashtag reach sample + co-tag harvest. Not on the live Layer A tick.
 - **`list_user_media(cfg, *, get=None, creds=None)`** — paginated media list, capped 50 pages. Callers: `enumerate_scoped_media`.
 - **`_next_path(cfg, next_url)`** — strips base URL from paging cursor. Callers: `list_user_media`.
-- **`credentialed_ig_handles(cfg)`** — active handles with own `ig_user_id`. Disk read. Callers: `reconcile.project_imported_media`.
+- **`resolve_ig_media(cfg, media_id, *, handle=None, get=None)`** — verify-live media probe. Callers: `confirm_post_live`, `reconcile`.
+- **`confirm_post_live(cfg, post, *, reported_username=None, get=None)`** — `{exists, permalink, username, confirmed}` for verify-live. Callers: `cli`, `reconcile`.
 - **`enumerate_scoped_media(cfg, handles, *, get=None)`** — flattens media across handles, fail-open per-handle. Callers: `reconcile.project_imported_media`.
 - **`insights_metrics_for(product_type)`** — metric-list builder by product type. Pure. Callers: `media_insights`.
 - **`_is_scope_error(body)`** — classifies permission-refusal vs transient. Pure. Callers: `media_insights`.

@@ -1,6 +1,7 @@
 # Connecting a YouTube channel (Shorts) via Postiz
 
-FanOps publishes through **Postiz only** (the Meta Graph token is trends-only — no publish path).
+FanOps publishes through **Postiz only** (the Meta Graph token is operator-only — imported insights /
+verify-live; no publish path).
 YouTube is onboarded exactly like Instagram: connect the channel in Postiz over a public HTTPS
 callback, then map its integration id into `accounts.json`. This is the YouTube analog of
 [INSTAGRAM_CONNECT.md](INSTAGRAM_CONNECT.md) — read that for the deeper "why" on the funnel and the
