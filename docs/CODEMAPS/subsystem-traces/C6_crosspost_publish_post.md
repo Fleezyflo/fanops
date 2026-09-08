@@ -243,10 +243,6 @@ Module constants: `_SIL_END`, `_SCD` (regexes), `_SIDECAR_V=3`, `_MAX_PEAKS=400`
 - `_extract_zernio_state` / `_extract_zernio_permalink` / `_zernio_platform_rows` — Zernio response-shape extractors (status/permalink live under `platforms[]`, not top-level — a 2026-06-30-verified live-shape fix). Pure. Called by `ZernioStatusClient.get_status`.
 - `ZernioMetricsClient` / `ZernioStatusClient` — mirror the Postiz classes for the Zernio/TikTok backend (Bearer auth, `/analytics?postId=`, `/posts/{id}`). Same per-post isolation + fatal-401 pattern.
 - `_zernio_num`, `_map_zernio_analytics`, `_zernio_platform_metric_payload`, `_zernio_analytics_payload`, `_zernio_raw_labels` — Zernio's more defensive response-shape normalization (flat dict / labeled array / one-level-nested wrapper, all INTEGRATION CHECKPOINTS per the module comments). Pure. Called by `ZernioMetricsClient._fetch_one`.
-- `_retention_fraction(avg_watch_ms, duration_s) -> float | None` — computes a `[0,1]` watch-through rate, clamped, `None` if either input is missing/non-positive (never fabricated). Pure. Called by `GraphInsightsClient.list_posts`.
-- `GraphInsightsClient.__init__(self, cfg, *, posts=None, insights_fn=None)` — the sole IG performance reader (Leg 2 of the insights-culmination rebuild per CLAUDE.md); `PostizMetricsClient` is dead for IG.
-- `GraphInsightsClient._default_insights(self, media_id, product_type, handle)` — resolves per-account Meta creds and calls `meta_graph.media_insights`. Called by `list_posts`.
-- `GraphInsightsClient.list_posts(self, window="30d") -> list[dict]` — per-post isolated; a `MetaInsightsScopeError` is the ONE external gate that fails the WHOLE pass CLOSED + LOUD (`insights_blocked` flag persisted via `meta_graph._set_insights_blocked`, loop `break`s) — deliberately not per-post isolated, because a scope refusal means every subsequent call would also fail identically. A transient `None` result skips just that post. Called outside this cluster (`track.py`).
 
 ### post/postiz.py — the Postiz REST poster backend
 
@@ -368,9 +364,7 @@ Auth: a single `POSTIZ_API_KEY` env var, sent verbatim as the `Authorization` he
 
 Auth: `ZERNIO_API_KEY` as a `Bearer` token. Same never-logged / 401-body-withheld discipline.
 
-### Meta Graph (IG insights only, read via `meta_graph.py` outside this cluster, invoked from `GraphInsightsClient` in `post/metrics.py`)
-
-Not a publish path — read-only insights. Per-account creds resolved via `meta_graph.resolve_meta_creds`. A `MetaInsightsScopeError` fails the whole metrics pass closed+loud (`insights_blocked`).
+Authored metrics: Postiz/Zernio clients above. Meta Graph insights: C7 `pull_imported_insights` only (#1196).
 
 ## SAFETY AUDIT: publish-capable call sites and their approval-gate status
 

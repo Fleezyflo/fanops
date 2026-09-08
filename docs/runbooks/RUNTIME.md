@@ -440,8 +440,8 @@ same pass, because every staggered time is pushed after `T`.
 **`fanops track [--window 30d]`** pulls per-post metrics and moves published posts to
 `analyzed`:
 
-- On a **live backend with creds**, pulls IG metrics via the Meta Graph and moves published posts to
-  `analyzed`. If no live route / Graph token, it **skips cleanly** —
+- On a **live backend with creds**, pulls metrics from the live publish backend (Postiz/Zernio) and moves
+  published posts to `analyzed`. If no live route / backend creds, it **skips cleanly** —
   `track skipped: ...` — rather than erroring.
 - Matches metric rows to posts by `submission_id`; **failed posts are skipped** (they
   have no real lift and must never enter the winners pool).
@@ -449,7 +449,7 @@ same pass, because every staggered time is pushed after `T`.
   (likes are near-noise). The default weights live in `track._W`
   (`saves 4.0, shares 4.0, retention 3.0, reach 0.001, likes 0.05`). Re-weight either in code,
   or — without a code change — via `00_control/tuning.json` → `lift_weights` (audit b; see
-  *Optional override file* above), if the Graph exposes different fields or you want
+  *Optional override file* above), if the backend exposes different fields or you want
   engagement-rate over raw reach.
 
 **`fanops adjust [--winner-pct 0.3] [--retire-pct 0.2] [--lift-floor 20.0]`** ranks the
@@ -579,7 +579,8 @@ Blotato `rest`/`mcp` backends were removed — valid `FANOPS_POSTER` values are 
 - **Postiz** — `POSTIZ_URL` + `POSTIZ_API_KEY`; each `(handle × platform)` maps to a Postiz
   `integration_id`. See `docs/POSTIZ_SETUP.md` and `docs/RUNBOOK.md`.
 - **Zernio** — `ZERNIO_API_KEY`; TikTok channels route to the Zernio backend per account.
-- **IG metrics** — read from the Meta Graph (`GraphInsightsClient`), not from Postiz analytics alone.
+- **IG metrics** — Postiz analytics (same backend as publish); TikTok via Zernio. Meta Graph is not on the
+  `fanops track` path (#1196).
 
 Setup walkthrough: `docs/GOLIVE.md` (choose a path) and `docs/RUNBOOK.md` (linear first run).
 

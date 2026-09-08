@@ -15,10 +15,10 @@ clone — **this codemap is the tracked record of that design**, not a pointer t
 Every actuator ranks by **raw Meta Graph reach**, not the engagement-skewed `lift_score` (lift weights reach
 0.001 — reach-first is the operator's objective, one philosophy for all structural dims).
 
-- IG performance is read from the **Meta Graph** ([track.py](../../src/fanops/track.py) `_default_list_posts`
-  → `GraphInsightsClient`, track.py:181-185), the **sole IG metric reader**. `PostizMetricsClient`
-  ([post/metrics.py](../../src/fanops/post/metrics.py)) is retained for any **non-IG** use but **no longer
-  reads IG metrics** — Leg 2 made `PostizMetricsClient`-for-IG dead.
+- Authored-post reach is read from the **publish backend** ([track.py](../../src/fanops/track.py)
+  `_default_list_posts` → `PostizMetricsClient` / `ZernioMetricsClient` per channel routing).
+- Meta Graph was the authored IG reader via `GraphInsightsClient` until **#1196** removed it; Graph remains
+  on operator paths only (`pull_imported_insights` / `fanops map-media`).
 - `learning_validated` ([validation_gate.py](../../src/fanops/validation_gate.py)) is the freeze gate:
   nothing propagates until it unfreezes, which happens automatically on the first **live, non-degraded**
   Postiz-shaped row (`reach` + a primary engagement key `saves|shares`; retention NOT required —
