@@ -8,7 +8,7 @@ from fanops.agentstep import request_path, response_path, latest_request_id, gat
 from fanops.models import MomentDecision, MomentHookDecision, CaptionSet, PostState
 from fanops.transcribe import real_transcript_signal
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asr]
 
 # Whisper model this test pins itself to (see _make_spoken_sample / the monkeypatch below).
 # `tiny` is the smallest checkpoint and the one cached in the dev/CI image; pinning it in-test
