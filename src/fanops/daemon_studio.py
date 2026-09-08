@@ -19,6 +19,12 @@ _log = logging.getLogger(__name__)
 STUDIO_LABEL = "com.fanops.studio"
 STUDIO_DEFAULT_HOST = "127.0.0.1"
 STUDIO_DEFAULT_PORT = 8787
+_STUDIO_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _studio_bind_host_refused(host: str) -> str | None:
+    h = (host or "").strip().lower()
+    return None if h in _STUDIO_BIND_HOSTS else f"REFUSED: Studio must bind loopback-only (got {host!r})"
 _STUDIO_PORT_TRIES = 60         # confirm the CYCLED Studio answers again (~2 min at 2s)
 _STUDIO_PORT_STEP = 2.0
 _STUDIO_LAUNCH_CMD = f"fanops studio --managed --host {STUDIO_DEFAULT_HOST} --port {STUDIO_DEFAULT_PORT}"
@@ -97,6 +103,8 @@ def install_studio(cfg: Config, *, host: str = STUDIO_DEFAULT_HOST, port: int = 
     to a human standing there."""
     from fanops import daemon
     daemon._require_darwin()
+    if (refused := _studio_bind_host_refused(host)):
+        raise ValueError(refused)
     cfg.reports.mkdir(parents=True, exist_ok=True)
 
     # 1. Own the generation invariant (MOL-728)

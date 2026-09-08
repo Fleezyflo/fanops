@@ -114,7 +114,7 @@ def _meta_token_expiry_check(cfg: Config, *, get=None):
         if expired: parts.append("EXPIRED for: " + ", ".join(sorted(expired)))
         if unknown: parts.append("could not introspect (fail-closed) for: " + ", ".join(sorted(unknown)))
         hint = ("; ".join(parts) + " — mint a fresh long-lived token + set it (global META_GRAPH_TOKEN, or the "
-                "per-handle META_GRAPH_TOKEN__<SLUG>) via the Studio Go-Live tab; see docs/META_CREDS_OPS.md. "
+                "per-handle META_GRAPH_TOKEN__<SLUG>) per docs/META_CREDS_OPS.md. "
                 "Postiz keeps publishing on its own OAuth while Graph verification + metrics go dark.")
         return _check(lbl, False, hint)
     if soon:

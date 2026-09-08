@@ -78,6 +78,12 @@ def test_wipe_keep_guard_keys_on_state_not_live_match(tmp_path):
     plan = ledger_wipe.compute_wipe_set(Ledger.load(cfg))
     assert "p_foreign" not in plan.post_ids                # kept on STATE, though unmatchable by the probe
     assert plan.post_ids == set()                          # nothing removed — it's all backed history
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p_published", parent_id="c1", account="other", account_id="ig9",
+                          platform=Platform.instagram, caption="live no metrics yet",
+                          state=PostState.published, public_url="https://ig/reel/live/", metrics={}))
+    plan = ledger_wipe.compute_wipe_set(Ledger.load(cfg))
+    assert "p_published" not in plan.post_ids              # live state kept even with empty metrics
 
 
 def test_wipe_removes_batches_stitch_in_closure(tmp_path):

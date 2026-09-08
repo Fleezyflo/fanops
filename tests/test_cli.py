@@ -765,6 +765,13 @@ def test_amplify_variants_inert_when_flag_off(tmp_path, monkeypatch):
     assert main(["amplify-variants"]) == 0               # flag OFF -> apply_variant_amplify inert
 
 
+def test_studio_refuses_non_loopback_host(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    import fanops.cli as cli
+    assert cli.main(["studio", "--host", "0.0.0.0", "--dev-reload"]) == 2
+    assert "loopback" in capsys.readouterr().err.lower()
+
+
 def test_studio_refuses_unmanaged_foreground(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli

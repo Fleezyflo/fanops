@@ -25,7 +25,7 @@
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 311,
+      "line": 313,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     }

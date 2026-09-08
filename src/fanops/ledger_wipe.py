@@ -39,7 +39,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import MomentOrigin, PostState
+from fanops.models import MomentOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ def _is_kept_post(post, *, keep_history=True) -> bool:
     row with no metrics is NOT kept (it is the unbacked cache that falls away)."""
     if not keep_history:
         return False
-    if post.state is PostState.analyzed:
+    if post.state in Ledger._LIVE_POST_STATES:
         return True
     return bool(post.metrics)                            # a post that ever recorded metrics has real history
 

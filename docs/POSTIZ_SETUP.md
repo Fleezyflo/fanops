@@ -115,6 +115,24 @@ learning loop). Header is `Authorization: <your key>`.
 
 ---
 
+## R2 (required for real Instagram publish)
+
+Real IG publish needs clip URLs on the public internet — Postiz/IG cannot fetch loopback. Set all five in **`.env`** (not Studio):
+
+`FANOPS_MEDIA_PUBLIC_BASE`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`
+
+```bash
+FANOPS_MEDIA_PUBLIC_BASE=https://pub-<id>.r2.dev/fanops
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=clips
+```
+
+Symptoms / recovery: [`POSTIZ_OPS.md` §7](POSTIZ_OPS.md).
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |

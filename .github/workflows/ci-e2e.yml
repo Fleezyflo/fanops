@@ -6,6 +6,7 @@ on:
     # pull requests, so this is what stops it rotting unobserved. A red nightly is a signal to look,
     # not a merge gate.
     - cron: "0 4 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ci-e2e-${{ github.workflow }}-${{ github.ref }}
