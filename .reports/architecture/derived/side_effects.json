@@ -521,11 +521,11 @@
     "fanops.post.metrics.postiz_read": [
       {
         "call": "requests.get",
-        "line": 81
+        "line": 77
       },
       {
         "call": "requests.get",
-        "line": 159
+        "line": 155
       }
     ],
     "fanops.post.metrics.zernio_read": [

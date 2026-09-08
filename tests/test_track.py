@@ -60,7 +60,7 @@ def test_record_marks_lift_degraded_when_high_weight_metric_absent(tmp_path):
     led = record_metrics(led, "p1", {"reach": 50000, "shares": 30, "likes": 200})
     m = led.posts["p1"].metrics
     assert m["lift_degraded"] is True
-    assert m["lift_missing_keys"] == ["retention", "saves"]   # the high-weight _W keys absent from the row
+    assert m["lift_missing_keys"] == ["saves"]                # retention not a Postiz IG gap
     assert "lift_score" in m                                  # still scored (on the present metrics)
 
 def test_record_not_degraded_on_full_metric_set(tmp_path):
@@ -452,7 +452,7 @@ def test_pull_postiz_row_carries_lift_degraded(tmp_path):
     led = pull_metrics(led, cfg, list_posts=lambda w: rows, now=_PUB + timedelta(hours=5))
     row = led.posts["p1"].metrics_series[0]
     assert row["lift_degraded"] is True
-    assert row["lift_missing_keys"] == ["retention", "saves"]   # asserted on the ROW, not only Post.metrics
+    assert row["lift_missing_keys"] == ["saves"]                # retention not a Postiz IG gap
 
 def test_cmd_track_prints_series_and_degraded_summary(tmp_path, monkeypatch, mocker, capsys):
     # cmd_track summarizes the pass: series rows ADDED and how many were degraded. A Postiz-shaped row

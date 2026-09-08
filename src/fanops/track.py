@@ -34,24 +34,20 @@ _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.
 # reach/shares-dominated scalar. reach (0.001) / likes (0.05) are low-weight proxies, never "missing".
 _HIGH_WEIGHT = 1.0
 
-# Platform CAPABILITY: which lift keys a platform's analytics can STRUCTURALLY deliver — the ONE place
-# this knowledge lives (MOL-16/17 audit 2026-07-02). Derived from the three read maps: IG reads the Meta
-# Graph (meta_graph._MEDIA_METRICS/_GRAPH_INSIGHTS_MAP) which yields reach/views/saves/shares/likes/
-# comments AND avg_watch_time -> a DERIVED `retention` (REELS only, and only when the clip duration is
-# known); TikTok reads Zernio (post/metrics._ZERNIO_LABEL_MAP) and youtube/facebook/twitter publish via
-# Postiz (post/metrics._POSTIZ_LABEL_MAP) — NEITHER map has a watch-time/retention field, so retention is
-# absent BY CONSTRUCTION on every non-IG platform. Keyed to Platform (not "not TikTok") so youtube — a
-# third Platform via Postiz with retention equally unavailable — is exempted too. A metric a platform
-# CANNOT produce is NOT a REQUIRED primary when proving THAT platform's shape, and is NOT a "missing"
-# degraded key for it. Reach-only / likes-only noise still fails everywhere (the proof floor is
-# capability-independent). Stale-map guard: risks table — a mapped-available metric that stops appearing
-# is the failure mode; keep this in lockstep with the three maps.
+# Platform CAPABILITY: which lift keys a platform's analytics can STRUCTURALLY deliver — lockstep with the
+# read maps (MOL-16/17). Published-post metrics: IG/youtube/facebook/twitter via Postiz
+# (GET /public/v1/analytics/post/{id} — docs.postiz.com; IG postAnalytics emits Views/Reach/Saves/Likes/
+# Comments/Shares per instagram.provider.ts); TikTok via Zernio (_ZERNIO_LABEL_MAP). A metric the map
+# cannot emit is NOT a required primary for that platform and is NOT a lift_missing_keys gap. Add a label
+# to the map once; capability follows. Reach-only / likes-only noise still fails everywhere.
+_POSTIZ_LIFT_KEYS = frozenset({"likes", "shares", "comments", "reach", "saves", "views"})
+_ZERNIO_LIFT_KEYS = frozenset({"likes", "comments", "shares", "saves", "reach", "views"})
 _PLATFORM_METRICS: dict[Platform, frozenset[str]] = {
-    Platform.instagram: frozenset({"reach", "views", "saves", "shares", "likes", "comments", "retention"}),
-    Platform.tiktok:    frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # Zernio: no watch-time
-    Platform.youtube:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
-    Platform.facebook:  frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
-    Platform.twitter:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
+    Platform.instagram: _POSTIZ_LIFT_KEYS,
+    Platform.tiktok:    _ZERNIO_LIFT_KEYS,
+    Platform.youtube:   _POSTIZ_LIFT_KEYS,
+    Platform.facebook:  _POSTIZ_LIFT_KEYS,
+    Platform.twitter:   _POSTIZ_LIFT_KEYS,
 }
 
 def _platform_delivers(platform: Optional[Platform], key: str) -> bool:
@@ -72,9 +68,9 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
     learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
     (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Postiz-shaped)
     always proves. MOL-17: `platform` names the row's Platform so a metric the platform CANNOT deliver
-    (retention on TikTok/youtube via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
+    (retention on Postiz/Zernio platforms via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
     `require_ig_retention` (default OFF, caller-gated on cfg.ig_retention_proof) tightens ONLY a platform
-    that CAN deliver retention (IG) to require it present-numeric — fail-OPEN for platform None/unknown or
+    that CAN deliver retention to require it present-numeric — fail-OPEN for platform None/unknown or
     a platform that structurally can't (prove exactly as today)."""
     if LIFT_SCORE not in metrics:
         return False

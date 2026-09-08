@@ -37,7 +37,7 @@ def test_postiz_list_posts_none_ids_makes_no_network_call(tmp_path, monkeypatch,
 def test_postiz_unknown_label_dropped_from_metrics_but_kept_in_raw_labels(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
-    arr = [{"label": "Retention", "data": [{"total": "9", "date": "2026-06-12"}]},   # genuinely absent from the live label map → dropped
+    arr = [{"label": "Retention", "data": [{"total": "9", "date": "2026-06-12"}]},   # hypothetical unmapped label
            {"label": "Shares", "data": [{"total": "4", "date": "2026-06-12"}]}]
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, arr))
     row = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]
