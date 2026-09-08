@@ -131,15 +131,11 @@ def test_moment_framing_center_overrides_global_on(tmp_path, monkeypatch, mocker
     assert next(iter(led.posts.values())).top_bias is False
 
 def test_render_spec_distinct_framing_ids(tmp_path):
-    from fanops.accounts import Account
     from fanops.crosspost import render_spec
     cfg = Config(root=tmp_path)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    mom = Moment(id="mom_1", parent_id="s", start=0, end=7, reason="r")
-    rid_top, _, _, tb_top = render_spec(cfg, clip=clip, hook="SAME", moment=mom,
-                                        acct=Account(handle="a", account_id="1", framing="top"))
-    rid_ctr, _, _, tb_ctr = render_spec(cfg, clip=clip, hook="SAME", moment=mom,
-                                        acct=Account(handle="b", account_id="2", framing="center"))
+    rid_top, _, _, tb_top = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="mom_1", parent_id="s", start=0, end=7, reason="r", framing="top"))
+    rid_ctr, _, _, tb_ctr = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="mom_1", parent_id="s", start=0, end=7, reason="r", framing="center"))
     assert rid_top != rid_ctr and tb_top is True and tb_ctr is False
 
 def test_moment_framing_top_matches_global_on(tmp_path, monkeypatch, mocker):
@@ -160,13 +156,9 @@ def test_moment_profile_long_stamped_on_post(tmp_path, mocker):
     assert next(iter(led.posts.values())).clip_profile == "long"
 
 def test_render_spec_band_and_framing_compose(tmp_path):
-    from fanops.accounts import Account
     from fanops.crosspost import render_spec
     cfg = Config(root=tmp_path)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
-    mom = Moment(id="m1", parent_id="s", start=0, end=7, reason="r")
-    rid_long = render_spec(cfg, clip=clip, hook="SAME", moment=mom,
-                           acct=Account(handle="a", account_id="1", clip_profile="long", framing="top"))[0]
-    rid_talk = render_spec(cfg, clip=clip, hook="SAME", moment=mom,
-                           acct=Account(handle="b", account_id="2", clip_profile="talk", framing="top"))[0]
-    assert rid_long != rid_talk
+    rid_long = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="m1", parent_id="s", start=0, end=7, reason="r", clip_profile="long", framing="top"))[0]
+    rid_talk = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="m2", parent_id="s", start=0, end=7, reason="r", clip_profile="talk", framing="top"))[0]
+    assert rid_long == rid_talk

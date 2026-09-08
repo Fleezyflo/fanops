@@ -165,16 +165,13 @@ def test_crosspost_default_profile_from_moment(tmp_path, mocker):
     assert next(iter(led.posts.values())).clip_profile == "talk"
 
 def test_render_spec_band_tagged_when_profile_differs(tmp_path):
-    from fanops.accounts import Account
     cfg = Config(root=tmp_path)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/x.mp4", aspect=Fmt.r9x16, state=ClipState.captioned)
     m_long = Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H")
     m_talk = Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="talk", hook="H")
-    rid_long, wants_cut, profile, _ = render_spec(cfg, clip=clip, hook="H", moment=m_long,
-                                                  acct=Account(handle="x", account_id="1", clip_profile="long"))
-    rid_talk, _, _, _ = render_spec(cfg, clip=clip, hook="H", moment=m_talk,
-                                    acct=Account(handle="y", account_id="2", clip_profile="talk"))
-    assert wants_cut is True and profile == "long" and rid_long != rid_talk
+    rid_long, wants_cut, profile, _ = render_spec(cfg, clip=clip, hook="H", moment=m_long)
+    rid_talk, _, _, _ = render_spec(cfg, clip=clip, hook="H", moment=m_talk)
+    assert wants_cut is True and profile == "long" and rid_long == rid_talk
 
 def test_same_moment_same_profile_one_render(tmp_path, mocker):
     cfg = Config(root=tmp_path)
@@ -198,12 +195,11 @@ def test_same_moment_same_profile_one_render(tmp_path, mocker):
     mocker.patch("fanops.crosspost.render_moment", side_effect=_rm)
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     assert len(calls) == 1
-    assert {p.clip_profile for p in led.posts.values()} == {"short", "long"}
+    assert {p.clip_profile for p in led.posts.values()} == {"long"}
 
 def test_render_moment_file_fail_open_burn(tmp_path, mocker):
     from fanops.crosspost import render_moment_file
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H"))
@@ -224,7 +220,6 @@ def test_render_moment_file_fail_open_burn(tmp_path, mocker):
 def test_render_moment_file_cut_success(tmp_path, mocker):
     from fanops.crosspost import render_moment_file
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", start=0, end=7, reason="r", clip_profile="long", hook="H"))
@@ -242,7 +237,7 @@ def test_render_moment_file_cut_success(tmp_path, mocker):
     plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=led.sources["src_1"])
     assert plan.produced is True and Path(plan.vpath).read_bytes() == b"ACUT"
 
-def test_posts_use_account_profile_not_moment(tmp_path, mocker):
+def test_posts_share_moment_profile_not_account_override(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
@@ -256,4 +251,4 @@ def test_posts_use_account_profile_not_moment(tmp_path, mocker):
     clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("long/instagram", "long/tiktok")}
     led_obj.add_clip(clip); led_obj.save()
     led = _run_crosspost(cfg, mocker)
-    assert {p.clip_profile for p in led.posts.values()} == {"long"}
+    assert {p.clip_profile for p in led.posts.values()} == {"talk"}

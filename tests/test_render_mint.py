@@ -30,11 +30,10 @@ def _run(cfg, monkeypatch):
     return crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
 
 
-def test_mint_stamps_account_profile_no_variant_fields(tmp_path, monkeypatch, mocker):
+def test_mint_stamps_moment_profile_no_variant_fields(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.overlay.burn_hook_only")
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
-                          "clip_profile": "long", "framing": "top"}])
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, moment_kw={"clip_profile": "long", "framing": "top"})
     led.save()
@@ -54,14 +53,12 @@ def test_render_spec_wants_cut_for_any_hook(tmp_path):
     assert wants is True and prof == cfg.clip_profile and top is False
 
 
-def test_render_spec_same_id_for_same_account_spec(tmp_path):
-    from fanops.accounts import Account
+def test_render_spec_same_id_for_same_moment_spec(tmp_path):
     from fanops.ids import child_id
     cfg = Config(root=tmp_path)
     clip = Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16)
     m = Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r",
                state=MomentState.clipped, hook="watch this", clip_profile="talk", framing="top")
-    acct = Account(handle="a", account_id="1", framing="top")
-    rid_a, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m, acct=acct)
-    rid_b, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m, acct=acct)
+    rid_a, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m)
+    rid_b, *_ = render_spec(cfg, clip=clip, hook="watch this", moment=m)
     assert rid_a == rid_b == child_id("render", "clip_1", "watch this\x1fframe:top")

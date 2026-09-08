@@ -92,16 +92,19 @@ def _clip_for_aspect(led: Ledger, cfg: Config, moment_id: str, aspect: Fmt):
     led, clip = render_moment(led, cfg, moment_id, aspect=aspect)   # rebind led (was discarded as led2)
     return clip
 
-def render_spec(cfg: Config, *, clip, hook: str, moment, acct=None):
-    """Per-account render IDENTITY + cut decision. wants_cut = bool(hook). Band tag when profile != global."""
-    profile = cfg.resolve_clip_profile(acct)
-    top_bias = cfg.resolve_top_bias(acct)
+def _top_bias_from_framing(framing: str | None, cfg: Config) -> bool:
+    if framing == "top": return True
+    if framing == "center": return False
+    return cfg.aware_reframe
+
+def render_spec(cfg: Config, *, clip, hook: str, moment):
+    """Owner-moment render IDENTITY + cut decision. wants_cut = bool(hook). Length is the pick — no band tag."""
+    profile = ((moment.clip_profile if moment is not None else None) or cfg.clip_profile)
+    top_bias = _top_bias_from_framing(moment.framing if moment is not None else None, cfg)
     wants_cut = bool(hook)
     tag = [hook] if hook else []
     if wants_cut:
         tag.append(f"frame:{'top' if top_bias else 'center'}")
-        if profile != cfg.clip_profile:
-            tag.append(f"band:{profile}")
     return child_id("render", clip.id, "\x1f".join(tag)), wants_cut, profile, top_bias
 
 @dataclass
@@ -126,8 +129,7 @@ def render_moment_file(led: Ledger, cfg: Config, *, post, target_clip, src, call
     mom = led.moments.get(target_clip.parent_id)
     hook = (mom.hook or "").strip() if mom is not None else ""
     aspect = target_clip.aspect
-    acct = next((a for a in Accounts.load(cfg).accounts if a.handle == post.account), None)
-    rid, wants_cut, profile, top_bias = render_spec(cfg, clip=target_clip, hook=hook, moment=mom, acct=acct)
+    rid, wants_cut, profile, top_bias = render_spec(cfg, clip=target_clip, hook=hook, moment=mom)
     hook_source = HookSource.shared_fallback if hook else HookSource.none
     batch_id = src.batch_id if src is not None else None
     source_id = src.id if src is not None else None
@@ -164,7 +166,7 @@ def _seed_clips(led: Ledger) -> list:
 
 
 def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
-                       base, date_str: str, clip_dur, tgt, src_batch, acct_by_handle) -> int:
+                       base, date_str: str, clip_dur, tgt, src_batch) -> int:
     """Born/skip ONE post for this clip x surface. Returns 1 when the surface is a BATCH-TARGET
     exclusion (the per-clip tally counts only these), else 0 for every other outcome (a born post OR
     any other skip). Owns all the per-surface gates + the add_post — the deepest-nested body of
@@ -237,9 +239,6 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
             existing = None
     if existing is not None:
         return 0
-    acct = acct_by_handle.get(surf.account)
-    clip_profile = cfg.resolve_clip_profile(acct)
-    top_bias = cfg.resolve_top_bias(acct)
     # post_type: Postiz IG service vocab ("post"); TikTok stays None — Zernio OpenAPI v1.0.4
     # POST /v1/posts (createPost) has no post-type enum (TikTokPlatformData.mediaType is video|photo only).
     led.add_post(Post(
@@ -258,9 +257,9 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         submission_id=f"fanops_{_hash('idemp', pid)}",
         render_id=render_id,
         first_frame_kind=target_clip.first_frame_kind, cut_seconds=target_clip.cut_seconds,
-        clip_profile=clip_profile,
+        clip_profile=(m.clip_profile if m is not None else None) or cfg.clip_profile,
         batch_id=src_batch,
-        top_bias=top_bias,
+        top_bias=_top_bias_from_framing(m.framing if m is not None else None, cfg),
         variation_axis=(cap.get("axis") if isinstance(cap, dict) else None)))
     return 0
 
@@ -269,7 +268,6 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
     base = _parse(base_time)
     date_str = base.date().isoformat()
     surfaces = accounts.surfaces()
-    acct_by_handle = {a.handle: a for a in accounts.accounts}
     for clip in _seed_clips(led):   # captioned + not held + not retired
         # AUDIT (g): the clip's PLAYABLE duration is its MOMENT window (end - start). Clip has no
         # .duration field; the seed clip is rendered from [start,end] of the source, so the window
@@ -287,8 +285,7 @@ def crosspost_clips(led: Ledger, cfg: Config, accounts: Accounts, *, base_time: 
         posts_before = len(led.posts)   # c8-f2: detect a clip consumed with ZERO posts born (selection denied all)
         for i, surf in enumerate(surfaces):
             n_skipped += _mint_surface_post(led, cfg, clip, m, surf, i, base=base, date_str=date_str,
-                                            clip_dur=clip_dur, tgt=tgt, src_batch=src_batch,
-                                            acct_by_handle=acct_by_handle)
+                                            clip_dur=clip_dur, tgt=tgt, src_batch=src_batch)
         born = len(led.posts) - posts_before
         if tgt:   # T5: one structured exclusion summary per batched clip (the ONLY persistent record — excluded
                   # surfaces become no Post). Silent when tgt==[] (unbatched/ALL-sentinel) -> byte-identical fan-out.
