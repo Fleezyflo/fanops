@@ -18,14 +18,10 @@ from fanops.post.metrics.common import _json_or_raise, _safe, poster_fail_reason
 # and fetches each. It emits the SAME {postSubmissionId, metrics} row contract pull_metrics consumes,
 # plus an inert _raw_labels list that M3's cutover reconcile reads (so it never re-fetches). ----
 
-# VERIFIED-live Postiz analytics labels (Views/Reach/Saves/Likes/Comments/Shares, confirmed against the
-# running instance 2026-06-21) -> lift_score key. The optimization-target weights live in tuning.json
-# lift_weights (applied downstream by lift_score); unknown labels are DROPPED (lift_score whitelists keys
-# anyway). `saves` (top _W weight) and `reach` (the learn_doctor gating key) are exactly the keys the old
-# {"impressions":"reach"} map silently dropped — that froze the learning loop on live Postiz. NB:
-# `comments`+`views` map but the default _W has no weight for them (present-but-unweighted until the
-# operator weights them via tuning.json — intended). `retention` is genuinely absent from the live label
-# set, so it stays unmapped (the one remaining _W gap learn_doctor reports).
+# Postiz post analytics labels -> lift_score key (case-insensitive via _map_analytics). IG post-level
+# labels per Postiz docs + instagram.provider.ts postAnalytics: Views, Reach, Saves, Likes, Comments,
+# Shares (docs.postiz.com/public-api/analytics/post). Unknown labels are DROPPED (lift_score whitelists
+# keys anyway). Add a new Postiz label here once; track._PLATFORM_METRICS for Postiz platforms follows.
 _POSTIZ_LABEL_MAP = {"likes": "likes", "shares": "shares", "comments": "comments", "reach": "reach", "saves": "saves", "views": "views"}
 
 

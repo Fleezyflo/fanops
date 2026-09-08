@@ -70,14 +70,29 @@ def test_learning_validated_after_postiz_cutover(tmp_path, monkeypatch):
 
 # ---- Platform-aware learning proof (MOL-16/17/18, capability model) ----
 from fanops.track import _shape_proves_learning as _P, _missing_high_weight, _PLATFORM_METRICS, record_metrics
+from fanops.post.metrics import _POSTIZ_LABEL_MAP, _ZERNIO_LABEL_MAP
 
-def test_capability_map_retention_only_available_on_ig():
-    # MOL-16: the ONE capability source — retention is IG-only (Meta Graph avg-watch); every non-IG
-    # Platform (TikTok/youtube/facebook/twitter via Zernio/Postiz) has NO retention key. Guards against a
-    # future "not TikTok" shortcut silently re-including youtube (a third Platform with retention absent).
-    assert "retention" in _PLATFORM_METRICS[Platform.instagram]
-    for pf in (Platform.tiktok, Platform.youtube, Platform.facebook, Platform.twitter):
-        assert "retention" not in _PLATFORM_METRICS[pf]
+def test_capability_map_lockstep_with_read_maps():
+    # MOL-16: capability follows the label maps — Postiz platforms share _POSTIZ_LABEL_MAP values;
+    # TikTok follows _ZERNIO_LABEL_MAP. No hand-added keys (Graph-era retention on IG is gone).
+    postiz_keys = frozenset(_POSTIZ_LABEL_MAP.values())
+    zernio_keys = frozenset(_ZERNIO_LABEL_MAP.values())
+    assert _PLATFORM_METRICS[Platform.instagram] == postiz_keys
+    assert _PLATFORM_METRICS[Platform.youtube] == postiz_keys
+    assert _PLATFORM_METRICS[Platform.facebook] == postiz_keys
+    assert _PLATFORM_METRICS[Platform.twitter] == postiz_keys
+    assert _PLATFORM_METRICS[Platform.tiktok] == zernio_keys
+    assert "retention" not in postiz_keys
+
+def test_ig_postiz_row_not_marked_retention_degraded(tmp_path):
+    # IG published metrics route through Postiz (no retention label) — reach+saves present -> no
+    # lift_degraded for retention (same pattern as TikTok).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="ig1", parent_id="c", account="i", account_id="1", platform=Platform.instagram,
+                      caption="x", state=PostState.published, public_url="https://x"))
+    record_metrics(led, "ig1", {"reach": 50000, "saves": 40, "shares": 12})
+    m = led.posts["ig1"].metrics
+    assert "lift_degraded" not in m and "lift_missing_keys" not in m
 
 def test_tiktok_reach_plus_saves_still_proves_untouched():
     # The 6a7323f shape-heuristic (reach + saves|shares, no retention) still PROVES for TikTok — pinned
@@ -124,11 +139,11 @@ def test_ig_retention_flag_off_ig_proves_without_retention():
     assert _P(m, platform=Platform.instagram) is True                     # default: flag off -> proves
     assert _P(m, platform=Platform.instagram, require_ig_retention=False) is True
 
-def test_ig_retention_flag_on_ig_without_retention_does_not_prove():
-    # MOL-18c ON: with the flag ON, an IG row (retention-capable) that lacks a present-numeric retention
-    # does NOT prove — the IG shape is held to include retention. This is NEW behavior behind the flag.
+def test_ig_retention_flag_on_ig_without_retention_still_proves():
+    # MOL-18c ON but IG metrics are Postiz-shaped (retention not in capability set) — the flag is inert;
+    # reach + saves still proves.
     m = {"lift_score": 1.0, "reach": 50000, "saves": 40, "shares": 12}          # no retention
-    assert _P(m, platform=Platform.instagram, require_ig_retention=True) is False
+    assert _P(m, platform=Platform.instagram, require_ig_retention=True) is True
 
 def test_ig_retention_flag_on_ig_with_retention_proves():
     # MOL-18c ON, satisfied: an IG row WITH retention proves even under the flag.

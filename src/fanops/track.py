@@ -12,6 +12,7 @@ from fanops.log import get_logger
 from fanops.metrics_schedule import due_offset
 from fanops.models import LIFT_SCORE, Platform, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
+from fanops.post.metrics import _POSTIZ_LABEL_MAP, _ZERNIO_LABEL_MAP
 
 # DEFAULT lift weights: saves/shares are the real algorithmic signal; likes ~ noise (deweighted).
 # NOTE: reach at 0.001 can dominate lift for very high-reach posts (reach=100k -> +100);
@@ -34,24 +35,20 @@ _W = {"saves": 4.0, "shares": 4.0, "retention": 3.0, "reach": 0.001, "likes": 0.
 # reach/shares-dominated scalar. reach (0.001) / likes (0.05) are low-weight proxies, never "missing".
 _HIGH_WEIGHT = 1.0
 
-# Platform CAPABILITY: which lift keys a platform's analytics can STRUCTURALLY deliver — the ONE place
-# this knowledge lives (MOL-16/17 audit 2026-07-02). Derived from the three read maps: IG reads the Meta
-# Graph (meta_graph._MEDIA_METRICS/_GRAPH_INSIGHTS_MAP) which yields reach/views/saves/shares/likes/
-# comments AND avg_watch_time -> a DERIVED `retention` (REELS only, and only when the clip duration is
-# known); TikTok reads Zernio (post/metrics._ZERNIO_LABEL_MAP) and youtube/facebook/twitter publish via
-# Postiz (post/metrics._POSTIZ_LABEL_MAP) — NEITHER map has a watch-time/retention field, so retention is
-# absent BY CONSTRUCTION on every non-IG platform. Keyed to Platform (not "not TikTok") so youtube — a
-# third Platform via Postiz with retention equally unavailable — is exempted too. A metric a platform
-# CANNOT produce is NOT a REQUIRED primary when proving THAT platform's shape, and is NOT a "missing"
-# degraded key for it. Reach-only / likes-only noise still fails everywhere (the proof floor is
-# capability-independent). Stale-map guard: risks table — a mapped-available metric that stops appearing
-# is the failure mode; keep this in lockstep with the three maps.
+# Platform CAPABILITY: which lift keys a platform's analytics can STRUCTURALLY deliver — lockstep with the
+# read maps (MOL-16/17). Published-post metrics: IG/youtube/facebook/twitter via Postiz
+# (GET /public/v1/analytics/post/{id} — docs.postiz.com; IG postAnalytics emits Views/Reach/Saves/Likes/
+# Comments/Shares per instagram.provider.ts); TikTok via Zernio (_ZERNIO_LABEL_MAP). A metric the map
+# cannot emit is NOT a required primary for that platform and is NOT a lift_missing_keys gap. Add a label
+# to the map once; capability follows. Reach-only / likes-only noise still fails everywhere.
+_POSTIZ_LIFT_KEYS = frozenset(_POSTIZ_LABEL_MAP.values())
+_ZERNIO_LIFT_KEYS = frozenset(_ZERNIO_LABEL_MAP.values())
 _PLATFORM_METRICS: dict[Platform, frozenset[str]] = {
-    Platform.instagram: frozenset({"reach", "views", "saves", "shares", "likes", "comments", "retention"}),
-    Platform.tiktok:    frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # Zernio: no watch-time
-    Platform.youtube:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
-    Platform.facebook:  frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
-    Platform.twitter:   frozenset({"reach", "views", "saves", "shares", "likes", "comments"}),   # via Postiz: no retention
+    Platform.instagram: _POSTIZ_LIFT_KEYS,
+    Platform.tiktok:    _ZERNIO_LIFT_KEYS,
+    Platform.youtube:   _POSTIZ_LIFT_KEYS,
+    Platform.facebook:  _POSTIZ_LIFT_KEYS,
+    Platform.twitter:   _POSTIZ_LIFT_KEYS,
 }
 
 def _platform_delivers(platform: Optional[Platform], key: str) -> bool:
@@ -72,9 +69,9 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
     learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
     (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Postiz-shaped)
     always proves. MOL-17: `platform` names the row's Platform so a metric the platform CANNOT deliver
-    (retention on TikTok/youtube via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
+    (retention on Postiz/Zernio platforms via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
     `require_ig_retention` (default OFF, caller-gated on cfg.ig_retention_proof) tightens ONLY a platform
-    that CAN deliver retention (IG) to require it present-numeric — fail-OPEN for platform None/unknown or
+    that CAN deliver retention to require it present-numeric — fail-OPEN for platform None/unknown or
     a platform that structurally can't (prove exactly as today)."""
     if LIFT_SCORE not in metrics:
         return False
@@ -265,18 +262,30 @@ def _default_list_posts(cfg: Config, *, submission_ids: Optional[list[str]] = No
     if posts is None:
         return _metrics_client_for(cfg, cfg.poster_backend, submission_ids)
     from fanops.accounts import load_accounts_safe
+    from fanops.models import Platform
     accounts, err = load_accounts_safe(cfg)
     if err: get_logger(cfg)("backend_route", "accounts", "load_failed_global_fallback", err=err)
-    # IG metrics route through Postiz like other backends; retention unavailable via Postiz (accepted tradeoff).
+    # Leg 2 (Insight): Instagram metrics come from Meta Graph (the SOLE IG source) regardless of the
+    # PUBLISH backend (Postiz publishes IG, but Graph MEASURES it). Split IG posts to GraphInsightsClient
+    # (it needs the Post objects for media_id + cut_seconds), leave every non-IG post on its provider's
+    # reader UNCHANGED (TikTok -> Zernio). Both fetchers' rows concat into ONE pass.
+    ig_posts = [p for p in posts if p.platform is Platform.instagram and p.submission_id]
     groups: dict[str, list[str]] = {}
     for p in posts:
+        if p.platform is Platform.instagram: continue
         if not p.submission_id: continue
         backend = accounts.effective_provider(p.account, p.platform)   # H1: per-channel provider, NOT the global fallback
         if backend is None: continue                                   # no provider -> don't dryrun-default a live post's metrics
         groups.setdefault(backend, []).append(p.submission_id)
     fetchers = [_metrics_client_for(cfg, b, ids) for b, ids in groups.items()]
+    graph = None
+    if ig_posts:
+        from fanops.post.metrics import GraphInsightsClient
+        graph = GraphInsightsClient(cfg, posts=ig_posts)
     def fetch(window: str = "30d") -> list[dict]:
         rows: list[dict] = []
+        if graph is not None:
+            rows.extend(graph.list_posts(window))
         for f in fetchers:
             rows.extend(f(window))
         return rows

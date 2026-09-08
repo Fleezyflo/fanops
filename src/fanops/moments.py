@@ -395,7 +395,7 @@ def request_moments(led: Ledger, cfg: Config, source_id: str, accounts=None, *, 
                                 signal_peaks=persona_peaks,
                                 language=src.language,
                                 guidance=g,
-                                clip_profile=cfg.clip_profile,
+                                clip_profile=cfg.resolve_clip_profile(a),
                                 personas=[pe],
                                 frames=frames).model_dump()
         payload.pop("request_id", None)
