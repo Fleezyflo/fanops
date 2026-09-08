@@ -36,18 +36,11 @@ Verify before wiring it in:
 `GET https://graph.facebook.com/v21.0/debug_token?input_token=<NEW_TOKEN>&access_token=<NEW_TOKEN>`
 → check `data.is_valid == true` and read `data.expires_at`. (This is the same call the doctor preflight makes.)
 
-## Set it in FanOps — no shell editing
+## Set it in FanOps
 
-**Studio Go-Live tab → per-account Meta creds** is the supported path. It calls
-`studio.golive.set_meta_creds(cfg, handle, ig_user_id, token)`, which:
-
-- writes the **id** (non-secret) to `accounts.json` first (validates the handle exists), then
-- dual-writes the **token** to the per-handle `.env` key `META_GRAPH_TOKEN__<SLUG>` **and** `os.environ`
-  (write-only — the tab never renders it back; a blank token leaves the existing one untouched so you can
-  update just the id).
-
-For the **global** token, set `META_GRAPH_TOKEN` + `META_IG_USER_ID` in `.env` (the global fallback used by
-any account with no per-account creds). Restart the Studio/daemon so a fresh `Config` reloads `.env`.
+- **Access token** (secret): OS keychain — see [CONFIG.md](CONFIG.md) § Secrets storage (`META_GRAPH_TOKEN` or per-handle `META_GRAPH_TOKEN__<SLUG>`).
+- **IG user id** (non-secret): per-account `ig_user_id` in `accounts.json` (global fallback: `META_IG_USER_ID` in `.env`).
+- Restart the Studio/daemon after rotating so a fresh `Config` reloads creds.
 
 ## After rotating
 
