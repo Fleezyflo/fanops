@@ -236,7 +236,7 @@ def _produce_transcript(led: Ledger, cfg: Config, source_id: str, src, out_dir: 
         return led
     attempts = int(src.meta.get("whisper_timeout_attempts", 0))
     engine = "faster-whisper"
-    used_model = model or "large-v3"
+    used_model = model or cfg.asr_model_for(src.duration, timeout_attempts=attempts)
     cmd = fw_cmd(audio, str(out_dir), used_model, cfg.asr_language)
     timeout_s = _whisper_timeout(src.duration)
     t0 = time.monotonic()

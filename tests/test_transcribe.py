@@ -77,8 +77,8 @@ def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monk
     assert led.sources["src_1"].state is SourceState.transcribed
 
 def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkeypatch):
-    # With no explicit model=, short and long sources both get large-v3 — duration no longer
-    # selects a smaller model.
+    # With no explicit model=, duration-aware selection picks large-v3 for short sources and steps
+    # down for long sources that would blow the whisper timeout budget.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")           # skip demucs; isolate the model-selection wiring
     mocker.patch("fanops.transcribe._fw_available", return_value=True)
@@ -94,7 +94,7 @@ def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkey
         return R()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "short"); transcribe_source(led, cfg, "long")
-    assert models == ["large-v3", "large-v3"]
+    assert models == ["large-v3", "small"]
 
 def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
     # FANOPS_ASR_LANGUAGE -> cfg.asr_language -> fw_cmd --language, threaded through transcribe_source

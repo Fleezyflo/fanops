@@ -20,8 +20,8 @@ from fanops.escalation import (
 from fanops.escalation import ATTEMPT_CEILING as _GATE_DETERMINISTIC_MAX  # noqa: F401 — re-exported for tests
 from fanops.gate_keys import gate_source_id as _gate_source_id
 from fanops.errors import ToolchainMissingError, fail_open
-from fanops.llm import (claude_json_meta, LlmTimeoutError, LlmContextLimitError, LlmSchemaError,
-                        LlmToolchainError, LlmFramesUnreadError)
+from fanops.llm import (claude_json_meta, LlmTimeoutError, LlmRateLimitError, LlmContextLimitError,
+                        LlmSchemaError, LlmToolchainError, LlmFramesUnreadError)
 from fanops.prompts import moment_pick_prompt, moment_hook_prompt, caption_prompt
 from fanops.control import guidance_sha
 from fanops.log import get_logger
@@ -117,6 +117,9 @@ class LlmResponder:
             except LlmFramesUnreadError as e:
                 # Frames were attached but never opened. Reason-only is not a hook — leave pending.
                 log("responder", f"{kind}:{key}", "frames_unread", err=str(e)[:160])
+                return False
+            except LlmRateLimitError as e:
+                log("responder", f"{kind}:{key}", "rate_limit", err=str(e)[:160])
                 return False
             rid_after = latest_request_id(cfg, kind, key)
             if rid_after is None or rid_after != rid_before:

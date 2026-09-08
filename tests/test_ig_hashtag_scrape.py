@@ -390,6 +390,7 @@ def test_open_client_unattended_dead_profile_sid_leaves_envelope(tmp_path, monke
 
 def test_scrape_login_promote_writes_envelope_from_session_file(tmp_path, monkeypatch):
     """scrape-login promote writes envelope from on-disk session probe (no cookie inject)."""
+    import stat
     from pathlib import Path
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
@@ -415,6 +416,7 @@ def test_scrape_login_promote_writes_envelope_from_session_file(tmp_path, monkey
     assert seen["login"] == 0
     assert seen["dump"] == 1
     assert '"promoted": true' in sess.read_text()
+    assert stat.S_IMODE(sess.stat().st_mode) == 0o600
 
 
 

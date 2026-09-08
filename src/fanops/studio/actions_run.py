@@ -304,6 +304,8 @@ def upload_init(cfg: Config, filename: str, size: int, sha256: str) -> ActionRes
     resolved = _resolve_upload_dest(inbox, filename or "", _VIDEO_EXT)
     if resolved[0] is None:
         return ActionResult(ok=False, error=resolved[1])
+    if size <= 0 or size > cfg.upload_max_bytes:
+        return ActionResult(ok=False, error="file too large")
     name, dest, tmp = resolved
     meta_p = _upload_meta_path(tmp)
     if tmp.exists() and meta_p.exists():

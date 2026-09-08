@@ -27,6 +27,14 @@ def test_upload_init_rejects_hostile_names(tmp_path, raw, reason):
     assert not res.ok and reason in (res.error or "")
 
 
+def test_upload_init_rejects_aggregate_over_cap(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
+    cfg = Config(root=tmp_path)
+    data = b"X" * (2 * 1024 * 1024)
+    res = actions.upload_init(cfg, "big.mp4", len(data), _sha(data))
+    assert not res.ok and "too large" in (res.error or "").lower()
+
+
 def test_upload_chunk_offset_mismatch_409(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
     cfg = Config(root=tmp_path)
@@ -48,7 +56,7 @@ def test_upload_chunk_append_and_finalize(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.ingest.has_video_stream", return_value=True)
     mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
     cfg = Config(root=tmp_path)
-    data = b"V" * (2 * 1024 * 1024)   # 2 MB — exceeds 1 MB per-chunk cap
+    data = b"V" * (512 * 1024)   # 512 KB — within 1 MB cap
     init = actions.upload_init(cfg, "big.mp4", len(data), _sha(data))
     assert init.ok and init.detail["offset"] == 0
     uid = init.detail["upload_id"]

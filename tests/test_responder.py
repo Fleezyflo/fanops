@@ -281,6 +281,22 @@ def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, mo
     assert n == 0                                          # not answered
     assert not response_path(cfg, "moments", "src_1").exists()   # gate stays pending (visible via log)
 
+def test_llm_responder_rate_limit_leaves_gate_pending_without_burning_attempts(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path, _attempts_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmRateLimitError
+    write_request(cfg, kind="moments", key="src_1",
+                  payload={"source_id": "src_1", "duration": 20.0, "transcript": [], "signal_peaks": []})
+    def rate_limited(kind, payload):
+        raise LlmRateLimitError("claude -p rate-limited after retries")
+    n = LlmResponder(cfg, model=rate_limited).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "moments", "src_1").exists()
+    assert not _attempts_path(cfg, "moments", "src_1").exists()
+    assert "rate_limit" in capsys.readouterr().err
+
 # --- M1b: the moment_hooks gate (pass 2 — the frame-seeing hook AUTHOR) -----------------------------
 def test_moment_hooks_model_passes_window_frames_as_images(mocker):
     # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's

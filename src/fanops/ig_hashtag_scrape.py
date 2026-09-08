@@ -423,6 +423,8 @@ def _promote_envelope(client, dump_sess: Path) -> None:
     """Write-once device envelope. scrape-login is the only caller."""
     dump_sess.parent.mkdir(parents=True, exist_ok=True)
     client.dump_settings(str(dump_sess))
+    try: os.chmod(dump_sess, 0o600)
+    except OSError: pass
 
 
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
