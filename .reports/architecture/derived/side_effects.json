@@ -187,7 +187,7 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 373
+        "line": 388
       }
     ],
     "fanops.responder": [
@@ -768,6 +768,12 @@
         "line": 35
       }
     ],
+    "fanops.post.postiz_errors": [
+      {
+        "call": "subprocess.run",
+        "line": 70
+      }
+    ],
     "fanops.postiz_lifecycle": [
       {
         "call": "subprocess.run",
@@ -830,6 +836,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 39
+    "subprocess_sites": 40
   }
 }

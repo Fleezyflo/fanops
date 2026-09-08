@@ -6,6 +6,7 @@ from __future__ import annotations
 from fanops.studio.views_posted import (  # noqa: F401
     _BAR_METRICS,
     _EXPOSURE_STATES,
+    _FAILURE_KINDS,
     _RETRYABLE_FAILURES,
     _classify_channel,
     DimInsightRow,

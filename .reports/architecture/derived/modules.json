@@ -111,6 +111,7 @@
     "fanops.post.metrics.postiz_read",
     "fanops.post.metrics.zernio_read",
     "fanops.post.postiz",
+    "fanops.post.postiz_errors",
     "fanops.post.providers",
     "fanops.post.publish_archive",
     "fanops.post.publish_dryrun",
@@ -315,6 +316,7 @@
     "fanops.post.metrics.postiz_read": "S12_publish",
     "fanops.post.metrics.zernio_read": "S12_publish",
     "fanops.post.postiz": "S12_publish",
+    "fanops.post.postiz_errors": "S12_publish",
     "fanops.post.providers": "S12_publish",
     "fanops.post.publish_archive": "S12_publish",
     "fanops.post.publish_dryrun": "S12_publish",
@@ -407,9 +409,9 @@
     "fanops.window_math": "S09_render"
   },
   "totals": {
-    "assigned": 195,
+    "assigned": 196,
     "ghosts": 0,
-    "modules": 195,
+    "modules": 196,
     "unassigned": 0
   },
   "unassigned_modules": []
