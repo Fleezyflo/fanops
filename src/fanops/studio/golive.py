@@ -605,6 +605,7 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
     from datetime import datetime as _dt, timezone as _tz
     from fanops.ledger import Ledger as _Ledger
     from fanops.models import PostState as _PS
+    from fanops.post.run import _non_active_row
     from fanops.timeutil import is_due_or_past
     _now = now if now is not None else _dt.now(_tz.utc)
     try:
@@ -614,8 +615,10 @@ def go_live(cfg: Config, confirmed: bool = False, *, now: "datetime | None" = No
         # root: never silent fail-open). Log and refuse so the operator sees both signals.
         get_logger(cfg)("go_live", "-", "past_due_gate_load_failed", err=str(_exc)[:160])
         return ActionResult(ok=False, error=f"not ready — ledger unreadable: {str(_exc)[:160]}. Run `fanops doctor` first.")
-    _past_due = sum(1 for _p in _led.posts.values()
-                    if _p.state is _PS.queued and is_due_or_past(_p.scheduled_time, _now))
+    def _drainable_past_due(_p) -> bool:
+        return (_p.state is _PS.queued and is_due_or_past(_p.scheduled_time, _now)
+                and _led.can_promote(_p) and _non_active_row(accounts, _p.account) is None)
+    _past_due = sum(1 for _p in _led.posts.values() if _drainable_past_due(_p))
     if _past_due:
         return ActionResult(ok=False, error=(
             f"not ready — {_past_due} queued post(s) are past-due. Respread the bucket first "

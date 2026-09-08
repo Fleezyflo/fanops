@@ -150,6 +150,33 @@ def test_approve_with_hook_refuses_a_retired_clip(tmp_path):
     assert Ledger.load(cfg).posts["p_h"].state is PostState.awaiting_approval
 
 
+def test_approve_skips_non_active_account(tmp_path):
+    """F6-I approve-side twin: a live-lineage post on a planned/retired row must not promote to queued."""
+    from fanops.studio.actions_approve import approve_posts
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active", "persona": "hype"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned", "persona": "hype"},
+    ]}))
+    with Ledger.transaction(cfg) as led:
+        _lineage(led, mom_id="mom_a", clip_id="clip_a")
+        _lineage(led, mom_id="mom_b", clip_id="clip_b")
+        led.add_post(Post(id="p_active", parent_id="clip_a", account="a", account_id="1",
+                          platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
+        led.add_post(Post(id="p_planned", parent_id="clip_b", account="b", account_id="2",
+                          platform=Platform.instagram, caption="c", state=PostState.awaiting_approval))
+
+    res = approve_posts(cfg, ["p_active", "p_planned"], now=NOW)
+
+    assert res.ok
+    assert res.detail["approved"] == 1 and res.detail["skipped_not_active"] == 1
+    again = Ledger.load(cfg)
+    assert again.posts["p_active"].state is PostState.queued
+    assert again.posts["p_planned"].state is PostState.awaiting_approval
+    assert "skipped_not_active" in cfg.log_path.read_text()
+
+
 # ---- the parity invariant the docstring promises but nothing enforced ------------------------
 
 def test_awaiting_headline_equals_the_review_worklist_with_retired_lineage(tmp_path):

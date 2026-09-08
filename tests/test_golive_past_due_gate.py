@@ -139,3 +139,50 @@ def test_go_live_refusal_is_atomic(tmp_path, monkeypatch):
     post_env_disk = (tmp_path / ".env").read_text() if (tmp_path / ".env").exists() else ""
     assert post_env_disk == pre_env_disk, f".env mutated despite refusal: {post_env_disk!r}"
     assert os.environ.get("FANOPS_LIVE") == pre_environ_live, "os.environ mutated despite refusal"
+
+
+def test_go_live_past_due_gate_counts_only_drainable_posts(tmp_path, monkeypatch):
+    """Past-due gate must mirror publish_due: retired lineage and non-active rows do not block the flip."""
+    cfg = _clean(monkeypatch, tmp_path); _seed_live_ready(cfg, monkeypatch)
+    yesterday_iso = iso_z(FIXED_DT - timedelta(days=1))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", duration=10.0))
+    led.add_moment(Moment(id="mom_ret", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.retired))
+    clip_ret = Clip(id="clip_ret", parent_id="mom_ret", path="/clip_ret_9x16.mp4", aspect=Fmt.r9x16,
+                    state=ClipState.captioned)
+    clip_ret.meta_captions = {"a/instagram": {"caption": "a", "hashtags": []}}
+    led.add_clip(clip_ret)
+    led.add_post(Post(id="p_retired_lineage", parent_id=clip_ret.id, account="a", account_id="1",
+                      platform=Platform.instagram, caption="c", state=PostState.queued,
+                      scheduled_time=yesterday_iso, media_urls=["file:///clip_ret_9x16.mp4"],
+                      public_url="dryrun://ret"))
+    led.add_moment(Moment(id="mom_plan", parent_id="src_1", content_token="0-7b", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip_plan = Clip(id="clip_plan", parent_id="mom_plan", path="/clip_plan_9x16.mp4", aspect=Fmt.r9x16,
+                     state=ClipState.captioned)
+    clip_plan.meta_captions = {"b/instagram": {"caption": "b", "hashtags": []}}
+    led.add_clip(clip_plan)
+    led.add_post(Post(id="p_planned_acct", parent_id=clip_plan.id, account="b", account_id="2",
+                      platform=Platform.instagram, caption="c", state=PostState.queued,
+                      scheduled_time=yesterday_iso, media_urls=["file:///clip_plan_9x16.mp4"],
+                      public_url="dryrun://plan"))
+    led.save()
+    raw = json.loads(cfg.accounts_path.read_text())
+    raw["accounts"].append({"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned",
+                            "integrations": {"instagram": "ig_2"}, "backends": {"instagram": "postiz"}})
+    cfg.accounts_path.write_text(json.dumps(raw))
+
+    res = golive.go_live(cfg, confirmed=True, now=FIXED_DT)
+    assert res.ok is True, f"non-drainable past-due posts must not block go_live: {res.error}"
+
+
+def test_go_live_past_due_gate_still_blocks_drainable_backlog(tmp_path, monkeypatch):
+    """Control: a past-due queued post on an active account with live lineage still refuses the flip."""
+    cfg = _clean(monkeypatch, tmp_path); _seed_live_ready(cfg, monkeypatch)
+    yesterday_iso = iso_z(FIXED_DT - timedelta(days=1))
+    _seed_clip_and_queued_post(cfg, post_id="p_stale", scheduled_iso=yesterday_iso)
+
+    res = golive.go_live(cfg, confirmed=True, now=FIXED_DT)
+    assert res.ok is False
+    assert "past-due" in res.error.lower() or "respread" in res.error.lower()

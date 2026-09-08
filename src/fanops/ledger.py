@@ -669,6 +669,12 @@ class Ledger:
         p = self.posts.get(uid)
         if p is not None and p.state is PostState.queued:                   # send an approved-but-unsent post back to review
             self.posts[uid] = p.model_copy(update={"state": PostState.awaiting_approval})
+    def unapprove_queued_for_account(self, handle: str) -> int:
+        n = 0
+        for p in self.posts.values():
+            if p.state is PostState.queued and p.account == handle:
+                self.unapprove_post(p.id); n += 1
+        return n
 
     # ---- queries ----
     def already_seen(self, *, sha256: str | None = None) -> bool:

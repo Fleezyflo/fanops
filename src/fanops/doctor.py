@@ -59,10 +59,6 @@ def _env_settings_check(cfg: Config) -> dict:
         return _check(lbl, False, hint)
 
 
-_META_TOKEN_LEAD_DAYS = 10                                # WARN this many days before a Meta token expires
-
-
-
 def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) -> dict | None:
     """Hashtag Layer A: session/envelope presence only — no live Instagram tag or API probe (HT3).
 
@@ -76,70 +72,6 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
         return None  # N/A — setup incomplete, not a green PASS
     if not any_scrape_session(cfg):
         return None  # N/A — credentials without session is setup incompleteness
-    return _check(lbl, True, "")
-
-def _meta_token_expiry_check(cfg: Config, *, get=None):
-    """T9: build the 'Meta Graph token not expiring' check dict, or None when no Meta token is configured (the
-    check is simply N/A then — never a false alarm). Introspects EVERY distinct resolvable token (global +
-    per-handle) via meta_graph.debug_token_expiry: an expired OR unintrospectable (FAIL-CLOSED) token -> ok=False;
-    a token inside the _META_TOKEN_LEAD_DAYS window -> Severity.WARN (surface, never block). The token value
-    is NEVER read into the label/hint (only the handle label + the human expiry date). Fail-open around the
-    enumeration so a torn accounts.json can't crash the report (resolvable_meta_tokens already degrades to global)."""
-    from datetime import datetime, timezone
-    from fanops.meta_graph import resolvable_meta_tokens, debug_token_expiry
-    try:
-        toks = resolvable_meta_tokens(cfg)
-    except Exception as e:
-        if decide("observability", 0) is EscalationPosture.degrade:
-            logging.getLogger("fanops.doctor").debug("meta token enumeration failed: %s", e)
-            toks = []                                    # never crash the report over enumeration
-        else:
-            raise
-    if not toks:
-        return None                                      # no Meta token to introspect -> check N/A
-    now = int(datetime.now(timezone.utc).timestamp())
-    lead = _META_TOKEN_LEAD_DAYS * 86400
-    expired: list[str] = []; unknown: list[str] = []; soon: list[tuple[str, int]] = []
-    for label, tok in toks:
-        status, detail = debug_token_expiry(cfg, tok, get=get)
-        if status == "expired":
-            expired.append(label)
-        elif status == "unknown":
-            unknown.append(label)
-        elif status == "ok" and isinstance(detail, int) and detail != 0 and detail - now <= lead:
-            soon.append((label, detail))                 # a real future expiry inside the lead window (0 == never-expires)
-    lbl = "Meta Graph token valid + not near expiry (debug_token)"
-    if expired or unknown:
-        parts = []
-        if expired: parts.append("EXPIRED for: " + ", ".join(sorted(expired)))
-        if unknown: parts.append("could not introspect (fail-closed) for: " + ", ".join(sorted(unknown)))
-        hint = ("; ".join(parts) + " — mint a fresh long-lived token + set it (global META_GRAPH_TOKEN, or the "
-                "per-handle META_GRAPH_TOKEN__<SLUG>) per docs/META_CREDS_OPS.md. "
-                "Postiz keeps publishing on its own OAuth while Graph verification + metrics go dark.")
-        return _check(lbl, False, hint)
-    if soon:
-        def _fmt(e): return datetime.fromtimestamp(e, tz=timezone.utc).date().isoformat()
-        who = ", ".join(f"{h} (expires {_fmt(e)})" for h, e in sorted(soon, key=lambda x: x[1]))
-        hint = ("Meta token expiring within %d days: %s — rotate it now (docs/META_CREDS_OPS.md) "
-                "before Graph verification + metrics go dark." % (_META_TOKEN_LEAD_DAYS, who))
-        return _check(lbl, severity="warn", hint=hint)
-    return _check(lbl, True, "")
-
-
-def _graph_hashtag_quota_check(cfg: Config) -> dict | None:
-    """Surface Hashtag Search unique-ID spend (30 / 7d). File read — token expiry is blind to this."""
-    from fanops.source_tags import graph_search_quota_status, graph_tag_cache_path
-    has_creds = bool(getattr(cfg, "meta_graph_token", None) and getattr(cfg, "meta_ig_user_id", None))
-    p = graph_tag_cache_path(cfg)
-    if not has_creds and not p.exists():
-        return None
-    spent, limit, exhausted = graph_search_quota_status(cfg)
-    lbl = "Meta Hashtag Search quota (unique IDs / 7d)"
-    if exhausted:
-        return _check(
-            lbl, severity="warn",
-            hint=f"{spent}/{limit} unique ig_hashtag_search IDs in 7d — quota exhausted "
-                 f"(code 18/2207034); resume locks from the Graph cache, do not mint new IDs")
     return _check(lbl, True, "")
 
 
@@ -223,24 +155,35 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     except Exception:
         with fail_open("doctor.daemon heartbeat age read degrade:", log=logging.getLogger("fanops.doctor").debug):
             raise
-    # (b) past-due backlog — fail-open ledger read
+    # (b) past-due backlog — fail-open ledger read; parity filters match publish_due (can_promote + active account)
     now = datetime.now(timezone.utc)
     backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
+    parked = 0; lineage = 0; total_queued = 0
     try:
         from fanops.ledger import Ledger
         from fanops.models import PostState
+        from fanops.post.run import _non_active_row
         from fanops.timeutil import is_due_or_past, parse_iso
         led = Ledger.load(cfg)
+        accounts = Accounts.load(cfg)
         grace = 2 * interval
         for p in led.posts_in_state(PostState.queued):
+            total_queued += 1
             if not is_due_or_past(p.scheduled_time, now):
                 continue
             try:
                 due_age = (now - parse_iso(p.scheduled_time)).total_seconds()
             except (ValueError, TypeError):
                 due_age = grace + 1                       # unparseable due time counts as stale-past (mirrors is_due_or_past)
-            if due_age > grace:
-                backlog_n += 1; oldest_h = max(oldest_h, due_age / 3600.0)
+            if due_age <= grace:
+                continue
+            if not led.can_promote(p):
+                lineage += 1
+                continue
+            if _non_active_row(accounts, p.account) is not None:
+                parked += 1
+                continue
+            backlog_n += 1; oldest_h = max(oldest_h, due_age / 3600.0)
     except Exception as e:
         if decide("observability", 0) is EscalationPosture.degrade:
             logging.getLogger("fanops.doctor").debug("daemon backlog read failed: %s", e)
@@ -274,8 +217,8 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
             parts.append(f"daemon heartbeat is {int(age)}s old (> {_DAEMON_STALE_TICKS}x the {interval}s tick) — the "
                          f"pump looks dead/stopped; approved posts won't send. Restart it (`fanops daemon status`)")
     if backlog_n:
-        parts.append(f"{backlog_n} queued post(s) past-due by up to {oldest_h:.1f}h — backlog is piling up "
-                     f"(the pump isn't draining the queue)")
+        parts.append(f"{backlog_n} drainable past-due (up to {oldest_h:.1f}h); {parked} parked on non-active "
+                     f"accounts; {lineage} retired lineage; {total_queued} total queued")
     if backlog_unknown:
         parts.append("could not read the ledger to assess past-due backlog (fail-closed)")
     return _check(lbl, False, "; ".join(parts))
@@ -532,34 +475,10 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
                 "the switch. Route a channel to a provider with creds (Studio Go-Live tab), or "
                 "`fanops` back to dryrun. Every publish stays stuck in `queued` until then.")))
 
-    # Leg 2 (Insight): the ONE external gate — a persisted breadcrumb means a Graph media-insights read was
-    # refused for lack of the instagram_manage_insights scope, so IG posts kept their PRIOR snapshot (fail-
-    # closed, never a wrong number). Surface it LOUD with the exact unblock; self-clears once insights flow.
-    from fanops.meta_graph import insights_blocked_signal
-    blocked = insights_blocked_signal(cfg)
-    checks.append(_check("IG insights readable (Meta Graph media insights)", not blocked,
-                         "grant the instagram_manage_insights token scope — IG performance (reach/retention) "
-                         "is frozen at its last snapshot until then; identification still works on instagram_basic"))
-
     # Hashtag Layer A scrape session (instagrapi) — omit when setup incomplete (N/A, not green PASS).
     htag = _hashtag_scrape_check(cfg)
     if htag is not None:
         checks.append(htag)
-
-    # T9: Meta token expiry — live network only. Observe-mode skips (CP uses snapshots; no Graph re-probe).
-    if probe_policy != "observe":
-        tcheck = _meta_token_expiry_check(cfg, get=get)
-        if tcheck is not None:
-            checks.append(tcheck)
-
-    # Hashtag Search unique-ID quota — file read of the Graph tag cache. Token expiry alone is blind.
-    try:
-        qcheck = _graph_hashtag_quota_check(cfg)
-        if qcheck is not None:
-            checks.append(qcheck)
-    except Exception:
-        with fail_open("doctor.graph-quota sensor degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
 
     # T10: REAL backend reachability on the publish path (the operator-confirms-health step, as code). Postiz's
     # docker health-check is nginx-only and LIES while the Node backend crash-loops (mastra_ai_spans) — the real

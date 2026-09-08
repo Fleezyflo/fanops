@@ -4,6 +4,7 @@
 # yields an empty derived metric set, which media_insights refuses PRE-FLIGHT — no HTTP, no scope block).
 # CRITICAL acceptance (PRD): the unresolved-product_type ImportedMedia case makes ZERO HTTP calls and
 # writes NO scope-block breadcrumb. Pure-fixture (injected `get=`), no real network.
+import json
 from fanops.config import Config
 from fanops.models import ImportedMedia, Platform
 from fanops.ledger import Ledger
@@ -131,6 +132,39 @@ def test_imported_path_threads_platform_like_record_metrics(tmp_path, monkeypatc
     assert seen, "_missing_high_weight was never called on the imported path"
     # every call on this IG-only path must carry Platform.instagram — never the fail-open None default
     assert all(p is Platform.instagram for p in seen), f"expected all Platform.instagram, got {seen}"
+
+
+def test_scope_refusal_writes_insights_blocked_breadcrumb(tmp_path, monkeypatch):
+    # A Meta permission/OAuth refusal on an imported row must set the LOUD insights_blocked breadcrumb
+    # (doctor + Home strip) without crashing the pull — same perm body as test_graph_insights.
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, [ImportedMedia(media_id="M1", permalink="https://ig/reel/A/", product_type="REELS",
+                                   metrics={"reach": 42})])
+    perm = {"error": {"code": 10, "type": "OAuthException",
+                      "message": "(#10) Application does not have permission for this action"}}
+    track.pull_imported_insights(led, cfg, get=_insights_get({"M1": _Resp(400, perm)}))
+    assert cfg.insights_blocked_path.exists()
+    assert json.loads(cfg.insights_blocked_path.read_text()) == {"blocked": True}
+    assert led.imported_media["M1"].metrics.get("reach") == 42    # prior snapshot preserved
+
+
+def test_scope_refusal_on_one_row_continues_and_fills_others(tmp_path, monkeypatch):
+    # Scope refusal on one row must not abort the loop — other rows still fill; the failing row keeps
+    # its prior snapshot. Order M2 (success) before M1 (scope block) so the breadcrumb survives the pull.
+    cfg = _cfg(tmp_path, monkeypatch)
+    perm = {"error": {"code": 10, "type": "OAuthException",
+                      "message": "(#10) Application does not have permission for this action"}}
+    led = _led(cfg, [
+        ImportedMedia(media_id="M2", permalink="https://ig/reel/B/", product_type="REELS"),
+        ImportedMedia(media_id="M1", permalink="https://ig/reel/A/", product_type="REELS",
+                      metrics={"reach": 99})])
+    track.pull_imported_insights(led, cfg, get=_insights_get({
+        "M2": _reels_insights(reach=500, saved=20),
+        "M1": _Resp(400, perm),
+    }))
+    assert led.imported_media["M2"].metrics.get("reach") == 500     # sibling row filled
+    assert led.imported_media["M1"].metrics.get("reach") == 99      # scope-blocked row preserved
+    assert json.loads(cfg.insights_blocked_path.read_text()) == {"blocked": True}
 
 
 def test_insights_only_reads_imported_not_posts(tmp_path, monkeypatch):

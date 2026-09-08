@@ -96,7 +96,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 | `discover <folder>` | inline (`discover.discover`) | Scan a folder, write thumbnails + manifest into `00_review/` | READ-ONLY (local ffmpeg thumbnail extraction only) |
 | `intake` | inline (`discover.intake`) | Copy operator-approved `00_review/approved/*` originals into `01_inbox/` | READ-ONLY (local file copy) |
 | `compose <clip_id>` | `cmd_compose` | Composite intro/outro/title cards onto a rendered clip via MoviePy | READ-ONLY (local render only, needs `[compose]` extra; fails open to base clip) |
-| `doctor` | `cmd_doctor` | First-run health screen: toolchain, accounts, key, live-route coherence, IG insights readability; scrape probe reports only (no `_persist_cooldown` / `_freeze_for` — Layer A owns freeze) | `cp.observe` |
+| `doctor` | `cmd_doctor` | First-run health screen: toolchain, accounts, keys, live-route coherence, daemon backlog; scrape probe reports only (no `_persist_cooldown` / `_freeze_for` — Layer A owns freeze) | `cp.observe` |
 | `doctor --fix-routing` | `_cmd_doctor_fix_routing` | Read-only survey of per-channel routing drift + proposed fix text (never auto-writes) | `cp.observe` |
 | `publish-queue` | `cmd_publish_queue` | List queued posts for manual by-hand publishing | READ-ONLY |
 | `audit tail [-n]` | `cmd_audit` | Print last N lines of the operator audit log | READ-ONLY |
@@ -176,7 +176,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 ### `doctor.py` — read-only first-run health screen
 
 - `_check(label, ok, hint="")` — pure: builds one `{label, ok, hint}` result dict (hint blanked when ok). Called by `doctor_report`.
-- `doctor_report(cfg)` — the single composed check: media toolchain presence (ffmpeg/ffprobe/whisper/yt-dlp), `claude` on PATH (only if `FANOPS_RESPONDER=llm`), brand-brief (`context.md`) non-empty, `accounts.json` validity, Postiz key+URL consistency + learning-readiness (booleans only, key never echoed), live-route coherence (`FANOPS_LIVE=1` but nothing actually routes live — the "half-live" trap), IG-insights-readable (Meta Graph scope check via `meta_graph.insights_blocked_signal`), plus informational notes (poster backend + dryrun/live, learning-validated state, review-queue depth). Reads `learning_validated(cfg)` **once** and reuses it in both the Postiz-readiness check and the notes block. Performs no writes/mutations — pure diagnosis. Called by `autopilot.autopilot`, `cli.cmd_doctor`, `studio.views.golive_status`.
+- `doctor_report(cfg)` — the single composed check: media toolchain presence (ffmpeg/ffprobe/whisper/yt-dlp), `claude` on PATH (only if `FANOPS_RESPONDER=llm`), brand-brief (`context.md`) non-empty, `accounts.json` validity, Postiz key+URL consistency + learning-readiness (booleans only, key never echoed), live-route coherence (`FANOPS_LIVE=1` but nothing actually routes live — the "half-live" trap), plus informational notes (poster backend + dryrun/live, learning-validated state, review-queue depth). Reads `learning_validated(cfg)` **once** and reuses it in both the Postiz-readiness check and the notes block. Performs no writes/mutations — pure diagnosis. Called by `autopilot.autopilot`, `cli.cmd_doctor`, `studio.views.golive_status`.
 
 ### `cutover.py` — the manual live-cutover validation harness (writes ONLY `cutover.json`)
 

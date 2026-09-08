@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Optional, Sequence
 
+from fanops.accounts import Accounts
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.post.run import _non_active_row
 from fanops.models import ClipState, PostState, PLATFORM_MAX_SECONDS, validate_account_handle
 from fanops.audit import write_audit
 from fanops.log import get_logger
@@ -62,10 +64,11 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     """P9: promote awaiting->queued. Owner-moment clip is already rendered — no re-cut at approval."""
     now = _now(now); now_iso = iso_z(now)
     approved = 0
-    skipped_retired = 0; cut_over_cap = 0
+    skipped_retired = 0; cut_over_cap = 0; skipped_not_active = 0
     approved_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
+            accounts = Accounts.load(cfg)
             ids_in_batch = list(resolve_ids(led))
             batch_posts = [led.posts[i] for i in ids_in_batch if i in led.posts]
             sched = suggest_times_for_batch(cfg, batch_posts, now=now)
@@ -83,6 +86,11 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 if not led.can_promote(post):
                     skipped_retired += 1
                     get_logger(cfg)("approve", pid, "skipped_retired_lineage", account=post.account)
+                    continue
+                row = _non_active_row(accounts, post.account)
+                if row is not None:
+                    skipped_not_active += 1
+                    get_logger(cfg)("approve", pid, "skipped_not_active", account=post.account, status=row.status.value)
                     continue
                 if _over_cap_refusal(cfg, led, post) is not None:
                     cut_over_cap += 1   # counted + rendered by `_publish_outcome.html`: this `continue` used to leave NO trace, so a tick of N came back "Approved N-1". The cap's value/policy/trigger are unchanged — only its silence is.
@@ -114,7 +122,8 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                             "last_time": times[-1] if times else None,
                             "schedule_account": accts[0] if len(accts) == 1 else None}
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0,
-                                         "skipped_retired": skipped_retired, "cut_over_cap": cut_over_cap, **sched_detail})
+                                         "skipped_retired": skipped_retired, "skipped_not_active": skipped_not_active,
+                                         "cut_over_cap": cut_over_cap, **sched_detail})
 
 BULK_APPROVE_CONFIRM_AT = 15
 
