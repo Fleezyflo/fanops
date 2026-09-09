@@ -127,11 +127,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 500
+        "line": 499
       },
       {
         "call": "Ledger.transaction",
-        "line": 527
+        "line": 526
       }
     ],
     "fanops.post.compress": [
@@ -175,11 +175,11 @@
     "fanops.recaption": [
       {
         "call": "Ledger.transaction",
-        "line": 163
+        "line": 161
       },
       {
         "call": "Ledger.transaction",
-        "line": 191
+        "line": 189
       }
     ],
     "fanops.reconcile": [
