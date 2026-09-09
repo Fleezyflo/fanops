@@ -1370,7 +1370,7 @@ def test_injected_client_still_finishes_the_pile(tmp_path, monkeypatch):
 def test_unattended_lock_walks_budget_tags(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    names = ["t0", "t1", "t2", "t3", "t4"]
+    names = [f"t{i}" for i in range(9)]
     seen = []
 
     def opener(_cfg, user=None):
@@ -1385,14 +1385,15 @@ def test_unattended_lock_walks_budget_tags(tmp_path, monkeypatch):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert not rec.get("researched_at")
     assert rec.get("verified") == ["#t0", "#t1", "#t2", "#t3"]
-    assert rec.get("remaining") == ["#t4"]
+    assert rec.get("remaining") == [f"#t{i}" for i in range(4, 9)]
     assert seen == ["u"]
     from fanops.fanops_hashtags import reset_safari_tick_slot
     reset_safari_tick_slot()  # second unattended tick
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
                        **_ok_graph())
     rec2 = load_source_tag_locks(cfg)["src_1"]
-    assert rec2.get("verified") == ["#t0", "#t1", "#t2", "#t3", "#t4"]
+    assert rec2.get("verified") == [f"#t{i}" for i in range(8)]
+    assert rec2.get("remaining") == ["#t8"]
     assert not rec2.get("researched_at")
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
     unfinished = [r for r in recs if r.get("outcome") == "scrape_unfinished"]
