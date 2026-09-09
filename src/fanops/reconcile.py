@@ -232,6 +232,24 @@ def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
     url = (url or "").strip()
     sid = (submission_id or "").strip() or None
     p.public_url = url
+    if p.platform is not Platform.tiktok:
+        now = datetime.now(timezone.utc)
+        log = get_logger(cfg)
+        upd = {"public_url": url, "reconcile_candidate_id": None, "ig_confirm_failopen_count": 0}
+        if sid and is_real_submission_id(sid):
+            upd["submission_id"] = sid
+        if not (p.published_at or "").strip():
+            upd["published_at"] = iso_z(now)
+        _ph, _pd = publish_buckets(upd.get("published_at") or p.published_at, cfg)
+        upd["publish_hour"], upd["publish_dow"] = _ph, _pd
+        led.posts[post_id] = p.model_copy(update=upd)
+        led.set_post_state(post_id, PostState.published, error_reason=None)
+        try:
+            from fanops.post.publish_archive import _archive_published
+            _archive_published(cfg, led.posts[post_id])
+        except Exception as exc:
+            log("resolve", post_id, "archive_error", err=str(exc)[:120])
+        return True, ""
     if not sid or not is_real_submission_id(sid):
         auto_bind_submission_for_post(cfg, led, post_id, url_hint=url)
         p = led.posts[post_id]
@@ -318,7 +336,8 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                 rows, pag = zernio_list_posts(cfg, account_id=account_id, date_from=date_from,
                                               date_to=date_to, status="published", page=page,
                                               limit=_VENDOR_LOOKUP_PAGE_SIZE)
-            except Exception:
+            except Exception as exc:
+                get_logger(cfg)("reconcile", post.id, "vendor_lookup_list_error", err=str(exc)[:120])
                 break
             for row in rows:
                 if _zernio_row_matches_url(row, url):
@@ -338,7 +357,8 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                                               date_from=date_from, date_to=date_to,
                                               status="published", page=page,
                                               limit=_VENDOR_LOOKUP_PAGE_SIZE)
-            except Exception:
+            except Exception as exc:
+                get_logger(cfg)("reconcile", post.id, "vendor_lookup_list_error", err=str(exc)[:120])
                 break
             for row in rows:
                 rid = _zernio_list_row_id(row)

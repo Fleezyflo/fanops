@@ -12,7 +12,6 @@ from typing import Optional
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
-from fanops.post.run import _non_active_row
 from fanops.models import PostState, RenderState
 from fanops.timeutil import parse_iso, is_scheduled_due, schedule_utc
 from fanops.variant_learning import _hook_for_post
@@ -177,8 +176,10 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
         if editable:
             row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
-        if p.state is PostState.queued and _non_active_row(accts, p.account) is not None:
-            row.blocked_reason = "account not active — activate in Go Live"
+        if p.state is PostState.queued:
+            from fanops.post.run import _non_active_row
+            if _non_active_row(accts, p.account) is not None:
+                row.blocked_reason = "account not active — activate in Go Live"
         rows.append(row)
 
     def _key(r: ScheduleRow):

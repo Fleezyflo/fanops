@@ -1251,6 +1251,8 @@ def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
     monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
     class _FakeClient:
+        def __init__(self, _cfg):
+            pass
         def fetch_body(self, sid):
             assert sid == "z_real"
             return body
@@ -1296,6 +1298,8 @@ def test_vendor_lookup_promotes_unique_caption_match(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
                         lambda *a, **k: ([{"_id": "z_vendor"}], {"page": 1, "totalPages": 1}))
     class _FakeClient:
+        def __init__(self, _cfg):
+            pass
         def fetch_body(self, sid):
             assert sid == "z_vendor"
             return body
@@ -1333,6 +1337,8 @@ def test_vendor_lookup_skipped_when_candidate_auto_bind_wins(tmp_path, monkeypat
 
     monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts", _boom)
     class _FakeClient:
+        def __init__(self, _cfg):
+            pass
         def fetch_body(self, sid):
             assert sid == "z_cand"
             return body

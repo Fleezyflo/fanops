@@ -3,7 +3,7 @@
   "confidence": "CERTAIN",
   "declared_by_the_ci_tests": {
     "print": {
-      "cli_print_count": 177,
+      "cli_print_count": 179,
       "zero_print_modules": [
         "clip.py",
         "compose.py",
@@ -37,9 +37,7 @@
       "fanops.stranded_posts": 5,
       "fanops.studio_desktop": 1
     },
-    "silent_broad_except_by_file": {
-      "src/fanops/reconcile.py": 2
-    }
+    "silent_broad_except_by_file": {}
   },
   "note": "The two AST ratchet TESTS are the canonical enforcement. This block MEASURES the same properties so a third party can check the numbers the implementation contract COPIED from them. A copied number is a number that rots.",
   "regeneration_command": "python -m tools.arch regen",
