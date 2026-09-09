@@ -162,7 +162,6 @@ Implementation split (see `docs/CODEMAPS/hashtag-lifecycle.md`): `hashtag_refres
 - `_tags_in`, `is_tags_only_caption` — hashtag extraction + tags-only hold.
 - `_lang_base`, `_request_surfaces`, `_platform_for_surface` — request JSON truth.
 - `_caption_entry` — `meta_captions` entry shape (caption sentence ≠ joined tags).
-- `_recent_tags` — ordered-dedup recent post hashtags (uses `hashtags.norm_tag`).
 
 ### `hashtags.py` — normalization, curation, lock, ship
 

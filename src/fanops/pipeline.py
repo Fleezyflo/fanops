@@ -297,11 +297,10 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
 def _stage_ingest_captions(led: Ledger, cfg: Config, log) -> Ledger:
     """Ingest each captions_requested clip's landed captions (captions_requested -> captioned), per-clip
     quarantine."""
-    pass_recent: dict[str, list[str]] = {}
     for c in list(led.clips.values()):
         if c.state is ClipState.captions_requested:
             try:
-                led = ingest_captions(led, cfg, c.id, pass_recent=pass_recent)
+                led = ingest_captions(led, cfg, c.id)
             except Exception as e:
                 _quarantine(led, c.id, ClipState.error, "caption", e, log)
     return led

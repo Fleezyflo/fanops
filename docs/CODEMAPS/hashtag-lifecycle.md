@@ -117,10 +117,14 @@ Public imports stay on `fanops_hashtags` (thin facade); implementation:
 ## Config
 
 - `FANOPS_IG_SCRAPE_USER` + Safari profiles — remesure / lock scrape plane.
+- `FANOPS_LOCK_TAGS_PER_PASS` (default 4) — max tags the unattended source-lock walk
+  admits per Safari open (≤ `FANOPS_HASHTAG_SCRAPE_TRY_CAP`). See `docs/CONFIG.md`.
 - Sidecar: `00_control/source_tag_locks.json`.
 - Measurement cache: `00_control/hashtags.json` (remesure writes; not the
   caption membership set).
 - `FANOPS_CORPUS_TARGET` — Layer B observatory ceiling only.
+- `locks_pending` (`source_tags_sidecar`) — when any native source lock lacks
+  `researched_at`, tick remesure defers (`refresh_store_if_due` → `locks_pending`).
 
 ## Tests
 

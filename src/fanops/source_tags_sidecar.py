@@ -231,6 +231,19 @@ def _researched(table, sid: str) -> bool:
     return isinstance(at, str) and bool(at.strip())
 
 
+def locks_pending(cfg, led) -> bool:
+    """True if any native source lacks researched_at (including missing sidecar row)."""
+    table = load_source_tag_locks(cfg)
+    for source in led.sources.values():
+        if getattr(source, "origin_kind", "native") == "third_party":
+            continue
+        sid = str(getattr(source, "id", "") or "")
+        if not sid or _researched(table, sid):
+            continue
+        return True
+    return False
+
+
 def _has_catalog(rec) -> bool:
     if not isinstance(rec, dict):
         return False

@@ -204,6 +204,8 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
         elif r.get("refreshed"):
             get_logger(cfg)("hashtags", "-", "store_refreshed", measured=r.get("measured", 0), total=r.get("total", 0))
         elif r.get("reason") and r.get("reason") != "fresh":
+            # G2: locks_pending defers remesure until every native lock is stamped — same skip log as
+            # cooldown / quota / safari_tick_slot (not store_refresh_aborted).
             get_logger(cfg)("hashtags", "-", "store_refresh_skipped", reason=r.get("reason", ""))
     except Exception:
         with fail_open("cli._run_once hashtags refresh degrade:"):

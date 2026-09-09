@@ -44,7 +44,9 @@ class StoreStatus:
 
 @dataclass
 class RotationAccount:
-    """Section 3: one account's rotation health — the last N tag lines + the consecutive-duplicate warn."""
+    """Section 3: tag-line diversity observatory for one account — last N shipped tag lines plus a warn
+    when the agent reused an identical full line on consecutive posts. Not an ingest rotation mechanism;
+    ingest never substitutes or rotates tags — only `ship_from_lock` ∩ agent picks."""
     account: str
     warn: bool                         # True iff two adjacent (by created_at desc) posts shipped an identical tag line
     lines: list = field(default_factory=list)   # [[tag, ...], ...] the recent tag lines (most-recent first)
@@ -87,8 +89,10 @@ def _store_status(cfg: Config) -> StoreStatus:
 
 
 def rotation_health(led: Ledger, *, n: int = 5) -> list:
-    """Per account, last `n` in-flight/shipped posts (created_at desc). Warn when two adjacent posts
-    shipped an identical full tag line. Observatory only — ingest does not rotate. Pure read."""
+    """Tag-line diversity observatory: per account, last `n` in-flight/shipped posts (created_at desc).
+    Warn when two adjacent posts shipped an identical full tag line (agent shipped duplicate lines).
+    Name is historical (`rotation` in templates); there is no ingest rotation — only a read-model
+    duplicate-line warning. Pure read."""
     by_account: dict[str, list] = {}
     for p in led.posts.values():
         if p.state not in _EXPOSURE_STATES:

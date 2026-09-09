@@ -52,6 +52,29 @@ def test_caption_request_stale_when_surface_set_drifts(tmp_path):
     assert caption_request_stale(cfg, "clip_x", want_both) is True
 
 
+def test_caption_request_stale_when_lock_menu_changes(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha"], "lock": ["#alpha"], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+        request_captions(led, cfg, "clip_1", want)
+    assert caption_request_stale(cfg, "clip_1", want) is False
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta"], "lock": ["#beta"], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
 # ---- Task 1: affinity_admits — the shared gate (provably == the negation of the crosspost gate) ----
 def test_affinity_admits_off_ignores_affinities(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")

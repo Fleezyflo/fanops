@@ -200,6 +200,7 @@ _SCRAPE_DELAY_DEFAULT = (1.0, 3.0)   # instagrapi delay_range seconds (MOL-698);
 _SCRAPE_TRY_CAP_DEFAULT = 25
 _SCRAPE_COTAG_ENQUEUE_DEFAULT = 40
 _SCRAPE_PARALLEL_DEFAULT = 1
+_LOCK_TAGS_PER_PASS_DEFAULT = 4
 
 
 def parse_scrape_delay(raw: str | None) -> list[float] | None:
@@ -559,6 +560,15 @@ class Config:
                                     default=_SCRAPE_PARALLEL_DEFAULT, floor=1)
         except ValueError:
             return _SCRAPE_PARALLEL_DEFAULT
+
+    @property
+    def lock_tags_per_pass(self) -> int:
+        try:
+            raw = parse_scrape_cap(os.getenv("FANOPS_LOCK_TAGS_PER_PASS"),
+                                   default=_LOCK_TAGS_PER_PASS_DEFAULT, floor=1)
+        except ValueError:
+            raw = _LOCK_TAGS_PER_PASS_DEFAULT
+        return min(raw, self.hashtag_scrape_try_cap)
 
     @property
     def auto_adopt(self) -> bool:

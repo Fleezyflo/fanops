@@ -2010,6 +2010,85 @@ def test_tick_lock_then_remesure_one_safari_consumer(tmp_path, monkeypatch):
     assert rem.media_calls == []
 
 
+def test_refresh_store_if_due_skips_when_locks_pending(tmp_path):
+    """G2: unfinished native lock defers remesure — no Safari remesure slot."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot, safari_tick_slot_claimed
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); _persona(cfg)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_pending", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_sidecar(cfg, ["#alpha"], sid="src_done")
+    reset_safari_tick_slot()
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#alpha": 10})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0, max_age_s=10)
+    assert out["refreshed"] is False and out["reason"] == "locks_pending"
+    assert safari_tick_slot_claimed() is None
+    assert client.media_calls == [] and client.info_calls == []
+
+
+def test_refresh_store_if_due_runs_when_all_locks_complete(tmp_path):
+    """G2: when every native source is stamped, remesure path is unchanged."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); _persona(cfg)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_sidecar(cfg, ["#alpha"], sid="src_1")
+    reset_safari_tick_slot()
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#alpha": 10})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0, max_age_s=10)
+    assert out["refreshed"] is True
+    assert "alpha" in client.media_calls
+
+
+def test_lock_tick_still_runs_when_remesure_deferred(tmp_path, monkeypatch):
+    """G2: lock walk in advance is separate — remesure defer does not block pool completion."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot, safari_tick_slot_claimed
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    from fanops.source_tags import load_source_tag_locks, lock_ready_sources
+    from test_source_tags import _Hit, _SearchClient, _Media, _ok_graph, _write_whisper
+
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_old", source_path=str(tmp_path / "old.mp4"),
+                          state=SourceState.catalogued,
+                          created_at="2026-08-01T00:00:00Z"))
+    led.add_source(Source(id="src_new", source_path=str(tmp_path / "new.mp4"),
+                          state=SourceState.catalogued,
+                          created_at="2026-09-01T00:00:00Z"))
+    led.save()
+    _write_whisper(cfg, "old")
+    _write_whisper(cfg, "new")
+    _write_sidecar(cfg, ["#side"], sid="src_side")
+    reset_safari_tick_slot()
+    scrape = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+    lock_ready_sources(cfg, open_client_fn=lambda c, user=None, **k: scrape,
+                       research_fn=lambda *_a: ["music"], **_ok_graph())
+    table = load_source_tag_locks(cfg)
+    assert table["src_new"]["researched_at"]
+    assert not table.get("src_old", {}).get("researched_at")
+    assert safari_tick_slot_claimed() == "lock"
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    rem = _FakeClient({"#side": 10})
+    out = refresh_store_if_due(cfg, scrape_client=rem, now=t0, max_age_s=10)
+    assert out["refreshed"] is False and out["reason"] == "locks_pending"
+    assert rem.media_calls == []
+
+
 def test_refresh_store_if_due_empty_sidecar_is_clean_noop(tmp_path, monkeypatch):
     """Empty sidecar → refreshed False, not discovery_skip_no_niche, no scrape."""
     from datetime import datetime, timezone
