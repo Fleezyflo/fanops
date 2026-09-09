@@ -4,6 +4,8 @@ brand-risk HOLD in BOTH English and Arabic (FIX F33), REQUIRES a caption for eve
 surface (FIX F74 — no silent default), stores clean captions keyed by the documented
 'account/platform' contract (FIX F43), and advances only if nothing is held."""
 from __future__ import annotations
+import hashlib
+import json
 import logging
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -41,6 +43,9 @@ VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
 
+def _lock_fingerprint(lock: list[str]) -> str:
+    return hashlib.sha256(json.dumps(lock, sort_keys=False).encode()).hexdigest()[:16]
+
 def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[str, Platform]]) -> bool:
     """True when the on-disk caption gate must be (re)opened: no request yet, or the requested surface
     set no longer matches what casting would ask for now (e.g. IG surfaces added after a TikTok-only
@@ -58,7 +63,22 @@ def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[s
         return True
     if got != want:
         return True
-    return any(not surface_platform.get(s) for s in got)   # missing platform -> regenerate next pass
+    if any(not surface_platform.get(s) for s in got):      # missing platform -> regenerate next pass
+        return True
+    try:
+        req = json.loads(request_path(cfg, "captions", clip_id).read_text())
+    except Exception as exc:
+        logger.warning("caption staleness: request unreadable for %s (%s); regenerating", clip_id, exc)
+        return True
+    got_fp = req.get("lock_fingerprint")
+    if isinstance(got_fp, str) and got_fp:
+        led = Ledger.load(cfg)
+        clip = led.clips.get(clip_id)
+        moment = led.moments.get(clip.parent_id) if clip is not None else None
+        src = led.sources.get(moment.parent_id) if moment is not None else None
+        if _lock_fingerprint(_source_lock_tags(cfg, src)) != got_fp:
+            return True
+    return False
 
 def _learned_hooks(led: Ledger, cfg: Config,
                    surfaces: list[tuple[str, Platform]]) -> list[str]:
@@ -131,6 +151,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
         "transcript_excerpt": moment.transcript_excerpt,
         "language": src.language if src else None,
         "guidance": load_guidance(cfg),
+        "lock_fingerprint": _lock_fingerprint(lock),
         "surfaces": [{"surface": _surface_str(acct, plat), "platform": plat.value,
                       **({"persona": pv} if (pv := personas.get(acct)) else {}),
                       **({"hashtag_store": lock} if lock else {})}
