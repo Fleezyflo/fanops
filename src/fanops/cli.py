@@ -445,10 +445,8 @@ def cmd_resolve(cfg: Config, args) -> int:
 
     With --submission-id on a published resolve, mirror reconcile promote: stamp a real backend id,
     published_at + publish buckets, clear reconcile_candidate_id, archive — so manual recovery is
-    metrics-trackable."""
-    from datetime import datetime, timezone
+    metrics-trackable. Without --submission-id, auto-bind a verified reconcile_candidate_id first."""
     from fanops.models import PostState, _POST_TERMINAL_REQUIRES_URL, is_real_submission_id
-    from fanops.timeutil import iso_z, publish_buckets
     url = (getattr(args, "url", None) or "").strip() or None
     sid = (getattr(args, "submission_id", None) or "").strip() or None
     with Ledger.transaction(cfg) as led:
@@ -468,22 +466,14 @@ def cmd_resolve(cfg: Config, args) -> int:
             print("--submission-id must be a real backend id, not a fanops_ birth token",
                   file=sys.stderr)
             return 2
-        p = led.posts[args.post_id]
-        if st is PostState.published and url and sid:
-            upd = {"public_url": url, "submission_id": sid, "reconcile_candidate_id": None,
-                   "ig_confirm_failopen_count": 0}
-            if not (p.published_at or "").strip():
-                upd["published_at"] = iso_z(datetime.now(timezone.utc))
-            _ph, _pd = publish_buckets(upd.get("published_at") or p.published_at, cfg)
-            upd["publish_hour"], upd["publish_dow"] = _ph, _pd
-            led.posts[args.post_id] = p.model_copy(update=upd)
-            led.set_post_state(args.post_id, PostState.published, error_reason=None)
-            try:
-                from fanops.post.publish_archive import _archive_published
-                _archive_published(cfg, led.posts[args.post_id])
-            except Exception as exc:
-                get_logger(cfg)("resolve", args.post_id, "archive_error", err=str(exc)[:120])
+        if st is PostState.published and url:
+            from fanops.reconcile import apply_published_resolve
+            ok, err = apply_published_resolve(cfg, led, args.post_id, url=url, submission_id=sid)
+            if not ok:
+                print(err, file=sys.stderr)
+                return 2
         else:
+            p = led.posts[args.post_id]
             # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
             # serialization (terminal-with-URL invariant holds at every persistence point).
             if url:

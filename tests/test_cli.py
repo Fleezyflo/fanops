@@ -610,9 +610,11 @@ def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="dryrun://p1"))
     from fanops.cli import main
-    assert main(["resolve", "p1", "published", "--url", "https://x/p"]) == 0
+    assert main(["resolve", "p1", "published", "--url", "https://x/p", "--submission-id", "blotato_9"]) == 0
     led = Ledger.load(cfg)
-    assert led.posts["p1"].state is PostState.published and led.posts["p1"].public_url == "https://x/p"
+    p = led.posts["p1"]
+    assert p.state is PostState.published and p.public_url == "https://x/p"
+    assert p.submission_id == "blotato_9"
 
 def test_resolve_with_submission_id_sets_tracking_fields(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

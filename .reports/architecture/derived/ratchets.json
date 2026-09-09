@@ -30,14 +30,16 @@
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
   "measured": {
     "print_calls_by_module": {
-      "fanops.cli": 177,
+      "fanops.cli": 179,
       "fanops.log": 1,
       "fanops.paths_rebase": 2,
       "fanops.recaption": 5,
       "fanops.stranded_posts": 5,
       "fanops.studio_desktop": 1
     },
-    "silent_broad_except_by_file": {}
+    "silent_broad_except_by_file": {
+      "src/fanops/reconcile.py": 2
+    }
   },
   "note": "The two AST ratchet TESTS are the canonical enforcement. This block MEASURES the same properties so a third party can check the numbers the implementation contract COPIED from them. A copied number is a number that rots.",
   "regeneration_command": "python -m tools.arch regen",

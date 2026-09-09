@@ -133,6 +133,277 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
         return False
 
 
+def _reopen_misclassified_failures(led: Ledger, log) -> None:
+    """Retroactive heal: rows wrongly parked failed (http_207 pre-fix, unpollable with a candidate)."""
+    for post in list(led.posts.values()):
+        if post.state is not PostState.failed:
+            continue
+        reason = post.error_reason or ""
+        cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
+        if "http_207" in reason or (cand and "unpollable" in reason):
+            led.set_post_state(post.id, PostState.needs_reconcile,
+                               error_reason="healed: reopening misclassified failed for sid recovery")
+            log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
+
+
+def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict,
+                                *, url_hint: Optional[str] = None) -> tuple[bool, Optional[str]]:
+    """True when candidate is published on THIS post's integration and passes the TikTok liveness gate."""
+    if post.platform is not Platform.tiktok:
+        return False, None
+    from fanops.post.metrics.zernio_read import (_ZERNIO_STATE_MAP, _extract_zernio_permalink,
+                                                  _extract_zernio_state, zernio_reported_tiktok_username)
+    status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "")
+    if status != "published":
+        return False, None
+    reported = zernio_reported_tiktok_username(body, post.account_id)
+    if not reported:
+        return False, None
+    captured = safe_public_url(url_hint) or safe_public_url(_extract_zernio_permalink(body))
+    if not captured:
+        return False, None
+    if not _tiktok_url_confirmed(cfg, post, captured, candidate_id, reported):
+        return False, None
+    return True, captured
+
+
+def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *,
+                           captured_url: str, new_sub: str, release_id: Optional[str] = None) -> None:
+    """Shared published promotion: real sid, buckets, archive — reconcile promote + resolve parity."""
+    upd = {"public_url": captured_url, "submission_id": new_sub, "reconcile_candidate_id": None,
+           "ig_confirm_failopen_count": 0}
+    if post.platform is Platform.instagram and release_id:
+        upd["media_id"] = release_id
+    if not (post.published_at or "").strip():
+        upd["published_at"] = iso_z(now)
+    _ph, _pd = publish_buckets(upd.get("published_at") or post.published_at, cfg)
+    upd["publish_hour"], upd["publish_dow"] = _ph, _pd
+    led.posts[post.id] = post.model_copy(update=upd)
+    led.set_post_state(post.id, PostState.published, error_reason=None)
+    try:
+        from fanops.post.publish_archive import _archive_published
+        _archive_published(cfg, led.posts[post.id])
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "archive_error", err=str(exc)[:120])
+    log("reconcile", post.id, "published", auto_bind=True)
+
+
+def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log, now: datetime,
+                                      *, url_hint: Optional[str] = None) -> bool:
+    """Poll reconcile_candidate_id with integration + liveness gates; bind real sid without operator input."""
+    if is_real_submission_id(post.submission_id):
+        return False
+    cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
+    if not cand or not is_real_submission_id(cand):
+        return False
+    if post.platform is not Platform.tiktok:
+        return False
+    try:
+        from fanops.post.metrics import ZernioStatusClient
+        body = ZernioStatusClient(cfg).fetch_body(cand)
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "auto_bind_fetch_failed", err=str(exc)[:120])
+        return False
+    ok, captured = _verified_candidate_publish(cfg, post, cand, body, url_hint=url_hint)
+    if not ok or not captured:
+        log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
+        return False
+    _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=cand)
+    log("reconcile", post.id, "auto_bind_ok", sub=cand)
+    return True
+
+
+def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str, *,
+                                  url_hint: Optional[str] = None) -> bool:
+    """Public entry for resolve: auto-bind a verified candidate sid. Returns True when bound/promoted."""
+    log = get_logger(cfg)
+    now = datetime.now(timezone.utc)
+    post = led.posts.get(post_id)
+    if post is None:
+        return False
+    poll = _default_get_status(cfg, led)
+    return _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=url_hint)
+
+
+def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
+                            submission_id: Optional[str] = None) -> tuple[bool, str]:
+    """Mark a post published with metrics-trackable fields. Auto-binds verified candidate when sid omitted."""
+    p = led.posts[post_id]
+    url = (url or "").strip()
+    sid = (submission_id or "").strip() or None
+    p.public_url = url
+    if not sid or not is_real_submission_id(sid):
+        auto_bind_submission_for_post(cfg, led, post_id, url_hint=url)
+        p = led.posts[post_id]
+        if is_real_submission_id(p.submission_id) and p.state is PostState.published:
+            return True, ""
+        sid = sid or (p.submission_id if is_real_submission_id(p.submission_id) else None)
+    if sid and not is_real_submission_id(sid):
+        return False, "submission_id must be a real backend id, not a fanops_ birth token"
+    if not sid or not is_real_submission_id(sid):
+        return False, ("cannot mark published without a trackable backend id — "
+                      "reconcile auto-bind will retry when the duplicate candidate verifies")
+    now = datetime.now(timezone.utc)
+    log = get_logger(cfg)
+    upd = {"public_url": url, "submission_id": sid, "reconcile_candidate_id": None,
+           "ig_confirm_failopen_count": 0}
+    if not (p.published_at or "").strip():
+        upd["published_at"] = iso_z(now)
+    _ph, _pd = publish_buckets(upd.get("published_at") or p.published_at, cfg)
+    upd["publish_hour"], upd["publish_dow"] = _ph, _pd
+    led.posts[post_id] = p.model_copy(update=upd)
+    led.set_post_state(post_id, PostState.published, error_reason=None)
+    try:
+        from fanops.post.publish_archive import _archive_published
+        _archive_published(cfg, led.posts[post_id])
+    except Exception as exc:
+        log("resolve", post_id, "archive_error", err=str(exc)[:120])
+    return True, ""
+
+
+_VENDOR_LOOKUP_MAX_PAGES = 3
+_VENDOR_LOOKUP_PAGE_SIZE = 50
+
+
+def _vendor_lookup_date_window(post) -> tuple[Optional[str], Optional[str]]:
+    """scheduled_time ± 1 day, else created_at ± 1 day — ISO dates for Zernio dateFrom/dateTo."""
+    raw = (post.scheduled_time or "").strip() or (getattr(post, "created_at", None) or "").strip()
+    if not raw:
+        return None, None
+    try:
+        dt = parse_iso(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None, None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (dt - timedelta(days=1)).date().isoformat(), (dt + timedelta(days=1)).date().isoformat()
+
+
+def _zernio_list_row_id(row: dict) -> Optional[str]:
+    for k in ("_id", "id", "postSubmissionId", "submissionId"):
+        v = row.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _zernio_row_matches_url(row: dict, want_url: str) -> bool:
+    from fanops.post.metrics.zernio_read import _zernio_platform_rows
+    want = safe_public_url(want_url)
+    if not want:
+        return False
+    for plat in _zernio_platform_rows(row):
+        for k in ("platformPostUrl", "permalink", "postUrl", "publicUrl", "url", "shareUrl"):
+            got = safe_public_url(plat.get(k))
+            if got and got == want:
+                return True
+    return False
+
+
+def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Optional[str]) -> set[str]:
+    """Merge URL + caption list hits; capped pagination per strategy."""
+    from fanops.caption_compose import posted_text_for
+    from fanops.post.metrics.zernio_read import zernio_list_posts
+    account_id = (post.account_id or "").strip()
+    if not account_id:
+        return set()
+    date_from, date_to = _vendor_lookup_date_window(post)
+    if not date_from or not date_to:
+        return set()
+    ids: set[str] = set()
+    url = safe_public_url(url_hint) or safe_public_url(post.public_url)
+    if url:
+        for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
+            try:
+                rows, pag = zernio_list_posts(cfg, account_id=account_id, date_from=date_from,
+                                              date_to=date_to, status="published", page=page,
+                                              limit=_VENDOR_LOOKUP_PAGE_SIZE)
+            except Exception:
+                break
+            for row in rows:
+                if _zernio_row_matches_url(row, url):
+                    rid = _zernio_list_row_id(row)
+                    if rid:
+                        ids.add(rid)
+            if len(ids) > 1:
+                return ids
+            total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
+            if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
+                break
+    search = (posted_text_for(cfg, led, post) or "")[:80].strip()
+    if search:
+        for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
+            try:
+                rows, pag = zernio_list_posts(cfg, account_id=account_id, search=search,
+                                              date_from=date_from, date_to=date_to,
+                                              status="published", page=page,
+                                              limit=_VENDOR_LOOKUP_PAGE_SIZE)
+            except Exception:
+                break
+            for row in rows:
+                rid = _zernio_list_row_id(row)
+                if rid:
+                    ids.add(rid)
+            if len(ids) > 1:
+                return ids
+            total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
+            if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
+                break
+    return ids
+
+
+def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
+                            *, url_hint: Optional[str] = None) -> bool:
+    """Read-only Zernio list discovery when fanops_* has no reconcile_candidate_id to poll."""
+    if post.platform is not Platform.tiktok:
+        return False
+    if is_real_submission_id(post.submission_id):
+        return False
+    if not (post.account_id or "").strip():
+        return False
+    ids = _vendor_lookup_candidate_ids(cfg, led, post, url_hint=url_hint)
+    if not ids:
+        log("reconcile", post.id, "vendor_lookup_no_match")
+        return False
+    if len(ids) > 1:
+        log("reconcile", post.id, "vendor_lookup_ambiguous", count=len(ids))
+        return False
+    sid = next(iter(ids))
+    try:
+        from fanops.post.metrics import ZernioStatusClient
+        body = ZernioStatusClient(cfg).fetch_body(sid)
+    except Exception as exc:
+        get_logger(cfg)("reconcile", post.id, "vendor_lookup_fetch_failed", err=str(exc)[:120])
+        return False
+    ok, captured = _verified_candidate_publish(cfg, post, sid, body, url_hint=url_hint)
+    if not ok or not captured:
+        log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
+        return False
+    _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=sid)
+    log("reconcile", post.id, "vendor_lookup_ok", sub=sid)
+    return True
+
+
+def _auto_heal_unbound_submissions(cfg: Config, led: Ledger, poll, log, now: datetime) -> None:
+    """Daemon pass: reopen mis-failed rows and bind fanops_* / untrackable published rows."""
+    _reopen_misclassified_failures(led, log)
+    for post in list(led.posts.values()):
+        if post.platform is not Platform.tiktok:
+            continue
+        if is_real_submission_id(post.submission_id):
+            continue
+        hint = post.public_url or None
+        if post.state in (PostState.needs_reconcile, PostState.failed, PostState.submitting,
+                          PostState.submitted):
+            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now):
+                continue
+            _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
+        elif post.state in (PostState.published, PostState.analyzed):
+            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=hint):
+                continue
+            _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
+
+
 def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
     """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
     real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
@@ -405,6 +676,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
     log = get_logger(cfg)
     mirror = mirror or {}
     _reject_exhausted_husks(led, cfg, log)
+    _auto_heal_unbound_submissions(cfg, led, poll, log, now)
     # RESTING posts (published/analyzed) the caller mirrored. The ONLY thing that may happen to one of them
     # here is the postiz_state snapshot: a row that changed, or vanished, is RECORDED and nothing more. It
     # is deliberately not a re-decision — `failed` is re-queueable, so a mirror allowed to move a live post

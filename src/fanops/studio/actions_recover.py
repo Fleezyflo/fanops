@@ -65,9 +65,7 @@ def _shrink_oversize_for_retry(cfg: Config, led: Ledger, p, *, require_cap: bool
 def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] = None,
                  submission_id: Optional[str] = None) -> ActionResult:
     """Studio twin of cmd_resolve — operator forces ground truth on stuck inflight posts."""
-    from datetime import datetime, timezone
     from fanops.models import _POST_TERMINAL_REQUIRES_URL, is_real_submission_id
-    from fanops.timeutil import publish_buckets
     if post_id not in (Ledger.load(cfg).posts):
         return ActionResult(ok=False, error=f"no such post: {post_id}")
     try:
@@ -80,29 +78,17 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
     sid = (submission_id or "").strip() or None
     if st in _POST_TERMINAL_REQUIRES_URL and not url_stripped:
         return ActionResult(ok=False, error="Paste the live permalink to mark this post published.")
-    if st is PostState.published and url_stripped and sid and not is_real_submission_id(sid):
-        return ActionResult(ok=False,
-                            error="submission_id must be a real backend id, not a fanops_ birth token")
     try:
         with Ledger.transaction(cfg) as led:
             if post_id not in led.posts:
                 return ActionResult(ok=False, error=f"no such post: {post_id}")
-            p = led.posts[post_id]
-            if st is PostState.published and url_stripped and sid:
-                upd = {"public_url": url_stripped, "submission_id": sid, "reconcile_candidate_id": None,
-                       "ig_confirm_failopen_count": 0}
-                if not (p.published_at or "").strip():
-                    upd["published_at"] = iso_z(datetime.now(timezone.utc))
-                _ph, _pd = publish_buckets(upd.get("published_at") or p.published_at, cfg)
-                upd["publish_hour"], upd["publish_dow"] = _ph, _pd
-                led.posts[post_id] = p.model_copy(update=upd)
-                led.set_post_state(post_id, PostState.published, error_reason=None)
-                try:
-                    from fanops.post.publish_archive import _archive_published
-                    _archive_published(cfg, led.posts[post_id])
-                except Exception as exc:
-                    get_logger(cfg)("resolve", post_id, "archive_error", err=str(exc)[:120])
+            if st is PostState.published and url_stripped:
+                from fanops.reconcile import apply_published_resolve
+                ok, err = apply_published_resolve(cfg, led, post_id, url=url_stripped, submission_id=sid)
+                if not ok:
+                    return ActionResult(ok=False, error=err)
             else:
+                p = led.posts[post_id]
                 if url_stripped:
                     p.public_url = url_stripped
                 if st is PostState.failed:
@@ -113,12 +99,14 @@ def resolve_post(cfg: Config, post_id: str, status: str, *, url: Optional[str] =
     except Exception as exc:
         get_logger(cfg)("resolve", post_id, "resolve_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"resolve failed: {str(exc)[:160]}")
+    p = Ledger.load(cfg).posts[post_id]
+    bound_sid = p.submission_id if is_real_submission_id(p.submission_id) else sid
     write_audit(cfg, "resolve_post", [post_id], reason="studio_resolve", status=st.value,
-                url=url_stripped or "", submission_id=sid or "")
+                url=url_stripped or "", submission_id=bound_sid or "")
     outcome = "live_shipped" if st is PostState.published else "failed"
     return ActionResult(ok=True, detail={"post_id": post_id, "outcome": outcome, "state": st.value,
                                           "public_url": url_stripped,
-                                          "submission_id": sid})
+                                          "submission_id": bound_sid})
 
 
 def bulk_send_to_review(cfg: Config, post_ids: list[str], *, reason: str) -> ActionResult:

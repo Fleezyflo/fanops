@@ -362,6 +362,59 @@ def zernio_analytics_url_and_username(cfg: Config, submission_id: str, integrati
     return safe_public_url(_extract_zernio_permalink(body)), zernio_reported_tiktok_username(body, integration_id)
 
 
+def _zernio_extract_list_page(body) -> tuple[list[dict], dict]:
+    """Shape-tolerant list-page parse — bare list, posts[], or data.posts[]."""
+    if isinstance(body, list):
+        return [r for r in body if isinstance(r, dict)], {}
+    if not isinstance(body, dict):
+        return [], {}
+    pag: dict = {}
+    if isinstance(body.get("pagination"), dict):
+        pag = dict(body["pagination"])
+    elif isinstance(body.get("meta"), dict):
+        pag = dict(body["meta"])
+    else:
+        for k in ("page", "totalPages", "total_pages", "limit", "total"):
+            if k in body:
+                pag[k] = body[k]
+    for key in ("posts", "items", "results", "data"):
+        items = body.get(key)
+        if isinstance(items, list):
+            return [r for r in items if isinstance(r, dict)], pag
+        if isinstance(items, dict):
+            inner = items.get("posts") or items.get("items") or items.get("results")
+            if isinstance(inner, list):
+                return [r for r in inner if isinstance(r, dict)], pag
+    return [], pag
+
+
+def zernio_list_posts(cfg: Config, *, account_id: str, search: Optional[str] = None,
+                      date_from: Optional[str] = None, date_to: Optional[str] = None,
+                      status: str = "published", page: int = 1, limit: int = 50) -> tuple[list[dict], dict]:
+    """GET /posts list — account-scoped discovery for reconcile vendor lookup. Shape-tolerant like
+    zernio_list_accounts; returns (posts, pagination) with page/totalPages when present."""
+    base = _zbase(cfg)
+    key = _zkey(cfg)
+    params: dict = {"accountId": account_id, "status": status, "page": page, "limit": limit}
+    if search:
+        params["search"] = search
+    if date_from:
+        params["dateFrom"] = date_from
+    if date_to:
+        params["dateTo"] = date_to
+    resp = requests.get(f"{base}/posts", headers={"Authorization": f"Bearer {key}"}, params=params, timeout=30)
+    if resp.status_code == 401:
+        raise ZernioAuthError("Zernio 401 on posts list — check ZERNIO_API_KEY (response body withheld)")
+    if resp.status_code >= 300:
+        raise RuntimeError(f"zernio posts list {resp.status_code}: {_safe(cfg, resp.text)}")
+    posts, pag = _zernio_extract_list_page(_json_or_raise(resp, "zernio posts list", cfg))
+    if "page" not in pag:
+        pag["page"] = page
+    if "totalPages" not in pag and "total_pages" not in pag:
+        pag["totalPages"] = 1
+    return posts, pag
+
+
 class ZernioStatusClient:
     """Reconcile READ for the Zernio backend. GET /posts/{id} -> a per-post status + TikTok permalink.
     Unlike Postiz, Zernio HAS a real single-post lookup, so this is a bound single-post get_status (a bound
@@ -373,14 +426,18 @@ class ZernioStatusClient:
         self.base = _zbase(cfg)
         self.key = _zkey(cfg)   # _zkey raises ZernioAuthError if missing
 
-    def get_status(self, submission_id: str) -> dict:
+    def fetch_body(self, submission_id: str) -> dict:
+        """GET /posts/{id} raw body — used when integration-scoped identity checks need platform rows."""
         url = f"{self.base}/posts/{quote(str(submission_id), safe='')}"
         resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, timeout=30)
         if resp.status_code == 401:
             raise ZernioAuthError("Zernio 401 on post status — check ZERNIO_API_KEY (response body withheld)")
         if resp.status_code >= 300:
             raise RuntimeError(f"zernio status {resp.status_code}: {_safe(self.cfg, resp.text)}")
-        body = _json_or_raise(resp, "zernio status", self.cfg)
+        return _json_or_raise(resp, "zernio status", self.cfg)
+
+    def get_status(self, submission_id: str) -> dict:
+        body = self.fetch_body(submission_id)
         status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "scheduled")
         out = {"status": status}
         if status == "failed":
