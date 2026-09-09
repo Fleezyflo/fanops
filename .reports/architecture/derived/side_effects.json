@@ -545,11 +545,7 @@
       },
       {
         "call": "requests.get",
-        "line": 405
-      },
-      {
-        "call": "requests.get",
-        "line": 432
+        "line": 367
       }
     ],
     "fanops.post.postiz": [
@@ -844,7 +840,7 @@
     "ledger_transaction_sites": 84,
     "lock_sites": 21,
     "mkdtemp_sites": 2,
-    "network_sites_literal_requests": 16,
+    "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
     "subprocess_sites": 40
   }

@@ -362,6 +362,11 @@ def zernio_analytics_url_and_username(cfg: Config, submission_id: str, integrati
     return safe_public_url(_extract_zernio_permalink(body)), zernio_reported_tiktok_username(body, integration_id)
 
 
+def _zernio_http_get(cfg: Config, url: str, *, params: Optional[dict] = None):
+    """Shared authenticated GET for Zernio read clients — one literal requests.get site."""
+    return requests.get(url, headers={"Authorization": f"Bearer {_zkey(cfg)}"}, params=params, timeout=30)
+
+
 def _zernio_extract_list_page(body) -> tuple[list[dict], dict]:
     """Shape-tolerant list-page parse — bare list, posts[], or data.posts[]."""
     if isinstance(body, list):
@@ -393,8 +398,6 @@ def zernio_list_posts(cfg: Config, *, account_id: str, search: Optional[str] = N
                       status: str = "published", page: int = 1, limit: int = 50) -> tuple[list[dict], dict]:
     """GET /posts list — account-scoped discovery for reconcile vendor lookup. Shape-tolerant like
     zernio_list_accounts; returns (posts, pagination) with page/totalPages when present."""
-    base = _zbase(cfg)
-    key = _zkey(cfg)
     params: dict = {"accountId": account_id, "status": status, "page": page, "limit": limit}
     if search:
         params["search"] = search
@@ -402,7 +405,7 @@ def zernio_list_posts(cfg: Config, *, account_id: str, search: Optional[str] = N
         params["dateFrom"] = date_from
     if date_to:
         params["dateTo"] = date_to
-    resp = requests.get(f"{base}/posts", headers={"Authorization": f"Bearer {key}"}, params=params, timeout=30)
+    resp = _zernio_http_get(cfg, f"{_zbase(cfg)}/posts", params=params)
     if resp.status_code == 401:
         raise ZernioAuthError("Zernio 401 on posts list — check ZERNIO_API_KEY (response body withheld)")
     if resp.status_code >= 300:
@@ -429,7 +432,7 @@ class ZernioStatusClient:
     def fetch_body(self, submission_id: str) -> dict:
         """GET /posts/{id} raw body — used when integration-scoped identity checks need platform rows."""
         url = f"{self.base}/posts/{quote(str(submission_id), safe='')}"
-        resp = requests.get(url, headers={"Authorization": f"Bearer {self.key}"}, timeout=30)
+        resp = _zernio_http_get(self.cfg, url)
         if resp.status_code == 401:
             raise ZernioAuthError("Zernio 401 on post status — check ZERNIO_API_KEY (response body withheld)")
         if resp.status_code >= 300:
