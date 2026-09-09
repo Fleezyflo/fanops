@@ -5,12 +5,11 @@
 queued post — it implements NO caption logic of its own: caption.request_captions (fresh payload =
 current persona/corpus/genre by construction) -> responder.answer_pending(kinds=captions, parallel)
 -> caption.ingest_captions (brand-risk, ship_from_lock from the source sidecar —
-recaption reads the lock and does not produce it) with ONE shared pass_recent in schedule order (mirrors
-pipeline._stage_ingest_captions) -> a short transaction syncing each linked post's caption/hashtags
-from the seed clip's meta_captions.
+recaption reads the lock and does not produce it; pool→pick ships hashtags per surface) -> a short
+transaction syncing each linked post's caption/hashtags from the seed clip's meta_captions.
 
 Apply is batched: open all caption gates, answer captions ONLY in a parallel pool (never drain
-moments/hooks), then ingest+sync serially for pass_recent. Clip states cycle captions_requested ->
+moments/hooks), then ingest+sync serially in schedule order. Clip states cycle captions_requested ->
 captioned (the pipeline's own vocabulary) and are then
 RESTORED to their prior state: crosspost dedups per (clip, surface) by content-addressed post id
 (crosspost.py `existing = led.posts.get(pid)`), but it RE-MINTS rejected/failed surfaces of any
@@ -125,7 +124,7 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
     Apply is THREE phases (not one-clip-at-a-time LLM):
       1) request_captions for every pending seed clip (ledger only — fast)
       2) ONE captions-only parallel answer_pending (never moments/hooks; forced pool)
-      3) ingest+sync+restore in schedule order (pass_recent / vet stay serial)
+      3) ingest+sync+restore in schedule order (serial per clip)
 
     `responder` is injectable for tests (default: configured llm responder).
     `account` filters posts by exact handle before grouping. `limit` is max seed clips
@@ -154,7 +153,6 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
     summary["snapshot"] = str(snap)
     accts = Accounts.load(cfg)
     resp = responder if responder is not None else get_responder(cfg)
-    pass_recent: dict[str, list[str]] = {}               # ONE shared dict, schedule order — mirrors _stage_ingest_captions
     from fanops.crosspost import owner_caption_surfaces  # the same owner gate the pipeline requests with (P10)
 
     # --- phase 1: open EVERY caption gate (no LLM) ---
@@ -186,10 +184,10 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
     # --- phase 2: captions ONLY, parallel LLM fan-out (never drain moments/hooks) ---
     resp.answer_pending(cfg, kinds=("captions",), parallel=True)
 
-    # --- phase 3: ingest + sync in schedule order (pass_recent needs serial reduce) ---
+    # --- phase 3: ingest + sync in schedule order ---
     for cid, pids in work:
         with Ledger.transaction(cfg) as led3:
-            led3 = ingest_captions(led3, cfg, cid, pass_recent=pass_recent)
+            led3 = ingest_captions(led3, cfg, cid)
             clip3 = led3.clips.get(cid)
             if clip3 is None:
                 journal["notes"][cid] = "missing_clip"; journal["done"].append(cid); _save_journal(cfg, journal)

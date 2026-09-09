@@ -147,7 +147,7 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     led.set_clip_state(clip_id, ClipState.captions_requested)
     return led
 
-def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict[str, list[str]] | None = None) -> Ledger:
+def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
     cs = read_response(cfg, "captions", clip_id, CaptionSet)
     if cs is None:
         return led                                       # pending or stale
@@ -191,10 +191,8 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str, *, pass_recent: dict
             held_reason = reason
         # ...THEN ship picks ∩ sidecar lock. Request hashtag_store is the menu, not membership.
         _platform_for_surface(item.surface, surface_platform)   # AGENT-6: request platform still required
-        handle = item.surface.split("/", 1)[0]
         picks = item.hashtags or _tags_in(item.caption)
         tags = ship_from_lock(picks, _source_lock_tags(cfg, src))
-        if pass_recent is not None: pass_recent.setdefault(handle, []).extend(tags)
         clip.meta_captions[item.surface] = _caption_entry(
             tags, [str(h) for h in (item.hashtags or [])],
             caption=(item.caption or "").strip(), tag_sources={})
