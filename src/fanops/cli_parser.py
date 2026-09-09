@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("p4-bias")              # P4(b) cross-account reach dim-bias; inert unless flag on + validated
     p_res = sub.add_parser("resolve"); p_res.add_argument("post_id")
     p_res.add_argument("status", choices=["published", "failed", "analyzed", "retired"]); p_res.add_argument("--url", default=None)
+    p_res.add_argument("--submission-id", default=None)
     p_unh = sub.add_parser("unhold"); p_unh.add_argument("clip_id")
     p_rs = sub.add_parser("retry-source"); p_rs.add_argument("source_id")
     p_rs.add_argument("--from-stage", choices=["auto", "catalogued", "transcribed"], default="auto")   # MOL-121: AUTO preserves a good transcript

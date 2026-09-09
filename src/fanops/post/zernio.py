@@ -588,6 +588,16 @@ class ZernioPoster:
                 return ReconciliationRequired("rate_limited_may_be_live",
                                               f"429 and the retry budget ({_RETRY_DEADLINE_S:.0f}s) is spent — the create "
                                               f"may already have landed; body withheld")
+            if resp.status_code == 207:
+                parsed: ZernioCreateResult | None = None
+                body = None
+                with fail_open("zernio.207.parse", log=_breadcrumb(self.cfg, post.id, "zernio_207_body_unparsed")):
+                    body = resp.json()
+                    parsed = _parse_create_body(body)
+                if isinstance(parsed, (Created, IdempotentReplay)):
+                    self._create_2xx_body = body if isinstance(body, dict) else None
+                    return parsed
+                return ReconciliationRequired("http_207", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld")
             # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD — display prose must
             # never carry a status dump that could confuse operators; classification is ErrorKind at write.
             return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld")

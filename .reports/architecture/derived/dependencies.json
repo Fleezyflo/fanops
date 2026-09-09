@@ -1711,9 +1711,12 @@
       ],
       "lazy": [
         "fanops.accounts",
+        "fanops.caption_compose",
         "fanops.models",
         "fanops.post.metrics",
+        "fanops.post.metrics.zernio_read",
         "fanops.post.postiz_errors",
+        "fanops.post.publish_archive",
         "fanops.post.run",
         "fanops.postiz_lifecycle"
       ],
@@ -2142,6 +2145,7 @@
         "fanops.models",
         "fanops.post.compress",
         "fanops.post.run",
+        "fanops.reconcile",
         "fanops.studio.views_common",
         "fanops.studio.views_results"
       ],
@@ -3338,7 +3342,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 282,
+  "lazy_downward_count": 284,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -3619,6 +3623,14 @@
       "same_scc": false,
       "to": "fanops.moments",
       "to_level": 9
+    },
+    {
+      "from": "fanops.reconcile",
+      "from_level": 4,
+      "jump": 0,
+      "same_scc": false,
+      "to": "fanops.post.metrics.zernio_read",
+      "to_level": 4
     },
     {
       "from": "fanops.reconcile",
@@ -4607,6 +4619,14 @@
       "to_level": 4
     },
     {
+      "from": "fanops.studio.actions_recover",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.reconcile",
+      "to_level": 4
+    },
+    {
       "from": "fanops.studio.actions_run",
       "from_level": 3,
       "jump": 1,
@@ -5130,10 +5150,10 @@
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 820,
-    "lazy_edges": 450,
-    "lazy_edges_lateral": 57,
-    "lazy_edges_strictly_upward": 111,
-    "lazy_edges_to_equal_or_higher_level": 168,
+    "lazy_edges": 454,
+    "lazy_edges_lateral": 58,
+    "lazy_edges_strictly_upward": 112,
+    "lazy_edges_to_equal_or_higher_level": 170,
     "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9

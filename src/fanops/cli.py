@@ -441,34 +441,47 @@ def cmd_resolve(cfg: Config, args) -> int:
     it, the resolve closes the third door onto the ghost-row class (alongside D1: DryRunPoster,
     D2: _publish_one, D9: mark_published). Non-terminal targets (failed/error/etc) still resolve
     URL-less by design — a pre-network failure has nothing to point at. Order of checks: post
-    existence first (so "no such post: <id>" wins over the URL message on a typo)."""
-    from fanops.models import PostState, _POST_TERMINAL_REQUIRES_URL
+    existence first (so "no such post: <id>" wins over the URL message on a typo).
+
+    With --submission-id on a published resolve, mirror reconcile promote: stamp a real backend id,
+    published_at + publish buckets, clear reconcile_candidate_id, archive — so manual recovery is
+    metrics-trackable. Without --submission-id, auto-bind a verified reconcile_candidate_id first."""
+    from fanops.models import PostState, _POST_TERMINAL_REQUIRES_URL, is_real_submission_id
+    url = (getattr(args, "url", None) or "").strip() or None
+    sid = (getattr(args, "submission_id", None) or "").strip() or None
     with Ledger.transaction(cfg) as led:
         if args.post_id not in led.posts:
             print(f"no such post: {args.post_id}", file=sys.stderr); return 2
         requires_url = args.status in {s.value for s in _POST_TERMINAL_REQUIRES_URL}
-        if requires_url and not (getattr(args, "url", None) or "").strip():
+        if requires_url and not url:
             print(f"--url is REQUIRED when resolving to {args.status!r} (R1/D10): the post is moving "
                   f"to a terminal-success state and needs a permalink. If you don't have one, resolve "
                   f"to 'failed' instead.", file=sys.stderr)
             return 2
-        p = led.posts[args.post_id]
-        # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
-        # serialization (terminal-with-URL invariant holds at every persistence point).
-        if getattr(args, "url", None):
-            p.public_url = args.url
         try:
             st = PostState(args.status)
+        except ValueError:
+            st = PostState.published if args.status == "published" else PostState.failed
+        if st is PostState.published and url and sid and not is_real_submission_id(sid):
+            print("--submission-id must be a real backend id, not a fanops_ birth token",
+                  file=sys.stderr)
+            return 2
+        if st is PostState.published and url:
+            from fanops.reconcile import apply_published_resolve
+            ok, err = apply_published_resolve(cfg, led, args.post_id, url=url, submission_id=sid)
+            if not ok:
+                print(err, file=sys.stderr)
+                return 2
+        else:
+            p = led.posts[args.post_id]
+            # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
+            # serialization (terminal-with-URL invariant holds at every persistence point).
+            if url:
+                p.public_url = url
             if st is PostState.failed:
                 led.set_post_state(args.post_id, st, error_kind=ErrorKind.unknown)
             else:
                 led.set_post_state(args.post_id, st)
-        except ValueError:
-            # Unknown status string — back-compat: map "published" -> published, else "failed"
-            if args.status == "published":
-                led.set_post_state(args.post_id, PostState.published)
-            else:
-                led.set_post_state(args.post_id, PostState.failed, error_kind=ErrorKind.unknown)
     print(f"resolved {args.post_id} -> {args.status}"); return 0
 
 

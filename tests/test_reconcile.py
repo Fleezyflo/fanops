@@ -1235,3 +1235,114 @@ def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp
     assert [p.id for p in token_only] == ["tok"]
     assert [p.id for p in polled] == ["real"]
     assert mirrored == []
+
+
+def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
+    from fanops import reconcile as rec_mod
+    from fanops.models import Platform
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _post(led, "p1", PostState.needs_reconcile, sub="fanops_tok")
+    led.posts["p1"] = led.posts["p1"].model_copy(update={"platform": Platform.tiktok,
+                                                          "reconcile_candidate_id": "z_real",
+                                                          "account_id": "integ-1"})
+    body = {"status": "published", "platforms": [{"platform": "tiktok",
+            "accountId": {"_id": "integ-1", "username": "wahed_bared"},
+            "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
+    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
+    class _FakeClient:
+        def __init__(self, _cfg):
+            pass
+        def fetch_body(self, sid):
+            assert sid == "z_real"
+            return body
+    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    p = out.posts["p1"]
+    assert p.state is PostState.published
+    assert p.submission_id == "z_real"
+    assert p.reconcile_candidate_id is None
+
+
+def test_reopen_http_207_failed_for_sid_recovery(tmp_path):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _post(led, "p207", PostState.failed, sub="fanops_x")
+    led.posts["p207"] = led.posts["p207"].model_copy(
+        update={"error_reason": "zernio http_207: (207) body withheld"})
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    assert out.posts["p207"].state is PostState.needs_reconcile
+    assert "sid recovery" in (out.posts["p207"].error_reason or "")
+
+
+def _tiktok_unbound(led, pid, *, sub="fanops_tok", caption="beat drop #fyp", account_id="integ-1",
+                    scheduled_time=None, candidate=None):
+    from datetime import datetime, timezone
+    led.add_post(Post(id=pid, parent_id="c", account="tt", account_id=account_id,
+                      platform=Platform.tiktok, caption=caption, state=PostState.needs_reconcile,
+                      submission_id=sub,
+                      scheduled_time=scheduled_time or datetime.now(timezone.utc).isoformat(),
+                      reconcile_candidate_id=candidate))
+
+
+def test_vendor_lookup_promotes_unique_caption_match(tmp_path, monkeypatch):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _tiktok_unbound(led, "pv", caption="unique caption for vendor lookup test")
+    body = {"status": "published", "platforms": [{"platform": "tiktok",
+            "accountId": {"_id": "integ-1", "username": "wahed_bared"},
+            "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/9"}]}
+    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
+                        lambda *a, **k: ([{"_id": "z_vendor"}], {"page": 1, "totalPages": 1}))
+    class _FakeClient:
+        def __init__(self, _cfg):
+            pass
+        def fetch_body(self, sid):
+            assert sid == "z_vendor"
+            return body
+    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    p = out.posts["pv"]
+    assert p.state is PostState.published
+    assert p.submission_id == "z_vendor"
+
+
+def test_vendor_lookup_ambiguous_refuses_bind(tmp_path, monkeypatch):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _tiktok_unbound(led, "pamb", caption="shared hashtag caption")
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
+                        lambda *a, **k: ([{"_id": "z_a"}, {"_id": "z_b"}], {"page": 1, "totalPages": 1}))
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    assert out.posts["pamb"].state is PostState.needs_reconcile
+    assert out.posts["pamb"].submission_id == "fanops_tok"
+
+
+def test_vendor_lookup_skipped_when_candidate_auto_bind_wins(tmp_path, monkeypatch):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _tiktok_unbound(led, "pcand", candidate="z_cand")
+    body = {"status": "published", "platforms": [{"platform": "tiktok",
+            "accountId": {"_id": "integ-1", "username": "wahed_bared"},
+            "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
+    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
+
+    def _boom(*a, **k):
+        raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
+
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts", _boom)
+    class _FakeClient:
+        def __init__(self, _cfg):
+            pass
+        def fetch_body(self, sid):
+            assert sid == "z_cand"
+            return body
+    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    assert out.posts["pcand"].state is PostState.published
+    assert out.posts["pcand"].submission_id == "z_cand"

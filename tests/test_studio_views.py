@@ -174,6 +174,18 @@ def test_schedule_rows_sorted_with_recent_and_imminent_flags(tmp_path):
     assert by_id["p_far"].clip_id == "clip_1" and by_id["p_far"].platform == "instagram"
 
 
+def test_schedule_row_blocked_reason_for_planned_account(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_post(Post(id="p_planned", parent_id="clip_1", account="b", account_id="2",
+                      platform=Platform.instagram, caption="c", state=PostState.queued,
+                      scheduled_time=_z(NOW + timedelta(hours=3))))
+    rows = schedule_rows(led, cfg, now=NOW)
+    by_id = {r.post_id: r for r in rows}
+    assert by_id["p_planned"].blocked_reason == "account not active — activate in Go Live"
+
+
 from fanops.studio.views import lift_rows
 
 def test_lift_empty_no_analyzed_posts(tmp_path):

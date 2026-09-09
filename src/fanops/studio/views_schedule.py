@@ -65,6 +65,7 @@ class ScheduleRow:
     why_suggested: Optional[str] = None    # one plain sentence explaining the suggested time (account/platform/lead)
     bad_schedule: bool = False            # read-only: scheduled_time present but unparseable (M07 chip)
     inflight_headline: str = ""           # inflight lane: token-provenance copy, not a hardcoded waiting-for-link
+    blocked_reason: Optional[str] = None  # queued + non-active account: publish_due skips until Go Live
 
 
 # non-terminal render states a shippable artifact can be in (mirrors crosspost._REUSABLE_CLIP_STATES philosophy;
@@ -175,6 +176,10 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
         if editable:
             row.ready, row.ready_reason = publish_readiness(led, p, cfg)
             row.why_suggested = explain_suggested_time(cfg, row)
+        if p.state is PostState.queued:
+            from fanops.post.run import _non_active_row
+            if _non_active_row(accts, p.account) is not None:
+                row.blocked_reason = "account not active — activate in Go Live"
         rows.append(row)
 
     def _key(r: ScheduleRow):

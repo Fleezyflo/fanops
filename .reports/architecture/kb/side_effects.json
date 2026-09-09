@@ -118,6 +118,7 @@
   {"site": "post/zernio.py:183", "call": "GET /accounts"},
   {"site": "post/metrics.py:160", "call": "GET /public/v1/posts", "role": "POSTIZ STATUS (+/-35d window — Postiz has NO per-post status endpoint)", "unknown_id_behaviour": "returns {'status':'unknown'} — DOES NOT RAISE"},
   {"site": "post/metrics.py:286", "call": "GET /posts/{id}", "role": "ZERNIO STATUS (a true per-post lookup)", "unknown_id_behaviour": "*** RAISES RuntimeError on a 404 *** — the asymmetry is in the REMOTE API SHAPE, not in FanOps code (both clients raise identically on >=300). Root of C3-F2."},
+  {"site": "post/metrics/zernio_read.py:zernio_list_posts", "call": "GET /posts", "role": "ZERNIO LIST (reconcile vendor lookup — account + date window + caption search)", "lock": "NONE", "ordering": "OUTSIDE ledger lock in reconcile auto-heal"},
   {"site": "post/metrics.py:89", "call": "GET analytics"},
   {"site": "post/metrics.py:513", "call": "GET zernio analytics"},
   {"site": "health_model.py:160", "call": "GET docker/postiz health", "timeout_s": 3},

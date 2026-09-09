@@ -14,7 +14,7 @@
             <div class="sched-row-head"><span class="muted">{{ r.platform }}</span>{% if r.batch_title %} <span class="muted batch-tag">«{{ r.batch_title }}»</span>{% endif %}
               · {{ r.scheduled_time | localdt_hybrid or 'unscheduled' }}{% if r.bad_schedule %} <span class="chip warn">bad schedule</span>{% endif %}</div>
             <p class="sched-caption clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
-            <div class="sched-row-meta">{{ state_badge(r.delivery or r.lane) }}</div>
+            <div class="sched-row-meta">{{ state_badge(r.delivery or r.lane) }}{% if r.blocked_reason %} <span class="chip warn" title="{{ r.blocked_reason }}">blocked</span>{% endif %}</div>
           </div>
           <div class="sched-row-controls">
             {% if r.lane == 'inflight' %}

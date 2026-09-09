@@ -56,6 +56,24 @@ def test_resolve_post_published_clears_error_reason(tmp_path):
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.published and p.error_reason is None
 
+def test_resolve_post_with_submission_id_enables_metrics(tmp_path):
+    from fanops.models import is_real_submission_id
+    cfg = Config(root=tmp_path); _accounts(cfg); _seed_inflight(cfg)
+    led = Ledger.load(cfg)
+    led.posts["p1"] = led.posts["p1"].model_copy(
+        update={"submission_id": "fanops_t", "reconcile_candidate_id": "cand-x"})
+    led.save()
+    res = actions.resolve_post(cfg, "p1", "published",
+                               url="https://www.instagram.com/p/abc/",
+                               submission_id="zernio-real-99")
+    assert res.ok
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.submission_id == "zernio-real-99"
+    assert is_real_submission_id(p.submission_id)
+    assert p.published_at
+    assert p.reconcile_candidate_id is None
+
 def _seed_queued(cfg, pid="p1", state=PostState.queued):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "c0.mp4").write_bytes(b"V")
