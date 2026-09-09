@@ -1607,3 +1607,20 @@ def test_lock_ready_does_not_mass_stamp_via_hydrate(tmp_path):
     assert table["src_b"]["lock"] == ["#lyrics"]
     assert not table["src_a"].get("researched_at") and not table["src_b"].get("researched_at")
     assert table["src_a"]["hydrated_at"] and table["src_b"]["hydrated_at"]
+
+
+def test_pool_shortlist_then_scrape_completes(tmp_path):
+    """Pool stage: research_fn shortlist → Safari scrape → researched_at + lock ⊆ shortlist."""
+    cfg = _cfg(tmp_path)
+    shortlist = ["alpha", "beta", "gamma"]
+    client = _SearchClient(
+        {n: [_Hit(n)] for n in shortlist},
+        media_by_tag={f"#{n}": [_Media(1, "", play_count=i + 1)] for i, n in enumerate(shortlist)},
+    )
+    ensure_source_lock(cfg, _src(), client=client,
+                       research_fn=lambda _s, _e: shortlist, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    shortlist_norm = {f"#{n}" for n in shortlist}
+    assert set(rec["lock"]) <= shortlist_norm
+    assert rec.get("catalog") == [f"#{n}" for n in shortlist]

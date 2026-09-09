@@ -739,3 +739,74 @@ def test_request_captions_empty_completed_lock_opens(tmp_path):
     assert led.clips["clip_1"].state is ClipState.captions_requested
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "hashtag_store" not in payload["surfaces"][0]     # empty lock omits the menu key
+
+
+def test_e2e_rendered_to_captioned_with_lock(tmp_path):
+    """Completed source lock → caption gate → mock agent response → captioned + hashtags stored."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    lock = ["#wildclips", "#legendary", "#hiphopnews"]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    assert led.clips["clip_1"].state is ClipState.rendered
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    picks = ["#legendary", "#wildclips"]
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="no warning.", hashtags=picks),
+    ]).model_dump_json())
+    led = ingest_captions(led, cfg, "clip_1")
+    assert led.clips["clip_1"].state is ClipState.captioned
+    mc = led.clips["clip_1"].meta_captions["a/instagram"]
+    assert mc["hashtags"] == picks
+    assert mc["caption"] == "no warning."
+
+
+def test_consecutive_clips_can_differ_via_agent(tmp_path):
+    """Same lock, different agent picks → different shipped lines; no ingest rotation mechanism."""
+    import inspect
+    from fanops.caption import ingest_captions as ingest_fn
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    lock = ["#wildclips", "#legendary", "#boldstatement", "#hiphopnews",
+            "#pressconference", "#realrap"]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="clip one"))
+    led.add_moment(Moment(id="mom_2", parent_id="src_1", content_token="7-14", start=7, end=14,
+                          reason="r", transcript_excerpt="clip two"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c1.mp4", state=ClipState.rendered))
+    led.add_clip(Clip(id="clip_2", parent_id="mom_2", path="/c2.mp4", state=ClipState.rendered))
+    request_captions(led, cfg, "clip_1", [("cisumwolfhom", Platform.instagram)])
+    rid1 = latest_request_id(cfg, "captions", "clip_1")
+    picks_a = ["#wildclips", "#legendary", "#boldstatement", "#hiphopnews"]
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid1, items=[
+        CaptionItem(surface="cisumwolfhom/instagram", caption="x", hashtags=picks_a),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    request_captions(led, cfg, "clip_2", [("cisumwolfhom", Platform.instagram)])
+    rid2 = latest_request_id(cfg, "captions", "clip_2")
+    picks_b = ["#pressconference", "#legendary", "#hiphopnews", "#realrap"]
+    response_path(cfg, "captions", "clip_2").write_text(CaptionSet(request_id=rid2, items=[
+        CaptionItem(surface="cisumwolfhom/instagram", caption="y", hashtags=picks_b),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_2")
+    tags_a = led.clips["clip_1"].meta_captions["cisumwolfhom/instagram"]["hashtags"]
+    tags_b = led.clips["clip_2"].meta_captions["cisumwolfhom/instagram"]["hashtags"]
+    assert tags_a != tags_b
+    assert tags_a == picks_a
+    assert tags_b == picks_b
+    src = inspect.getsource(ingest_fn)
+    assert "pass_recent" not in src
+    assert "rotate_tag_line" not in src
