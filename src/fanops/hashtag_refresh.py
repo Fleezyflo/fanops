@@ -710,11 +710,11 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     from fanops.ig_hashtag_scrape import scrape_users
     if scrape_client is None and not scrape_users(cfg):
         return {"refreshed": False, "reason": "no scrape session"}
-    from fanops.ledger import Ledger
-    from fanops.source_tags_sidecar import locks_pending
-    if locks_pending(cfg, Ledger.load(cfg)):
-        return {"refreshed": False, "reason": "locks_pending"}
     try:
+        from fanops.ledger import Ledger
+        from fanops.source_tags_sidecar import locks_pending
+        if locks_pending(cfg, Ledger.load(cfg)):
+            return {"refreshed": False, "reason": "locks_pending"}
         now_dt = now or datetime.now(timezone.utc)
         cool = _read_active_cooldown(cfg, now_dt)
         if cool is not None:
