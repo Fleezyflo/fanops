@@ -231,6 +231,24 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
     assert "#interview" not in ta and "#globalwinner" not in ta
 
 
+def test_ingest_stores_agent_picks_intersect_lock(tmp_path):
+    """Agent picks off-lock are trimmed; shipped order follows pick order, not lock order."""
+    from fanops.hashtags import ship_from_lock
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
+    lock = ["#alpha", "#beta", "#gamma", "#delta"]
+    _write_lock(cfg, "src_1", lock)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    picks = ["#gamma", "#invented", "#alpha", "#offmenu", "#beta"]
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="x", hashtags=picks),
+    ]).model_dump_json())
+    ingest_captions(led, cfg, "clip_1")
+    shipped = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
+    assert shipped == ship_from_lock(picks, lock)
+    assert shipped == ["#gamma", "#alpha", "#beta"]
+
+
 # --- MOL-512 (C-2): persona_facts lead_tags use this persona's aligned pool --------------------
 
 def test_persona_facts_lead_tags_are_not_the_caption_menu(tmp_path):

@@ -202,6 +202,7 @@ class Settings(BaseSettings):
     FANOPS_HASHTAG_SCRAPE_TRY_CAP: int = 25
     FANOPS_HASHTAG_SCRAPE_COTAG_ENQUEUE: int = 40
     FANOPS_HASHTAG_SCRAPE_PARALLEL: int = 1
+    FANOPS_LOCK_TAGS_PER_PASS: int = 4
     FANOPS_HASHTAG_SCRAPE_DELAY: str = ""
     # Comma-separated usernames OK (MOL-857); _opt_str strips edges, keeps commas.
     FANOPS_IG_SCRAPE_USER: str | None = None
@@ -295,6 +296,11 @@ class Settings(BaseSettings):
     @classmethod
     def _scrape_parallel(cls, v):
         return parse_scrape_cap(v, default=1, floor=1)
+
+    @field_validator("FANOPS_LOCK_TAGS_PER_PASS", mode="before")
+    @classmethod
+    def _lock_tags_per_pass(cls, v):
+        return parse_scrape_cap(v, default=4, floor=1)
 
     @field_validator("FANOPS_VARIANT_MIN_POSTS", mode="before")
     @classmethod

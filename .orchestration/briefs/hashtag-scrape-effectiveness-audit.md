@@ -1,3 +1,5 @@
+> **TOMBSTONE — do not run this audit.** Grounded on the deleted two-layer model (measure → `derive_corpus` → `vet_hashtags` select). Layer B and the vet path are **gone** (`tests/test_hashtag_layer_b_tombstone.py`). Posted tags ship from the **source lock** only (`hashtags.ship_from_lock`). Current authority: [docs/CODEMAPS/hashtag-lifecycle.md](../../docs/CODEMAPS/hashtag-lifecycle.md).
+
 # Agent brief — Hashtag scrape effectiveness & wiring audit
 
 **Audience:** an auditor agent (read-only preferred; no `pytest` locally; no `launchctl`; no ledger wipe).  

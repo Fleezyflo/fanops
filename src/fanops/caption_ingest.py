@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 import re
 from fanops.config import Config
-from fanops.ledger import Ledger
-from fanops.models import Platform, PostState
+from fanops.models import Platform
 from fanops.agentstep import request_path
-from fanops.hashtags import CAPTION_TAG_RE, norm_tag
+from fanops.hashtags import CAPTION_TAG_RE
 
 _TAG_RE = re.compile(r"#\S+")
 
@@ -132,15 +131,3 @@ def _caption_entry(tags: list, hashtags_raw: list, *, caption: str, fallback: bo
     if fallback:
         entry["fallback"] = True
     return entry
-
-
-def _recent_tags(led: Ledger, handle: str, *, n: int = 1) -> list[str]:
-    """The last n non-rejected posts for `handle`, newest first — ordered-dedup union of their hashtags."""
-    posts = [p for p in led.posts_of_account(handle) if p.state is not PostState.rejected]
-    posts.sort(key=lambda p: (p.created_at or p.scheduled_time or ""), reverse=True)
-    out: list[str] = []; seen: set[str] = set()
-    for p in posts[:n]:
-        for t in (p.hashtags or []):
-            h = norm_tag(t) if isinstance(t, str) else ""
-            if h and h not in seen: seen.add(h); out.append(h)
-    return out

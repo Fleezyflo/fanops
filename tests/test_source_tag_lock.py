@@ -1,5 +1,7 @@
 # tests/test_source_tag_lock.py
 """lock_from_pile is positive play_count, play_rank_key order, cap 12. ship_from_lock is picks ∩ lock."""
+import json
+
 from fanops.hashtags import (lock_from_pile, lock_from_shortlist, play_rank_key,
                              ship_from_lock, size_rank_key)
 
@@ -130,3 +132,31 @@ def test_ship_from_lock_no_arabic_floor():
     ar = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]
     assert ship_from_lock(["#keep"] + ar, lock) == ["#keep"]
     assert "#arabicmusic" not in ship_from_lock(ar + ["#keep"], lock)
+
+
+def test_caption_request_hashtag_store_equals_lock(tmp_path):
+    """Completed lock → every caption-request surface carries hashtag_store == sidecar lock."""
+    from fanops.agentstep import request_path
+    from fanops.caption import request_captions
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
+    from fanops.source_tags import source_tag_locks_path
+
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    lock = ["#alpha", "#beta", "#gamma"]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    request_captions(led, cfg, "clip_1",
+                     [("a", Platform.instagram), ("b", Platform.tiktok)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    for surf in payload["surfaces"]:
+        assert surf["hashtag_store"] == lock

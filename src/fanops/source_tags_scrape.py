@@ -251,7 +251,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             _apply_cached_graph(cfg, measurements, tag)
             pending.pop(0)
             continue
-        if stagger and tags_this_walk >= 1:
+        if stagger and tags_this_walk >= cfg.lock_tags_per_pass:
             break
         current = _advance_lock_client(cfg, current, spare, already)
         if current is None:

@@ -1367,10 +1367,10 @@ def test_injected_client_still_finishes_the_pile(tmp_path, monkeypatch):
     assert _cooldown_used(cfg, "u") == 0
 
 
-def test_unattended_lock_walks_one_tag(tmp_path, monkeypatch):
+def test_unattended_lock_walks_budget_tags(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    names = ["t0", "t1", "t2"]
+    names = [f"t{i}" for i in range(9)]
     seen = []
 
     def opener(_cfg, user=None):
@@ -1384,21 +1384,45 @@ def test_unattended_lock_walks_one_tag(tmp_path, monkeypatch):
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
     assert not rec.get("researched_at")
-    assert rec.get("verified") == ["#t0"]
-    assert rec.get("remaining") == ["#t1", "#t2"]
+    assert rec.get("verified") == ["#t0", "#t1", "#t2", "#t3"]
+    assert rec.get("remaining") == [f"#t{i}" for i in range(4, 9)]
     assert seen == ["u"]
     from fanops.fanops_hashtags import reset_safari_tick_slot
     reset_safari_tick_slot()  # second unattended tick
     ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
                        **_ok_graph())
     rec2 = load_source_tag_locks(cfg)["src_1"]
-    assert rec2.get("verified") == ["#t0", "#t1"]
+    assert rec2.get("verified") == [f"#t{i}" for i in range(8)]
+    assert rec2.get("remaining") == ["#t8"]
     assert not rec2.get("researched_at")
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
     unfinished = [r for r in recs if r.get("outcome") == "scrape_unfinished"]
     assert unfinished
     assert all(r.get("level") != "error" for r in unfinished)
     assert not any(r.get("err") == "scrape_unfinished" for r in recs)
+
+
+def test_lock_tags_per_pass_env_override(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_LOCK_TAGS_PER_PASS", "2")
+    names = ["t0", "t1", "t2", "t3"]
+    seen = []
+
+    def opener(_cfg, user=None):
+        seen.append(user)
+        cli = _SearchClient({n: [_Hit(n)] for n in names},
+                            media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+        cli._fanops_scrape_user = user
+        return cli
+
+    ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener,
+                       **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert not rec.get("researched_at")
+    assert rec.get("verified") == ["#t0", "#t1"]
+    assert rec.get("remaining") == ["#t2", "#t3"]
+    assert seen == ["u"]
 
 
 def test_all_peers_at_cap_skips_stamp(tmp_path, monkeypatch):
@@ -1584,3 +1608,20 @@ def test_lock_ready_does_not_mass_stamp_via_hydrate(tmp_path):
     assert table["src_b"]["lock"] == ["#lyrics"]
     assert not table["src_a"].get("researched_at") and not table["src_b"].get("researched_at")
     assert table["src_a"]["hydrated_at"] and table["src_b"]["hydrated_at"]
+
+
+def test_pool_shortlist_then_scrape_completes(tmp_path):
+    """Pool stage: research_fn shortlist → Safari scrape → researched_at + lock ⊆ shortlist."""
+    cfg = _cfg(tmp_path)
+    shortlist = ["alpha", "beta", "gamma"]
+    client = _SearchClient(
+        {n: [_Hit(n)] for n in shortlist},
+        media_by_tag={f"#{n}": [_Media(1, "", play_count=i + 1)] for i, n in enumerate(shortlist)},
+    )
+    ensure_source_lock(cfg, _src(), client=client,
+                       research_fn=lambda _s, _e: shortlist, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec["researched_at"]
+    shortlist_norm = {f"#{n}" for n in shortlist}
+    assert set(rec["lock"]) <= shortlist_norm
+    assert rec.get("catalog") == [f"#{n}" for n in shortlist]
