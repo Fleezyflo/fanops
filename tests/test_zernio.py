@@ -168,6 +168,18 @@ def test_publish_other_4xx_fails(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.zernio.requests.post", return_value=_R(422, {}, text="bad"))
     assert ZernioPoster(cfg).publish(led, "p1").posts["p1"].state is PostState.failed
 
+def test_publish_207_parks_while_422_still_fails(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    mocker.patch("fanops.post.zernio.requests.post", return_value=_R(207, {"partial": "SENTINEL"}, text="partial"))
+    led = _led(cfg, _post(pid="p207"))
+    out = ZernioPoster(cfg).publish(led, "p207").posts["p207"]
+    assert out.state is PostState.needs_reconcile
+    assert "http_207" in (out.error_reason or "")
+    assert "SENTINEL" not in (out.error_reason or "")
+    mocker.patch("fanops.post.zernio.requests.post", return_value=_R(422, {}, text="bad"))
+    led2 = _led(cfg, _post(pid="p422"))
+    assert ZernioPoster(cfg).publish(led2, "p422").posts["p422"].state is PostState.failed
+
 def test_publish_network_error_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
     import requests as _rq
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())

@@ -614,6 +614,61 @@ def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.published and led.posts["p1"].public_url == "https://x/p"
 
+def test_resolve_with_submission_id_sets_tracking_fields(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform, is_real_submission_id
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t",
+                          reconcile_candidate_id="cand-99", public_url=""))
+    from fanops.cli import main
+    assert main(["resolve", "p1", "published", "--url", "https://x/p", "--submission-id", "zernio-real-42"]) == 0
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == "https://x/p"
+    assert p.submission_id == "zernio-real-42"
+    assert is_real_submission_id(p.submission_id)
+    assert p.published_at
+    assert p.publish_hour is not None and p.publish_dow is not None
+    assert p.reconcile_candidate_id is None
+    assert list(cfg.published.rglob("p1.json")), "resolve with sid must archive like reconcile promote"
+
+def test_resolve_with_submission_id_pull_metrics_binds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    from fanops.track import _metrics_trackable, pull_metrics
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.failed, submission_id="fanops_t", public_url=""))
+    from fanops.cli import main
+    assert main(["resolve", "p1", "published", "--url", "https://x/p", "--submission-id", "zernio-real-42"]) == 0
+    led = Ledger.load(cfg)
+    p = led.posts["p1"]
+    assert _metrics_trackable(cfg, p.submission_id)
+    pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "zernio-real-42", "metrics": {"likes": 3.0}}])
+    assert led.posts["p1"].metrics.get("likes") == 3.0
+
+def test_resolve_rejects_fanops_submission_id(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url=""))
+    from fanops.cli import main
+    assert main(["resolve", "p1", "published", "--url", "https://x/p", "--submission-id", "fanops_dead"]) == 2
+    assert "fanops_" in capsys.readouterr().err
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.needs_reconcile and p.submission_id == "fanops_t"
+
 def test_unhold_resets_a_held_clip(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config

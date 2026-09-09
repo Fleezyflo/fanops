@@ -179,7 +179,8 @@ def register_schedule_routes(app, cfg):
     def do_resolve_post(post_id):
         return _posted_panel(actions.resolve_post(
             cfg, post_id, request.form.get("status", "failed"),
-            url=(request.form.get("url") or "").strip() or None))
+            url=(request.form.get("url") or "").strip() or None,
+            submission_id=(request.form.get("submission_id") or "").strip() or None))
 
     @app.post("/posts/recover")
     def do_recover_posts():

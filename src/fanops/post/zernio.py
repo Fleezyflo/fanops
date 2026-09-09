@@ -588,6 +588,8 @@ class ZernioPoster:
                 return ReconciliationRequired("rate_limited_may_be_live",
                                               f"429 and the retry budget ({_RETRY_DEADLINE_S:.0f}s) is spent — the create "
                                               f"may already have landed; body withheld")
+            if resp.status_code == 207:
+                return ReconciliationRequired("http_207", f"zernio {resp.status_code}, may be live (reconcile by hand) — body withheld")
             # Other 4xx: a verdict re-sending cannot change. The body stays WITHHELD — display prose must
             # never carry a status dump that could confuse operators; classification is ErrorKind at write.
             return TerminalFailure(f"http_{resp.status_code}", f"({resp.status_code}) body withheld")

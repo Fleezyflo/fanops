@@ -448,6 +448,35 @@ def test_cli_resolve_published_with_url_succeeds(tmp_path):
     assert p.public_url == "https://www.instagram.com/p/xyz/"
 
 
+def test_cli_resolve_rejects_fanops_submission_id(tmp_path, capsys):
+    """`fanops resolve ... published --url ... --submission-id fanops_*` must refuse without mutating."""
+    from fanops.cli import cmd_resolve
+
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(
+        '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
+    )
+    clip = _seed_minimal_ledger(cfg)
+    led = Ledger.load(cfg)
+    led.add_post(Post(
+        id="post_r4", parent_id=clip.id, account="a", account_id="ig_a",
+        platform=Platform.instagram, caption="c", state=PostState.needs_reconcile,
+        submission_id="fanops_t",
+    ))
+    led.save()
+
+    import argparse
+    args = argparse.Namespace(post_id="post_r4", status="published",
+                              url="https://www.instagram.com/p/xyz/",
+                              submission_id="fanops_dead")
+    rc = cmd_resolve(cfg, args)
+    assert rc == 2
+    assert "fanops_" in capsys.readouterr().err
+    p = Ledger.load(cfg).posts["post_r4"]
+    assert p.state is PostState.needs_reconcile and p.submission_id == "fanops_t"
+
+
 def test_cli_resolve_to_non_published_does_not_require_url(tmp_path):
     """RED (firewall): resolving to failed / error / queued / etc. MUST NOT require --url —
     only published (and other terminal-with-URL states) gates on it."""

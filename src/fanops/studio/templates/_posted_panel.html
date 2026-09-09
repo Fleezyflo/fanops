@@ -89,6 +89,7 @@
         <div class="posted-row-actions">
           <form class="inline inflight-resolve" hx-post="{{ url_for('do_resolve_post', post_id=r.post_id, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
             <input name="url" placeholder="paste live URL" size="28">
+            <input name="submission_id" placeholder="Zernio submission id" size="22">
             <input type="hidden" name="status" value="published">
             <button type="submit">Mark live</button>
           </form>

@@ -663,6 +663,17 @@ def test_51_other_4xx_fails_with_the_body_withheld(tmp_path, monkeypatch):
     assert p.error_kind is ErrorKind.bad_payload
     assert is_transient_failure(p) is False
 
+def test_207_parks_needs_reconcile_not_failed(tmp_path, monkeypatch):
+    # 207 Multi-Status: the create may have partially landed — park, never `failed` (re-queueable).
+    cfg = _cfg(tmp_path, monkeypatch)
+    p = _publish(cfg, _post(), _Rec(_R(207, {"partial": "SENTINEL-BODY"})), monkeypatch)
+    assert p.state is PostState.needs_reconcile
+    assert p.state is not PostState.failed
+    assert "http_207" in p.error_reason
+    assert "SENTINEL-BODY" not in (p.error_reason or "")
+    assert p.error_kind is None
+    assert is_transient_failure(p) is False
+
 def test_52_connecttimeout_is_retried(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     rec = _Rec(requests.exceptions.ConnectTimeout("blip"), _R(201, {"_id": "z1"}))
