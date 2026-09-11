@@ -378,7 +378,7 @@ keeping the state change**. Audit is a *record*, not a *journal*.
 | `mark_published` | rejects blank url; refuses an already-terminal post ([actions.py:274](src/fanops/studio/actions.py:274)) | ✅ |
 | `bulk_send_to_review` | `state not in _REVIEW_REVERT_BLOCKED` | ✅ — but **preserves `submission_id`** ⇒ `C3-F1` |
 | `save_uploads` | video-ext check, traversal-safe `secure_filename`, inbox-bound resolve, **atomic `.uploadpart` → `os.replace`**, 2 GiB cap | ✅ content-addressed downstream |
-| wipe preview / confirm | typed word `REMOVE` → **mandatory verified snapshot** → `execute_wipe`'s own re-check | ⚠ **MOL-71**: no server-side check that *preview* ran |
+| wipe preview / confirm | typed word `REMOVE` → **preview token** (MOL-71 closed) → **mandatory verified snapshot** → `execute_wipe`'s own re-check | ✅ preview token enforced in `confirm_wipe` |
 
 **`execute_wipe` is fully inside ONE `Ledger.transaction`** ([ledger_wipe.py:252-275](src/fanops/ledger_wipe.py:252))
 and gated in code: `WipeNotConfirmed` unless `confirmed`; `SnapshotRequired` unless `snapshot_is_restorable`

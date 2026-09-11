@@ -138,10 +138,9 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
 
 
 def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker):
-    """P15 closed-loop: crosspost mint → approve → publish (stub) → reconcile permalink → Graph lift."""
+    """P15 closed-loop: crosspost mint → approve → publish (stub) → reconcile → list_posts lift metrics."""
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("META_GRAPH_TOKEN", "mtok")
-    monkeypatch.setenv("META_IG_USER_ID", "ig-1")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); accts = _seed_persona_accounts(cfg)
     cfg.clips.mkdir(parents=True, exist_ok=True)
     base = cfg.clips / "trust.mp4"; base.write_bytes(b"X")
@@ -185,9 +184,9 @@ def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker)
     with Ledger.transaction(cfg) as tx:
         tx.posts[pid] = p
 
-    mocker.patch("fanops.meta_graph.media_insights",
-                 return_value={"reach": 4200, "saves": 30, "shares": 12, "retention": 0.62})
-    led = pull_metrics(led, cfg)
+    rows = [{"postSubmissionId": "sub_trust",
+             "metrics": {"reach": 4200, "saves": 30, "shares": 12, "retention": 0.62}}]
+    led = pull_metrics(led, cfg, list_posts=lambda w: rows)
     p = led.posts[pid]
     assert p.state is PostState.analyzed
     assert p.account == "trust"

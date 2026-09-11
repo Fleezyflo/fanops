@@ -109,7 +109,7 @@
       "forbidden_scope_expansion": [
         "Do NOT touch Ledger.transaction, _save_unlocked, or any other writer — they are ALREADY correct.",
         "Do NOT 'unify' the A<->B lock domains (COUP-01). Out of scope.",
-        "Do NOT fix the wipe's MOL-71 preview gap.",
+        "MOL-71 CLOSED — do not reopen; confirm_wipe enforces preview token (actions_wipe.py L47-57).",
         "Do NOT delete ledger.lock in this PR even though it becomes genuinely dead — that is a separate, trivial cleanup and bundling it obscures the diff."
       ],
       "kills": "ledger.lock (LCK-008 / DEAD-005) loses its sole consumer and becomes GENUINELY dead for the first time — three cycles after being wrongly filed as dead."

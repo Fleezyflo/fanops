@@ -79,7 +79,7 @@ reachable only when the alternative is impossible.
 the first time** — it may then be deleted honestly, three cycles after being wrongly filed as dead.
 
 **What it does *not* fix:** `COUP-01`'s first consequence (publish reads `accounts.json` outside the ledger
-lock — already handled by "in-flight wins"); the wipe's `MOL-71` gap; anything in the submission lifecycle.
+lock — already handled by "in-flight wins"); anything in the submission lifecycle.
 
 ### ❌ Option C — a unified ledger storage contract · **REJECTED, NOT JUSTIFIED**
 Every other writer **already** goes through `store.lock()` + `write_raw`. `restore_snapshot` is the **only**

@@ -212,6 +212,54 @@ def test_ensure_does_not_refresh_daemon_strip_snapshot(tmp_path, monkeypatch):
     assert _kickstart_argv(uid) not in fake.calls
 
 
+def test_ensure_syncs_deps_before_kickstart_on_drift(tmp_path, monkeypatch):
+    # SHA drift + storm guard permits -> _sync_locked_deps runs BEFORE kickstart (fail-closed mirror of
+    # _plane_daemon). Call order is the contract — never kickstart onto a half-synced venv.
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
+    order: list[str] = []
+    def sync():
+        order.append("sync")
+        return True, ""
+    monkeypatch.setattr(daemon, "_sync_locked_deps", sync)
+    real_run = fake
+    def run(cmd, *a, **k):
+        if len(cmd) > 1 and cmd[1] == "kickstart":
+            order.append("kickstart")
+        return real_run(cmd, *a, **k)
+    run.calls = fake.calls
+    monkeypatch.setattr(daemon.subprocess, "run", run)
+
+    res = daemon.ensure(cfg)
+
+    assert order == ["sync", "kickstart"]
+    assert _kickstart_argv(uid) in fake.calls
+    assert res["action"] == "kickstart_stale_code"
+
+
+def test_ensure_skips_kickstart_when_sync_fails(tmp_path, monkeypatch):
+    # Failed deps sync -> log + skip kickstart (and Studio cycle); action stays "none".
+    cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_sync_locked_deps",
+                        lambda: (False, "deps sync failed for instagrapi:2.18.11->2.18.12: boom"))
+    studio_calls = []
+    monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: studio_calls.append(cfg))
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in fake.calls
+    assert not studio_calls
+    assert res["action"] == "none"
+
+
 def test_kill_switch_blocks_drift_kickstart(tmp_path, monkeypatch):
     # FANOPS_AUTO_ADOPT=0 -> the whole drift branch is skipped even with drift present.
     cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)

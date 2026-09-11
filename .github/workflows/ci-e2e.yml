@@ -130,3 +130,30 @@ jobs:
         run: |
           python scripts/ci/timing_report.py --step e2e_slow --log pytest-e2e-slow.log \
             --sha "${{ github.sha }}" --json-out ci-timing.partial.json --merge-in
+
+  launchd-e2e:
+    # ON-DEMAND + NIGHTLY ONLY — same triggers as this workflow (schedule + workflow_dispatch).
+    # MOL-830: closes the launchd daemon-reload gap the ubuntu e2e job deliberately deselects via
+    # `not macos_only`. One file, one marker — nothing else in the suite needs a macos runner.
+    name: launchd E2E (macos_only)
+    timeout-minutes: 15
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/ci-e2e.txt
+      - name: Install from hashed lock (dev+transcribe+studio+compose+framing; MOL-195/196 — reproducible)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements/ci-e2e.txt
+          pip install -e . --no-deps
+      - name: Integration suite — launchd lifecycle (macos_only)
+        env:
+          FANOPS_REQUIRE_E2E: "1"
+          FANOPS_REQUIRE_STUDIO: "1"
+        run: |
+          set -o pipefail
+          python -m pytest -q tests/test_studio_lifecycle_e2e.py -m macos_only -rs

@@ -201,6 +201,28 @@ def test_restore_snapshot_writes_in_place_uncontended(tmp_path):
     assert "later" not in restored and "src1" in restored       # reverted to the snapshot's rows
 
 
+def test_restore_snapshot_fallback_serializes_with_lock(tmp_path):
+    """INV-07: the os.replace fallback takes store.lock() (fcntl + BEGIN IMMEDIATE), so a writer
+    holding the lock blocks restore with LockBusyError — restore cannot race writers."""
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    doc = _populated_ledger(cfg)._to_doc()
+    snap = cfg.control / "ledger.snapshot.fallback-race.sqlite"
+    with store.lock():
+        store.write_raw(doc)
+        store.snapshot(snap)
+    cfg.ledger_path.write_bytes(b"this is not a sqlite database")   # force os.replace fallback
+    lock_inside = threading.Event(); lock_release = threading.Event()
+    def writer():
+        with store.lock():
+            lock_inside.set(); lock_release.wait(5)
+    tw = threading.Thread(target=writer); tw.start()
+    assert lock_inside.wait(5)
+    with pytest.raises(LockBusyError):
+        Ledger.restore_snapshot(cfg, snap, timeout=0.3)
+    lock_release.set(); tw.join(5)
+
+
 def test_restore_snapshot_falls_back_on_corrupt_live_db(tmp_path):
     """The corrupt-db fallback is retained: when the LIVE db can't be opened, restore uses the
     whole-file os.replace path and still recovers the snapshot."""

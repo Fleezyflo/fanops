@@ -2,7 +2,7 @@
   "cycle": 2,
   "git_head": "fcffa73",
   "generated": "2026-07-14",
-  "totals": {"total": 23, "verified": 11, "refined": 3, "false": 6, "verified_absent": 1, "retracted": 2},
+  "totals": {"total": 23, "verified": 11, "refined": 4, "false": 5, "verified_absent": 1, "retracted": 2},
   "classification_scheme": [
     "currently_reachable_defect",
     "dormant_defect_behind_disabled_flag",
@@ -40,14 +40,13 @@
     {
       "id": "INV-07",
       "claim": "00_control/ledger.lock is vestigial (Cycle-1 DEAD-005)",
-      "source": "config.py:159 code comment",
-      "verdict": "FALSE",
-      "class": "currently_reachable_defect",
-      "evidence": ["config.py:159", "ledger.py:551", "ledger_sqlite.py:92", "ledger_sqlite.py:151"],
-      "executed_race": "PROVEN by experiment. A live ledger writer holding BEGIN IMMEDIATE had restore_snapshot os.replace() the database file out from under it. The writer's commit() SUCCEEDED — no exception — and committed to the now-orphaned inode. Its data was SILENTLY DISCARDED. Final on-disk state was the snapshot's, not the writer's.",
-      "why": "restore_snapshot takes fcntl.flock on 00_control/ledger.lock (ledger.py:551). EVERY other ledger writer serializes on the SQLite BEGIN IMMEDIATE transaction (ledger_sqlite.py:92). The two primitives are mutually invisible. restore then calls os.replace on the db path (ledger_sqlite.py:151) and unlinks the -wal/-shm sidecars (ledger_sqlite.py:148-150) while another connection may hold them open.",
-      "exposure": "restore_snapshot has NO production caller — it is an operator break-glass classmethod. But ledger_wipe.py:246 advertises it as THE wipe rollback path, so an operator following the documented recovery procedure while the daemon is running hits this.",
-      "reclassification": "DEAD-005 was filed 'confirmed dead' on the strength of the word 'vestigial' in a comment. It is a LIVE single-holder lock that provides no mutual exclusion. New classification: live_lock_no_mutual_exclusion."
+      "source": "config.py:254",
+      "verdict": "REFINED",
+      "class": "documentation_error",
+      "evidence": ["config.py:254", "ledger_sqlite.py:110", "ledger.py:592", "tests/test_ledger_sqlite_store.py:204"],
+      "why": "The Cycle-1 'vestigial' comment was wrong — ledger.lock is the fcntl domain for every ledger writer. D3 unified the lock domain: SqliteLedgerStore.lock() nests _file_lock(cfg.lock_path) before BEGIN IMMEDIATE (ledger_sqlite.py:110), and restore_snapshot's os.replace fallback takes store.lock() (ledger.py:592) — the same path Ledger.transaction uses — so restore blocks on a held writer (LockBusyError) instead of racing it.",
+      "prior_defect": "Before D3, restore_snapshot took fcntl on ledger.lock while normal writers used BEGIN IMMEDIATE only — mutually invisible locks. Executed race (C4-COR-07): writer commit succeeded into an orphaned inode; restore discarded concurrent updates and deferred unlinks could delete media.",
+      "fix": "SqliteLedgerStore.lock nests _file_lock before BEGIN IMMEDIATE; restore_snapshot fallback serializes on store.lock. Proven by test_restore_snapshot_fallback_serializes_with_lock."
     },
     {
       "id": "INV-01",
@@ -154,8 +153,7 @@
     {
       "id": "INV-21", "claim": "Studio route authorization", "verdict": "VERIFIED-ABSENT", "class": "security_exposure",
       "evidence": ["studio/app.py", "cli.py:1285", "studio/CLAUDE.md"],
-      "note": "149 routes, 108 mutating, 0 authenticated, 0 CSRF-protected. No before_request hook, no session, no token. Recorded decision: studio/CLAUDE.md says 'no auth by design — don't add CSRF/rate-limit tickets; declined as out-of-scope for localhost'. The boundary is the network interface (default 127.0.0.1:8787). Any page the operator visits while the Studio runs can forge a POST to /golive/live, /schedule/publish-due, or /live-library/wipe/confirm.",
-      "known_gap": "MOL-71 (studio/CLAUDE.md): do_wipe_confirm has NO server-side check that do_wipe_preview ran first — 'preview before confirm' is a UI convention only. The typed-word + snapshot gates are unaffected."
+      "note": "149 routes, 108 mutating, 0 authenticated, 0 CSRF-protected. No before_request hook, no session, no token. Recorded decision: studio/CLAUDE.md says 'no auth by design — don't add CSRF/rate-limit tickets; declined as out-of-scope for localhost'. The boundary is the network interface (default 127.0.0.1:8787). Any page the operator visits while the Studio runs can forge a POST to /golive/live, /schedule/publish-due, or /live-library/wipe/confirm. MOL-71 CLOSED — confirm_wipe enforces preview token (actions_wipe.py L47-57)."
     },
     {
       "id": "INV-22",

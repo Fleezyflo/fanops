@@ -134,7 +134,6 @@
           "coupling_removed": "COUP-01's second consequence (the restore path's lock domain). The A<->B (ledger vs control-file) domain split REMAINS -- this slice does not touch it.",
           "does_not_fix": [
             "COUP-01's FIRST consequence: publish reads accounts.json outside the ledger lock. (Already handled by 'in-flight wins'.)",
-            "The wipe's MOL-71 gap (no server-side check that preview ran).",
             "Anything in the submission lifecycle."
           ],
           "ships_independently": true,

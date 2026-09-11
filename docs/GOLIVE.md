@@ -115,3 +115,10 @@ learning** (unfreeze the loop) → **Lift** (real per-variant lift, once the pla
   deletable before it could ever publish; its state lives in `00_control/cutover.json`, never the ledger.
 - Every publish is crash-safe (submit intent persisted before the network call) and never blind-retries
   an ambiguous failure (no double-post).
+
+### needs_reconcile
+
+Posts parked in `needs_reconcile` had an ambiguous publish outcome (network drop or 5xx after the body
+was sent). Postiz has no idempotency key (`postiz.py`). Run reconcile first (Studio **Schedule →
+Reconcile**, or let `fanops run` reconcile on its pass) and confirm live state before any manual
+re-queue or re-POST — otherwise you risk a double-post.

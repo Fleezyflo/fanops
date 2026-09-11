@@ -100,10 +100,10 @@ Owned by `tools/arch` (unit-lane enforced — see `docs/ENFORCEMENT.md`):
 - **Rationale:** a second literal drifts. It **did**: `__init__.py` said `0.3.0` while `pyproject.toml` said `0.4.0`, and both were live-read (the CLI heartbeat, the daemon self-adopt signal) — pip metadata reported a version the running tool denied. This is the `_CLI_PRINT_COUNT` failure class ("a number copied into prose is a defect") applied to a version string.
 - **Evidence:** `src/fanops/__init__.py` (`__version__ = _package_version("fanops")` + the `PackageNotFoundError` sentinel), landed by **#662** `fix(version): single version authority — __init__ derives from pyproject via importlib.metadata`. Prior drift is **historical** (fixed).
 
-### STD-VER-02 — release/versioning process is **not yet defined** (honest gap)
-- **Rule:** *(none yet)* — there is no declared release process, changelog, or semver policy.
-- **Rationale for recording it as a gap rather than inventing one:** a single-operator, continuously-deployed localhost tool may not want semver + release automation at all; picking one here would be inventing policy the evidence does not compel. `v0.1` in `docs/design/v0.1-ship-route.md` is a **milestone label**, unrelated to `[project].version`.
-- **Evidence:** no `CHANGELOG*` in-tree; `git tag` = 6 snapshot/checkpoint tags, **zero** semver tags ever; no release step in any workflow.
+### STD-VER-02 — release is merge-as-deploy; verify with `fanops doctor`
+- **Rule:** **Release** = merge to `main` → on the operator machine `git pull --ff-only` → `fanops up` (the keeper adopts new code onto the pump). **Verify** = `fanops doctor` deploy check green (`publish daemon running current code`). **Rollback** = `git revert` the bad commit → `git pull --ff-only` → `fanops up` → doctor deploy check green again. No separate semver tag, changelog, or release workflow — `[project].version` in `pyproject.toml` (STD-VER-01) is package metadata only; the live deploy signal is git HEAD SHA compared by `daemon._version_signal` vs the pump heartbeat `code`.
+- **Rationale:** production picks up merged code via the editable install and launchd daemon; a merge is the deploy. Doctor's `_deploy_code_check` surfaces SHA drift (pump still on old code after pull) as a FAIL with the exact remedy — the same comparison `daemon.ensure` uses to kickstart stale code.
+- **Evidence:** `src/fanops/doctor.py` (`_deploy_code_check`), `src/fanops/daemon.py` (`_last_heartbeat_code`, `_version_signal`, keeper drift branch in `ensure`); `v0.1` in `docs/design/v0.1-ship-route.md` remains a **milestone label**, unrelated to `[project].version`.
 
 ---
 

@@ -61,10 +61,8 @@ queued post FIRST un-approves back to Review, THEN clears — a post is never le
   (safe direction) needs no confirm. Do not add a `FANOPS_POSTER` write to go_live.
 - **Wipe** (`actions_wipe.confirm_wipe` `:35` → `ledger_wipe.execute_wipe` `:192`): typed word
   `CONFIRM_WORD = "REMOVE"` (`:21`) → mandatory pre-wipe snapshot → `snapshot_is_restorable` → `execute_wipe`
-  (its OWN re-check of snapshot+confirm). **Known gap (MOL-71):** `app_routes_live.do_wipe_confirm` (`:30`) has
-  NO server-side check that `do_wipe_preview` (`:24`) ran first — "preview before confirm" is only a UI
-  convention (template hides the form). The destructive typed-word/snapshot code gates are unaffected; if you
-  close MOL-71, add the server check WITHOUT weakening those.
+  (its OWN re-check of snapshot+confirm). MOL-71 closed: `confirm_wipe` requires a matching preview token
+  server-side (`actions_wipe.py` L47-57) — stale or missing token is refused before snapshot or removal.
 
 ## Secrets & persona-tab boundaries
 

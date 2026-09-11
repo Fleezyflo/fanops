@@ -1006,3 +1006,25 @@ cp -a "$HOME/FanOps-preflight-backup-$STAMP/MohFlow-FanOps" .
 ```
 
 Then reinstall daemons against the restored tree before debugging further.
+
+### Ledger restore (INV-07)
+
+Before `fanops restore`, stop the pump: `fanops daemon stop` (unload `com.fanops.run`) — belt-and-
+suspenders. D3 unified the lock domain: `SqliteLedgerStore.lock()` nests `_file_lock(cfg.lock_path)`
+before `BEGIN IMMEDIATE`, and `restore_snapshot`'s os.replace fallback takes `store.lock()` — the
+same path `Ledger.transaction` uses — so a concurrent writer blocks restore with `LockBusyError`
+instead of racing it.
+
+### Deploy after git pull
+
+After `git pull --ff-only`, if `requirements/ci-unit.txt` changed, run `fanops up`. On SHA drift the
+keeper (`fanops daemon ensure`) calls `_sync_locked_deps` before kickstarting the pump (D5), so pip
+sync is not deferred to `_plane_daemon` alone.
+
+### Code rollback
+
+To roll back code: `git revert <sha>` (or checkout the previous commit), then `fanops up`, then
+verify with `fanops doctor` — the deploy check must be green (`publish daemon running current code`,
+D4). Optionally confirm the newest loop heartbeat `code` in `07_reports/run.log`
+(`stage=="heartbeat"`, `origin=="loop"`) matches `git rev-parse HEAD` on disk — not via
+`fanops daemon status`, which reports loaded/pid/heartbeat age only.

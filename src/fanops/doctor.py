@@ -223,6 +223,33 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
         parts.append("could not read the ledger to assess past-due backlog (fail-closed)")
     return _check(lbl, False, "; ".join(parts))
 
+
+def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
+    """Deploy gate — the pump's heartbeat `code` must match the code SHA on disk.
+
+    FAIL when the daemon is loaded and the running SHA (_last_heartbeat_code) differs from the
+    deployed SHA (_version_signal). N/A when the daemon is not loaded. Mirrors daemon.ensure's
+    drift branch (keeper kickstart) as an operator-visible doctor check (STD-VER-02)."""
+    from fanops import daemon
+    lbl = "publish daemon running current code (heartbeat SHA matches disk)"
+    interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
+    reader = daemon_status or (lambda c, iv: daemon.status(c, interval=iv))
+    try:
+        st = reader(cfg, interval)
+    except Exception:
+        with fail_open("doctor.deploy status read degrade:", log=logging.getLogger("fanops.doctor").debug):
+            raise
+    if not st.get("loaded"):
+        return None                                              # N/A — pump not loaded
+    running = daemon._last_heartbeat_code(cfg)
+    deployed = daemon._version_signal(cfg)[0]
+    if running is not None and deployed is not None and running != deployed:
+        return _check(lbl, False,
+                      f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
+                      f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
+    return _check(lbl, True, "")
+
+
 def _doctor_notes(cfg: Config) -> list[str]:
     lv = learning_validated(cfg)
     notes: list[str] = []
@@ -507,6 +534,9 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # Observe: status_reader from snapshot (no daemon.status / launchctl).
     dchk = _daemon_liveness_check(cfg, status_reader=daemon_status)
     checks.append(dchk)
+    dep = _deploy_code_check(cfg, daemon_status=daemon_status)
+    if dep is not None:
+        checks.append(dep)
     # Operational sensors: progress-blocking backlog → ok=False (doctor exit NONZERO); Layer A cooldown
     # stays warn-only. See _operational_sensor_checks.
     checks.extend(_operational_sensor_checks(cfg))

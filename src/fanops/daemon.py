@@ -406,11 +406,16 @@ def ensure(cfg: Config) -> dict:
                     _log.warning("ensure.kickstart_stale_code: run flock held — skipping mid-pass SIGTERM "
                                  "(running=%s deployed=%s)", running, deployed)
                 else:
-                    _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
-                               timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
-                    _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
-                    if action == "none":
-                        action = "kickstart_stale_code"
+                    sync_ok, sync_note = _sync_locked_deps()
+                    if not sync_ok:
+                        _log.warning("ensure.kickstart_stale_code: %s — skipping kickstart onto half-synced venv "
+                                     "(running=%s deployed=%s)", sync_note or "deps sync failed", running, deployed)
+                    else:
+                        _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
+                                   timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
+                        _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
+                        if action == "none":
+                            action = "kickstart_stale_code"
     ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
     return {"label": LABEL, "loaded": loaded, "action": action}
 

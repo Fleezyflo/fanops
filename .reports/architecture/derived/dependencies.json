@@ -1084,7 +1084,9 @@
         "fanops.config",
         "fanops.errors"
       ],
-      "lazy": [],
+      "lazy": [
+        "fanops.ledger"
+      ],
       "optional": [],
       "typing": []
     },
@@ -1338,6 +1340,7 @@
         "fanops.accounts",
         "fanops.agentstep",
         "fanops.caption",
+        "fanops.caption_compose",
         "fanops.clip",
         "fanops.config",
         "fanops.crosspost",
@@ -1505,6 +1508,7 @@
       ],
       "lazy": [
         "fanops.caption_compose",
+        "fanops.post.metrics.postiz_read",
         "fanops.timeutil"
       ],
       "optional": [],
@@ -2960,7 +2964,7 @@
     "fanops.canary_baseline": 1,
     "fanops.canary_identity": 2,
     "fanops.caption": 2,
-    "fanops.caption_compose": 1,
+    "fanops.caption_compose": 2,
     "fanops.caption_ingest": 1,
     "fanops.casting": 1,
     "fanops.cli": 0,
@@ -3235,7 +3239,7 @@
     "fanops.persona_research": 1,
     "fanops.persona_store": 4,
     "fanops.personas": 6,
-    "fanops.pipeline": 27,
+    "fanops.pipeline": 28,
     "fanops.pipeline_run": 3,
     "fanops.pipeline_status": 8,
     "fanops.post": 2,
@@ -4523,6 +4527,14 @@
       "to_level": 3
     },
     {
+      "from": "fanops.ledger_sqlite",
+      "from_level": 1,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.ledger",
+      "to_level": 2
+    },
+    {
       "from": "fanops.persona_store",
       "from_level": 2,
       "jump": 1,
@@ -4545,6 +4557,14 @@
       "same_scc": false,
       "to": "fanops.post.media",
       "to_level": 3
+    },
+    {
+      "from": "fanops.post.postiz",
+      "from_level": 3,
+      "jump": 1,
+      "same_scc": false,
+      "to": "fanops.post.metrics.postiz_read",
+      "to_level": 4
     },
     {
       "from": "fanops.post.publish_dryrun",
@@ -5149,11 +5169,11 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 820,
-    "lazy_edges": 454,
+    "compile_edges_G1": 821,
+    "lazy_edges": 456,
     "lazy_edges_lateral": 58,
-    "lazy_edges_strictly_upward": 112,
-    "lazy_edges_to_equal_or_higher_level": 170,
+    "lazy_edges_strictly_upward": 114,
+    "lazy_edges_to_equal_or_higher_level": 172,
     "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9

@@ -611,8 +611,8 @@ is told it succeeded.
 fs-write · 11 network · 9 subprocess · 12 env-write · 16 audited · 18 confirm-gated · 97 validated.
 Authorization is a **recorded decision** (`studio/CLAUDE.md`: *"no auth by design … declined as
 out-of-scope for localhost"*); the boundary is the network interface (`cli.py:1285`, default
-`127.0.0.1:8787`). Known server-side gap **MOL-71**: `do_wipe_confirm` has no server check that
-`do_wipe_preview` ran.
+`127.0.0.1:8787`). **MOL-71 CLOSED** — `confirm_wipe` enforces preview token (`actions_wipe.py`
+L47-57).
 
 ## B.5 Modules inspected
 
