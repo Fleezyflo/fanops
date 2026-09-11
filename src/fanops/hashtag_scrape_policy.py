@@ -158,9 +158,9 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
                           require_session: bool = True) -> list[str]:
     """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak.
 
-    Lock picker: `require_budget_room=True, require_session=False` (Safari; no envelope json).
-    Harvest remesure keeps `require_session=True`. `require_budget_room=False` skips only a live
-    freeze / auth hold — not day budget (Safari lock / remesure path).
+    Lock picker: `require_budget_room=True, require_session=False` (Safari web; no envelope json).
+    Harvest remesure keeps `require_session=True` (instagrapi envelope on disk).
+    `require_budget_room=False` skips only a live freeze / auth hold — not day budget.
     """
     from fanops.ig_hashtag_scrape import scrape_session_path, scrape_user_usable, scrape_users
     users = scrape_users(cfg)

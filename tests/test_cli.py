@@ -7,22 +7,23 @@ def test_hashtags_cli_help_is_safari_sidecar(capsys):
         main(["hashtags", "--help"])
     assert e.value.code == 0
     out = capsys.readouterr().out
-    assert "instagrapi" not in out.lower()
+    assert "instagrapi" in out.lower()
     assert "chrome" not in out.lower()
     assert "Safari" in out or "safari" in out.lower() or "sidecar" in out.lower() or "lock" in out.lower()
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "refresh", "--help"])
     assert e.value.code == 0
     refresh = capsys.readouterr().out
-    assert "instagrapi" not in refresh.lower()
+    assert "instagrapi" in refresh.lower()
     assert "harvest" not in refresh.lower()
-    assert "Safari" in refresh
+    assert "Safari" not in refresh
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "scrape-login", "--help"])
     assert e.value.code == 0
     login = capsys.readouterr().out
     assert "Chrome" not in login
-    assert "Safari" in login
+    assert "instagrapi" in login.lower()
+    assert "Safari" not in login
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "discover", "--help"])
     assert e.value.code == 0

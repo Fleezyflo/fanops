@@ -212,7 +212,7 @@ rg '^FANOPS_IG_SCRAPE_USER=' "$FANOPS_ROOT/.env"
 fanops doctor | rg -i 'hashtag Layer A scrape'
 
 # Session recovery if doctor omits the check or scrape aborts
-fanops hashtags scrape-login   # Safari tab; operator logs in manually
+fanops hashtags scrape-login   # instagrapi password login; promotes device envelope
 
 # Run log — should NOT see no_scrape stamped on every lock walk forever
 rg 'no_scrape' "$FANOPS_ROOT/00_control/run.log" | tail -20

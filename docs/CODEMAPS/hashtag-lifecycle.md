@@ -53,13 +53,14 @@ that source). Never the persona store ∪ corpus.
   7 days.
 - One Safari opener per tick: `ig_safari_shell` tick slot (`lock` OR `remesure`).
 - Cooldown / UTC day budget / peer LRU: `hashtag_scrape_policy` (`.hashtag_scrape_cooldown.json`).
-- Same Safari `ig_web_scrape.open_web_session` plane as lock produce.
+- Lock produce and remesure share `ig_hashtag_scrape.open_client` instagrapi envelope plane; scrape-login bootstraps
+  envelope via `open_client(allow_reauth=True)`.
 
 Manual `fanops hashtags refresh` is the same sidecar remesure
 (`hashtag_refresh.cmd_hashtags_refresh` → `_remesure_sidecar`). Operator session
-recovery: `hashtag_refresh.cmd_hashtags_scrape_login` (clears auth-death freeze per
-user). Live `hashtag_refresh.refresh_store()` without an injected client aborts
-`safari_only` — Layer A persona harvest is not a live operator path.
+recovery: `hashtag_refresh.cmd_hashtags_scrape_login` (instagrapi password login; clears
+auth-death freeze per user). Live `hashtag_refresh.refresh_store()` without an injected client aborts
+`safari_only` — Layer A instagrapi harvest requires an authenticated client.
 
 ## Ship — `hashtags.ship_from_lock`
 

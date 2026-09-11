@@ -114,7 +114,7 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_CORPUS_TARGET` | 80 | Ceiling on a persona's DERIVED corpus (never padded to reach it) | .env |
-| `FANOPS_IG_SCRAPE_USER` | None | Instagram username(s) for hashtag scrape. Comma-separated membership + LRU tiebreak. Lock picker is LRU + freeze-skip, Safari (no envelope json). Harvest remesure still needs a session file. Unattended tick: up to `FANOPS_LOCK_TAGS_PER_PASS` tags per pass, `delay_range` on each XHR | .env |
+| `FANOPS_IG_SCRAPE_USER` | None | Instagram username(s) for hashtag scrape. Comma-separated membership + LRU tiebreak. Lock picker is LRU + freeze-skip; lock/remesure via instagrapi envelope (`open_client`). Bootstrap envelope via `fanops hashtags scrape-login`. Unattended tick: up to `FANOPS_LOCK_TAGS_PER_PASS` tags per pass, `delay_range` on each request | .env |
 | `FANOPS_IG_SCRAPE_PASSWORD` | None | Shared Instagram password for hashtag Layer A scrape-login (write-only; never logged). Optional per-user override: append `_` + sanitized username (uppercase, non-alnum → `_`), e.g. user `perca.late` → `…_PASSWORD_PERCA_LATE` | .env |
 | `FANOPS_LOCK_TAGS_PER_PASS` | 4 | Max tags the unattended source-lock walk admits per Safari open (capped by `FANOPS_HASHTAG_SCRAPE_TRY_CAP`). Incomplete lock does not stamp `researched_at` | .env |
 | `FANOPS_HASHTAG_SCRAPE_TRY_CAP` | 25 | Max tags per **injected/manual** remesure client this pass (`_user_attempt_room`). Lock walk budget is `FANOPS_LOCK_TAGS_PER_PASS` (≤ try_cap). Incomplete remesure does not advance `last_complete_pass` | .env |

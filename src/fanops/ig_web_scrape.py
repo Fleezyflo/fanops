@@ -192,7 +192,7 @@ def open_web_session(cfg: Config, user: str | None = None, *, fetch=None) -> IgW
 
 
 def _lock_web_users(cfg: Config, now) -> list[str]:
-    """LRU scrape users with day-budget room. Safari lock: no envelope json required."""
+    """LRU scrape users with day-budget room. Safari lock: no instagrapi envelope json required."""
     from fanops.fanops_hashtags import _healthy_scrape_users
     return _healthy_scrape_users(cfg, now, require_budget_room=True, require_session=False)
 

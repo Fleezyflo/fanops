@@ -436,15 +436,68 @@ def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch)
     assert "Application Support/Google/Chrome" not in joined
 
 
-def test_scrape_login_no_profile_sid_does_not_promote(tmp_path, monkeypatch):
-    """Missing envelope is open_client's hatch; no dump, no tab wait, no password."""
-    from fanops.fanops_hashtags import cmd_hashtags_scrape_login
-    from fanops.ig_hashtag_scrape import scrape_session_path
+def test_scrape_login_cold_start_password_writes_envelope(tmp_path, monkeypatch):
+    """Cold start: no envelope, password login writes ig_scrape_session_<user>.json."""
+    import stat
+    from pathlib import Path
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
-    assert cmd_hashtags_scrape_login(cfg) == 2
     assert not scrape_session_path(cfg, "u").exists()
+    seen = {"login": 0, "dump": 0}
+
+    class _Cold:
+        def login(self, user, pw):
+            seen["login"] += 1
+            assert user == "u" and pw == "p"
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            Path(p).write_text('{"cold": true}')
+    c = open_client(cfg, client_factory=_Cold, allow_reauth=True, user="u")
+    assert c is not None
+    assert seen == {"login": 1, "dump": 1}
+    sess = scrape_session_path(cfg, "u")
+    assert sess.exists()
+    assert '"cold": true' in sess.read_text()
+    assert stat.S_IMODE(sess.stat().st_mode) == 0o600
+
+
+def test_open_client_allow_reauth_loginrequired_restores_password(tmp_path, monkeypatch):
+    """LoginRequired with allow_reauth clears auth and password-logins once."""
+    from pathlib import Path
+    from instagrapi.exceptions import LoginRequired
+    import fanops.ig_hashtag_scrape as igs
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text('{"keep": true}')
+    cleared = {"n": 0}
+    seen = {"login": 0, "dump": 0}
+    original_clear = igs._clear_auth_keep_device
+
+    def _track_clear(client):
+        cleared["n"] += 1
+        original_clear(client)
+    monkeypatch.setattr(igs, "_clear_auth_keep_device", _track_clear)
+
+    class _Restore:
+        authorization_data = {"ds_user_id": "1"}
+        def load_settings(self, _p): pass
+        def search_hashtags(self, _q):
+            raise LoginRequired("login_required")
+        def login(self, user, pw):
+            seen["login"] += 1
+            assert user == "u" and pw == "p"
+        def dump_settings(self, p):
+            seen["dump"] += 1
+            Path(p).write_text('{"restored": true}')
+    open_client(cfg, client_factory=_Restore, allow_reauth=True, user="u")
+    assert cleared["n"] == 1
+    assert seen == {"login": 1, "dump": 1}
 
 
 def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeypatch):
