@@ -4,7 +4,7 @@ import sqlite3, threading
 import pytest
 from fanops.config import Config
 from fanops.errors import LockBusyError
-from fanops.ledger import Ledger, SCHEMA_VERSION
+from fanops.ledger import Ledger, SCHEMA_VERSION, _file_lock
 from fanops.ledger_sqlite import SqliteLedgerStore
 from fanops.models import (
     Batch, Clip, ClipState, Fmt, ImportedMedia, Moment, MomentState, Platform, Post, PostState,
@@ -202,8 +202,8 @@ def test_restore_snapshot_writes_in_place_uncontended(tmp_path):
 
 
 def test_restore_snapshot_fallback_serializes_with_lock(tmp_path):
-    """INV-07: the os.replace fallback takes store.lock() (fcntl + BEGIN IMMEDIATE), so a writer
-    holding the lock blocks restore with LockBusyError — restore cannot race writers."""
+    """INV-07: the os.replace fallback takes _file_lock(cfg.lock_path) (fcntl), so a writer
+    holding the same fcntl domain blocks restore with LockBusyError — restore cannot race writers."""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc = _populated_ledger(cfg)._to_doc()
@@ -214,7 +214,7 @@ def test_restore_snapshot_fallback_serializes_with_lock(tmp_path):
     cfg.ledger_path.write_bytes(b"this is not a sqlite database")   # force os.replace fallback
     lock_inside = threading.Event(); lock_release = threading.Event()
     def writer():
-        with store.lock():
+        with _file_lock(cfg.lock_path):
             lock_inside.set(); lock_release.wait(5)
     tw = threading.Thread(target=writer); tw.start()
     assert lock_inside.wait(5)

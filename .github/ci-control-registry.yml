@@ -68,6 +68,11 @@ controls:
     workflow: .github/workflows/ci-e2e.yml
     job: e2e  # Audits the E2E toolchain environment without duplicating the large install
 
+  - id: CI-E2E-LAUNCHD
+    classification: scheduled
+    workflow: .github/workflows/ci-e2e.yml
+    job: launchd-e2e
+
   # ===== architecture.yml ===========================================================================
   - id: ARCH-IMPACT
     classification: advisory
