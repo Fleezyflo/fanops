@@ -158,7 +158,7 @@ def _healthy_scrape_users(cfg: Config, now: datetime, *, allow_reauth: bool = Fa
                           require_session: bool = True) -> list[str]:
     """Healthy scrape peers, LRU-oldest accounts[user].updated_at first; env order tiebreak.
 
-    Lock picker: `require_budget_room=True, require_session=False` (Safari web; no envelope json).
+    Lock picker: `require_budget_room=True, require_session=False` (peer LRU; no envelope gate).
     Harvest remesure keeps `require_session=True` (instagrapi envelope on disk).
     `require_budget_room=False` skips only a live freeze / auth hold — not day budget.
     """
