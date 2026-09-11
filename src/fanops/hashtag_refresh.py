@@ -1,7 +1,8 @@
 # src/fanops/hashtag_refresh.py
 """Hashtag measurement cache refresh/remesure orchestration (00_control/hashtags.json).
 
-Live tick: `refresh_store_if_due` remeasures sidecar pile ∪ lock via Safari. Operator
+Live tick: `refresh_store_if_due` remeasures sidecar pile ∪ lock via instagrapi envelope
+or Safari web. Operator
 `cmd_hashtags_refresh` runs the same remesure path. Layer A discovery harvest lives in
 `refresh_store` / `_refresh_pass` when `known_names` is None."""
 from __future__ import annotations
@@ -350,8 +351,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
     harvest = known_names is None
     if harvest and scrape_client is None:
         return {"written": False, "aborted": "safari_only",
-                "reason": ("Layer A instagrapi discovery removed — hashtag network is Safari web only; "
-                           "operator `fanops hashtags refresh` remesures sidecar names via Safari"),
+                "reason": ("Layer A instagrapi harvest requires an authenticated client — "
+                           "inject scrape_client or run fanops hashtags scrape-login"),
                 "backend": "safari"}
     if harvest:
         from fanops.persona_research import persona_terms
@@ -574,8 +575,8 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
             log("hashtags", "-", "pass_try_cap", tried=tried, queue_left=len(queue) - i, cap=try_cap)
     else:
         walk: list[tuple[str, int]] = []
-        # Harvest needs an envelope on disk. Tick remesure walks FANOPS_IG_SCRAPE_USER
-        # (Safari profile map, #1029) and does not require ig_scrape_session_*.json.
+        # Harvest needs instagrapi envelope on disk. Tick remesure walks FANOPS_IG_SCRAPE_USER
+        # and opens each peer via open_client (envelope json required).
         if harvest:
             peers = _healthy_scrape_users(cfg, now, allow_reauth=False)
         else:
@@ -754,7 +755,7 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
 
 
 def cmd_hashtags_refresh(cfg: Config) -> int:
-    """`fanops hashtags refresh` — Safari remesure of sidecar pile∪lock names. No instagrapi discovery.
+    """`fanops hashtags refresh` — instagrapi remesure of sidecar pile∪lock names. No persona harvest.
 
     Without FANOPS_IG_SCRAPE_USER or with no sidecar names / quota exhausted, aborts loudly (exit 2)."""
     from fanops.ig_hashtag_scrape import scrape_users
@@ -781,7 +782,7 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
         get_logger(cfg)("hashtags", "-", "refresh_aborted", level="error",
                         aborted=r.get("aborted", "unknown"), reason=r.get("reason", ""),
                         detail=("00_control/hashtags.json left untouched; "
-                                "fanops hashtags scrape-login for Safari session"))
+                                "fanops hashtags scrape-login for instagrapi envelope"))
         return 2
     unresolved = r.get("unresolved") or []
     codes = sorted({u.get("code") for u in unresolved if u.get("code") is not None})
@@ -797,13 +798,13 @@ def cmd_hashtags_refresh(cfg: Config) -> int:
 
 
 def cmd_hashtags_scrape_login(cfg: Config) -> int:
-    """`fanops hashtags scrape-login` — envelope promote. No Safari. No password.
+    """`fanops hashtags scrape-login` — instagrapi envelope bootstrap. No Safari window.
 
     Operator hatch: ignores an active cooldown and CLEARS it on success (MOL-699).
-    Sole `allow_reauth=True` call site. Loop every FANOPS_IG_SCRAPE_USER, probe the
-    on-disk envelope, dump if live. Dead/missing envelope fails that user
-    (`ScrapeUnavailable`). Unattended lock + remesure load the envelope via
-    `open_client` (no allow_reauth). Never password login. Never opens a browser.
+    Sole `allow_reauth=True` call site. Loop every FANOPS_IG_SCRAPE_USER: cold-start
+    password login or LoginRequired restore via `_clear_auth_keep_device`, then promote
+    envelope. Unattended lock + remesure load the envelope via `open_client`
+    (no allow_reauth). Never opens a browser.
 
     Multi-account (MOL-857/858): clears THAT user's freeze on success — peers keep
     their own cooldown."""

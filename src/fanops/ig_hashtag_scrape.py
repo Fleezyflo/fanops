@@ -363,6 +363,26 @@ def wait_for_scrape_profile_auth(cfg: Config, user: str, *, timeout_s: float = 3
         sleep(min(1.0, max(deadline - clock(), 0)))
 
 
+def _clear_auth_keep_device(client) -> None:
+    """Drop session auth/cookies so login() does not see a user_id and relogin=True.
+
+    Keep uuids, device_settings, user_agent, mid — set_settings({}) resets those to
+    library defaults and is the more suspicious fingerprint.
+    """
+    if hasattr(client, "authorization_data"):
+        client.authorization_data = {}
+    for sess_name in ("private", "public"):
+        sess_obj = getattr(client, sess_name, None)
+        cookies = getattr(sess_obj, "cookies", None)
+        if cookies is not None and hasattr(cookies, "clear"):
+            cookies.clear()
+        headers = getattr(sess_obj, "headers", None)
+        if isinstance(headers, dict):
+            headers.pop("Authorization", None)
+    if hasattr(client, "last_login"):
+        client.last_login = None
+
+
 def _promote_envelope(client, dump_sess: Path) -> None:
     """Write-once device envelope. scrape-login is the only caller."""
     dump_sess.parent.mkdir(parents=True, exist_ok=True)
@@ -373,15 +393,17 @@ def _promote_envelope(client, dump_sess: Path) -> None:
 
 def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False, user: str | None = None,
                 now: datetime | None = None):
-    """Open an instagrapi Client from the on-disk device envelope ONLY. PACED. Never echoes secrets.
+    """Open an authenticated instagrapi Client, PACED. Lazy-imports; never echoes secrets.
 
-    Sole live call site: `fanops hashtags scrape-login` best-effort envelope promote
-    (`allow_reauth=True`). Unattended hashtag network work (tick remesure, lock walk, manual
-    refresh) uses Safari web via `ig_web_scrape.open_web_session` — never Chrome cookie inject,
-    never this client on default paths.
+    `allow_reauth` defaults False (daemon / lock_ready_sources / Layer A): load_settings →
+    search_hashtags probe (never account_info, never login). Live envelope → return client,
+    no dump. LoginRequired → raise ScrapeUnavailable so callers rotate; on-disk dump left
+    untouched. Throttle/network propagate without overwrite.
 
-    Loads `ig_scrape_session_<user>.json`, search_hashtags-probes (account_info only when
-    allow_reauth). Dead envelope → ScrapeUnavailable. No password login.
+    Only `fanops hashtags scrape-login` passes `allow_reauth=True`: existing envelope → probe;
+    LoginRequired → `_clear_auth_keep_device` + password login via `scrape_password_for`
+    (UUIDs kept; never login(relogin=True)). No session file → cold-start password login.
+    Success → `_promote_envelope` writes the per-user dump.
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`.
     scrape-login passes an explicit `user` per account.
@@ -416,17 +438,29 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     client.delay_range = _scrape_delay_range()
     sess = scrape_session_path(cfg, user)
     dump_sess = cfg.control / f"ig_scrape_session_{user}.json"
-    if not sess.exists():
-        raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
-    client.load_settings(str(sess))
-    try:
-        _probe_scrape_session(client, allow_account_info=allow_reauth)
-    except Exception as e:                              # noqa: BLE001 — probe surface is opaque
-        get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__, via="envelope")
-        if not scrape_session_needs_restore(e):
-            raise
-        raise ScrapeUnavailable(
-            "scrape session dead — run fanops hashtags scrape-login") from e
+    if sess.exists():
+        client.load_settings(str(sess))
+        try:
+            _probe_scrape_session(client, allow_account_info=allow_reauth)
+        except Exception as e:                          # noqa: BLE001 — probe surface is opaque
+            get_logger(cfg)("hashtags", user, "scrape_reauth", err=type(e).__name__, via="envelope")
+            if not scrape_session_needs_restore(e):
+                raise
+            if not allow_reauth:
+                raise ScrapeUnavailable(
+                    "scrape session dead — run fanops hashtags scrape-login") from e
+            pw = scrape_password_for(user)
+            if not pw:
+                raise ScrapeUnavailable("no scrape password configured") from e
+            _clear_auth_keep_device(client)
+            client.login(user, pw)
+    else:
+        if not allow_reauth:
+            raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")
+        pw = scrape_password_for(user)
+        if not pw:
+            raise ScrapeUnavailable("no scrape password configured")
+        client.login(user, pw)
     if allow_reauth:
         _promote_envelope(client, dump_sess)
     setattr(client, "_fanops_scrape_user", user)

@@ -186,17 +186,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_learn = sub.add_parser("learn", help="learning-loop diagnostics (read-only)")
     learn_sub = p_learn.add_subparsers(dest="learn_cmd", required=True)
     learn_sub.add_parser("doctor", help="read-only: does live Postiz analytics carry the reach signal lift_score needs?")
-    p_hash = sub.add_parser("hashtags", help="source-lock measurement cache (Safari play_count)")
+    p_hash = sub.add_parser("hashtags", help="source-lock measurement cache (instagrapi envelope)")
     hash_sub = p_hash.add_subparsers(dest="hashtags_cmd", required=True)
     hash_sub.add_parser(
         "refresh",
-        help="remesure sidecar pile and lock names now via Safari",
-        description="remesure sidecar pile and lock names now via Safari",
+        help="remesure sidecar pile and lock names now via instagrapi envelope",
+        description="remesure sidecar pile and lock names now via instagrapi envelope",
     )
     hash_sub.add_parser(
         "scrape-login",
-        help="open Safari on Instagram and promote the device envelope",
-        description="open Safari on Instagram and promote the device envelope",
+        help="instagrapi password login and promote the device envelope",
+        description="instagrapi password login and promote the device envelope",
     )
     hash_sub.add_parser(
         "discover",

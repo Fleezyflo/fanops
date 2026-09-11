@@ -160,13 +160,14 @@ def test_measurements_accrue_across_passes(tmp_path, monkeypatch):
 
 
 def test_refresh_store_no_scrape_aborts_loudly(tmp_path, monkeypatch):
-    # Default harvest without injected client refuses instagrapi (Safari-only runtime).
+    # Default harvest without injected client refuses instagrapi (no authenticated client).
     monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path); _persona(cfg)
     out = refresh_store(cfg)
     assert out["written"] is False and out["aborted"] == "safari_only"
-    assert "Safari" in out["reason"]
+    assert "instagrapi" in out["reason"]
+    assert "Safari" not in out["reason"]
     assert not cfg.hashtags_path.exists()
 
 
@@ -935,15 +936,16 @@ def test_open_client_unattended_throttle_does_not_overwrite_dump(tmp_path, monke
 
 
 def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
-    """A rejected profile probe must not overwrite the on-disk envelope or password-login."""
-    from instagrapi.exceptions import LoginRequired
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
+    """BadPassword on restore must not overwrite the on-disk envelope."""
+    from instagrapi.exceptions import BadPassword, LoginRequired
+    from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
-    sess.write_text('{"keep": true}')
+    original = '{"keep": true}'
+    sess.write_text(original)
     seen = {"login": 0}
 
     class _Fail:
@@ -952,15 +954,13 @@ def test_open_client_failed_login_does_not_dump(tmp_path, monkeypatch):
             raise LoginRequired("login_required")
         def login(self, *_a, **_k):
             seen["login"] += 1
+            raise BadPassword("bad password")
         def dump_settings(self, _p):
-            raise AssertionError("must not dump after failed profile probe")
-    try:
+            raise AssertionError("must not dump after failed login")
+    with pytest.raises(BadPassword):
         open_client(cfg, client_factory=_Fail, allow_reauth=True, user="u")
-        raise AssertionError("expected ScrapeUnavailable")
-    except ScrapeUnavailable:
-        pass
-    assert seen["login"] == 0
-    assert '"keep": true' in sess.read_text()
+    assert seen["login"] == 1
+    assert sess.read_text() == original
 
 
 def test_open_client_valid_session_skips_login_on_both_paths(tmp_path, monkeypatch):
@@ -2246,13 +2246,14 @@ def test_ht4_cmd_hashtags_refresh_uses_safari_remesure(tmp_path, monkeypatch):
 
 
 def test_ht4_refresh_store_harvest_without_client_refuses_instagrapi(tmp_path, monkeypatch):
-    """Default refresh_store harvest path refuses silent instagrapi (Safari-only runtime)."""
+    """Default refresh_store harvest path refuses silent instagrapi (no authenticated client)."""
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     cfg = Config(root=tmp_path)
     _persona(cfg)
     out = refresh_store(cfg)
     assert out["aborted"] == "safari_only"
-    assert "Safari" in out["reason"]
+    assert "instagrapi" in out["reason"]
+    assert "Safari" not in out["reason"]
 
 
 def test_tick_remesure_safari_no_envelope_not_no_scrape(tmp_path, monkeypatch):
