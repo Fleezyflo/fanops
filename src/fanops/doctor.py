@@ -234,12 +234,13 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     lbl = "publish daemon running current code (heartbeat SHA matches disk)"
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
     reader = daemon_status or (lambda c, iv: daemon.status(c, interval=iv))
+    st = None
     try:
         st = reader(cfg, interval)
     except Exception:
         with fail_open("doctor.deploy status read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
-    if not st.get("loaded"):
+            pass
+    if not st or not st.get("loaded"):
         return None                                              # N/A — pump not loaded
     running = daemon._last_heartbeat_code(cfg)
     deployed = daemon._version_signal(cfg)[0]

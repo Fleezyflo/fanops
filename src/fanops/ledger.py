@@ -589,7 +589,7 @@ class Ledger:
             with store.lock(timeout=timeout):                  # serialize with Ledger.transaction (RC-5)
                 store.write_raw(doc)
         else:
-            with store.lock(timeout=timeout):                  # INV-07: same domain as Ledger.transaction
+            with _file_lock(cfg.lock_path, timeout=timeout):   # INV-07: fcntl domain shared — writers nest _file_lock inside store.lock()
                 store.restore(src)
         _snapshot_restore_control_files(cfg, src)
 

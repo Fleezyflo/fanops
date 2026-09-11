@@ -444,7 +444,7 @@
         "line": 589
       },
       {
-        "call": "store.lock",
+        "call": "_file_lock",
         "line": 592
       }
     ],
