@@ -2,7 +2,7 @@
 """Hashtag measurement cache refresh/remesure orchestration (00_control/hashtags.json).
 
 Live tick: `refresh_store_if_due` remeasures sidecar pile ∪ lock via instagrapi envelope
-or Safari web. Operator
+(`open_client`). Operator
 `cmd_hashtags_refresh` runs the same remesure path. Layer A discovery harvest lives in
 `refresh_store` / `_refresh_pass` when `known_names` is None."""
 from __future__ import annotations
@@ -353,7 +353,7 @@ def _refresh_pass(cfg: Config, *, scrape_client=None, now=None, known_names=None
         return {"written": False, "aborted": "safari_only",
                 "reason": ("Layer A instagrapi harvest requires an authenticated client — "
                            "inject scrape_client or run fanops hashtags scrape-login"),
-                "backend": "safari"}
+                "backend": "instagrapi"}
     if harvest:
         from fanops.persona_research import persona_terms
         try:

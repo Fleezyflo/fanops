@@ -51,7 +51,7 @@ that source). Never the persona store ∪ corpus.
   run loop (HV1-PR4).
 - Cadence gated on `last_complete_pass` (default 12h), exact-name quota ≤30 /
   7 days.
-- One Safari opener per tick: `ig_safari_shell` tick slot (`lock` OR `remesure`).
+- One tick slot mutex per tick (`ig_safari_shell`; names `lock` OR `remesure` only — network opens via `open_client`).
 - Cooldown / UTC day budget / peer LRU: `hashtag_scrape_policy` (`.hashtag_scrape_cooldown.json`).
 - Lock produce and remesure share `ig_hashtag_scrape.open_client` instagrapi envelope plane; scrape-login bootstraps
   envelope via `open_client(allow_reauth=True)`.
