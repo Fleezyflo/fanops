@@ -3,7 +3,7 @@
 
 `fanops posts recaption` drives the EXISTING stages over every awaiting_approval / non-imminent
 queued post — it implements NO caption logic of its own: caption.request_captions (fresh payload =
-current persona/corpus/genre by construction) -> responder.answer_pending(kinds=captions, parallel)
+current source-lock menu + persona by construction) -> responder.answer_pending(kinds=captions, parallel)
 -> caption.ingest_captions (brand-risk, ship_from_lock from the source sidecar —
 recaption reads the lock and does not produce it; pool→pick ships hashtags per surface) -> a short
 transaction syncing each linked post's caption/hashtags from the seed clip's meta_captions.
