@@ -100,6 +100,59 @@ def test_caption_request_stale_legacy_no_fingerprint_even_if_menu_matches(tmp_pa
     assert caption_request_stale(cfg, "clip_1", want) is True
 
 
+def test_caption_request_stale_legacy_corpus_key_wrong_menu(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta", "#gamma"], "lock": ["#alpha"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "corpus": ["#alpha", "#beta", "#gamma"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
+def test_caption_request_stale_fingerprint_present_menu_mismatch(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.caption_compose import _lock_fingerprint
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock = ["#alpha"]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta", "#gamma"], "lock": lock,
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "lock_fingerprint": _lock_fingerprint(lock),
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "hashtag_store": ["#alpha", "#beta", "#gamma"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
 def test_caption_request_stale_when_lock_menu_changes(tmp_path):
     from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
     from fanops.source_tags import source_tag_locks_path
