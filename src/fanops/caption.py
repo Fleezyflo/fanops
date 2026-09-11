@@ -4,7 +4,6 @@ brand-risk HOLD in BOTH English and Arabic (FIX F33), REQUIRES a caption for eve
 surface (FIX F74 — no silent default), stores clean captions keyed by the documented
 'account/platform' contract (FIX F43), and advances only if nothing is held."""
 from __future__ import annotations
-import hashlib
 import json
 import logging
 from fanops.config import Config
@@ -27,9 +26,10 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import ship_from_lock, load_measurements
+from fanops.hashtags import ship_from_lock, load_measurements, _dedupe_norm
 from fanops.control import load_guidance
-from fanops.caption_compose import (_hashtag_metrics_for, _source_lock_completed, _source_lock_tags)
+from fanops.caption_compose import (_hashtag_metrics_for, _lock_fingerprint, _source_lock_completed,
+                                    _source_lock_tags)
 from fanops.caption_ingest import (_caption_entry, _lang_base, _platform_for_surface, _request_surfaces,
                                     _tags_in, brand_risk_flag, is_tags_only_caption)
 
@@ -42,9 +42,6 @@ VARIATION_AXES = ("hook_string", "caption_angle", "hook_placement")
 
 def _surface_str(account: str, platform: Platform) -> str:
     return f"{account}/{platform.value}"                  # the documented lookup contract
-
-def _lock_fingerprint(lock: list[str]) -> str:
-    return hashlib.sha256(json.dumps(lock, sort_keys=False).encode()).hexdigest()[:16]
 
 def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[str, Platform]]) -> bool:
     """True when the on-disk caption gate must be (re)opened: no request yet, or the requested surface
@@ -70,14 +67,22 @@ def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[s
     except Exception as exc:
         logger.warning("caption staleness: request unreadable for %s (%s); regenerating", clip_id, exc)
         return True
-    got_fp = req.get("lock_fingerprint")
-    if isinstance(got_fp, str) and got_fp:
-        led = Ledger.load(cfg)
-        clip = led.clips.get(clip_id)
-        moment = led.moments.get(clip.parent_id) if clip is not None else None
-        src = led.sources.get(moment.parent_id) if moment is not None else None
-        if _lock_fingerprint(_source_lock_tags(cfg, src)) != got_fp:
+    led = Ledger.load(cfg)
+    clip = led.clips.get(clip_id)
+    moment = led.moments.get(clip.parent_id) if clip is not None else None
+    src = led.sources.get(moment.parent_id) if moment is not None else None
+    if _source_lock_completed(cfg, src):
+        lock = _source_lock_tags(cfg, src)
+        fp = req.get("lock_fingerprint")
+        if not (isinstance(fp, str) and fp) or _lock_fingerprint(lock) != fp:
             return True
+        for s in req.get("surfaces") or []:
+            if not isinstance(s, dict):
+                continue
+            raw = s.get("hashtag_store") or s.get("corpus") or []
+            menu = _dedupe_norm(t for t in raw if isinstance(t, str)) if isinstance(raw, list) else []
+            if (lock and menu != lock) or (not lock and menu):
+                return True
     return False
 
 def _learned_hooks(led: Ledger, cfg: Config,

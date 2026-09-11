@@ -1,5 +1,7 @@
 """Posted-caption compose helpers + source lock reads for the caption/ship path."""
 from __future__ import annotations
+import hashlib
+import json
 import re
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -36,6 +38,17 @@ def _source_lock_tags(cfg: Config, src) -> list[str]:
     if not isinstance(raw, list):
         return []
     return _dedupe_norm(t for t in raw if isinstance(t, str))
+
+
+def _lock_fingerprint(lock: list[str]) -> str:
+    return hashlib.sha256(json.dumps(lock, sort_keys=False).encode()).hexdigest()[:16]
+
+
+def _tags_off_lock(cfg: Config, src, tags: list) -> bool:
+    if not _source_lock_completed(cfg, src):
+        return False
+    allowed = set(_source_lock_tags(cfg, src))
+    return any(t not in allowed for t in _dedupe_norm(tags or []))
 
 
 def compose_posted_caption(sentence, tags) -> str:

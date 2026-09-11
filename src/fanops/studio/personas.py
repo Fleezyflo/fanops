@@ -1,5 +1,5 @@
-"""Studio "Personas" actions (A2): create / edit / delete a first-class Persona, curate its hashtag
-corpus, and connect accounts to it — ENTIRELY in the browser (no personas.json / accounts.json
+"""Studio "Personas" actions (A2): create / edit / delete a first-class Persona and connect
+accounts to it — ENTIRELY in the browser (no personas.json / accounts.json
 hand-edit). A thin operator-facing surface over the A1 core writers (fanops.personas) + the account
 link writer (accounts.link_persona); every function returns an ActionResult (ok/error/detail) and
 NEVER raises into a 500, so the htmx panel always renders an inline ✓/✗. Mirrors golive.py exactly:

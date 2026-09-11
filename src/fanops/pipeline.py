@@ -21,6 +21,7 @@ from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
+from fanops.caption_compose import _source_lock_completed, _tags_off_lock
 from fanops.crosspost import crosspost_clips, owner_caption_surfaces
 from fanops.post.run import publish_due
 from fanops.reconcile import reconcile_due
@@ -284,7 +285,12 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
             continue
         if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
             continue
-        if c.state in (ClipState.captioned, ClipState.queued) and need <= have:
+        src = led.sources.get(m.parent_id)
+        off_lock = _source_lock_completed(cfg, src) and any(
+            _tags_off_lock(cfg, src, (c.meta_captions or {}).get(s, {}).get("hashtags") or [])
+            for s in need if isinstance((c.meta_captions or {}).get(s), dict)
+        )
+        if c.state in (ClipState.captioned, ClipState.queued) and need <= have and not off_lock:
             continue
         try:
             led = request_captions(led, cfg, c.id, want, accounts=accts)

@@ -52,6 +52,107 @@ def test_caption_request_stale_when_surface_set_drifts(tmp_path):
     assert caption_request_stale(cfg, "clip_x", want_both) is True
 
 
+def test_caption_request_stale_legacy_no_fingerprint_wrong_menu(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta", "#gamma"], "lock": ["#alpha"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "hashtag_store": ["#alpha", "#beta", "#gamma"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
+def test_caption_request_stale_legacy_no_fingerprint_even_if_menu_matches(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha"], "lock": ["#alpha"], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram", "hashtag_store": ["#alpha"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
+def test_caption_request_stale_legacy_corpus_key_wrong_menu(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta", "#gamma"], "lock": ["#alpha"],
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "corpus": ["#alpha", "#beta", "#gamma"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
+def test_caption_request_stale_fingerprint_present_menu_mismatch(tmp_path):
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.caption_compose import _lock_fingerprint
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock = ["#alpha"]
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha", "#beta", "#gamma"], "lock": lock,
+                  "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080, language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.rendered))
+    write_request(cfg, kind="captions", key="clip_1", payload={
+        "clip_id": "clip_1",
+        "lock_fingerprint": _lock_fingerprint(lock),
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram",
+                      "hashtag_store": ["#alpha", "#beta", "#gamma"]}],
+    })
+    assert caption_request_stale(cfg, "clip_1", want) is True
+
+
 def test_caption_request_stale_when_lock_menu_changes(tmp_path):
     from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
     from fanops.source_tags import source_tag_locks_path
@@ -168,6 +269,63 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     # missing-caption skip. Previously the selection-deny was silent, so only @b appeared; now the swap is
     # FULLY traced, never partially silent.
     assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}
+
+
+def _refresh_fixture(tmp_path, *, clip_state, meta_captions):
+    from fanops.pipeline import _stage_refresh_caption_requests
+    from fanops.source_tags import source_tag_locks_path
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [_acct("a")])
+    clip_path = cfg.clips / "c.mp4"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"X")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/show.mp4", language="en"))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me",
+                              state=MomentState.clipped, affinities=["a"]))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(clip_path),
+                          aspect=Fmt.r9x16, state=clip_state, meta_captions=meta_captions))
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": ["#alpha"], "lock": ["#alpha"], "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    logs = []
+    with Ledger.transaction(cfg) as led:
+        _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg),
+                                        lambda *a, **k: logs.append((a, k)))
+    return cfg, logs
+
+
+def test_refresh_reopens_queued_clip_with_off_lock_meta_captions(tmp_path):
+    from fanops.agentstep import latest_request_id
+    cfg, logs = _refresh_fixture(tmp_path, clip_state=ClipState.queued,
+                                 meta_captions={"a/instagram": {"caption": "cap", "hashtags": ["#offlock"]},
+                                                "a/youtube": {"caption": "cap", "hashtags": ["#alpha"]}})
+    assert latest_request_id(cfg, "captions", "clip_1")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    assert logs
+
+
+def test_refresh_reopens_captioned_clip_with_off_lock_meta_captions(tmp_path):
+    from fanops.agentstep import latest_request_id
+    cfg, logs = _refresh_fixture(tmp_path, clip_state=ClipState.captioned,
+                                 meta_captions={"a/instagram": {"caption": "cap", "hashtags": ["#offlock"]},
+                                                "a/youtube": {"caption": "cap", "hashtags": ["#alpha"]}})
+    assert latest_request_id(cfg, "captions", "clip_1")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    assert logs
+
+
+def test_refresh_skips_queued_clip_with_on_lock_meta_captions(tmp_path):
+    from fanops.agentstep import latest_request_id
+    cfg, logs = _refresh_fixture(tmp_path, clip_state=ClipState.queued,
+                                 meta_captions={"a/instagram": {"caption": "cap", "hashtags": ["#alpha"]},
+                                                "a/youtube": {"caption": "cap", "hashtags": ["#alpha"]}})
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.queued
+    assert not logs
 
 
 def test_refresh_opens_caption_gate_for_rendered_clip(tmp_path):
