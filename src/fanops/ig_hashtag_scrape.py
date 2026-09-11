@@ -401,8 +401,8 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
     untouched. Throttle/network propagate without overwrite.
 
     Only `fanops hashtags scrape-login` passes `allow_reauth=True`: existing envelope → probe;
-    LoginRequired → `_clear_auth_keep_device` + password login via `scrape_password_for`
-    (UUIDs kept; never login(relogin=True)). No session file → cold-start password login.
+    LoginRequired → `_clear_auth_keep_device` + `login(..., relogin=True)` via `scrape_password_for`
+    (UUIDs kept). No session file → cold-start password login.
     Success → `_promote_envelope` writes the per-user dump.
 
     Multi-account (MOL-857/858): when `user` is omitted, pick via `_pick_healthy_scrape_user`.
@@ -453,7 +453,7 @@ def open_client(cfg: Config, *, client_factory=None, allow_reauth: bool = False,
             if not pw:
                 raise ScrapeUnavailable("no scrape password configured") from e
             _clear_auth_keep_device(client)
-            client.login(user, pw)
+            client.login(user, pw, relogin=True)
     else:
         if not allow_reauth:
             raise ScrapeUnavailable("no scrape session — run fanops hashtags scrape-login")

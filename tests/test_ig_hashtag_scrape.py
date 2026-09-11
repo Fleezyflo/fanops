@@ -489,9 +489,10 @@ def test_open_client_allow_reauth_loginrequired_restores_password(tmp_path, monk
         def load_settings(self, _p): pass
         def search_hashtags(self, _q):
             raise LoginRequired("login_required")
-        def login(self, user, pw):
+        def login(self, user, pw, relogin=False):
             seen["login"] += 1
             assert user == "u" and pw == "p"
+            assert relogin is True
         def dump_settings(self, p):
             seen["dump"] += 1
             Path(p).write_text('{"restored": true}')
