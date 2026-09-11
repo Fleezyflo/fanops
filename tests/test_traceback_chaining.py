@@ -23,10 +23,10 @@ from fanops.ledger_sqlite import SqliteLedgerStore
 from fanops.stage_lock import stage_lock, _lock_path_for
 
 
-def test_ledger_lock_busy_preserves_operationalerror_cause(tmp_path):
+def test_ledger_lock_busy_preserves_contention_cause(tmp_path):
     # R-002: a live write holder forces SqliteLedgerStore.lock to time out and raise LockBusyError.
-    # The raise chains the OperationalError from SQLITE_BUSY (`from err`), so __cause__ is that
-    # OperationalError — not None (the bare re-raise dropped it).
+    # Post-D3, fcntl is acquired before BEGIN IMMEDIATE, so __cause__ is usually BlockingIOError;
+    # if contention surfaces at the sqlite layer instead, OperationalError is also valid.
     cfg = Config(root=tmp_path)
     Ledger.load(cfg).save()
     holder_store = SqliteLedgerStore(cfg)
@@ -49,8 +49,8 @@ def test_ledger_lock_busy_preserves_operationalerror_cause(tmp_path):
     finally:
         release.set()
         t.join(5)
-    assert isinstance(ei.value.__cause__, sqlite3.OperationalError), \
-        "LockBusyError dropped the OperationalError cause (B904 raise-from missing)"
+    assert isinstance(ei.value.__cause__, (BlockingIOError, sqlite3.OperationalError)), \
+        "LockBusyError dropped the contention cause (B904 raise-from missing)"
 
 
 def test_stage_lock_busy_preserves_blockingioerror_cause(tmp_path):

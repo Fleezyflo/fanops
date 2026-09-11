@@ -454,6 +454,12 @@
         "line": 83
       }
     ],
+    "fanops.ledger_sqlite": [
+      {
+        "call": "_file_lock",
+        "line": 110
+      }
+    ],
     "fanops.pipeline_run": [
       {
         "call": "fcntl.flock",
@@ -567,7 +573,7 @@
       },
       {
         "call": "requests.post",
-        "line": 512
+        "line": 569
       }
     ],
     "fanops.post.zernio": [
@@ -669,11 +675,7 @@
       },
       {
         "call": "subprocess.run",
-        "line": 707
-      },
-      {
-        "call": "subprocess.run",
-        "line": 733
+        "line": 712
       },
       {
         "call": "subprocess.run",
@@ -681,11 +683,15 @@
       },
       {
         "call": "subprocess.run",
-        "line": 766
+        "line": 743
       },
       {
         "call": "subprocess.run",
-        "line": 839
+        "line": 771
+      },
+      {
+        "call": "subprocess.run",
+        "line": 844
       }
     ],
     "fanops.discover": [
@@ -838,7 +844,7 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 84,
-    "lock_sites": 21,
+    "lock_sites": 22,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,

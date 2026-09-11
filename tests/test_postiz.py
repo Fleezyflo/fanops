@@ -50,7 +50,18 @@ def _capture(mocker):
         PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
         PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
     ])
+    mocker.patch("fanops.post.metrics.postiz_read.requests.get", return_value=_R(200, {"posts": []}))
     return cap
+
+def _matching_postiz_row(*, intg_id="intg_1", content="fire", sid="postiz_existing"):
+    return {"id": sid, "state": "QUEUE", "integration": {"id": intg_id}, "content": content}
+
+def _integrations_patch(mocker):
+    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=[
+        PostizIntegration(id="intg_1", name="ig", platform="instagram-standalone"),
+        PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
+        PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
+    ])
 
 def _settings(cap):
     return cap["json"]["posts"][0]["settings"]
@@ -248,6 +259,37 @@ def test_publish_network_error_parks_needs_reconcile_no_repost(tmp_path, monkeyp
                  side_effect=_rq.exceptions.ConnectionError("dropped"))
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
+
+
+def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    post_mock = mocker.patch("fanops.post.postiz.requests.post")
+    _integrations_patch(mocker)
+    mocker.patch("fanops.post.metrics.postiz_read.requests.get",
+                 return_value=_R(200, {"posts": [_matching_postiz_row()]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_not_called()
+    assert led.posts["p1"].state is PostState.submitted
+    assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch, mocker):
+    import requests as _rq
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    _integrations_patch(mocker)
+    mocker.patch("fanops.post.postiz.requests.post",
+                 side_effect=_rq.exceptions.ConnectTimeout("timed out"))
+    calls = {"n": 0}
+    def get_side(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _R(200, {"posts": []})
+        return _R(200, {"posts": [_matching_postiz_row()]})
+    mocker.patch("fanops.post.metrics.postiz_read.requests.get", side_effect=get_side)
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert led.posts["p1"].state is PostState.submitted
+    assert led.posts["p1"].submission_id == "postiz_existing"
+    assert calls["n"] == 2
 
 def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
     # A 429 is rejected pre-processing (not posted), so retrying is safe; exhausting retries -> failed

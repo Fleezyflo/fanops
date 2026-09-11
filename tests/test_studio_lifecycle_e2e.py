@@ -15,8 +15,8 @@ from fanops import daemon
 #     skip into a failure, with no allowlist (tests/_require_e2e.py).
 #   * `skipif` is for humans: a developer on Linux running `-m integration` gets a clean skip with a
 #     reason instead of a RuntimeError traceback out of daemon.py.
-# CONSEQUENCE, stated rather than buried: daemon reload has NO CI coverage anywhere. Closing that
-# needs this test on a macos runner, which MOL-830 records as the follow-up.
+# CONSEQUENCE, stated rather than buried: the `launchd-e2e` job in `.github/workflows/ci-e2e.yml`
+# runs this test on `macos-latest` (`python -m pytest -q tests/test_studio_lifecycle_e2e.py -m macos_only`).
 @pytest.mark.integration
 @pytest.mark.macos_only
 @pytest.mark.skipif(sys.platform != "darwin", reason="MOL-830: fanops daemon is launchd/macOS-only")

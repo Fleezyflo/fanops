@@ -1,0 +1,11 @@
+{
+  "id": "cmr0postizcreate001",
+  "publishDate": "2099-01-01T00:00:00.000Z",
+  "state": "scheduled",
+  "integration": {
+    "id": "intg_1",
+    "name": "ig",
+    "identifier": "instagram-standalone"
+  },
+  "content": "fire"
+}

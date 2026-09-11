@@ -106,26 +106,28 @@ class SqliteLedgerStore:
         if self._conn is not None:
             raise RuntimeError("SqliteLedgerStore.lock() nested on same instance")
         tout = timeout if timeout is not None else _DEFAULT_LOCK_TIMEOUT
-        self._conn = self._open(timeout=tout)
-        try:
+        from fanops.ledger import _file_lock  # deferred: ledger imports this module at load
+        with _file_lock(self.cfg.lock_path, timeout=tout):   # INV-07: fcntl before BEGIN IMMEDIATE
+            self._conn = self._open(timeout=tout)
             try:
-                self._conn.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as err:
-                raise LockBusyError(
-                    f"ledger lock busy > {tout}s (another fanops process is writing): {self.db_path}") from err
-            yield
-            self._conn.commit()
-            try: self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except sqlite3.OperationalError: pass
-        except LockBusyError:
-            self._conn.rollback()
-            raise
-        except Exception:
-            self._conn.rollback()
-            raise
-        finally:
-            conn, self._conn = self._conn, None
-            conn.close()
+                try:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as err:
+                    raise LockBusyError(
+                        f"ledger lock busy > {tout}s (another fanops process is writing): {self.db_path}") from err
+                yield
+                self._conn.commit()
+                try: self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.OperationalError: pass
+            except LockBusyError:
+                self._conn.rollback()
+                raise
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                conn, self._conn = self._conn, None
+                conn.close()
 
     def snapshot(self, dest: Path) -> None:
         if dest.exists():

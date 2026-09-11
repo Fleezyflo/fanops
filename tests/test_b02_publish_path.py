@@ -43,7 +43,7 @@ def _seed_queued(cfg, pid="p1", cid="c1", *, sched="2020-01-01T00:00:00Z", sub=N
                           submission_id=sub))
 
 
-# ---- H01: retry ConnectTimeout only, not ConnectionError ----
+# ---- H01: Postiz ConnectTimeout does not retry; ConnectionError parks immediately ----
 def test_postiz_connection_error_single_attempt_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
     from fanops.post.postiz import PostizPoster
     _live_postiz(monkeypatch)
@@ -62,31 +62,6 @@ def test_postiz_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
     PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
     assert calls["n"] == 1
-
-
-def test_postiz_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, mocker):
-    from fanops.post.postiz import PostizPoster, _MAX_RETRIES
-    _live_postiz(monkeypatch)
-    cfg = Config(root=tmp_path)
-    _seed_queued(cfg)
-    led = Ledger.load(cfg)
-    with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
-    led = Ledger.load(cfg)
-    calls = {"n": 0}
-    class _R:
-        status_code = 201
-        def json(self): return {"id": "postiz_ok"}
-    def post_side(*a, **kw):
-        calls["n"] += 1
-        if calls["n"] < _MAX_RETRIES:
-            raise _rq.exceptions.ConnectTimeout("timed out")
-        return _R()
-    mocker.patch("fanops.post.postiz.requests.post", side_effect=post_side)
-    mocker.patch("fanops.post.postiz.time.sleep", return_value=None)
-    PostizPoster(cfg).publish(led, "p1")
-    assert led.posts["p1"].state is PostState.submitted
-    assert calls["n"] == _MAX_RETRIES
 
 
 def test_zernio_connection_error_single_attempt_parks_needs_reconcile(tmp_path, monkeypatch, mocker):

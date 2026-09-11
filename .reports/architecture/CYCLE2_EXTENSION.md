@@ -221,10 +221,9 @@ Full per-route contract: [`route_contract.json`](route_contract.json).
 | Input validation present | 97 / 108 |
 | **Idempotency** | Not enforced at the route layer. **Inherited from the action**: content-addressed ids + `setdefault` + in-lock source-state guards make most POSTs naturally idempotent. |
 
-**Known server-side gap (MOL-71, self-declared in [studio/CLAUDE.md](src/fanops/studio/CLAUDE.md)):**
-`do_wipe_confirm` has **no server-side check that `do_wipe_preview` ran first** — "preview before
-confirm" is a **UI convention only**. The typed-word (`REMOVE`) and mandatory-snapshot gates are
-unaffected.
+**MOL-71 CLOSED** — `confirm_wipe` enforces preview token (`actions_wipe.py` L47-57): confirm must
+match a fresh `preview_wipe` token; stale or missing preview is refused before snapshot or removal.
+The typed-word (`REMOVE`) and mandatory-snapshot gates are unchanged.
 
 ---
 

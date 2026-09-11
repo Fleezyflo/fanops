@@ -73,8 +73,7 @@
   {
    "op": "execute_wipe",
    "site": "ledger_wipe.py:252-275",
-   "verdict": "SAFE-BY-CONSTRUCTION — FULLY inside ONE Ledger.transaction, so a raise halfway rolls back ENTIRELY. Gated: WipeNotConfirmed unless confirmed; SnapshotRequired unless snapshot_is_restorable ACTUALLY OPENS the SQLite file and reads schema_version. *** It writes a .files.txt manifest of media paths but DOES NOT UNLINK MEDIA. ***",
-   "known_gap": "MOL-71 — do_wipe_confirm has NO server-side check that do_wipe_preview ran. 'Preview before confirm' is a UI CONVENTION ONLY.",
+   "verdict": "SAFE-BY-CONSTRUCTION — FULLY inside ONE Ledger.transaction, so a raise halfway rolls back ENTIRELY. Gated: WipeNotConfirmed unless confirmed; SnapshotRequired unless snapshot_is_restorable ACTUALLY OPENS the SQLite file and reads schema_version. MOL-71 CLOSED — confirm_wipe requires a fresh preview token from preview_wipe. *** It writes a .files.txt manifest of media paths but DOES NOT UNLINK MEDIA. ***",
    "confidence": "CERTAIN"
   },
   {

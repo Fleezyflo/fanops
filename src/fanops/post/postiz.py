@@ -431,6 +431,17 @@ def _status_of(exc: Exception) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _row_integration_id(raw: dict) -> str | None:
+    """Integration id from a GET /posts row — object {id} or bare string."""
+    intg = raw.get("integration")
+    if isinstance(intg, dict):
+        v = intg.get("id")
+        return v if isinstance(v, str) and v else None
+    if isinstance(intg, str) and intg:
+        return intg
+    return None
+
+
 def postiz_check_auth(cfg: Config) -> bool:
     """Cheap auth probe for the Go-Live 'Save & test' button: hit the integrations endpoint and report
     whether the key works. True on success, raise PostizAuthError on 401 (so the surface can name the
@@ -467,6 +478,49 @@ class PostizPoster:
                 if m is not None:
                     t = (m.hook or "").strip()
         return t if len(t) >= 2 else self.cfg.artist_name
+
+    def _adopt_submission(self, led: Ledger, post_id: str, sid: str, body=None) -> Ledger:
+        led.set_post_state(post_id, PostState.submitted)
+        post = led.posts[post_id]
+        post.submission_id = sid
+        post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid, body)) or post.public_url
+        return led
+
+    def _existing_submission_for_payload(self, post, payload: dict) -> tuple[str | None, dict | None]:
+        """Read-before-write dedup: GET the posts window and match integration id + content."""
+        from datetime import timedelta
+        from fanops.timeutil import parse_iso
+        from fanops.post.metrics.postiz_read import PostizStatusClient
+        now = datetime.now(timezone.utc)
+        if post.submission_started_at:
+            try:
+                start = parse_iso(post.submission_started_at)
+            except ValueError:
+                start = now - timedelta(hours=24)
+        else:
+            start = now - timedelta(hours=24)
+        end = now
+        try:
+            want_intg = payload["posts"][0]["integration"]["id"]
+            want_content = payload["posts"][0]["value"][0]["content"]
+        except (IndexError, KeyError, TypeError):
+            return None, None
+        try:
+            rows = PostizStatusClient(self.cfg)._fetch_posts(start, end)
+        except Exception as exc:
+            _log.warning("postiz dedup lookup failed (%s): %s", type(exc).__name__, str(exc)[:140])
+            return None, None
+        for sid, rec in rows.items():
+            raw = rec.get("raw")
+            if not isinstance(raw, dict):
+                continue
+            if raw.get("content") != want_content:
+                continue
+            if _row_integration_id(raw) != want_intg:
+                continue
+            if isinstance(sid, str) and sid:
+                return sid, raw
+        return None, None
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
@@ -506,13 +560,17 @@ class PostizPoster:
                                        content=content, media_urls=media_urls,
                                        scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)
+        existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
+        if existing_sid:
+            return self._adopt_submission(led, post_id, existing_sid, existing_raw)
         delay, last = 1.0, None
         for attempt in range(_MAX_RETRIES):
             try:
                 resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
             except requests.exceptions.RequestException as exc:
-                if isinstance(exc, requests.exceptions.ConnectTimeout) and attempt < _MAX_RETRIES - 1:
-                    time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
+                existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
+                if existing_sid:
+                    return self._adopt_submission(led, post_id, existing_sid, existing_raw)
                 # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post.
                 led.set_post_state(post_id, PostState.needs_reconcile,

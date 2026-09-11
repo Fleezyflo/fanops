@@ -589,7 +589,7 @@ class Ledger:
             with store.lock(timeout=timeout):                  # serialize with Ledger.transaction (RC-5)
                 store.write_raw(doc)
         else:
-            with _file_lock(cfg.lock_path, timeout=timeout):   # unreadable snapshot OR corrupt/absent live db -> file replace
+            with _file_lock(cfg.lock_path, timeout=timeout):   # INV-07: fcntl domain shared — writers nest _file_lock inside store.lock()
                 store.restore(src)
         _snapshot_restore_control_files(cfg, src)
 

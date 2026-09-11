@@ -251,7 +251,7 @@ class Config:
             setattr(self, attr, self.base / name)
         self.ledger_path = self.control / "ledger.sqlite"
         self.legacy_ledger_json_path = self.control / "ledger.json"   # M1-F break-glass: bridge import only
-        self.lock_path = self.control / "ledger.lock"                 # vestigial; accounts/personas use flock
+        self.lock_path = self.control / "ledger.lock"                 # INV-07: fcntl domain for SqliteLedgerStore.lock()
         self.digest_path = self.control / "ledger_digest.md"
         self.accounts_path = self.control / "accounts.json"
         self.accounts_lock_path = self.control / "accounts.lock"   # serializes the accounts.json read-modify-write mutators

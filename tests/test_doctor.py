@@ -274,6 +274,10 @@ def _fresh_daemon_reader(_cfg, _interval):
     return {"installed": True, "loaded": True, "verdict": "ok", "heartbeat_age_s": 30}
 
 
+def _deploy_check(rep):
+    return next((c for c in rep["checks"] if "current code" in c["label"].lower()), None)
+
+
 def _write_accounts_for_daemon(cfg, rows):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": rows}))
@@ -303,6 +307,34 @@ def test_doctor_passes_when_faster_whisper_available(tmp_path, monkeypatch):
     monkeypatch.setattr("fanops.transcribe._fw_available", lambda: True)
     c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
     assert c is not None and c["ok"] is True
+
+
+def test_deploy_code_check_fails_on_sha_drift(tmp_path, monkeypatch):
+    """STD-VER-02: loaded pump reporting a stale heartbeat SHA must FAIL the deploy gate."""
+    from fanops import daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: "aaa111deadbeef")
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: ("bbb222cafef00d", "git-head"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "aaa111deadbeef"[:12] in row["hint"] and "bbb222cafef00d"[:12] in row["hint"]
+    assert "git pull --ff-only" in row["hint"]
+
+
+def test_deploy_code_check_passes_when_shas_match(tmp_path, monkeypatch):
+    from fanops import daemon
+    cfg = Config(root=tmp_path)
+    sha = "same_sha_on_disk_and_pump"
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: sha)
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: (sha, "git-head"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is True
+
+
+def test_deploy_code_check_omitted_when_daemon_not_loaded(tmp_path):
+    def _unloaded(_cfg, _interval):
+        return {"installed": True, "loaded": False, "verdict": "not loaded"}
+    assert doctor._deploy_code_check(Config(root=tmp_path), daemon_status=_unloaded) is None
 
 
 def test_doctor_fails_on_dead_daemon_or_past_due_backlog(tmp_path, monkeypatch):

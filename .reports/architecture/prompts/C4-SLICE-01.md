@@ -185,7 +185,7 @@ State in the PR:
 
 - ❌ Do **not** touch `Ledger.transaction` or any other writer.
 - ❌ Do **not** "unify" the A↔B lock domains (`COUP-01`).
-- ❌ Do **not** fix the wipe's `MOL-71` preview gap.
+- ❌ Do **not** reopen `MOL-71` — CLOSED (`confirm_wipe` preview token @ `actions_wipe.py` L47-57).
 - ❌ Do **not** delete `ledger.lock` in this PR — **even though this fix makes it genuinely dead for the first
   time.** That is a separate, trivial cleanup; bundling it obscures the diff.
 

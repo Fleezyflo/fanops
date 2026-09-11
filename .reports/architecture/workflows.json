@@ -188,7 +188,7 @@
         "mark_published": "rejects a blank url; refuses an already-terminal post (actions.py:274)",
         "bulk_send_to_review": "state not in _REVIEW_REVERT_BLOCKED. *** PRESERVES submission_id DELIBERATELY *** -> feeds C3-F1",
         "save_uploads": "video-ext check, traversal-safe secure_filename, inbox-bound resolve, ATOMIC .uploadpart -> os.replace, 2 GiB cap",
-        "wipe": "typed word REMOVE -> MANDATORY verified snapshot -> execute_wipe's own re-check. KNOWN GAP MOL-71: no server-side check that PREVIEW ran."
+        "wipe": "typed word REMOVE -> preview token enforced (MOL-71 closed) -> MANDATORY verified snapshot -> execute_wipe's own re-check."
       },
       "execute_wipe": "FULLY inside ONE Ledger.transaction (ledger_wipe.py:252-275) -> a raise halfway rolls back ENTIRELY. Gated in code: WipeNotConfirmed unless confirmed; SnapshotRequired unless snapshot_is_restorable — which ACTUALLY OPENS the SQLite file and reads schema_version (ledger_wipe.py:218-235). It writes a .files.txt manifest of media paths but DOES NOT UNLINK MEDIA.",
       "terminal_stuck_possible": false
