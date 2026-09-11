@@ -55,7 +55,7 @@ ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 python -m pip install --quiet --upgrade pip-tools
 mkdir -p requirements
 _compile() { python -m piptools compile --quiet --generate-hashes --allow-unsafe --strip-extras "$@" pyproject.toml; }
-_compile --extra dev --extra studio --extra desktop --extra framing --extra igscrape --output-file requirements/ci-unit.txt
+_compile --upgrade-package instagrapi --extra dev --extra studio --extra desktop --extra framing --extra igscrape --output-file requirements/ci-unit.txt
 # e2e omits igscrape. The original reason was a hard CONFLICT — moviepy pinned pillow<12, instagrapi
 # >=2.18.12 needs Pillow>=12.2 — and that conflict is GONE as of MOL-723 ([compose] now pins the
 # upstream commit that dropped the cap, so e2e resolves Pillow 12 too). The omission now rests only on

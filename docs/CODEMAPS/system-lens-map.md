@@ -204,7 +204,7 @@ empty line. Recorded in `meta_captions[surface].tag_sources`.
 `tests/test_hashtags.py` (hard cap at 4 `test_hard_caps_at_four`; drops non-vetted; reach ordering; Arabic
 floors; corpus float/floors), `tests/test_content_aware_hashtags.py` (content extraction, floor reserves a
 slot, every-kept-tag-has-a-source, byte-identical-without-content), `tests/test_hashtag_attribution_severance.py`
-(no post→hashtag feedback), `tests/test_fanops_hashtags.py`, `tests/test_hashtag_lifecycle_e2e.py`,
+(no post→hashtag feedback), `tests/test_fanops_hashtags.py`, `tests/test_hashtag_page.py`,
 `tests/test_persona_corpus.py`.
 
 ---
