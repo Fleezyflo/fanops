@@ -40,7 +40,7 @@ def test_auth_per_channel_postiz_without_global_poster(tmp_path, monkeypatch, mo
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_check_auth", return_value=True)
+    mocker.patch("requests.get", return_value=_R(200, []))
     out = cutover.cutover_auth(cfg)
     assert out["ok"] is True and out["backend"] == "postiz"
 
@@ -75,9 +75,14 @@ def _postiz_env(monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
 
-def _integrations():
-    from fanops.post.postiz import PostizIntegration
-    return [PostizIntegration(id="ig_1", name="throwaway", platform="instagram-standalone")]
+
+def _intg_body():
+    return [{"id": "ig_1", "name": "throwaway", "identifier": "instagram-standalone"}]
+
+
+def _get_intgs(mocker):
+    mocker.patch("requests.get", return_value=_R(200, _intg_body()))
+
 
 # Task 1 — dispatch by backend
 def test_cutover_metrics_dispatches_postiz(tmp_path, monkeypatch):
@@ -91,7 +96,7 @@ def test_cutover_metrics_dispatches_postiz(tmp_path, monkeypatch):
 # Task 2 — Postiz auth
 def test_postiz_auth_ok(tmp_path, monkeypatch, mocker):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_check_auth", return_value=True)
+    mocker.patch("requests.get", return_value=_R(200, []))
     out = cutover.cutover_auth(cfg)
     assert out["ok"] is True and out["backend"] == "postiz"
 
@@ -104,26 +109,25 @@ def test_postiz_auth_requires_key(tmp_path, monkeypatch):
 def test_postiz_auth_401_propagates(tmp_path, monkeypatch, mocker):
     from fanops.errors import PostizAuthError
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_check_auth", side_effect=PostizAuthError("401 — key withheld"))
+    mocker.patch("requests.get", return_value=_R(401, {"e": "unauthorized"}))
     with pytest.raises(PostizAuthError):
         cutover.cutover_auth(cfg)
 
 # Task 3 — Postiz post (confirmed 2099 throwaway; operator-selected integration; SECURITY surface)
-def test_postiz_post_refuses_without_confirm(tmp_path, monkeypatch, mocker):
+def test_postiz_post_refuses_without_confirm(tmp_path, monkeypatch):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
     with pytest.raises(CutoverError, match="throwaway|confirm"):
         cutover.cutover_post(cfg, "ig_1", confirmed=False)
 
 def test_postiz_post_refuses_unknown_integration(tmp_path, monkeypatch, mocker):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    _get_intgs(mocker)
     with pytest.raises(CutoverError, match="unknown postiz integration"):
         cutover.cutover_post(cfg, "NOT_MAPPED", confirmed=True)
 
 def test_postiz_post_fires_and_saves_when_confirmed(tmp_path, monkeypatch, mocker):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    _get_intgs(mocker)
     captured = {}
     def fake_post(url, **kw): captured["json"] = kw["json"]; return _R(201, {"id": "pz_LIVE_1"})
     out = cutover.cutover_post(cfg, "ig_1", confirmed=True, post=fake_post)
@@ -137,7 +141,7 @@ def test_postiz_post_fires_and_saves_when_confirmed(tmp_path, monkeypatch, mocke
 def test_postiz_post_401_redacted(tmp_path, monkeypatch, mocker):
     from fanops.errors import PostizAuthError
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=_integrations())
+    _get_intgs(mocker)
     def fake_post(url, **kw): return _R(401, {"e": "key SENTINEL"}, text="key SENTINEL")
     with pytest.raises(PostizAuthError) as ei:
         cutover.cutover_post(cfg, "ig_1", confirmed=True, post=fake_post)
@@ -164,17 +168,17 @@ def test_postiz_metrics_missing_row_says_postiz_not_blotato(tmp_path, monkeypatc
 def test_save_state_is_atomic_no_torn_file_on_crash(tmp_path, monkeypatch):
     # XC-3: a crash mid-write leaves the PRIOR valid cutover.json (atomic os.replace), never a half-file.
     # Simulate the crash by making os.replace raise AFTER the tmp is written, then assert the original stands.
-    from fanops import controlio
+    import os
     cfg = Config(root=tmp_path)
     cutover._save_state(cfg, {"metrics_confirmed": True, "submission_id": "sub_1"})   # establish a valid file
     good = cfg.cutover_path.read_text()
-    real_replace = controlio.os.replace
+    real_replace = os.replace
     def boom(src, dst):
         raise OSError("simulated crash during replace")
-    monkeypatch.setattr(controlio.os, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
     with pytest.raises(OSError):
         cutover._save_state(cfg, {"metrics_confirmed": False})                        # the "crash"
-    monkeypatch.setattr(controlio.os, "replace", real_replace)
+    monkeypatch.setattr(os, "replace", real_replace)
     assert cfg.cutover_path.read_text() == good           # prior valid file intact — never torn
     # and no leftover .tmp turd in the control dir (cleanup-on-failure)
     assert not list(cfg.cutover_path.parent.glob(cfg.cutover_path.name + ".*tmp"))

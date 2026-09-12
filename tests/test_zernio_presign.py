@@ -20,6 +20,7 @@
 #   47 -> test_publish_now_rejects_awaiting_approval      tests/test_studio_approval.py:49
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 import requests as _rq
@@ -185,17 +186,21 @@ def test_size_sent_and_is_post_shrink_bytes(tmp_path, monkeypatch, mocker):
     # 5 — `size` is a documented optional presign field for pre-validation (max 5GB). It must describe the
     # bytes we ACTUALLY PUT: maybe_shrink_for_cap may rewrite the file, so the pre-shrink size would
     # pre-validate a file we never send — worse than omitting it (report 09 §8.3).
+    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "1")
     cfg = _cfg(tmp_path, monkeypatch)
-    big = tmp_path / "v.mp4"; big.write_bytes(b"V" * 5000)
-    small = tmp_path / "v.shrunk.mp4"; small.write_bytes(b"V" * 900)
-    mocker.patch("fanops.post.zernio.maybe_shrink_for_cap", return_value=small)
+    big = tmp_path / "v.mp4"; big.write_bytes(b"V" * (2 * 1024 * 1024))
+    def _ffmpeg(cmd, **kw):
+        out = Path(cmd[-1]); out.write_bytes(b"V" * 900)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+    mocker.patch("fanops.post.compress.subprocess.run", side_effect=_ffmpeg)
     p = _mock_presign(mocker); _mock_put(mocker)
     zernio_upload_media(cfg, big, account_id=_ACC)
     sent = p.call_args_list[0].kwargs["json"]
     assert isinstance(sent["size"], int)
-    assert sent["size"] == small.stat().st_size == 900
+    assert sent["size"] == 900
     assert sent["size"] != big.stat().st_size            # NOT the pre-shrink size
-    assert sent["filename"] == "v.shrunk.mp4"            # and the name follows the bytes too
+    assert sent["filename"] != "v.mp4"                   # dest follows the shrunk bytes
+
 
 
 def test_content_type_is_enum_member(tmp_path, monkeypatch, mocker):

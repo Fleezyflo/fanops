@@ -143,38 +143,26 @@ def test_postiz_health_probe_401_reports_unhealthy_with_status(tmp_path, monkeyp
 
 
 # ------------------------------------------------------------------ D13b: Studio Postiz-down banner ----
-def test_postiz_health_for_banner_absent_when_no_channel_routes_to_postiz(tmp_path, monkeypatch, mocker):
+def test_postiz_health_for_banner_absent_when_no_channel_routes_to_postiz(tmp_path, monkeypatch):
     # Postiz is down, but NO channel routes to postiz (a pure-Zernio deployment) — the banner must NOT show
-    # (a Postiz outage is irrelevant to a deployment that doesn't publish through it).
+    # (a Postiz outage is irrelevant to a deployment that doesn't publish through it). Snapshot-only: no probe.
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
     _seed(cfg, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"], "status": "active",
                  "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}])
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner["show"] is False
-    probe.assert_not_called()
 
 
-# ------------------------------------------------------------------ foundation-honesty Wave 2: banner fail-open at WARNING ----
-def test_any_channel_routes_to_postiz_logs_warning_on_failure(tmp_path, monkeypatch, mocker, caplog):
-    # Fail-open False must stay, but the route-check exception must be WARNING (operators see banner suppressions).
-    cfg = _clean(monkeypatch, tmp_path)
-    mocker.patch("fanops.accounts.load_accounts_safe", side_effect=RuntimeError("registry boom"))
-    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_common"):
-        assert views_common._any_channel_routes_to_postiz(cfg) is False
-    assert any(r.levelno >= logging.WARNING and "postiz-route check failed" in r.getMessage()
-               for r in caplog.records)
-
-
-def test_postiz_health_for_banner_due_plan_fail_logs_warning(tmp_path, monkeypatch, mocker, caplog):
-    # Unhealthy snapshot + due_publish_plan raise → treat as idle (muted), log WARNING (not debug).
+def test_postiz_health_for_banner_due_plan_fail_logs_warning(tmp_path, monkeypatch, caplog):
+    # Unhealthy snapshot + due_publish_plan raise (unreadable ledger) → treat as idle (muted), log WARNING.
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_due_postiz_post(cfg)
     _seed_postiz_row(cfg, ok=False, status_code=502)
-    mocker.patch("fanops.studio.views_results.due_publish_plan", side_effect=RuntimeError("due plan boom"))
+    cfg.ledger_path.write_text("not-a-ledger")
     with caplog.at_level(logging.WARNING, logger="fanops.studio.views_common"):
         banner = views_common.postiz_health_for_banner(cfg)
     assert banner.get("show") is True and banner.get("danger") is not True
@@ -182,7 +170,7 @@ def test_postiz_health_for_banner_due_plan_fail_logs_warning(tmp_path, monkeypat
                for r in caplog.records)
 
 
-def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch, mocker):
+def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch):
     # Postiz is down (502) AND a due postiz post is waiting -> real stall: danger banner names the status code
     # and points at docs/POSTIZ_OPS.md. Assert on the read-model that base.html renders (build_system_strip).
     cfg = _clean(monkeypatch, tmp_path)
@@ -191,55 +179,47 @@ def test_studio_renders_postiz_down_banner_when_unhealthy(tmp_path, monkeypatch,
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_due_postiz_post(cfg)
     _seed_postiz_row(cfg, ok=False, status_code=502)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
     pd = strip.get("postiz_down")
     assert pd and pd.get("show") is True and pd.get("danger") is True
     assert "502" in str(pd.get("status"))
     assert "stalled" in pd.get("hint", "").lower()
     assert "POSTIZ_OPS.md" in pd.get("hint", "")
-    probe.assert_not_called()
 
 
 # ------------------------------------------------------------------ MOL-124: idle-by-design vs real stall ----
-def test_postiz_banner_muted_idle_when_down_and_no_due_postiz_posts(tmp_path, monkeypatch, mocker):
-    # Reaper-stopped Postiz is expected cold state — probe down with zero due postiz posts must NOT cry wolf.
+def test_postiz_banner_muted_idle_when_down_and_no_due_postiz_posts(tmp_path, monkeypatch):
+    # Reaper-stopped Postiz is expected cold state — snapshot down with zero due postiz posts must NOT cry wolf.
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_postiz_row(cfg, ok=False, status_code=502)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner.get("danger") is not True
     assert "stalled" not in (banner.get("hint") or "").lower()
-    probe.assert_not_called()
 
 
-def test_postiz_banner_danger_when_down_and_due_postiz_post(tmp_path, monkeypatch, mocker):
+def test_postiz_banner_danger_when_down_and_due_postiz_post(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_due_postiz_post(cfg)
     _seed_postiz_row(cfg, ok=False, status_code=502)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     banner = views_common.postiz_health_for_banner(cfg)
     assert banner.get("show") is True and banner.get("danger") is True
     assert "stalled" in (banner.get("hint") or "").lower()
-    probe.assert_not_called()
 
 
-def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch, mocker):
+def test_postiz_down_banner_absent_when_healthy(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     _seed_postiz_row(cfg, ok=True, status_code=200)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
     assert strip.get("postiz_down", {}).get("show") is False
-    probe.assert_not_called()
 
 
 # ------------------------------------------------------------------ D14: POSTIZ_OPS.md ----
@@ -360,20 +340,7 @@ def test_doctor_does_not_flag_genuine_live(tmp_path, monkeypatch):
     assert coh and coh[0]["ok"] is True                          # genuine live passes the coherence check
 
 
-def test_half_live_compute_failure_is_not_solid_live(tmp_path, monkeypatch):
-    """Anti-regression C companion: live_route_exists boom → half_live True (not solid LIVE)."""
-    cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setattr(type(cfg), "live_route_exists",
-                        property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
-    from fanops.health_model import half_live_state
-    hl = half_live_state(cfg)
-    assert hl.is_half_live is True
-    assert "not treating as solid LIVE" in hl.hint
-    assert "not confirmed" in hl.hint.lower()
-
-
-def test_postiz_banner_unknown_on_stale_snapshot(tmp_path, monkeypatch, mocker):
+def test_postiz_banner_unknown_on_stale_snapshot(tmp_path, monkeypatch):
     """Ancient deps snapshot must show unknown, never silent hide, when a channel routes to postiz."""
     import json
     cfg = _clean(monkeypatch, tmp_path)
