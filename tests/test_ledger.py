@@ -209,11 +209,21 @@ def test_retire_source_preserves_live_descendants(tmp_path):
     led.add_moment(Moment(id="m", parent_id="src_y", content_token="A", start=0, end=2, reason="a"))
     led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.published))
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p"))
+                      platform=Platform.instagram, caption="x", state=PostState.published,
+                      public_url="https://www.instagram.com/p/LIVEPERM/"))
     led.retire_source("src_y")
     assert led.is_retired_source("src_y")
     assert led.moments["m"].state is MomentState.retired           # kept but suppressed (live descendant)
     assert "c" in led.clips and "p" in led.posts                   # the performance record survives
+    assert led.posts["p"].public_url.startswith("https://")        # genuinely live: https permalink, not leftover dryrun://
+
+def test_retire_source_dryrun_url_is_not_live():
+    # leftover dryrun:// must NOT count as published/live — unconstructible at Post(), so it
+    # cannot be a live descendant of retire_source. Owner: Post._enforce_published_url_invariant.
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Post(id="p", parent_id="c", account="a", account_id="1",
+             platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p")
 
 def test_retire_source_leaves_file_on_disk(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)

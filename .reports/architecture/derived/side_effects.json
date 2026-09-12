@@ -421,31 +421,31 @@
     "fanops.ledger": [
       {
         "call": "fcntl.flock",
-        "line": 312
+        "line": 314
       },
       {
         "call": "fcntl.flock",
-        "line": 322
+        "line": 324
       },
       {
         "call": "store.lock",
-        "line": 514
+        "line": 516
       },
       {
         "call": "self._store.lock",
-        "line": 544
+        "line": 554
       },
       {
         "call": "store.lock",
-        "line": 570
+        "line": 580
       },
       {
         "call": "store.lock",
-        "line": 589
+        "line": 599
       },
       {
         "call": "_file_lock",
-        "line": 592
+        "line": 602
       }
     ],
     "fanops.ledger_bridge": [

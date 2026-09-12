@@ -24,8 +24,10 @@ from fanops.models import (Source, Moment, Clip, Post, Render, validate_account_
                            # import so the class attributes below can re-export them under their own
                            # names without shadowing, and without minting a `fanops` package edge.
                            _LIVE_POST_STATES as _MODELS_LIVE_POST_STATES,
-                           _PROTECTED_POST_STATES as _MODELS_PROTECTED_POST_STATES)
+                           _PROTECTED_POST_STATES as _MODELS_PROTECTED_POST_STATES,
+                           _POST_TERMINAL_REQUIRES_URL)
 from fanops.ids import child_id
+from fanops.text import safe_public_url
 
 
 _UNSET = object()  # MOL-779: omit optional kwargs from set_*_state model_copy update
@@ -478,8 +480,8 @@ class Ledger:
                 # (state=published + public_url='') by writing 'dryrun://<id>' or parking needs_reconcile
                 # is DELETED. Post-boundary nothing produces a ghost row (a dryrun post halts `queued`,
                 # never terminal-without-url); the 29 legacy rows were pruned outright (M4). A terminal
-                # row with no url now fails the R1 invariant at construction below — which is correct: it
-                # would be a genuine defect, not a dryrun artifact to paper over.
+                # row with no https url (empty / dryrun:// / non-https) fails the R1 invariant at
+                # Post() below — it cannot load, and _save_unlocked refuses it so it cannot rest.
                 led.posts = {k: Post(**v) for k, v in raw.get("posts", {}).items()}
                 led.tag_log = raw.get("tag_log", {})
                 led.variant_streaks = raw.get("variant_streaks", {})
@@ -534,6 +536,14 @@ class Ledger:
 
     def _save_unlocked(self) -> None:
         """The write half of save(), WITHOUT re-acquiring the lock (BEGIN IMMEDIATE txn held by transaction())."""
+        # In-place `post.public_url = …` does not re-run Post's model_validator; refuse a
+        # published/analyzed + non-https row here so it cannot rest on disk.
+        for p in self.posts.values():
+            if p.state in _POST_TERMINAL_REQUIRES_URL and not safe_public_url(p.public_url):
+                raise ControlFileError(
+                    f"{self.cfg.ledger_path.name} invalid: post {p.id} state={p.state.value} "
+                    f"requires a https public_url"
+                )
         self._store.write_raw(self._to_doc())
 
     def save(self) -> None:

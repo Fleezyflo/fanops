@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from fanops.ids import content_id
+from fanops.text import safe_public_url
 
 # Supercut per-span noise floor — a segment shorter than this is noise. Not a clip-length band.
 _MIN_MOMENT_S = 0.5
@@ -550,12 +551,12 @@ class Post(BaseModel):
         # 'dryrun://' escape any more). failed/error/retired/etc are NEGATIVE or archival terminals and may
         # legitimately lack a URL, so they're NOT gated here.
         if self.state in _POST_TERMINAL_REQUIRES_URL:
-            if not (self.public_url or "").strip():
+            if not safe_public_url(self.public_url):
                 raise ValueError(
-                    f"Post(id={self.id!r}, state={self.state.value}) requires a non-empty public_url — "
-                    f"'published'/'analyzed' mean the operator has a real permalink. A backend "
-                    f"that can't return one MUST park in needs_reconcile until the reconciler back-fills it "
-                    f"(R1 invariant)."
+                    f"Post(id={self.id!r}, state={self.state.value}) requires a https public_url — "
+                    f"'published'/'analyzed' mean the operator has a real permalink. dryrun:// / "
+                    f"empty / non-https cannot rest. A backend that can't return one MUST park in "
+                    f"needs_reconcile until the reconciler back-fills it (R1 invariant)."
                 )
         return self
 
