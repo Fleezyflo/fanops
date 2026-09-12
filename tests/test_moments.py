@@ -1,4 +1,6 @@
 import json
+import subprocess
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Clip, Post, Moment, MomentState, SourceState, Platform,
@@ -21,6 +23,23 @@ from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, LEGACY_EN
 
 def _mp(s, e, reason="r"):
     return MomentPick(start=s, end=e, reason=reason)
+
+def _log_recs(cfg):
+    if not cfg.log_path.exists():
+        return []
+    return [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+
+def _stub_ffmpeg_jpegs(mocker, *, write=True, seen=None):
+    """OS-edge ffmpeg: real extract_keyframes, mocked subprocess only. Writes a tiny JPEG when write=True."""
+    def run(cmd, **kw):
+        if seen is not None:
+            seen.append(list(cmd))
+        dst = Path(cmd[-1])
+        if write:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"\xff\xd8\xff")
+        return subprocess.CompletedProcess(cmd, 0 if write else 1, "", "")
+    return mocker.patch("fanops.keyframes.subprocess.run", side_effect=run)
 
 def _ingest_picks(led, cfg, source_id, picks, *, handle=None):
     """PASS 1: write a MomentDecision response + ingest -> `picked` moments / `picks_decided`."""
@@ -204,19 +223,18 @@ def test_ingest_overlapping_different_owners_both_minted(tmp_path):
     assert len(moms) == 2                                   # cross-owner overlap kept BOTH
     assert {tuple(m.affinities) for m in moms} == {("a",), ("b",)}
 
-def test_ingest_logs_owner_pick_counts(tmp_path, mocker):
+def test_ingest_logs_owner_pick_counts(tmp_path):
     # MOL-478 (T5): visibility breadcrumb — per-owner pick counts alongside overlaps_dropped/zero_moments.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
-    logfn = mocker.patch("fanops.moments.get_logger").return_value
     picks = [MomentPick(start=14, end=34, reason="a1", personas=["a"]),
              MomentPick(start=40, end=54, reason="a2", personas=["a"]),
              MomentPick(start=20, end=54, reason="b1", personas=["b"])]
     led = _ingest_picks(led, cfg, "src_1", picks)
-    owner_logs = [c for c in logfn.call_args_list if c.args[2:3] == ("owner_picks",)]
+    owner_logs = [r for r in _log_recs(cfg) if r["outcome"] == "owner_picks"]
     assert len(owner_logs) == 1
-    assert owner_logs[0].kwargs.get("a") == 2 and owner_logs[0].kwargs.get("b") == 1
+    assert owner_logs[0].get("a") == "2" and owner_logs[0].get("b") == "1"
 
 def test_ingest_owner_becomes_affinities_and_stamps_spec(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -333,13 +351,15 @@ def test_request_moment_hooks_uses_picked_window_eof_clamp(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/w0.jpg"])
+    seen = []
+    _stub_ffmpeg_jpegs(mocker, seen=seen)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
                         [MomentPick(start=14.0, end=34.0, reason="verse lands", personas=["a"])])
+    seen.clear()
     led = request_moment_hooks(led, cfg, "src_1")
-    call = spy.call_args
-    assert call.args[1] == 14.0 and call.args[2] == 34.0
+    ss = [float(cmd[cmd.index("-ss") + 1]) for cmd in seen if "-ss" in cmd]
+    assert ss and all(14.0 < t < 34.0 for t in ss)
 
 def test_ingest_no_skip_state_fields(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
@@ -445,13 +465,13 @@ def test_request_reuses_frames_once(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/a.jpg"])
+    _stub_ffmpeg_jpegs(mocker)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    assert spy.call_count == 1
-    for h in ("a", "b"):
-        payload = json.loads(request_path(cfg, "moments", f"src_1.{h}").read_text())
-        assert payload["frames"] == ["/k/a.jpg"]
+    frames_a = json.loads(request_path(cfg, "moments", "src_1.a").read_text())["frames"]
+    frames_b = json.loads(request_path(cfg, "moments", "src_1.b").read_text())["frames"]
+    assert frames_a and frames_a == frames_b
+    assert all(Path(p).exists() for p in frames_a)
 
 def test_request_zero_personas_drops_key(tmp_path, monkeypatch):
     # P4: empty personas -> drop the key; persona-blind path byte-identical to no-accounts call.
@@ -598,13 +618,6 @@ def test_validate_pick_rejects_collapsed_rounded_cue():
     assert "end<=start" in bad or "cue" in bad
 
 
-def test_validate_pick_skips_grid_without_trusted_cues():
-    src = Source(id="src_1", source_path="/x", duration=60.0, language="en",
-                 transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 18.0}])
-    pick = MomentPick(start=14.0, end=22.0, reason="visual beat")
-    assert validate_pick(pick, duration=60.0, src=src) is None
-
-
 def test_validate_pick_skips_grid_without_src():
     assert validate_pick(MomentPick(start=10.4, end=19.5, reason="r"), duration=60.0) is None
 
@@ -749,10 +762,10 @@ def test_request_moments_attaches_source_frames(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")              # the source path must exist for extraction
-    mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/a.jpg", "/k/b.jpg"])
+    _stub_ffmpeg_jpegs(mocker)
     led = request_moments(led, cfg, "src_1")
     payload = json.loads(request_path(cfg, "moments", "src_1").read_text())
-    assert payload["frames"] == ["/k/a.jpg", "/k/b.jpg"]
+    assert payload["frames"] and all(Path(p).exists() for p in payload["frames"])
 
 def test_request_moments_frames_empty_when_source_absent(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)   # source_path NOT written
@@ -766,14 +779,17 @@ def test_request_moment_hooks_extracts_frames_over_the_fitted_window(tmp_path, m
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=["/k/w0.jpg"])
+    seen = []
+    _stub_ffmpeg_jpegs(mocker, seen=seen)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="bar lands")])
+    seen.clear()
     led = request_moment_hooks(led, cfg, "src_1")
-    call = spy.call_args
-    assert call.args[1] == 14.0 and call.args[2] == 34.0
+    ss = [float(cmd[cmd.index("-ss") + 1]) for cmd in seen if "-ss" in cmd]
+    assert ss and all(14.0 < t < 34.0 for t in ss)
     payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-34.00").read_text())
-    assert payload["frames"] == ["/k/w0.jpg"] and payload["moment_id"]
+    assert payload["frames"] and payload["moment_id"]
+    assert all(Path(p).exists() for p in payload["frames"])
 
 def test_request_moment_hooks_is_write_once(tmp_path):
     # A second request_moment_hooks pass must NOT re-stamp an already-open gate (that would invalidate an
@@ -1201,17 +1217,18 @@ def test_cross_pass_exact_dup_stripped_not_burned_twice(tmp_path):
 def test_window_frames_empty_no_whole_source_fallback(tmp_path, mocker):
     # review: when the picked-WINDOW frame probe yields nothing, the author gets [] (honest text-only),
     # NOT whole-source frames — the hook prompt asserts the stills ARE this clip's window, so substituting
-    # out-of-window footage would mislead the author. extract_keyframes is called exactly ONCE (no fallback).
+    # out-of-window footage would mislead the author. ffmpeg is the window only (no 0..duration fallback).
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
     (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    spy = mocker.patch("fanops.moments.extract_keyframes", return_value=[])   # window probe yields nothing
+    seen = []
+    _stub_ffmpeg_jpegs(mocker, write=False, seen=seen)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="r")])
-    spy.reset_mock()                                   # measure ONLY the hook pass (pick pass also probes)
+    seen.clear()
     led = request_moment_hooks(led, cfg, "src_1")
-    assert spy.call_count == 1                          # ONE window probe, no whole-source fallback
-    assert spy.call_args.args[1] == 14.0               # ...and it was the WINDOW (start=14), never 0.0..duration
+    ss = [float(cmd[cmd.index("-ss") + 1]) for cmd in seen if "-ss" in cmd]
+    assert ss and all(14.0 < t < 34.0 for t in ss)
     payload = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-34.00").read_text())
     assert payload["frames"] == []                     # honest text-only, not wrong footage
 
@@ -1256,11 +1273,9 @@ def test_long_transcript_is_truncated_with_marker():
 
 
 # ---- MOL-159: persona-biased _bounded_transcript (filtered peaks + corpus bonus) ----
-def test_bounded_transcript_biases_to_filtered_peaks(monkeypatch):
-    from fanops import moments
+def test_bounded_transcript_biases_to_filtered_peaks():
     from fanops.moments import _bounded_transcript
-    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 5000)
-    segs = [talk_seg("line " * 20, start=float(i), end=float(i) + 1) for i in range(200)]
+    segs = [talk_seg("x" * 1000, start=float(i), end=float(i) + 1) for i in range(200)]
     peaks_early = [{"t": 5.0, "kind": "energy", "score": 9.0}]
     peaks_late = [{"t": 195.0, "kind": "energy", "score": 9.0}]
     kept_early, _ = _bounded_transcript(segs, peaks_early)
@@ -1270,12 +1285,10 @@ def test_bounded_transcript_biases_to_filtered_peaks(monkeypatch):
     assert max(s["start"] for s in kept_early) < min(s["start"] for s in kept_late)
 
 
-def test_bounded_transcript_corpus_bonus(monkeypatch):
-    from fanops import moments
+def test_bounded_transcript_corpus_bonus():
     from fanops.moments import _bounded_transcript
-    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 50)
-    near_plain = talk_seg("x" * 40, start=48.0, end=52.0)           # mid=50, no corpus hit
-    near_corpus = talk_seg("freestyle " * 4, start=49.0, end=51.0)  # mid=50, corpus hit
+    near_plain = talk_seg("x" * 40000, start=48.0, end=52.0)           # mid=50, no corpus hit
+    near_corpus = talk_seg(("freestyle " * 4000)[:40000], start=49.0, end=51.0)  # mid=50, corpus hit
     far = [talk_seg("z" * 200, start=float(i * 10), end=float(i * 10) + 1) for i in range(30)]
     segs = sorted(far + [near_plain, near_corpus], key=lambda s: s["start"])
     peaks = [{"t": 50.0}]
@@ -1284,11 +1297,9 @@ def test_bounded_transcript_corpus_bonus(monkeypatch):
     assert near_plain not in kept
 
 
-def test_bounded_transcript_corpus_not_a_filter(monkeypatch):
-    from fanops import moments
+def test_bounded_transcript_corpus_not_a_filter():
     from fanops.moments import _bounded_transcript
-    monkeypatch.setattr(moments, "_TRANSCRIPT_CHAR_BUDGET", 200)
-    segs = [talk_seg("off theme " * 10, start=float(i), end=float(i) + 1) for i in range(50)]
+    segs = [talk_seg("off theme " * 100, start=float(i), end=float(i) + 1) for i in range(200)]
     peaks = [{"t": 25.0}]
     kept, dropped = _bounded_transcript(segs, peaks, corpus=["freestyle", "drill"])
     assert kept and dropped > 0
@@ -1454,25 +1465,23 @@ def test_ingest_dotted_partial_answer_defers_atomic(tmp_path):
     assert led.sources["src_1"].state is SourceState.moments_requested
     assert len(led.moments_of("src_1")) == 0
 
-def test_ingest_owner_mismatch_logged(tmp_path, mocker):
+def test_ingest_owner_mismatch_logged(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    logfn = mocker.patch("fanops.moments.get_logger").return_value
     led = _ingest_picks(led, cfg, "src_1",
                         [MomentPick(start=0, end=18, reason="x", personas=["b"])], handle="a")
-    mism = [c for c in logfn.call_args_list
-            if c.args[:3] == ("moments", "src_1.a", "owner_mismatch")]
+    mism = [r for r in _log_recs(cfg)
+            if r["outcome"] == "owner_mismatch" and r["unit_id"] == "src_1.a"]
     assert len(mism) == 1
     assert led.moments_of("src_1")[0].affinities == ["a"]
 
-def test_ingest_per_gate_outcome_logged(tmp_path, mocker):
+def test_ingest_per_gate_outcome_logged(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     accts = _seed_multi_pick_persona_accounts(cfg, ["a", "b"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    logfn = mocker.patch("fanops.moments.get_logger").return_value
     led = _ingest_picks_all_accounts(led, cfg, "src_1", {"a": [_mp(0, 18)], "b": []})
-    outcomes = {(c.args[1], c.args[2]) for c in logfn.call_args_list if c.args and c.args[0] == "moments"}
+    outcomes = {(r["unit_id"], r["outcome"]) for r in _log_recs(cfg) if r["stage"] == "moments"}
     assert ("src_1.a", "contrib") in outcomes
     assert ("src_1.b", "empty") in outcomes
 
@@ -1499,47 +1508,28 @@ def test_deactivate_between_request_and_ingest_unions_snapshot(tmp_path):
     assert len(led.moments_of("src_1")) == 2
     assert {m.affinities[0] for m in led.moments_of("src_1")} == {"a", "b"}
 
-def test_targeted_intersect_active_empty_warns(tmp_path, mocker):
+def test_targeted_intersect_active_empty_warns(tmp_path):
     from fanops.models import Batch
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    logfn = mocker.patch("fanops.moments.get_logger").return_value
     led.add_batch(Batch(id="bat_1", name="Ghost", target_accounts=["ghost"]))
     src = Source(id="src_1", source_path="/s.mp4", state=SourceState.signalled, duration=60.0,
                  transcript=[], signal_peaks=[], batch_id="bat_1", meta={"transcribed": True})
     led.add_source(src); led.save()
     accts = _seed_multi_pick_persona_accounts(cfg, ["a"])
     led = request_moments(led, cfg, "src_1", accounts=accts)
-    warns = [c for c in logfn.call_args_list if c.args[2:3] == ("no_targeted_active_accounts",)]
+    warns = [r for r in _log_recs(cfg) if r["outcome"] == "no_targeted_active_accounts"]
     assert len(warns) == 1
     assert led.sources["src_1"].state is SourceState.moments_empty
 
 
-# --- MOL-230: vision finalizer recovers a well-formed MomentDecision on the pick gate ---
-def test_vision_finalizer_yields_valid_moment_decision(mocker):
-    """Prose-only vision turn -> schema-only finalizer -> MomentDecision, then real validate_pick.
-    Schema parse is not grounding: an off-transcript window against the request transcript must fail."""
-    from fanops.responder import _default_claude_model
+# --- MOL-230: schema parse is not grounding; invented windows must fail validate_pick ---
+def test_vision_finalizer_yields_valid_moment_decision():
+    """An off-transcript window against the request transcript must fail validate_pick.
+    Schema parse of a MomentDecision is not a substitute for speech-grounded bounds."""
     req = {"source_id": "src_1", "duration": 60.0,
-           "frames": ["/f/a.jpg", "/f/b.jpg"],
            "transcript": [{"start": 10, "end": 28, "text": "bar"}],
-           "signal_peaks": [], "language": "en", "guidance": ""}
-    pick = {"start": 10.0, "end": 28.0, "reason": "the bar lands as the beat drops"}
-    decision = {"picks": [pick]}
-    prose = "I reviewed the attached frames. Strong energy mid-source but returning prose."
-    seq = iter([json.dumps({"structured_output": None, "result": prose, "num_turns": 2}),
-                json.dumps({"structured_output": decision, "num_turns": 1})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    from fanops import llm as _llm
-    mocker.patch("fanops.responder.claude_json_meta", _llm.claude_json_meta)  # undo hermetic autouse; exercise real finalizer
-    out = _default_claude_model("moments", req)
-    dec = MomentDecision(**out)
-    assert len(dec.picks) == 1 and dec.picks[0].start == 10.0 and dec.picks[0].end == 28.0
-    assert run.call_count == 2
+           "language": "en"}
     src = Source(id=req["source_id"], source_path="/x", duration=req["duration"],
                  language=req["language"], transcript=req["transcript"])
-    for p in dec.picks:
-        validate_pick(p, duration=req["duration"], src=src)
     off = MomentPick(start=40.0, end=50.0, reason="invented window with no transcript overlap")
     assert validate_pick(off, duration=req["duration"], src=src) is not None

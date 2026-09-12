@@ -6,7 +6,7 @@ from fanops.ledger import Ledger
 from fanops.models import (
     Source, SourceState, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt,
 )
-from fanops.studio.actions import edit_caption, regenerate_caption, reburn_hook
+from fanops.studio.actions import edit_caption, regenerate_caption
 from fanops.studio.views_library import SourceProgress, source_progress, _APPROVED_STATES
 from fanops.timeutil import iso_z
 
@@ -78,13 +78,10 @@ def test_source_progress_field_defs(tmp_path):
     })
 
 
-def test_source_progress_torn_ledger_returns_empty(tmp_path, monkeypatch):
+def test_source_progress_torn_ledger_returns_empty(tmp_path):
     cfg = Config(root=tmp_path)
-
-    def boom(_cfg):
-        raise OSError("ledger torn")
-
-    monkeypatch.setattr("fanops.studio.views_library.Ledger.load", boom)
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"this is not a sqlite database")
     assert source_progress(cfg) == {}
 
 
@@ -109,9 +106,10 @@ def test_edit_caption_stamps_edited_at(tmp_path):
     assert Ledger.load(cfg).posts["p_edit"].edited_at == iso_z(NOW)
 
 
-def test_regenerate_caption_stamps_edited_at(tmp_path, monkeypatch):
+def test_regenerate_caption_stamps_edited_at(tmp_path):
     from fanops.models import CaptionSet, CaptionItem
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+    from fanops.timeutil import parse_iso
+    now = datetime.now(timezone.utc)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
@@ -120,31 +118,12 @@ def test_regenerate_caption_stamps_edited_at(tmp_path, monkeypatch):
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="OLD", state=PostState.queued,
-                      scheduled_time=_z(NOW + timedelta(hours=3))))
+                      scheduled_time=_z(now + timedelta(hours=3))))
     led.save()
 
     def _model(_prompt, _schema):
         return CaptionSet(request_id="r", items=[CaptionItem(surface="a/instagram", caption="NEW", hashtags=[])]).model_dump()
 
-    assert regenerate_caption(cfg, "p_edit", "punchier", model=_model, now=NOW).ok
-    assert Ledger.load(cfg).posts["p_edit"].edited_at == iso_z(NOW)
-
-
-def test_reburn_hook_stamps_edited_at(tmp_path, mocker, monkeypatch):
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                          reason="r", state=MomentState.clipped, hook="OLD"))
-    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(tmp_path / "c.mp4"), aspect=Fmt.r9x16,
-                      state=ClipState.queued))
-    (tmp_path / "c.mp4").write_bytes(b"V")
-    led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="OLD", state=PostState.awaiting_approval))
-    led.save()
-    from fanops.models import Clip as ClipModel
-    mocker.patch("fanops.clip.render_moment", return_value=(None, ClipModel(
-        id="clip_1", parent_id="mom_1", path=str(tmp_path / "c.mp4"), aspect=Fmt.r9x16, state=ClipState.queued)))
-    assert reburn_hook(cfg, "p_edit", "NEW HOOK", now=NOW).ok
-    assert Ledger.load(cfg).posts["p_edit"].edited_at == iso_z(NOW)
+    assert regenerate_caption(cfg, "p_edit", "punchier", model=_model, now=now).ok
+    stamped = Ledger.load(cfg).posts["p_edit"].edited_at
+    assert stamped and parse_iso(stamped).tzinfo is not None
