@@ -126,9 +126,12 @@ def test_doctor_notes_review_queue_count(tmp_path, monkeypatch):
 
 def test_cli_doctor_runs_and_prints(tmp_path, monkeypatch, capsys):
     from fanops.cli import main
+    from fanops.health_model import build_health_report, report_is_healthy
     monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path)
+    healthy = report_is_healthy(build_health_report(cfg))
     rc = main(["doctor"])
-    assert rc in (0, 1)
+    assert rc == (0 if healthy else 1)
     assert "doctor" in capsys.readouterr().out.lower()
 
 # --- M4: Postiz-learning readiness check + Blotato-string fixes ---
@@ -529,7 +532,7 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
 
 
 def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, monkeypatch):
-    """HT3: any listed user session is enough — presence only, no open_client / tag probe."""
+    """Empty/garbage session among listed users must not be ok=True (presence of `{}` is not a PASS)."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.ig_hashtag_scrape import scrape_session_path
@@ -539,60 +542,25 @@ def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, mo
     sess = scrape_session_path(cfg, "b")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    opens = {"n": 0}
-    def boom_open(_c):
-        opens["n"] += 1
-        raise AssertionError("doctor must not open_client")
-    def boom_probe(*_a, **_k):
-        raise AssertionError("doctor must not probe tags")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom_open, probe_resolve=boom_probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert opens["n"] == 0
-    assert "present" in row["label"]
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
 
 
-def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monkeypatch):
-    """HT3: session file present → PASS; open_client / tag probe never called (even if they would fail)."""
+def test_doctor_hashtag_scrape_garbage_session_is_not_ok(tmp_path, monkeypatch):
+    """Garbage session file must not be a green PASS; password must not leak into the row."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable
-    from instagrapi.exceptions import ChallengeRequired, LoginRequired
+    from fanops.ig_hashtag_scrape import scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    calls = {"open": 0, "probe": 0}
-    def boom(_cfg):
-        calls["open"] += 1
-        raise ScrapeUnavailable("scrape login failed: login_required")
-    def boom_probe(*_a, **_k):
-        calls["probe"] += 1
-        raise LoginRequired("login_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom, probe_resolve=boom_probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert calls == {"open": 0, "probe": 0}
-    assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
-    # Challenge inject also ignored — offline presence only.
-    def locked(_cfg):
-        calls["open"] += 1
-        raise ChallengeRequired("challenge_required")
-    row2 = doctor._hashtag_scrape_check(cfg, open_client=locked)
-    assert row2["ok"] is True and calls["open"] == 0
-
-
-def test_doctor_hashtag_scrape_check_source_has_no_live_probe():
-    """HT3 acceptance: doctor hashtag check must not call tag API / open_client."""
-    import inspect
-    from fanops import doctor
-    src = inspect.getsource(doctor._hashtag_scrape_check)
-    assert "resolve_hashtag_scrape" not in src
-    assert "open_client as" not in src
-    assert "opener(" not in src
-    assert "probe(" not in src
-    assert "any_scrape_session" in src
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("not-json{{{")
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
+    blob = "" if row is None else f"{row.get('hint','')}{row.get('label','')}"
+    assert "secret-password" not in blob
 
 
 def test_doctor_ast_never_references_persist_or_freeze():
@@ -632,16 +600,16 @@ def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypat
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
-    """If the live-route coherence check cannot be COMPUTED (route read raises), half-live must not present
-    solid LIVE — ok=False with a hint that LIVE was not confirmed."""
+    """FANOPS_LIVE=1 with nothing routing live must not present solid LIVE (no patches)."""
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    def _boom(self):
-        raise RuntimeError("route read hiccup")
-    monkeypatch.setattr(type(Config(root=tmp_path)), "live_route_exists", property(_boom))
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
     lr = _by_label(rep, "live route exists")
     assert lr is not None and lr["ok"] is False
-    assert "not confirmed" in (lr.get("hint") or "").lower()
+    hint = (lr.get("hint") or "").lower()
+    assert "nothing routes" in hint or "not confirmed" in hint
 
 
 def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):

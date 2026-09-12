@@ -1,27 +1,15 @@
-# tests/test_fail_open_primitive.py — Brief 05: fail_open primitive + resolve_account_handle exemplar.
-import logging
-
+# tests/test_fail_open_primitive.py — fail_open must not swallow; resolve_account_handle fails closed.
 import pytest
 
 from fanops.config import Config
 
 
-def test_fail_open_logs_every_failure_not_once_per_process(tmp_path, caplog):
+def test_fail_open_does_not_swallow_runtime_error():
+    """Swallowing RuntimeError is a defect, not a passing contract. KeyboardInterrupt/SystemExit stay raised."""
     from fanops.errors import fail_open
-    n = 0
-
-    def _boom():
-        nonlocal n
-        n += 1
-        raise RuntimeError(f"boom-{n}")
-
-    with caplog.at_level(logging.WARNING, logger="fanops.errors"):
+    with pytest.raises(RuntimeError, match="boom"):
         with fail_open("test.site"):
-            _boom()
-        with fail_open("test.site"):
-            _boom()
-    assert len(caplog.records) == 2
-    assert all("test.site fail-open" in r.message for r in caplog.records)
+            raise RuntimeError("boom")
 
 
 def test_fail_open_propagates_keyboard_interrupt():
@@ -38,16 +26,11 @@ def test_fail_open_propagates_system_exit():
             raise SystemExit(1)
 
 
-def test_resolve_account_handle_logs_and_preserves_raw_on_load_error(tmp_path, monkeypatch, caplog):
+def test_resolve_account_handle_fails_closed_on_unreadable_accounts(tmp_path):
+    """Torn accounts.json (directory where the file belongs) must raise, not return the raw handle."""
     from fanops.studio import views
     cfg = Config(root=tmp_path)
-
-    def _boom(_cfg):
-        raise OSError("accounts unreadable")
-
-    monkeypatch.setattr("fanops.studio.views.Accounts.load", _boom)
-    with caplog.at_level(logging.WARNING, logger="fanops.errors"):
-        assert views.resolve_account_handle("@someone", cfg) == "@someone"
-        assert views.resolve_account_handle("@someone", cfg) == "@someone"
-    assert len(caplog.records) == 2
-    assert all("studio.views.resolve_account_handle fail-open" in r.message for r in caplog.records)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.mkdir()
+    with pytest.raises(OSError):
+        views.resolve_account_handle("@someone", cfg)

@@ -49,18 +49,17 @@ def test_write_audit_appends_jsonl(tmp_path):
     assert "ts" in e0 and e0["ts"].endswith("Z"), f"bad ts: {e0.get('ts')!r}"
 
 
-def test_write_audit_never_raises_on_io_error(tmp_path, monkeypatch):
-    """R3/D17 contract: audit is OBSERVABILITY, never a blocker. If the disk fills
-    or the dir disappears, write_audit fails silently — the operator action MUST
-    NOT raise just because the audit write failed."""
+def test_write_audit_io_error_leaves_fail_open_breadcrumb(tmp_path, caplog):
+    """Real I/O fail: the audit log directory is a file. Calling write_audit is enough —
+    pin the fail_open breadcrumb; do not patch fail_open."""
+    import logging
     from fanops.audit import write_audit
     cfg = Config(root=tmp_path)
-    # Make audit_path resolve to a path that can't be opened (a directory, not a file).
-    (cfg.control).mkdir(parents=True, exist_ok=True)
-    (cfg.control / "studio_audit.log").mkdir()    # collide: directory where the file should go
-
-    # Must NOT raise — audit failure is silent, never breaks the caller.
-    write_audit(cfg, "approve", ["p1"], reason="test")
+    cfg.control.parent.mkdir(parents=True, exist_ok=True)
+    cfg.control.write_text("not-a-dir")
+    with caplog.at_level(logging.WARNING, logger="fanops.errors"):
+        write_audit(cfg, "approve", ["p1"], reason="test")
+    assert any("audit.write_audit fail-open" in r.message for r in caplog.records)
 
 
 def test_write_audit_preserves_extra_kw(tmp_path):

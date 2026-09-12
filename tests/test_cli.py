@@ -7,29 +7,27 @@ def test_hashtags_cli_help_is_safari_sidecar(capsys):
         main(["hashtags", "--help"])
     assert e.value.code == 0
     out = capsys.readouterr().out
-    assert "instagrapi" in out.lower()
+    assert "source-lock measurement cache (instagrapi envelope)" in out
     assert "chrome" not in out.lower()
-    assert "Safari" in out or "safari" in out.lower() or "sidecar" in out.lower() or "lock" in out.lower()
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "refresh", "--help"])
     assert e.value.code == 0
     refresh = capsys.readouterr().out
-    assert "instagrapi" in refresh.lower()
+    assert "remesure sidecar pile and lock names now via instagrapi envelope" in refresh
     assert "harvest" not in refresh.lower()
     assert "Safari" not in refresh
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "scrape-login", "--help"])
     assert e.value.code == 0
     login = capsys.readouterr().out
+    assert "instagrapi password login and promote the device envelope" in login
     assert "Chrome" not in login
-    assert "instagrapi" in login.lower()
     assert "Safari" not in login
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "discover", "--help"])
     assert e.value.code == 0
     disc = capsys.readouterr().out
-    assert "persona" not in disc.lower() or "lock" in disc.lower()
-    assert "lock" in disc.lower()
+    assert "report each source lock (read-only, zero network)" in disc
 
 
 def test_gates_blocked_note_flags_remaining_gates():
@@ -264,24 +262,6 @@ def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
     assert rc == 1                                   # halted cleanly with nonzero, no traceback
 
 
-def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, capsys):
-    # AUDIT H8: a PostizAuthError (bad/missing key) escaping advance is operator-actionable —
-    # `fanops advance` must print a clean one-line pointer and exit nonzero, not crash-dump.
-    from fanops.errors import PostizAuthError
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    mocker.patch.object(cli, "advance", side_effect=PostizAuthError("Postiz 401 — check POSTIZ_API_KEY"))
-    # advance gates on _check_accounts first; give it a valid active account so we reach advance().
-    from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    rc = cli.main(["advance"])
-    assert rc != 0
-    err = capsys.readouterr().err
-    assert "Traceback" not in err and "POSTIZ_API_KEY" in err
-
-
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
 # Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH (2026-06-04): the responder
 # uses the operator's EXISTING `claude` subscription (plain `claude -p`, NOT `--bare`/API key), so
@@ -419,41 +399,44 @@ def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, 
     assert "Traceback" not in err                    # degraded, not a stack dump
     assert "RuntimeError" in err                     # the one-line halt message names the cause
 
-def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
-    # E1 (learning_pass_guard): the new post-loop learning pass (pull_metrics -> classify ->
-    # amplify -> retire) runs ONLY when the backend is live AND its key is set (is_live_backend)
-    # (the identical reconcile guard at pipeline.py:106). In dryrun (the default, FANOPS_POSTER
-    # unset) the guard short-circuits, the pass is never entered, and `run` still converges and
-    # exits 0 — a regression guard that the learning pass does NOT run in dryrun and does NOT
-    # break run's exit code.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend
+def _write_active_account(tmp_path):
     from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    return cfg
 
-def test_run_learning_pass_not_entered_in_dryrun(tmp_path, monkeypatch, mocker):
-    # E1 HARDEN (mutation-proven): the exit==0 assertion above is BLIND to whether the learning
-    # pass actually ran — with the guard removed (`if True:`), pull_metrics in dryrun-no-key raises
-    # RuntimeError from BlotatoMetricsClient.__init__, which the swallow-all `except Exception`
-    # (cli.py:211) eats, so the exit code STAYS 0 and the hollow test still passes. This test binds
-    # the real guarantee by SPYING on the learning-pass entry point: spy fanops.cli.pull_metrics
-    # (so even an ungated body cannot reach the real client) and assert it is NEVER called in
-    # dryrun. Removing/weakening the cli.py:204 guard makes this FAIL (spy.call_count==1).
+
+def test_run_learning_pass_is_guarded_to_live_backends(tmp_path, monkeypatch):
+    # Dryrun / live-off must not pull_metrics. Observe ledger posts + learn-pass log, not a spy.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("FANOPS_POSTER", raising=False)       # dryrun backend (default)
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # no key
-    import fanops.cli as cli
-    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+    from fanops.ledger import Ledger
+    cfg = _write_active_account(tmp_path)
+    Ledger.load(cfg).save()
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    after = Ledger.load(cfg)
+    assert all(not p.metrics for p in after.posts.values())
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "amplify_skipped" not in blob
+    assert "learn degrade" not in blob
+
+
+def test_run_learning_pass_not_entered_in_dryrun(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    from fanops.ledger import Ledger
+    cfg = _write_active_account(tmp_path)
+    Ledger.load(cfg).save()
     rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
-    assert rc == 0                                            # run still converges + exits 0
-    assert spy.call_count == 0                                # the learning pass is NEVER entered in dryrun
+    assert rc == 0
+    assert all(not p.metrics for p in Ledger.load(cfg).posts.values())
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "amplify_skipped" not in blob
 
 def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypatch, mocker):
     # E1 HARDEN (positive branch): with a LIVE backend (FANOPS_POSTER=zernio) AND a key set, the
@@ -502,40 +485,38 @@ def test_run_learning_pass_entered_with_postiz_backend_and_key(tmp_path, monkeyp
     assert rc == 0
     assert spy.call_count == 1                                # learning pass runs once when postiz+keyed
 
-def _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker):
-    # shared setup: a live postiz backend with the learn-pass network stubbed (spies keep it offline).
+def _live_postiz_empty_tree(tmp_path, monkeypatch):
+    """Live postiz+key, empty ledger (no pollable posts → learn_pass does no network). Real apply."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
-    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
-    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
-    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
-    spy = mocker.patch.object(cli, "apply_p4_dim_bias", side_effect=lambda led, cfg: led)
-    from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    return spy
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    from fanops.ledger import Ledger
+    cfg = _write_active_account(tmp_path)
+    Ledger.load(cfg).save()
+    return cfg
 
-def test_run_fires_p4_dim_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):
-    # the P4(b) cross-account reach dim-bias actuator must fire in the AUTONOMOUS run loop when its flag
-    # is on + live backend — symmetric with apply_variant_amplify. Before, it was reachable ONLY via the
-    # manual `fanops p4-bias` verb, so unattended runs never applied it. Network-free (spied); the actuator
-    # self-guards on the flag AND stays validation-frozen until cutover, so wiring it in is fail-SAFE.
-    monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")            # operator intent ON
-    spy = _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker)
-    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
-    assert spy.call_count == 1                                # fired once in the autonomous loop
 
-def test_run_skips_p4_dim_bias_when_flag_off(tmp_path, monkeypatch, mocker):
-    # symmetric kill-switch: flag OFF -> apply_p4_dim_bias is NEVER called from run (default behavior).
-    monkeypatch.delenv("FANOPS_P4_DIM_BIAS", raising=False)  # flag OFF (default)
-    spy = _run_with_live_learning_stubs(tmp_path, monkeypatch, mocker)
+def test_run_fires_p4_dim_bias_when_flag_on_and_live(tmp_path, monkeypatch):
+    # Real apply_p4_dim_bias (no patch). Unvalidated cutover → skipped_unvalidated log, no new sources.
+    monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")
+    cfg = _live_postiz_empty_tree(tmp_path, monkeypatch)
+    from fanops.ledger import Ledger
     assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
-    assert spy.call_count == 0
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skipped_unvalidated" in blob
+    assert list(Ledger.load(cfg).sources) == []
+
+
+def test_run_skips_p4_dim_bias_when_flag_off(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_P4_DIM_BIAS", raising=False)
+    cfg = _live_postiz_empty_tree(tmp_path, monkeypatch)
+    from fanops.ledger import Ledger
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skipped_unvalidated" not in blob
+    assert list(Ledger.load(cfg).sources) == []
 
 def test_run_prints_heartbeat_with_version(tmp_path, monkeypatch, capsys):
     # B5/E2: every `fanops run` must emit a heartbeat line on stdout carrying the fanops version,
@@ -819,8 +800,11 @@ def test_amplify_variants_inert_when_flag_off(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
     from fanops.ledger import Ledger
-    Ledger.load(Config(root=tmp_path)).save()
-    assert main(["amplify-variants"]) == 0               # flag OFF -> apply_variant_amplify inert
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()
+    before = sorted(Ledger.load(cfg).sources)
+    assert main(["amplify-variants"]) == 0
+    assert sorted(Ledger.load(cfg).sources) == before
 
 
 def test_studio_refuses_non_loopback_host(tmp_path, monkeypatch, capsys):

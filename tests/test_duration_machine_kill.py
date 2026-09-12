@@ -12,7 +12,7 @@ from fanops.models import MomentPick
 from fanops.moments import validate_pick, _persona_entry, _pick_personas, request_moment_hooks
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
 from fanops.prompts import moment_pick_prompt
-from fanops.clip import render_moment, fit_window
+from fanops.clip import fit_window
 from tests.test_moments import _src
 
 
@@ -44,7 +44,7 @@ def test_fit_window_never_pads_to_lo():
     assert fit_window(10.0, 13.0, 120.0, lo=12.0, hi=22.0) == (10.0, 13.0)
 
 
-@pytest.mark.parametrize("site", ["render_moment", "render_account_cut", "request_moment_hooks"])
+@pytest.mark.parametrize("site", ["render_account_cut", "request_moment_hooks"])
 def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
@@ -55,19 +55,7 @@ def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
         id="mom_1", parent_id="src_1", content_token="14.00-18.00",
         start=14.0, end=18.0, reason="r", state=__import__("fanops.models", fromlist=["MomentState"]).MomentState.picked))
     spy = mocker.patch("fanops.clip.fit_window", wraps=fit_window)
-    if site == "render_moment":
-        mocker.patch("fanops.clip.subprocess.run", return_value=type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})())
-        mocker.patch("fanops.clip.render_reframed", return_value=type("R", (), {"returncode": 0})())
-        from fanops.models import Fmt, MomentState
-        led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"state": MomentState.decided})
-        try:
-            render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-        except Exception:
-            pass
-        assert spy.called
-        kw = spy.call_args.kwargs
-        assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
-    elif site == "render_account_cut":
+    if site == "render_account_cut":
         from fanops.clip import render_account_cut
         from fanops.models import Fmt
         mocker.patch("fanops.clip.render_reframed", return_value=type("R", (), {"returncode": 0})())

@@ -73,12 +73,12 @@ def test_postiz_analytics_date_param_is_unix_ms_not_day_count(tmp_path, monkeypa
     sent = g.call_args.kwargs.get("params", {}).get("date")
     assert isinstance(sent, int) and sent > 1_500_000_000_000   # a real ms-epoch timestamp (post-2017), never 7/30
 
-def test_postiz_non_list_response_yields_empty_metrics(tmp_path, monkeypatch, mocker):
+def test_postiz_non_list_response_emits_no_match_row(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"unexpected": "object"}))
-    row = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]
-    assert row["metrics"] == {} and row["_raw_labels"] == []
+    rows = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
+    assert all(r.get("postSubmissionId") != "s" for r in rows)
 
 def test_postiz_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
     from fanops.errors import PostizAuthError
@@ -142,7 +142,7 @@ def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, mo
     by_sid = {r["postSubmissionId"]: r for r in rows}
     assert by_sid["OK1"]["metrics"] == {"likes": 7.0}         # survivors collected
     assert by_sid["OK2"]["metrics"] == {"likes": 7.0}
-    assert "BAD" not in by_sid or not by_sid["BAD"]["metrics"]  # failing sid skipped/empty, not fatal
+    assert "BAD" not in by_sid
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "BAD" in log                                       # breadcrumb for the failed fetch
 
