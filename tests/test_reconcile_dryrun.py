@@ -39,7 +39,6 @@ def test_reconcile_due_routes_zernio_when_global_dryrun(tmp_path, monkeypatch, m
     # body carries that username on post.platforms[].accountId (_id == post.account_id "z1"); get_status surfaces
     # it and the oEmbed author ("tt") must equal it. The mock answers the status poll (url + username) + oEmbed.
     url = "https://www.tiktok.com/@tt/video/1"
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     def _get(u, **kw):
         if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
         return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",
@@ -65,7 +64,6 @@ def test_reconcile_post_without_provider_parks_not_blotato(tmp_path, monkeypatch
                       caption="x", state=PostState.needs_reconcile, submission_id="orphan_sid",
                       public_url="dryrun://p"))
     led.save()
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["p"]
     assert p.state is PostState.needs_reconcile
@@ -90,7 +88,6 @@ def test_reconcile_inflight_live_dryrun_global_zernio(tmp_path, monkeypatch, moc
     # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username (carried on post.platforms[].
     # accountId, _id == post.account_id "z1"); get_status surfaces it and the oEmbed author ("tt") must equal it.
     url = "https://www.tiktok.com/@tt/video/9"
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     def _get(u, **kw):
         if "oembed" in u: return _R(200, {"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
         return _R(200, {"post": {"platforms": [{"platform": "tiktok", "status": "published",

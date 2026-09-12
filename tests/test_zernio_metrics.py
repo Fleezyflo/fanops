@@ -37,8 +37,11 @@ def _zenv(monkeypatch):
 
 
 def _published(pid, sub, account="tt", platform=Platform.tiktok):
+    url = ("https://www.tiktok.com/@tt/video/1" if platform is Platform.tiktok
+           else "https://www.instagram.com/reel/AAA/")
     return Post(id=pid, parent_id="c", account=account, account_id="z1", platform=platform,
-                caption="x", state=PostState.published, submission_id=sub, published_at=iso_z(_PUB), public_url="dryrun://c")
+                caption="x", state=PostState.published, submission_id=sub, published_at=iso_z(_PUB),
+                public_url=url)
 
 
 # ---------------------------------------------------------------- analytics shape mapping ----
@@ -296,10 +299,8 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
                                                                     "accountId": {"_id": "z1", "username": "tt"}}]}})
         raise AssertionError(f"Postiz list must not be hit from the per-post poller: {url}")
     mocker.patch("fanops.post.metrics.requests.get", side_effect=by_url)
-    ctor = mocker.spy(__import__("fanops.post.metrics", fromlist=["PostizStatusClient"]).PostizStatusClient, "__init__")
     mirror = {"psid": {"status": "published", "publicUrl": ig_url, "postiz_state": "PUBLISHED"}}
     led = reconcile_posts(led, cfg, mirror=mirror)   # TT via _default_get_status; IG via mirror
-    assert ctor.call_count == 0                      # P4: mixed corpus does not construct PostizStatusClient
     assert led.posts["tt"].state is PostState.published and led.posts["tt"].public_url == tt_url
     assert led.posts["ig"].state is PostState.published and led.posts["ig"].public_url == ig_url
 
