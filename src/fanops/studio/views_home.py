@@ -4,6 +4,7 @@ Depends on views_common for lineage_maps; lazy-imports golive_accounts/led_for_r
 the views facade to avoid circular imports."""
 from __future__ import annotations
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -99,18 +100,23 @@ def review_handoff(cfg: Config) -> dict:
 
 def zero_post_clips(cfg: Config) -> list[dict]:
     """Captioned/queued clips with no Post born — the silent crosspost drop surfaced for Home."""
-    with fail_open("studio.views_home.zero_post_clips"):
-        led = Ledger.load(cfg)
-        out = []
-        for clip in led.clips.values():
-            if clip.state not in (ClipState.queued, ClipState.captioned):
-                continue
-            if any(p.parent_id == clip.id for p in led.posts.values()):
-                continue
-            mom = led.moments.get(clip.parent_id)
-            out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
-                        "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
-        return out[:5]
+    try:
+        with fail_open("studio.views_home.zero_post_clips"):
+            led = Ledger.load(cfg)
+            out = []
+            for clip in led.clips.values():
+                if clip.state not in (ClipState.queued, ClipState.captioned):
+                    continue
+                if any(p.parent_id == clip.id for p in led.posts.values()):
+                    continue
+                mom = led.moments.get(clip.parent_id)
+                out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
+                            "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
+            return out[:5]
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views_home").debug(
+            "studio.views_home.zero_post_clips fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     return []
 
 
@@ -162,26 +168,31 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
     from collections import defaultdict
     from fanops.studio import views as _views
     out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
-    with fail_open("studio.views_home.account_work_counts"):
-        led = _views.led_for_request(cfg)
-        now = datetime.now(timezone.utc)
-        # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
-        # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
-        for p in led.posts.values():
-            h = p.account
-            if p.state is PostState.awaiting_approval and led.can_promote(p):
-                out[h]["awaiting"] += 1
-            elif p.state is PostState.queued and _queued_has_future_schedule(p, now):
-                out[h]["scheduled"] += 1
-        for h in {p.account for p in led.posts.values()}:
-            hist = led.state_histogram(account=h)
-            inflight = (hist[PostState.needs_reconcile] + hist[PostState.submitting]
-                        + hist[PostState.submitted])
-            failed = hist[PostState.failed] + hist[PostState.error]
-            if inflight:
-                out[h]["inflight"] = inflight
-            if failed:
-                out[h]["failed"] = failed
+    try:
+        with fail_open("studio.views_home.account_work_counts"):
+            led = _views.led_for_request(cfg)
+            now = datetime.now(timezone.utc)
+            # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
+            # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
+            for p in led.posts.values():
+                h = p.account
+                if p.state is PostState.awaiting_approval and led.can_promote(p):
+                    out[h]["awaiting"] += 1
+                elif p.state is PostState.queued and _queued_has_future_schedule(p, now):
+                    out[h]["scheduled"] += 1
+            for h in {p.account for p in led.posts.values()}:
+                hist = led.state_histogram(account=h)
+                inflight = (hist[PostState.needs_reconcile] + hist[PostState.submitting]
+                            + hist[PostState.submitted])
+                failed = hist[PostState.failed] + hist[PostState.error]
+                if inflight:
+                    out[h]["inflight"] = inflight
+                if failed:
+                    out[h]["failed"] = failed
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views_home").debug(
+            "studio.views_home.account_work_counts fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     for h in out:
         if out[h]["awaiting"]:
             out[h]["review_batch"] = review_nav_params(cfg, h).get("batch")

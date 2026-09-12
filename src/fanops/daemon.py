@@ -936,11 +936,14 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
     # Generation: if the plist has one, it must match.
     sha, _src = _version_signal(cfg)
     expect_gen = None
-    from fanops.errors import fail_open
-    with fail_open("daemon._redeploy_studio.plist_generation"):   # no plist / unreadable -> skip the
-        import plistlib                                          # generation check, keep sha + pid
+    try:
+        import plistlib                                          # no plist / unreadable -> skip generation
         pl = plistlib.loads(studio_plist_path().read_bytes())
-        expect_gen = pl.get("EnvironmentVariables", {}).get("FANOPS_STUDIO_GENERATION")
+        env = pl.get("EnvironmentVariables") or {}
+        expect_gen = env.get("FANOPS_STUDIO_GENERATION")
+    except Exception as exc:
+        _log.debug("daemon._redeploy_studio.plist_generation fail-open: %s: %s",
+                   type(exc).__name__, str(exc)[:200], exc_info=True)
     
     import fanops.daemon as _daemon
     return _daemon._studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)
