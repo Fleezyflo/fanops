@@ -105,12 +105,13 @@ def test_inert_when_flag_off(tmp_path, monkeypatch):
     apply_p4_dim_bias(led, cfg)
     assert _frozen(led) == before                            # default OFF -> ledger content untouched
 
-def test_apply_failsafe_logs_the_failing_dim(tmp_path, monkeypatch, mocker):
-    # fail-SAFE, not fail-silent (review fix): an amplify error is contained, never propagates, and the
-    # log names WHICH dim failed (so 'one amplified, one failed' is distinguishable from 'zero amplified').
+def test_apply_failsafe_logs_the_failing_dim(tmp_path, monkeypatch):
+    # fail-SAFE, not fail-silent: a real amplify failure (corrupt accounts.json) is contained, never
+    # propagates, and the log names WHICH dim failed. Do not patch amplify.
     monkeypatch.setenv("FANOPS_P4_DIM_BIAS", "1")
     cfg = Config(root=tmp_path); led = _gated_led(cfg); _validate(cfg)
-    mocker.patch("fanops.p4_dim_bias.amplify", side_effect=RuntimeError("boom"))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{")                          # ControlFileError inside amplify
     apply_p4_dim_bias(led, cfg)                               # must NOT raise
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "p4_dim_bias" in log and "first_frame_kind" in log   # the failing dim is named, not a generic '-'
