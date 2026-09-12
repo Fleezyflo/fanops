@@ -247,16 +247,18 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                 led.set_moment_state(moment_id, MomentState.clipped)
                 return led, clip
             sc_ok = False
+            sc_reason = None
             try:
                 r = render_supercut_reframed(src.source_path, str(dst), spans, aspect.value,
                                              src_w=src.width or 0, src_h=src.height or 0,
                                              span_entries=span_entries, content_type=span_ct, extra_vf=extra_vf,
                                              timeout=_FFMPEG_TIMEOUT)
                 sc_ok = r.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+                if not sc_ok:
+                    out = dst.stat().st_size if dst.exists() else "missing"
+                    sc_reason = f"supercut rc={r.returncode} out={out}B: {(r.stderr or '')[:180]}"
             except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-                get_logger(cfg)("clip", cid, "supercut_fail_open",
-                                reason=f"{type(exc).__name__}: supercut render failed — falling back to envelope")
-                r = None
+                sc_reason = f"{type(exc).__name__}: supercut render failed"
             if sc_ok:
                 clip = Clip(id=cid, parent_id=moment_id, state=born_state, path=str(dst), aspect=aspect,
                             first_frame_kind=None, cut_seconds=sc_cut_seconds, hook_burn_failed=hook_burn_failed)
@@ -270,11 +272,11 @@ def render_moment(led: Ledger, cfg: Config, moment_id: str, *,
                     except (OSError, ValueError): pass
                 except OSError: pass
                 return led, clip
-            rc = getattr(r, "returncode", "?") if r is not None else "?"
-            get_logger(cfg)("clip", cid, "supercut_fail_open",
-                            reason=f"supercut rc={rc} — falling back to envelope cut")
-        # FAIL-OPEN: today's single-window path over the envelope (fit_window below).
-        spans = None
+            get_logger(cfg)("clip", cid, "supercut_failed", reason=sc_reason)
+            clip = Clip(id=cid, parent_id=moment_id, state=ClipState.error, path=str(dst),
+                        aspect=aspect, error_reason=sc_reason)
+            led.clips[cid] = clip
+            return led, clip
     if not is_stitch and not spans:
         dur = src.duration or 0.0
         hi = dur if dur > 0 else float("inf")
