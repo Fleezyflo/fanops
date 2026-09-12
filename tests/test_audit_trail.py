@@ -16,6 +16,7 @@ actions), D18 (Posted-tub batch grouping/filter)."""
 from __future__ import annotations
 import json
 from datetime import datetime, timezone
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Post, Clip, Source, Moment, Platform, PostState, ClipState,
@@ -50,15 +51,16 @@ def test_write_audit_appends_jsonl(tmp_path):
 
 
 def test_write_audit_io_error_leaves_fail_open_breadcrumb(tmp_path, caplog):
-    """Real I/O fail: the audit log directory is a file. Calling write_audit is enough —
-    pin the fail_open breadcrumb; do not patch fail_open."""
+    """Real I/O fail: the audit log directory is a file. fail_open logs then re-raises —
+    pin the breadcrumb; do not patch fail_open."""
     import logging
     from fanops.audit import write_audit
     cfg = Config(root=tmp_path)
     cfg.control.parent.mkdir(parents=True, exist_ok=True)
     cfg.control.write_text("not-a-dir")
     with caplog.at_level(logging.WARNING, logger="fanops.errors"):
-        write_audit(cfg, "approve", ["p1"], reason="test")
+        with pytest.raises(OSError):
+            write_audit(cfg, "approve", ["p1"], reason="test")
     assert any("audit.write_audit fail-open" in r.message for r in caplog.records)
 
 

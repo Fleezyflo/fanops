@@ -103,6 +103,8 @@
     "tests/test_studio_lifecycle_e2e.py"
   ],
   "src/fanops/errors.py": [
+    "tests/test_fail_open_primitive.py",
+    "tests/test_fail_open_logging_mol67.py",
     "tests/test_cli.py",
     "tests/test_swallow_ratchet.py"
   ],
