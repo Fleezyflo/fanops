@@ -2,6 +2,7 @@
 """Clip-length BANDS by content type. A song's hook/verse is a longer watchable unit than a spoken
 beat, so the SONG band is wider and higher than the TALK default; band_for resolves a profile name
 to its Band. Unknown/empty must not silently become TALK."""
+import pytest
 from fanops.bands import band_for, TALK, SONG
 
 def test_talk_and_song_bands():
@@ -21,11 +22,10 @@ def test_band_for_is_case_and_whitespace_tolerant():
     assert band_for("  SONG\n") is SONG                     # a .env value may carry case/ws
 
 def test_band_for_unknown_or_empty_defaults_to_talk():
-    # Unknown/empty must not silently become TALK. PROFILE_NAMES is the validatable set; a junk
-    # profile fail-opening to TALK is the load-posture defect this pin holds red until src refuses it.
-    assert band_for("podcast") is not TALK
-    assert band_for("") is not TALK
-    assert band_for(None) is not TALK
+    # Unknown/empty must not silently become TALK. Refuse at band_for; do not invert to a new default.
+    for junk in ("podcast", "", None):
+        with pytest.raises(ValueError):
+            band_for(junk)
 
 def test_short_medium_long_are_distinct_new_tiers():
     # M2: three operator-facing length tiers, ADDED alongside the legacy content-type bands (NOT aliases).
