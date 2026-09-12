@@ -475,7 +475,7 @@
     {
       "decorator": "app.get",
       "handler": "fingerprint",
-      "line": 223,
+      "line": 228,
       "methods": [
         "GET"
       ],
@@ -486,7 +486,7 @@
     {
       "decorator": "app.get",
       "handler": "candidates",
-      "line": 282,
+      "line": 287,
       "methods": [
         "GET"
       ],
@@ -497,7 +497,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_candidate",
-      "line": 287,
+      "line": 292,
       "methods": [
         "POST"
       ],
@@ -574,7 +574,7 @@
     {
       "decorator": "app.get",
       "handler": "gates",
-      "line": 327,
+      "line": 332,
       "methods": [
         "GET"
       ],
@@ -585,7 +585,7 @@
     {
       "decorator": "app.post",
       "handler": "do_answer_gate",
-      "line": 333,
+      "line": 338,
       "methods": [
         "POST"
       ],
@@ -596,7 +596,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_gate",
-      "line": 345,
+      "line": 350,
       "methods": [
         "POST"
       ],
@@ -959,7 +959,7 @@
     {
       "decorator": "app.get",
       "handler": "healthz",
-      "line": 217,
+      "line": 222,
       "methods": [
         "GET"
       ],
@@ -1201,7 +1201,7 @@
     {
       "decorator": "app.get",
       "handler": "metrics",
-      "line": 237,
+      "line": 242,
       "methods": [
         "GET"
       ],
@@ -1509,7 +1509,7 @@
     {
       "decorator": "app.get",
       "handler": "publish_panel",
-      "line": 294,
+      "line": 299,
       "methods": [
         "GET"
       ],
@@ -1520,7 +1520,7 @@
     {
       "decorator": "app.post",
       "handler": "do_publish_now",
-      "line": 313,
+      "line": 318,
       "methods": [
         "POST"
       ],
@@ -1531,7 +1531,7 @@
     {
       "decorator": "app.post",
       "handler": "do_mark_posted",
-      "line": 308,
+      "line": 313,
       "methods": [
         "POST"
       ],
@@ -1553,7 +1553,7 @@
     {
       "decorator": "app.get",
       "handler": "reconcile_strip_partial",
-      "line": 321,
+      "line": 326,
       "methods": [
         "GET"
       ],
@@ -2004,7 +2004,7 @@
     {
       "decorator": "app.get",
       "handler": "stitches",
-      "line": 259,
+      "line": 264,
       "methods": [
         "GET"
       ],
@@ -2015,7 +2015,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_stitches",
-      "line": 269,
+      "line": 274,
       "methods": [
         "POST"
       ],
@@ -2026,7 +2026,7 @@
     {
       "decorator": "app.post",
       "handler": "do_dismiss_stitches",
-      "line": 273,
+      "line": 278,
       "methods": [
         "POST"
       ],
@@ -2037,7 +2037,7 @@
     {
       "decorator": "app.post",
       "handler": "do_release_stitches",
-      "line": 277,
+      "line": 282,
       "methods": [
         "POST"
       ],
