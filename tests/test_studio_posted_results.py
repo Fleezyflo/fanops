@@ -103,11 +103,6 @@ def test_lineage_ranks_within_the_passed_set():
     assert next(r for r in filtered if r.post_id == "b").rank == 1
 
 
-def test_lineage_never_raises():
-    class Weird: pass
-    views.lineage_stats([Weird(), Weird()])              # missing every attr -> fail-open, no exception
-
-
 def test_lineage_returns_new_rows_originals_untouched():
     # MOL-70: lineage_stats must NOT mutate the caller-owned rows — it returns a NEW annotated list.
     originals = [_row("a", "clip_1", 0.9), _row("b", "clip_1", 0.5)]
@@ -251,24 +246,22 @@ def test_posted_link_is_a_labeled_affordance_not_a_raw_url(tmp_path):
 
 
 def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
-    """M5 — a published post WITHOUT a public_url is the dryrun signature (DryRunPoster->publish_post
-    never sets public_url; only reconcile.py does, and only on a real provider response). The OLD
-    contract conflated this with 'pending — link fills in later' and was the operator's verbatim
-    'says posted when nothing is posted' bug. The NEW contract: dryrun rows label 'dryrun' (chip) +
-    'no link' (the link cell), live-rows-without-URL still read 'pending ⟳'."""
+    """published+dryrun:// is not posted — /posted must not list it next to a live permalink."""
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="clip_np", parent_id="m1", path="/c/clip_np.mp4", state=ClipState.published))
-        # R1: a published row MUST carry a public_url; the dryrun:// scheme is the M5 dryrun-signature
-        # marker (channel chip labels 'dryrun'). The old contract (public_url=None) is now unconstructable.
         led.add_post(Post(id="p_nourl", parent_id="clip_np", account="a", account_id="ig_1",
                           platform=Platform.instagram, caption="fire", state=PostState.published,
                           scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_nourl",
                           metrics={LIFT_SCORE: 0.5}))
+        led.add_post(Post(id="p_live", parent_id="clip_np", account="a", account_id="ig_1",
+                          platform=Platform.instagram, caption="live", state=PostState.published,
+                          scheduled_time="2026-06-02T00:00:00Z", public_url="https://insta/p_live",
+                          metrics={LIFT_SCORE: 0.5}))
     html = _client(cfg).get("/posted").data.decode()
-    assert 'data-testid="posted-channel-chip"' in html       # M5: channel chip present
-    assert ">dryrun<" in html                                # labels as dryrun (no real platform saw it)
-    assert "no link" in html                                 # the honest dryrun placeholder, NOT 'pending'
+    assert "https://insta/p_live" in html
+    assert "/posts/repost/p_nourl" not in html
+    assert ">dryrun<" not in html
 
 
 # ── MOL-51: per-row action weights ranked deliberately (U8: repost actions folded into one menu) ──────

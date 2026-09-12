@@ -35,10 +35,11 @@ def _seed(cfg, *, pid="p1", state=PostState.queued, account="a", when=None, sour
                           public_url="dryrun://clip_1"))
 
 
-# ---- 1: account_color_hue deterministic SHA1 → 0-359 ----
+# ---- 1: account_color_hue is SHA1(handle)[:8] % 360 — pin the digest, not f(x)==f(x) ----
 def test_account_color_hue_deterministic():
     from fanops.studio.views import account_color_hue
-    assert account_color_hue("a") == account_color_hue("a")
+    assert account_color_hue("a") == 319
+    assert account_color_hue("b") == 318
     assert 0 <= account_color_hue("a") < 360
     assert account_color_hue("a") != account_color_hue("b")
 

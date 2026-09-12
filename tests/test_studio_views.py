@@ -1,4 +1,5 @@
 # tests/test_studio_views.py — CREATE
+import pytest
 from datetime import datetime, timezone, timedelta
 from fanops.studio.views import _imminent, IMMINENT_THRESHOLD_MINUTES
 
@@ -71,7 +72,7 @@ def test_review_buckets_editable_recent_held(tmp_path):
                       state=ClipState.published))
     led.add_post(Post(id="p_recent", parent_id="clip_recent", account="a", account_id="1",
                       platform=Platform.instagram, caption="SHIPPED", state=PostState.published,
-                      scheduled_time=_z(NOW - timedelta(hours=2)), public_url="dryrun://p_recent"))
+                      scheduled_time=_z(NOW - timedelta(hours=2)), public_url="https://instagram.com/reel/recent/"))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     by_bucket = {}
     for c in cards:
@@ -91,6 +92,24 @@ def test_review_buckets_editable_recent_held(tmp_path):
     rc = [c for c in by_bucket.get("recent", []) if c.clip_id == "clip_recent"][0]
     assert all(not s.editable for s in rc.surfaces)
     assert any(s.post_id == "p_recent" for s in rc.surfaces)
+
+def test_review_buckets_recent_excludes_dryrun_url(tmp_path):
+    cfg = Config(root=tmp_path)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    led = Ledger.load(cfg); _lineage(led)
+    led.add_clip(Clip(id="clip_live", parent_id="mom_1", path="/clips/clip_live.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.published))
+    led.add_post(Post(id="p_live", parent_id="clip_live", account="a", account_id="1",
+                      platform=Platform.instagram, caption="LIVE", state=PostState.published,
+                      scheduled_time=_z(NOW - timedelta(hours=2)), public_url="https://instagram.com/reel/x/"))
+    led.add_clip(Clip(id="clip_dry", parent_id="mom_1", path="/clips/clip_dry.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.published))
+    led.add_post(Post(id="p_dry", parent_id="clip_dry", account="a", account_id="1",
+                      platform=Platform.instagram, caption="DRY", state=PostState.published,
+                      scheduled_time=_z(NOW - timedelta(hours=2)), public_url="dryrun://p_dry"))
+    recent_ids = {s.post_id for c in review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
+                  if c.bucket == "recent" for s in c.surfaces}
+    assert "p_live" in recent_ids and "p_dry" not in recent_ids
 
 def test_review_buckets_variant_media_url_is_post_scoped(tmp_path):
     # media_url is always /media/<post_id> (route resolves variant vs base); not the clip path.
@@ -376,9 +395,8 @@ def test_account_median_deltas_returns_new_rows_originals_untouched():
     assert all(o is not n for o, n in zip(originals, out))
 
 def test_account_median_deltas_fail_open_on_bad_input():
-    # mirrors lineage_stats' blanket fail-open: a non-iterable / attribute-less arg must not raise.
-    assert account_median_deltas(None) is None          # no exception
-    account_median_deltas([object()])    # rows without .account/.lift_score are skipped, not fatal
+    with pytest.raises(TypeError):
+        account_median_deltas(None)
 
 def test_lift_row_carries_account_median_delta_field():
     # the additive field exists and defaults None WITHOUT disturbing the existing delta_vs_best.
@@ -643,7 +661,7 @@ def test_posted_library_row_carries_published_at(tmp_path):
     led.add_clip(Clip(id="clip_1", parent_id="m1", path="/c.mp4", state=ClipState.published))
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
-                      published_at="2026-06-05T10:00:00Z", public_url="dryrun://p1"))
+                      published_at="2026-06-05T10:00:00Z", public_url="https://instagram.com/reel/p1/"))
     rows = posted_library(led, cfg)
     assert rows[0].published_at == "2026-06-05T10:00:00Z"
 
@@ -770,7 +788,8 @@ def test_home_status_counts(tmp_path):
     cfg = Config(root=tmp_path); _seed_home(cfg)
     st = home_status(cfg)
     assert st.counts["sources"] == 1                                  # native only (the third_party src excluded)
-    assert st.counts["awaiting"] == 1 and st.counts["scheduled"] == 1 and st.counts["posted"] == 1
+    assert st.counts["awaiting"] == 1 and st.counts["scheduled"] == 1
+    assert st.counts["posted"] == 0                                   # p3 is published+dryrun:// — not shipped
     assert st.mode == "dryrun" and st.is_live is False
 
 def test_home_status_failed_and_live_trackable(tmp_path):
@@ -790,7 +809,7 @@ def test_home_status_failed_and_live_trackable(tmp_path):
     assert c["failed"] == 1
     assert c["live_trackable"] == 1
     assert c["inflight"] == 1
-    assert c["posted"] == 2
+    assert c["posted"] == 1                                   # https live only; dryrun:// is not posted
 
 def test_home_awaiting_counts_moments_not_posts(tmp_path):
     # Root fix: Home 'Awaiting' is the MOMENT count (size of the Review approve-worklist), NOT the raw
@@ -836,14 +855,13 @@ def test_home_status_batches_count(tmp_path):
     create_batch(led, name="Launch", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     assert home_status(cfg).counts["batches"] == 1
 
-def test_home_status_fail_open(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path); _seed_home(cfg)
-    def _boom(c): raise RuntimeError("torn")
-    monkeypatch.setattr(Ledger, "load", _boom)
-    st = home_status(cfg)
-    assert st.counts == {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
-                         "inflight": 0, "due_soon": 0, "live_today": 0, "live_trackable": 0, "failed": 0, "posted": 0}
-    assert st.by_account == {}                                        # zeroed shell, never a 500
+def test_home_status_fail_open(tmp_path):
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"not-a-sqlite-database")
+    with pytest.raises(ControlFileError):
+        home_status(cfg)
 
 def test_golive_accounts_parity_with_golive_status(tmp_path):
     cfg = Config(root=tmp_path); _seed_home(cfg)
@@ -880,11 +898,13 @@ def test_home_batches_flags_emptied_shell(tmp_path):
     hb = home_batches(cfg)[0]
     assert hb.is_emptied is True and hb.is_zero_result is False and hb.sources_in_batch == 0
 
-def test_home_batches_fail_open(tmp_path, monkeypatch):
+def test_home_batches_fail_open(tmp_path):
+    from fanops.errors import ControlFileError
     cfg = Config(root=tmp_path)
-    def _boom(c): raise RuntimeError("torn")
-    monkeypatch.setattr(Ledger, "load", _boom)
-    assert home_batches(cfg) == []
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"not-a-sqlite-database")
+    with pytest.raises(ControlFileError):
+        home_batches(cfg)
 
 
 # ---------------------------------------------------------------- M3a: per-account length/cut/framing on the card ----
@@ -1006,7 +1026,7 @@ def test_posted_library_delivery_filter(tmp_path):
     from fanops.studio.views_results import posted_library
     assert len(posted_library(led, cfg, delivery="live")) == 1
     assert posted_library(led, cfg, delivery="live")[0].post_id == "pl"
-    assert len(posted_library(led, cfg, delivery="dryrun")) == 1
+    assert {r.post_id for r in posted_library(led, cfg)} == {"pl"}   # default Posted library is live only
 
 
 # ---- Sprint 1: failure classification + recovery cockpit ----

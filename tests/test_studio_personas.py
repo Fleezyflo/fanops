@@ -4,6 +4,7 @@
 # returns ActionResult (ok/error/detail), never raising into a 500; the read-model (views.personas_page)
 # powers the page; the routes htmx-swap the panel. Mirrors the Go-Live action/route conventions.
 import json
+import pytest
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.hashtags import METRIC_FIELD, SIZE_FIELD
@@ -237,11 +238,12 @@ def test_personas_page_renders_no_retired_block(tmp_path):
 
 
 def test_personas_page_failopen_on_corrupt(tmp_path):
+    from fanops.errors import ControlFileError
     cfg = Config(root=tmp_path)
     cfg.personas_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.personas_path.write_text("{ not json")
-    page = views.personas_page(cfg)                      # corrupt file -> empty page, never 500
-    assert page.personas == [] and page.accounts == []
+    with pytest.raises(ControlFileError):
+        views.personas_page(cfg)
 
 
 # --- routes ------------------------------------------------------------------------------------

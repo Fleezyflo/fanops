@@ -118,12 +118,22 @@ def test_publish_show_more_offset_returns_remainder(tmp_path, monkeypatch):
 def test_review_oversize_and_garbage_offset_never_500(tmp_path, monkeypatch):
     # a hand-typed offset beyond the total (or non-numeric) must clamp to an empty/first page, never 500.
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n_clips=2)
+    cfg = Config(root=tmp_path / "rev"); _accounts(cfg)
+    _seed(cfg, n_clips=2, state=PostState.awaiting_approval)
     c = _client(cfg)
-    assert c.get("/review?offset=9999").status_code == 200      # beyond total -> empty page, no crash
-    assert c.get("/review?offset=-5").status_code == 200        # negative -> clamped to 0
-    assert c.get("/review?offset=abc").status_code == 200       # garbage -> 0
-    assert c.get("/publish?offset=9999").status_code == 200
+    over = c.get("/review?account=all&offset=9999")
+    assert over.status_code == 200 and b'id="review-body"' in over.data
+    assert over.data.decode().count('class="card clip-card"') == 0
+    first = c.get("/review?account=all&offset=-5")
+    assert first.status_code == 200 and first.data.decode().count('class="card clip-card"') == 2
+    garbage = c.get("/review?account=all&offset=abc")
+    assert garbage.status_code == 200 and garbage.data.decode().count('class="card clip-card"') == 2
+    cfg_p = Config(root=tmp_path / "pub"); _accounts(cfg_p); _seed(cfg_p, n_clips=2)
+    c_p = _client(cfg_p)
+    pub_over = c_p.get("/publish?offset=9999")
+    assert pub_over.status_code == 200 and pub_over.data.decode().count('class="publish-row"') == 0
+    pub_first = c_p.get("/publish")
+    assert pub_first.status_code == 200 and pub_first.data.decode().count('class="publish-row"') == 2
 
 
 # ---- (3) publish-now button on /publish ----

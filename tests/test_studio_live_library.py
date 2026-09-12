@@ -71,8 +71,8 @@ def test_live_library_scope_label_is_credentialed_handle(tmp_path, monkeypatch):
 def test_live_library_scope_label_no_creds(tmp_path, monkeypatch):
     monkeypatch.delenv("META_IG_USER_ID", raising=False)
     cfg = Config(root=tmp_path)
-    label = views.live_library_scope(cfg)
-    assert label                                            # never blank; a no-creds label still renders
+    assert views.live_library_scope(cfg) == (
+        "No Instagram account is connected — connect one on the Go Live tab to mirror its live media.")
 
 
 # ---- route (U13: the live library is folded into /library?view=live; /live-library 301s there) ----
