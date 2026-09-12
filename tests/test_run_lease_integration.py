@@ -68,7 +68,8 @@ def test_run_prepare_errors_are_not_ok(tmp_path, monkeypatch):
     _write_run_accounts(cfg)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
-                          state=SourceState.error, error_reason="boom"))
+                          state=SourceState.error,
+                          error_reason="toolchain missing: ffmpeg"))
     led.save()
     res = actions_run.run_prepare(cfg)
     assert (res.detail or {}).get("errors", 0) > 0
