@@ -50,17 +50,39 @@ def _client(cfg):
 
 # ============================ Task 1 — ?source= / ?state= arg readers ============================
 def test_source_arg_blank_is_none(tmp_path):
-    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led); led.save()
+    # blank/absent ?source= is unfiltered (both clips); ?source=<id> narrows to that source.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("alpha",))
+    led = Ledger.load(cfg)
+    _lineage(led, cid="clip_src_a", mid="m_src_a", sid="s_src_a", path="/v/show1.mp4")
+    _lineage(led, cid="clip_src_b", mid="m_src_b", sid="s_src_b", path="/v/show2.mp4")
+    _await(led, "p_src_a", "clip_src_a", "alpha")
+    _await(led, "p_src_b", "clip_src_b", "alpha")
+    led.save()
     c = _client(cfg)
-    assert c.get("/review").status_code == 200          # absent ?source= -> unfiltered, never 500
-    assert c.get("/review?source=").status_code == 200  # blank -> None, never 500
+    bare = c.get("/review").get_data(as_text=True)
+    blank = c.get("/review?source=").get_data(as_text=True)
+    one = c.get("/review?source=s_src_a").get_data(as_text=True)
+    assert "clip_src_a" in bare and "clip_src_b" in bare
+    assert "clip_src_a" in blank and "clip_src_b" in blank
+    assert "clip_src_a" in one and "clip_src_b" not in one
 
 def test_state_arg_unknown_maps_to_none(tmp_path):
-    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led); led.save()
+    # unknown ?state= is the unfiltered view (awaiting + held); ?state=awaiting keeps editable only.
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("alpha",))
+    led = Ledger.load(cfg)
+    _lineage(led, cid="clip_ed", mid="m_ed", sid="s_ed")
+    _await(led, "p_ed", "clip_ed", "alpha")
+    led.add_clip(Clip(id="clip_held", parent_id="m_ed", path="/c/h.mp4", aspect=Fmt.r9x16,
+                      state=ClipState.queued, held=True, held_reason="risk"))
+    led.save()
     c = _client(cfg)
-    # an unknown ?state= must map to None (the unfiltered view), never 500.
-    assert c.get("/review?state=bogus").status_code == 200
-    assert c.get("/review?state=awaiting").status_code == 200
+    # account=all is the moment-card path so both buckets render (bare /review auto-feeds one account).
+    bogus = c.get("/review?account=all&state=bogus").get_data(as_text=True)
+    awaiting = c.get("/review?account=all&state=awaiting").get_data(as_text=True)
+    assert "Awaiting approval" in bogus and "Held for review" in bogus
+    assert "clip_ed" in bogus and "clip_held" in bogus
+    assert "Awaiting approval" in awaiting and "clip_ed" in awaiting
+    assert "Held for review" not in awaiting and "clip_held" not in awaiting
 
 
 # ============================ Task 2 — source/state filters narrow review_buckets ============================
@@ -203,10 +225,18 @@ def test_feed_view_renders_only_one_account(tmp_path):
     assert "p_a" in body and "p_b" not in body
 
 def test_feed_view_no_account_on_bare_shows_switcher(tmp_path):
-    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _await(led, "p_a", "clip_1", "a"); led.save()
-    c = _client(cfg)
-    assert c.get("/review").status_code == 200
+    cfg = Config(root=tmp_path); _seed_accounts(cfg, handles=("acct_alpha", "acct_beta"))
+    led = Ledger.load(cfg)
+    _lineage(led, cid="clip_a", mid="m_a", sid="s_a")
+    _lineage(led, cid="clip_b", mid="m_b", sid="s_b")
+    _await(led, "p_alpha", "clip_a", "acct_alpha")
+    _await(led, "p_beta", "clip_b", "acct_beta")
+    led.save()
+    body = _client(cfg).get("/review").get_data(as_text=True)
+    assert "review-switcher" in body
+    assert "acct_alpha" in body and "acct_beta" in body
+    assert "Pick an account" in body
+    assert "review-feed" not in body
 
 def test_feed_always_shows_video(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)

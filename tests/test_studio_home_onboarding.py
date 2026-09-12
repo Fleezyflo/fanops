@@ -123,8 +123,12 @@ def test_inline_per_account_post_count(tmp_path):
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, public_url="dryrun://p1"))
+        led.add_post(Post(id="p2", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                          caption="y", state=PostState.published, public_url="https://instagram.com/p/real"))
     html = _client(cfg).get("/").data.decode()
-    assert "home-acct-tile" in html and "1 posted" in html
+    assert "home-acct-tile" in html
+    assert "2 posted" not in html          # published+dryrun:// must not count as shipped
+    assert "1 posted" in html              # https published may
 
 
 def test_orphan_handle_not_on_home(tmp_path):
