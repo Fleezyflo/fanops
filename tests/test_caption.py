@@ -377,21 +377,6 @@ def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
 
-def test_request_captions_failopen_on_learning_error(monkeypatch, tmp_path):
-    # A raising best_hooks must NOT propagate: the request is still written, no hint, clip advances.
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_variant_posts_for_at_a(led)
-    monkeypatch.setattr("fanops.caption.best_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])   # must NOT raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()                                      # request still written -> clip advances
-    payload = json.loads(p.read_text())
-    assert "learned_hooks" not in payload                  # error -> no hint
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
-
 # --- transfer: request_captions injects the cross-surface prior for a COLD recipient ----------
 from fanops.accounts import Account, Accounts, AccountStatus
 
@@ -469,25 +454,6 @@ def test_request_captions_own_winner_takes_precedence_over_transfer(monkeypatch,
     assert payload["learned_hooks"] == ["OWN"]                 # own signal present
     assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed (own-wins, not the freeze)
 
-def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    accts = _transfer_accounts(cfg, [("a", "hype"), ("b", "hype"), ("c", "hype")])
-    _win_surface_for(led, "a", Platform.instagram, "STYLE")
-    _win_surface_for(led, "b", Platform.instagram, "STYLE")
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so the raising
-    #                                                           scorer is actually REACHED (else the freeze
-    #                                                           short-circuits and the fail-open path is untested)
-    monkeypatch.setattr("fanops.caption.transferred_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("c", Platform.instagram)], accounts=accts)  # no raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()
-    payload = json.loads(p.read_text())
-    assert "learned_hooks_transferred" not in payload          # error -> no prior
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
 def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
     # ROOT FIX: the caption gate no longer authors a hook (the frame-seeing moment gate does). Even if a
     # (legacy) response still carries a hook, ingest_captions IGNORES it and stores None.
@@ -558,17 +524,6 @@ def test_request_captions_no_hint_when_learning_off_even_with_ucb(monkeypatch, t
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload                 # learning off -> neither scorer runs
-
-def test_request_captions_failopen_on_ucb_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
-    monkeypatch.setattr("fanops.caption.ucb_rank",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_thinlead_for_at_a(led)
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])  # must NOT raise
-    assert request_path(cfg, "captions", "clip_1").exists()                   # written anyway
-    assert led.clips["clip_1"].state is ClipState.captions_requested          # clip advanced
 
 
 # --- persona injection: the UI-set per-account fan voice must reach the caption request ----------

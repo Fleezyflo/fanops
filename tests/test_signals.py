@@ -1,4 +1,5 @@
 # tests/test_signals.py
+import os
 import subprocess
 import pytest
 from fanops.config import Config
@@ -7,6 +8,34 @@ from fanops.models import Source, SourceState
 from fanops.errors import ToolchainMissingError
 from fanops.signals import (parse_silences, parse_scene_changes, detect_signals, apply_energy,
                             filter_peaks_by_intensity, _silence_cmd, _scene_cmd, _scene_timeout)
+
+
+def _ffprobe_dims(_cmd, **_kw):
+    class R:
+        returncode = 0
+        stdout = "1920\n1080\n12.0\n"
+        stderr = ""
+    return R()
+
+
+def _patch_signal_bins(mocker, ffmpeg_side_effect):
+    mocker.patch("fanops.signals.subprocess.run", side_effect=ffmpeg_side_effect)
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
+
+
+def _ffmpeg_on_path(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    ff = bin_dir / "ffmpeg"
+    ff.write_text("#!/bin/sh\nexit 0\n")
+    ff.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+
+
+def _ffmpeg_off_path(tmp_path, monkeypatch):
+    empty = tmp_path / "emptybin"
+    empty.mkdir(exist_ok=True)
+    monkeypatch.setenv("PATH", str(empty))
 
 SILENCE_STDERR = """
 [silencedetect @ 0x] silence_start: 2.5
@@ -60,8 +89,7 @@ def test_detect_signals_merges_advances_and_backfills_duration(tmp_path, mocker)
             returncode = 0; stdout = ""
             stderr = SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR
         return R()
-    mocker.patch("fanops.signals.subprocess.run", side_effect=fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    _patch_signal_bins(mocker, fake_run)
     led = detect_signals(led, cfg, "src_1")
     s = led.sources["src_1"]
     assert s.state is SourceState.signalled
@@ -99,8 +127,7 @@ def test_detect_signals_writes_sidecar_for_the_commit_pass(tmp_path, mocker):
             returncode = 0; stdout = ""
             stderr = SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR
         return R()
-    mocker.patch("fanops.signals.subprocess.run", side_effect=fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    _patch_signal_bins(mocker, fake_run)
     detect_signals(led, cfg, "src_1")
     sidecar = cfg.agent_io / "signals" / "src_1.json"
     assert sidecar.exists(), "expected a written signals sidecar"
@@ -132,8 +159,7 @@ def test_detect_signals_scores_speech_peaks_from_energy(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, meta={"transcribed": True}))
-    mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    _patch_signal_bins(mocker, _energy_fake_run)
     led = detect_signals(led, cfg, "src_1")
     sp = [p for p in led.sources["src_1"].signal_peaks if p["kind"] == "speech_resume"]
     assert sp and all(p["score"] != 0.5 for p in sp)          # energy replaced the constant
@@ -151,7 +177,7 @@ def test_detect_signals_v1_sidecar_not_adopted_recomputes(tmp_path, mocker):
     (sc / "src_1.json").write_text(json.dumps(                # legacy v1-shaped sidecar (no version)
         {"peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
     spy = mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
     detect_signals(led, cfg, "src_1")
     spy.assert_called()                                       # stale sidecar rejected -> ffmpeg ran
     d = json.loads((sc / "src_1.json").read_text())
@@ -162,8 +188,7 @@ def test_detect_signals_writes_versioned_sidecar(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, meta={"transcribed": True}))
-    mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    _patch_signal_bins(mocker, _energy_fake_run)
     detect_signals(led, cfg, "src_1")
     d = json.loads((cfg.agent_io / "signals" / "src_1.json").read_text())
     assert d["v"] == 3 and "peaks" in d
@@ -258,7 +283,7 @@ def test_detect_signals_wires_duration_scaled_scene_timeout(tmp_path, mocker):
 
 
 # ---- MOL-122: the in-lock reduce pass must never shell slow ffmpeg — adopt-or-defer on a cold sidecar ----
-def test_detect_signals_in_lock_defers_when_sidecar_cold(tmp_path, mocker):
+def test_detect_signals_in_lock_defers_when_sidecar_cold(tmp_path, mocker, monkeypatch):
     # The reducer runs detect_signals INSIDE the ledger flock, meant only to ADOPT the producer's warm
     # sidecar. If the producer failed (cold sidecar), an in-lock ffmpeg run would hold the flock for up to
     # the (now duration-scaled) scene timeout — an hour on a long source. in_lock=True must DEFER instead:
@@ -266,20 +291,20 @@ def test_detect_signals_in_lock_defers_when_sidecar_cold(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, duration=1455.0, meta={"transcribed": True}))
-    mocker.patch("fanops.signals.shutil.which", return_value="/usr/bin/ffmpeg")   # toolchain present -> defer, don't quarantine
+    _ffmpeg_on_path(tmp_path, monkeypatch)
     spy = mocker.patch("fanops.signals.subprocess.run")
     led = detect_signals(led, cfg, "src_1", in_lock=True)
     spy.assert_not_called()                                          # NO slow ffmpeg under the flock
     assert led.sources["src_1"].state is SourceState.transcribed     # left for the next producer pass
 
-def test_detect_signals_in_lock_absent_toolchain_still_raises(tmp_path, mocker):
+def test_detect_signals_in_lock_absent_toolchain_still_raises(tmp_path, monkeypatch):
     # A genuinely-absent toolchain fails in microseconds (no flock risk) and must STILL quarantine — the
     # in-lock defer applies only to the SLOW work, never to a real toolchain-missing failure that would
     # otherwise spin the source `transcribed` forever. The cheap PATH probe raises the typed error in-lock.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, duration=1455.0, meta={"transcribed": True}))
-    mocker.patch("fanops.signals.shutil.which", return_value=None)   # ffmpeg absent from PATH
+    _ffmpeg_off_path(tmp_path, monkeypatch)
     with pytest.raises(ToolchainMissingError, match="ffmpeg"):
         detect_signals(led, cfg, "src_1", in_lock=True)
 
@@ -310,21 +335,21 @@ def test_detect_signals_producer_path_still_runs_ffmpeg(tmp_path, mocker):
             stderr = SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR
         return R()
     spy = mocker.patch("fanops.signals.subprocess.run", side_effect=fake_run)
-    mocker.patch("fanops.signals.probe_dimensions", return_value=(1920, 1080, 12.0))
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
     led = detect_signals(led, cfg, "src_1")                          # default: producer path
     spy.assert_called()                                             # ffmpeg ran (warms the sidecar)
     assert led.sources["src_1"].state is SourceState.signalled
 
 
 # ---- H09: signals_defer attempt budget — cold sidecar in-lock defers with ceiling ----
-def test_signals_defer_bumps_attempts_and_ceiling_errors(tmp_path, mocker):
+def test_signals_defer_bumps_attempts_and_ceiling_errors(tmp_path, mocker, monkeypatch):
     import json
     from fanops.agentstep import _attempts_path
     from fanops.responder import _GATE_DETERMINISTIC_MAX
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, duration=60.0, meta={"transcribed": True}))
-    mocker.patch("fanops.signals.shutil.which", return_value="/usr/bin/ffmpeg")
+    _ffmpeg_on_path(tmp_path, monkeypatch)
     mocker.patch("fanops.signals.subprocess.run")
     for tick in range(1, _GATE_DETERMINISTIC_MAX):
         led = detect_signals(led, cfg, "src_1", in_lock=True)
@@ -352,7 +377,7 @@ def test_signals_adopt_clears_defer_attempts(tmp_path, mocker):
     assert not _attempts_path(cfg, "signals_defer", "src_1").exists()
 
 
-def test_signals_defer_ceiling_blocks_auto_resume(tmp_path, mocker):
+def test_signals_defer_ceiling_blocks_auto_resume(tmp_path, mocker, monkeypatch):
     from fanops.responder import _GATE_DETERMINISTIC_MAX
     from fanops.pipeline import reconcile_source_progress
     from fanops.log import get_logger
@@ -360,7 +385,7 @@ def test_signals_defer_ceiling_blocks_auto_resume(tmp_path, mocker):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.transcribed, duration=60.0, meta={"transcribed": True}))
     led.save()
-    mocker.patch("fanops.signals.shutil.which", return_value="/usr/bin/ffmpeg")
+    _ffmpeg_on_path(tmp_path, monkeypatch)
     mocker.patch("fanops.signals.subprocess.run")
     for _ in range(_GATE_DETERMINISTIC_MAX):
         led = detect_signals(led, cfg, "src_1", in_lock=True)

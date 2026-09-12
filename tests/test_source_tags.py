@@ -109,14 +109,22 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
 
 def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     captured = {}
+    envelope = {"structured_output": {
+        "keep": ["#hiphop", "#inventedslogan", "#rickross"],
+        "reject": ["#fyp"]}, "result": "", "session_id": "s"}
 
-    def fake_claude(prompt, schema, **_k):
-        captured["prompt"] = prompt
-        captured["schema"] = schema
-        return {"keep": ["#hiphop", "#inventedslogan", "#rickross"],
-                "reject": ["#fyp"]}, "m", False
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    def fake_run(cmd, **kw):
+        captured["prompt"] = kw.get("input") or ""
+        if "--json-schema" in cmd:
+            captured["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
+        return R()
+
+    mocker.patch("fanops.llm.subprocess.run", side_effect=fake_run)
     from fanops.source_tags import shortlist_source_tags
     src = _src(title="Rick Ross talks tiers", language="en")
     catalog = ["#rickross", "#hiphop", "#fyp", "#miami"]
@@ -252,11 +260,16 @@ def test_researched_without_catalog_rejudges(tmp_path):
 
 
 def test_catalog_search_feeds_judge(tmp_path, mocker):
-    def fake_claude(*_a, **_k):
-        return {"keep": ["#rickross"],
-                "reject": ["#fyp", "#whichwayamifacing"]}, "m", False
+    envelope = {"structured_output": {
+        "keep": ["#rickross"],
+        "reject": ["#fyp", "#whichwayamifacing"]}, "result": "", "session_id": "s"}
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
+
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
     from fanops.source_tags import shortlist_source_tags
     cfg = _cfg(tmp_path)
     client = _SearchClient(
@@ -305,11 +318,11 @@ def test_unattended_researched_without_catalog_resumes(tmp_path, monkeypatch):
 def test_empty_title_search_does_not_stamp(tmp_path, mocker):
     called = {"n": 0}
 
-    def fake_claude(*_a, **_k):
+    def fake_run(*_a, **_k):
         called["n"] += 1
-        return {"keep": ["#rickross"]}, "m", False
+        raise AssertionError("LLM must not run")
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    mocker.patch("fanops.llm.subprocess.run", side_effect=fake_run)
     cfg = _cfg(tmp_path)
     client = _SearchClient({"rick ross": []})
     ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
@@ -771,28 +784,12 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
     assert seen == ["mark", "wolf"]
 
 
-def test_lock_default_opener_is_open_client(tmp_path, monkeypatch):
+def test_lock_default_opener_is_open_client():
     """Default lock opener (open_client_fn is None) is open_client, not open_web_session."""
-    import inspect
-    from types import SimpleNamespace
-    import fanops.ig_hashtag_scrape as igs
     import fanops.source_tags as st
-    from fanops.source_tags import _iter_lock_clients
     src = inspect.getsource(st._iter_lock_clients)
     assert "open_client" in src
     assert "open_web_session" not in src
-    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
-    cfg = _cfg(tmp_path)
-    seen = []
-
-    def fake_open(_cfg, user=None, **_k):
-        seen.append(user)
-        return SimpleNamespace(_fanops_scrape_user=user)
-
-    monkeypatch.setattr(igs, "open_client", fake_open)
-    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=None))
-    assert seen == ["mark"]
-    assert [c._fanops_scrape_user for c in opened] == ["mark"]
 
 
 

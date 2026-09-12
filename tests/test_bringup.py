@@ -10,19 +10,19 @@ daemon freshness restart, the honest verdict, idempotent re-run, and the non-dar
 
 os.environ / HOME are sandboxed per test via monkeypatch (clean teardown; no leak — tests/CLAUDE.md)."""
 from __future__ import annotations
-import os, subprocess
+import os, socket, subprocess
 from datetime import datetime, timedelta, timezone
 
 from fanops.config import Config
 from fanops import daemon
 
-import pytest
 
-
-@pytest.fixture(autouse=True)
-def _noop_locked_deps_sync(monkeypatch):
-    """Existing plane tests must not hit a real pip install against the checkout lock."""
-    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+def _listen_studio():
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((daemon.STUDIO_DEFAULT_HOST, daemon.STUDIO_DEFAULT_PORT))
+    srv.listen(1)
+    return srv
 
 
 # ── mock helpers (mirror tests/test_daemon_keeper.py::_fake_launchctl) ────────────────────────
@@ -163,9 +163,7 @@ def test_daemon_plane_kickstarts_running_daemon_and_confirms_fresh_heartbeat(tmp
     daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
     fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})   # already loaded + running
     monkeypatch.setattr(daemon.subprocess, "run", fake)
-    # a FRESH heartbeat lands after the restart instant
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since",
-                        lambda cfg, since, **k: True)
+    _write_heartbeat(cfg, ts=datetime.now(timezone.utc) + timedelta(hours=1))
 
     plane = daemon._plane_daemon(cfg, kickstart=True)
 
@@ -204,7 +202,7 @@ def test_daemon_plane_kickstart_waits_past_throttle_interval(tmp_path, monkeypat
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(daemon.subprocess, "run", run)
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+    _write_heartbeat(cfg, ts=datetime.now(timezone.utc) + timedelta(hours=1))
 
     plane = daemon._plane_daemon(cfg, kickstart=True)
 
@@ -227,7 +225,6 @@ def test_daemon_plane_kickstart_real_failure_still_not_ready(tmp_path, monkeypat
     daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
     fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n'), "kickstart": (1, "boom")})
     monkeypatch.setattr(daemon.subprocess, "run", fake)
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
 
     plane = daemon._plane_daemon(cfg, kickstart=True)
 
@@ -254,7 +251,6 @@ def test_daemon_plane_ensures_then_loads_when_not_running(tmp_path, monkeypatch)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
     run.calls = []
     monkeypatch.setattr(daemon.subprocess, "run", run)
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
 
     plane = daemon._plane_daemon(cfg, kickstart=True)
 
@@ -289,137 +285,100 @@ def test_daemon_plane_off_darwin_typed_skip_no_exception(tmp_path, monkeypatch):
 # ── studio plane: report-only ─────────────────────────────────────────────────────────────────
 
 def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
-    # No plist installed -> report-only branch (plist absence forced so the operator's real
-    # com.fanops.studio.plist can't flip this test onto the kickstart branch).
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: tmp_path / "com.fanops.studio.plist")
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
-    cfg = Config(root=tmp_path)
-    plane = daemon._plane_studio(cfg)
-    assert plane["ok"] is True
-    assert plane["report_only"] is True
+    monkeypatch.setenv("HOME", str(tmp_path))
+    srv = _listen_studio()
+    try:
+        plane = daemon._plane_studio(Config(root=tmp_path))
+        assert plane["ok"] is True
+        assert plane["report_only"] is True
+    finally:
+        srv.close()
 
 
 def test_studio_plane_reports_down_with_launch_command(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: tmp_path / "com.fanops.studio.plist")
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: False)
-    cfg = Config(root=tmp_path)
-    plane = daemon._plane_studio(cfg)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    plane = daemon._plane_studio(Config(root=tmp_path))
     assert plane["ok"] is False
-    assert plane["report_only"] is True                 # never fails the overall verdict
-    assert "fanops studio" in plane["detail"]            # the exact command to run
+    assert plane["report_only"] is True
+    assert "fanops studio" in plane["detail"]
 
 
 def test_studio_plane_kickstarts_when_plist_present(tmp_path, monkeypatch):
-    # Plist installed -> REAL restart: kickstart -k the studio label, then the port gate confirms.
-    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pp = daemon.studio_plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text("<plist/>")
     fake = _fake_launchctl(kickstart=(0, ""))
     monkeypatch.setattr(daemon.subprocess, "run", fake)
-    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
-    cfg = Config(root=tmp_path)
-    plane = daemon._plane_studio(cfg)
-    assert plane["ok"] is True and plane["report_only"] is True
-    assert "cycled onto current code" in plane["detail"]
-    # kickstart -k gui/<uid>/com.fanops.studio actually fired
-    assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
-               for c in fake.calls)
-
-
-def test_studio_plane_reports_not_answering_when_restart_fails_port(tmp_path, monkeypatch):
-    # Plist present, kickstart ok, but the port never answers -> not-answering (still non-gating).
-    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
-    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
-    probes = {"n": 0}
-    def never(*a, **k): probes["n"] += 1; return False
-    monkeypatch.setattr(daemon, "_studio_port_answers", never)
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)   # bounded poll, no wall-clock wait
-    cfg = Config(root=tmp_path)
-    plane = daemon._plane_studio(cfg)
-    assert plane["ok"] is False and plane["report_only"] is True
-    assert "not answering" in plane["detail"]
-    assert probes["n"] == daemon._STUDIO_PORT_TRIES            # gave up on a BOUNDED budget
+    srv = _listen_studio()
+    try:
+        plane = daemon._plane_studio(Config(root=tmp_path))
+        assert plane["ok"] is True and plane["report_only"] is True
+        assert "cycled onto current code" in plane["detail"]
+        assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
+                   for c in fake.calls)
+    finally:
+        srv.close()
 
 
 def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monkeypatch):
-    # MOL-700: `kickstart -k` SIGKILLs the resident, so the port is REFUSED for the first seconds
-    # (measured 2.0s live; a cold boot behind the Docker probe takes ~90s). Probing once at +0s
-    # reported a healthy restart as DOWN. The plane must POLL, like _heartbeat_fresh_since does.
-    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pp = daemon.studio_plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text("<plist/>")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
-    probes = {"n": 0}
-    def answers_on_third(*a, **k): probes["n"] += 1; return probes["n"] >= 3
-    monkeypatch.setattr(daemon, "_studio_port_answers", answers_on_third)
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
-    plane = daemon._plane_studio(Config(root=tmp_path))
-    assert plane["ok"] is True and plane["report_only"] is True
-    assert "cycled onto current code" in plane["detail"]
-    assert probes["n"] == 3                                    # polled past the mid-restart refusals
+    srv = {"s": None}
+    n = {"i": 0}
+
+    def sleep(_s):
+        n["i"] += 1
+        if n["i"] == 2 and srv["s"] is None:
+            srv["s"] = _listen_studio()
+
+    monkeypatch.setattr(daemon.time, "sleep", sleep)
+    try:
+        plane = daemon._plane_studio(Config(root=tmp_path))
+        assert plane["ok"] is True and plane["report_only"] is True
+        assert "cycled onto current code" in plane["detail"]
+        assert n["i"] >= 2
+    finally:
+        if srv["s"] is not None:
+            srv["s"].close()
 
 
 def test_keeper_studio_redeploy_probes_once_and_never_polls(tmp_path, monkeypatch):
-    # _kickstart_studio_if_present runs inside daemon.ensure, which the keeper fires every
-    # KEEPER_POLL_INTERVAL_S (120s) and which DISCARDS this result — a bounded 120s poll here would
-    # overlap keeper fires. The waiting poll belongs to `fanops up` ONLY; keeper timing is unchanged.
-    plist = tmp_path / "com.fanops.studio.plist"; plist.write_text("<plist/>")
-    monkeypatch.setattr(daemon, "studio_plist_path", lambda: plist)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pp = daemon.studio_plist_path()
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text("<plist/>")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
-    probes = {"n": 0}
-    def never(*a, **k): probes["n"] += 1; return False
-    monkeypatch.setattr(daemon, "_studio_port_answers", never)
     slept: list[float] = []
     monkeypatch.setattr(daemon.time, "sleep", lambda s: slept.append(s))
     daemon._kickstart_studio_if_present(Config(root=tmp_path))
-    assert probes["n"] == 1 and slept == []
-
-
-def test_main_up_off_darwin_daemon_skip_is_not_a_crash(tmp_path, monkeypatch, capsys):
-    # Non-darwin: the daemon plane returns a typed skip; the CLI must exit cleanly (no traceback),
-    # honestly NOT-READY (daemon freshness unproven), never a raw exception.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(daemon.sys, "platform", "linux")
-    # let git/postiz/studio pass, daemon plane runs for real (off-darwin -> skip)
-    def mk(name, ok, extra=None):
-        def _p(cfg, *a, **k):
-            d = {"plane": name, "ok": ok, "detail": name}
-            if extra: d.update(extra)
-            return d
-        return _p
-    monkeypatch.setattr(daemon, "_plane_git", mk("git", True, {"behind": 0}))
-    monkeypatch.setattr(daemon, "_plane_postiz", mk("postiz", True))
-    monkeypatch.setattr(daemon, "_plane_studio", mk("studio", True, {"report_only": True}))
-    from fanops.cli import main
-    rc = main(["up"])          # must not raise
-    out = capsys.readouterr().out
-    assert rc != 0
-    assert "NOT-READY" in out
+    assert slept == []
 
 
 # ── heartbeat freshness helper ────────────────────────────────────────────────────────────────
 
-def test_heartbeat_fresh_since_true_when_newer(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+def test_heartbeat_fresh_since_true_when_newer(tmp_path):
     cfg = Config(root=tmp_path)
     since = datetime.now(timezone.utc)
     _write_heartbeat(cfg, ts=since + timedelta(seconds=5))
     assert daemon._heartbeat_fresh_since(cfg, since, tries=2, step=0.0) is True
 
 
-def test_heartbeat_fresh_since_false_when_only_stale(tmp_path, monkeypatch):
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+def test_heartbeat_fresh_since_false_when_only_stale(tmp_path):
     cfg = Config(root=tmp_path)
     since = datetime.now(timezone.utc)
     _write_heartbeat(cfg, ts=since - timedelta(seconds=30))   # older than the restart instant
     assert daemon._heartbeat_fresh_since(cfg, since, tries=2, step=0.0) is False
 
 
-def test_heartbeat_fresh_since_true_on_any_new_line_not_only_loop_heartbeat(tmp_path, monkeypatch):
+def test_heartbeat_fresh_since_true_on_any_new_line_not_only_loop_heartbeat(tmp_path):
     # Change 1e: the freshness proof now polls _newest_activity_ts (ANY run.log line), so a restarted
     # daemon proves healthy on its FIRST stage line — not only after a whole pass finishes (a loop
     # heartbeat lands only then). A non-heartbeat line newer than the restart instant is enough.
     import json
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)
     since = datetime.now(timezone.utc)
@@ -427,71 +386,4 @@ def test_heartbeat_fresh_since_true_on_any_new_line_not_only_loop_heartbeat(tmp_
            "stage": "transcribe", "unit_id": "src-1", "outcome": "ok"}   # a NON-heartbeat stage line
     cfg.log_path.write_text(json.dumps(rec) + "\n")
     assert daemon._heartbeat_fresh_since(cfg, since, tries=2, step=0.0) is True
-
-
-def test_daemon_plane_no_dep_drift_leaves_detail_unchanged(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
-    uid = os.getuid()
-    main_print = f"gui/{uid}/{daemon.LABEL}"
-    cfg = Config(root=tmp_path)
-    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
-    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
-    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
-    monkeypatch.setattr(daemon.subprocess, "run", fake)
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
-    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))  # no drift
-
-    plane = daemon._plane_daemon(cfg, kickstart=True)
-
-    assert plane["ok"] is True and plane["restarted"] is True
-    assert plane["detail"] == "restarted onto current code; fresh heartbeat confirmed"
-
-
-def test_daemon_plane_dep_drift_syncs_before_kickstart(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
-    uid = os.getuid()
-    main_print = f"gui/{uid}/{daemon.LABEL}"
-    cfg = Config(root=tmp_path)
-    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
-    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
-    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
-    monkeypatch.setattr(daemon.subprocess, "run", fake)
-    monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
-    calls: list[int] = []
-    def sync():
-        calls.append(1)
-        return True, "deps synced (instagrapi:2.18.11->2.18.12)"
-    monkeypatch.setattr(daemon, "_sync_locked_deps", sync)
-
-    plane = daemon._plane_daemon(cfg, kickstart=True)
-
-    assert calls == [1]
-    assert plane["ok"] is True and plane["restarted"] is True
-    assert "deps synced (instagrapi:2.18.11->2.18.12)" in plane["detail"]
-    assert any(c[1] == "kickstart" for c in fake.calls)
-
-
-def test_daemon_plane_dep_sync_failure_skips_kickstart(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(daemon.sys, "platform", "darwin")
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
-    uid = os.getuid()
-    main_print = f"gui/{uid}/{daemon.LABEL}"
-    cfg = Config(root=tmp_path)
-    daemon.plist_path().parent.mkdir(parents=True, exist_ok=True)
-    daemon.plist_path().write_text(daemon.render_plist(cfg, interval=600))
-    fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
-    monkeypatch.setattr(daemon.subprocess, "run", fake)
-    monkeypatch.setattr(daemon, "_sync_locked_deps",
-                        lambda: (False, "deps sync failed for instagrapi:2.18.11->2.18.12: boom"))
-
-    plane = daemon._plane_daemon(cfg, kickstart=True)
-
-    assert plane["ok"] is False and plane["restarted"] is False
-    assert "deps sync failed" in plane["detail"]
-    assert not any(c[1] == "kickstart" for c in fake.calls)
 

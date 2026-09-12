@@ -141,8 +141,15 @@ def test_ship_route_steps_2_6_dryrun_smoke(tmp_path, monkeypatch, mocker):
     # §0 step 4 · Upload + ingest inbox.
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / "clip.mp4").write_bytes(b"Vclip")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    from types import SimpleNamespace
+
+    def ffprobe(cmd, **_k):
+        joined = " ".join(cmd)
+        if "codec_type" in joined:
+            return SimpleNamespace(returncode=0, stdout="video\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="1920\n1080\n12.0\n", stderr="")
+
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=ffprobe)
     cat = actions.catalogue_inbox(cfg)
     assert cat.ok and cat.detail.get("added", 0) >= 1
     led = Ledger.load(cfg)

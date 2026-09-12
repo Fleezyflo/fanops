@@ -414,7 +414,6 @@ def test_32_409_survives_publish_one_end_to_end(tmp_path, monkeypatch):
     p = _post().model_copy(update={"state": PostState.queued})
     led = _led(cfg, p); led.save()
     monkeypatch.setattr(zernio.requests, "post", _Rec(_R(409, {"details": {"existingPostId": "z_other"}})))
-    monkeypatch.setattr(run_mod, "_ensure_media", lambda *a, **k: None)
     state = run_mod._publish_one(cfg, p.id, "zernio", account_id="acc_abc")
     assert state == PostState.needs_reconcile.value
     after = Ledger.load(cfg).posts[p.id]
@@ -612,13 +611,18 @@ def test_47_reconcile_clears_the_candidate_on_an_explicit_identity_decision(tmp_
     # Resolved on THIS row's own submission_id + the platform liveness gate — evidence that never touched the
     # candidate. Spent evidence must not outlive the ambiguity it described.
     cfg = _cfg(tmp_path, monkeypatch)
+    from types import SimpleNamespace
     from fanops import reconcile as rec_mod
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "fanops.post.metrics.zernio_read.requests.get",
+        lambda *a, **k: SimpleNamespace(status_code=200, text="{}",
+                                        json=lambda: {"author_unique_id": "x"}))
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_real"; p.reconcile_candidate_id = "z_other"
     led = _led(cfg, p)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {
-        "status": "published", "publicUrl": "https://tiktok.com/@x/video/1", "postSubmissionId": "z_real"})
+        "status": "published", "publicUrl": "https://www.tiktok.com/@x/video/1",
+        "postSubmissionId": "z_real", "tiktokUsername": "x"})
     after = out.posts[p.id]
     assert after.state is PostState.published
     assert after.reconcile_candidate_id is None
