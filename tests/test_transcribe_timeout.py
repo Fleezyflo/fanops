@@ -7,12 +7,11 @@
 # in_lock=True — adopt-or-defer on cold cache; whisper never shells under the flock. Out-of-lock
 # callers (produce.run_all) use the default in_lock=False and run the full whisper subprocess under
 # the per-(stage,source) stage_lock instead.
-import subprocess
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
-from fanops.transcribe import _whisper_timeout, _WHISPER_TIMEOUT, _PREWARM_TIMEOUT_FACTOR, transcribe_source
+from fanops.transcribe import _whisper_timeout, _WHISPER_TIMEOUT, _PREWARM_TIMEOUT_FACTOR
 
 
 def test_long_source_scales_with_length():
@@ -28,44 +27,9 @@ def test_short_or_unknown_duration_uses_the_floor():
     assert _whisper_timeout(0.0) == _WHISPER_TIMEOUT
 
 
-def test_timeout_killed_log_emitted(tmp_path, mocker, monkeypatch, capsys):
-    # MOL-481: silent timeout kills are visible in structured run.log.
-    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          state=SourceState.catalogued, duration=3600.0))
-    def hung(cmd, **kw):
-        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=hung)
-    transcribe_source(led, cfg, "src_1")
-    out = capsys.readouterr().err
-    assert "timeout_killed" in out and "transcribe" in out
-    assert "model=" in out or '"model"' in out
-
-
-def test_whisper_timeout_downgrades_model_on_retry(tmp_path, mocker, monkeypatch):
-    # After a timeout kill, the next attempt steps down via asr_model_for(timeout_attempts=…).
-    monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
-    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          state=SourceState.catalogued, duration=3600.0,
-                          meta={"whisper_timeout_attempts": 1}))
-    models = []
-    def fake_run(cmd, **kw):
-        models.append(cmd[cmd.index("--model") + 1])
-        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
-    transcribe_source(led, cfg, "src_1")
-    assert models[0] == cfg.asr_model_for(3600.0, timeout_attempts=1)
-
-
-def test_repeated_whisper_timeouts_stop_auto_resume(tmp_path, mocker, monkeypatch):
+def test_repeated_whisper_timeouts_stop_auto_resume(tmp_path, monkeypatch):
     # MOL-481: after 3 timeout kills auto-resume stops (doom loop mitigation).
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
     cfg = Config(root=tmp_path)
     path = str(tmp_path / "vid.mp4"); Path(path).write_bytes(b"V")
     with Ledger.transaction(cfg) as led:

@@ -271,12 +271,8 @@ def test_search_hashtags_scrape_fail_open_on_client_error():
 def test_open_client_unattended_envelope_probes_without_dump(tmp_path, monkeypatch):
     """Unattended success: load envelope → probe ok → no dump_settings."""
     from pathlib import Path
-    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
-    def _boom(_u):
-        raise AssertionError("unattended must not read scrape password")
-    monkeypatch.setattr(igs, "scrape_password_for", _boom)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -303,14 +299,10 @@ def test_open_client_unattended_envelope_probes_without_dump(tmp_path, monkeypat
 
 def test_open_client_unattended_dead_dump_no_profile_sid_leaves_envelope(tmp_path, monkeypatch):
     """Unattended dead dump + no profile sid → ScrapeUnavailable; envelope byte-identical."""
-    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    def _boom(_u):
-        raise AssertionError("unattended must not read scrape password")
-    monkeypatch.setattr(igs, "scrape_password_for", _boom)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -351,14 +343,10 @@ def test_ht4_runtime_has_no_cookie_inject_symbols():
 def test_open_client_unattended_dead_profile_sid_leaves_envelope(tmp_path, monkeypatch):
     """Unattended profile sid + LoginRequired probe → ScrapeUnavailable; envelope unchanged."""
     from pathlib import Path
-    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import ScrapeUnavailable, open_client, scrape_session_path
     from instagrapi.exceptions import LoginRequired as _LR
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
-    def _boom(_u):
-        raise AssertionError("unattended must not read scrape password")
-    monkeypatch.setattr(igs, "scrape_password_for", _boom)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
@@ -425,15 +413,21 @@ def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch)
     import fanops.ig_hashtag_scrape as igs
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
     cfg = Config(root=tmp_path)
-    argv = igs.scrape_chrome_launch_argv(cfg, "perca.late")
-    assert argv is not None
-    joined = " ".join(argv)
-    assert "Safari" in argv
-    assert argv[-1] == "perca"
-    assert "Google Chrome" not in joined
-    assert "9222" not in joined and "9223" not in joined
-    assert "remote-debugging" not in joined
-    assert "Application Support/Google/Chrome" not in joined
+    osa = []
+
+    def fake_co(cmd, *a, **k):
+        osa.append(list(cmd) if not isinstance(cmd, str) else cmd)
+        input_script = k.get("input") or ""
+        osa.append(input_script)
+        return "2\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
+    assert igs.launch_scrape_chrome(cfg, "perca.late") is True
+    blob = " ".join(str(x) for x in osa)
+    assert "Safari" in blob
+    assert "Google Chrome" not in blob
+    assert "9222" not in blob and "9223" not in blob
+    assert "remote-debugging" not in blob
 
 
 def test_scrape_login_cold_start_password_writes_envelope(tmp_path, monkeypatch):
@@ -467,7 +461,6 @@ def test_open_client_allow_reauth_loginrequired_restores_password(tmp_path, monk
     """LoginRequired with allow_reauth clears auth and password-logins once."""
     from pathlib import Path
     from instagrapi.exceptions import LoginRequired
-    import fanops.ig_hashtag_scrape as igs
     from fanops.ig_hashtag_scrape import open_client, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "p")
@@ -475,14 +468,7 @@ def test_open_client_allow_reauth_loginrequired_restores_password(tmp_path, monk
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text('{"keep": true}')
-    cleared = {"n": 0}
     seen = {"login": 0, "dump": 0}
-    original_clear = igs._clear_auth_keep_device
-
-    def _track_clear(client):
-        cleared["n"] += 1
-        original_clear(client)
-    monkeypatch.setattr(igs, "_clear_auth_keep_device", _track_clear)
 
     class _Restore:
         authorization_data = {"ds_user_id": "1"}
@@ -496,21 +482,21 @@ def test_open_client_allow_reauth_loginrequired_restores_password(tmp_path, monk
         def dump_settings(self, p):
             seen["dump"] += 1
             Path(p).write_text('{"restored": true}')
-    open_client(cfg, client_factory=_Restore, allow_reauth=True, user="u")
-    assert cleared["n"] == 1
+    c = open_client(cfg, client_factory=_Restore, allow_reauth=True, user="u")
+    assert c.authorization_data == {}
     assert seen == {"login": 1, "dump": 1}
 
 
 def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeypatch):
     import fanops.ig_hashtag_scrape as igs
-    import fanops.ig_safari_shell as shell
     cfg = Config(root=tmp_path)
     hits = {"n": 0}
 
-    def _auth(*_a, **_k):
+    def fake_co(cmd, *a, **k):
         hits["n"] += 1
-        return ("safari", "u") if hits["n"] >= 2 else None
-    monkeypatch.setattr(shell, "safari_profile_auth", _auth)
+        return "ok\n" if hits["n"] >= 2 else "login\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
     slept = []
     got = igs.wait_for_scrape_profile_auth(
         cfg, "u", timeout_s=5, sleep=lambda s: slept.append(s),

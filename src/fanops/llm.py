@@ -41,6 +41,28 @@ from fanops.llm_json import _json_candidates  # noqa: F401 — re-export for tes
 logger = logging.getLogger("fanops.llm")
 _sleep = time.sleep                                  # indirection so tests can stub the backoff wait
 
+
+def _missing_required_keys(obj, schema) -> list[str]:
+    """Top-level JSON-schema `required` keys absent from `obj`. Non-dict obj → ['<object>']."""
+    req = schema.get("required") if isinstance(schema, dict) else None
+    if not isinstance(obj, dict):
+        return ["<object>"]
+    if not isinstance(req, list):
+        return []
+    return [k for k in req if isinstance(k, str) and k not in obj]
+
+
+def _salvage_json(raw: str, schema: dict) -> dict | None:
+    """Extract a JSON object from prose. Missing schema required keys → LlmSchemaError, not a pass."""
+    salvaged = _extract_json_object(raw)
+    if salvaged is None:
+        return None
+    missing = _missing_required_keys(salvaged, schema)
+    if missing:
+        raise LlmSchemaError(
+            f"salvaged object missing schema required keys: {', '.join(missing)}")
+    return salvaged
+
 # T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
 _CURSOR_SUPPORTS_VISION = False
 _CURSOR_MODEL_ALIASES: dict[str, str] = {}
@@ -272,7 +294,7 @@ def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             try:
                 return json.loads(result), False
             except Exception:
-                salvaged = _extract_json_object(result)
+                salvaged = _salvage_json(result, schema)
                 if salvaged is not None:
                     logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
                     return salvaged, False
@@ -296,7 +318,7 @@ def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         try:
             return json.loads(result), resolved, frames_unread
         except Exception as e:
-            salvaged = _extract_json_object(result)
+            salvaged = _salvage_json(result, schema)
             if salvaged is not None:
                 logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
                 return salvaged, resolved, frames_unread
@@ -376,7 +398,7 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
             try:
                 return json.loads(result), False
             except Exception:
-                salvaged = _extract_json_object(result)
+                salvaged = _salvage_json(result, schema)
                 if salvaged is not None:
                     logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
                     return salvaged, False
@@ -400,7 +422,7 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         try:
             return json.loads(result), resolved, frames_unread
         except Exception as e:
-            salvaged = _extract_json_object(result)
+            salvaged = _salvage_json(result, schema)
             if salvaged is not None:
                 logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
                 return salvaged, resolved, frames_unread

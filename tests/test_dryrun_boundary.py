@@ -96,9 +96,13 @@ def test_dryrun_boundary_writes_preview_not_artifacts(tmp_path, monkeypatch):
     sidecar = cfg.scheduled / "p1.json"
     assert sidecar.exists()                                     # preview WAS written at the boundary
     assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600     # owner-only at rest (caption/media/target)
-    post = Ledger.load(cfg).posts["p1"]
+    led = Ledger.load(cfg)
+    post = led.posts["p1"]
     assert post.state is PostState.queued                      # still held at the boundary
     assert post.submission_id is None and post.public_url is None   # no fabricated distribution artifacts
+    from fanops.caption_compose import posted_text_for
+    payload = json.loads(sidecar.read_text())
+    assert payload["text"] == posted_text_for(cfg, led, post)
 
 
 def _ship_route_workspace(cfg):
@@ -137,8 +141,15 @@ def test_ship_route_steps_2_6_dryrun_smoke(tmp_path, monkeypatch, mocker):
     # §0 step 4 · Upload + ingest inbox.
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / "clip.mp4").write_bytes(b"Vclip")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    from types import SimpleNamespace
+
+    def ffprobe(cmd, **_k):
+        joined = " ".join(cmd)
+        if "codec_type" in joined:
+            return SimpleNamespace(returncode=0, stdout="video\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="1920\n1080\n12.0\n", stderr="")
+
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=ffprobe)
     cat = actions.catalogue_inbox(cfg)
     assert cat.ok and cat.detail.get("added", 0) >= 1
     led = Ledger.load(cfg)

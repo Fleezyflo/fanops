@@ -105,8 +105,9 @@ def bind_queue(cfg: Config, *, source_ids, batch_name: str = "", target_accounts
 def _drive_make_clips(cfg: Config, *, confirmed: bool, extra_detail: Optional[dict] = None) -> ActionResult:
     """MAKE-CLIPS CONTRACT: the queue-line and primary Make clips controls must run cut → caption →
     crosspost in the SAME request (run_prepare), not a best-effort detached kick that can fail-open
-    while the UI shows Done."""
-    prep = run_prepare(cfg, confirmed=confirmed)
+    while the UI shows Done. Callers already released the intended line(s); do not re-catalog every
+    other bound pending source (release_batch A must not catalog sibling B)."""
+    prep = run_prepare(cfg, confirmed=confirmed, release_held=False)
     detail = {**(prep.detail or {}), **(extra_detail or {})}
     return ActionResult(ok=prep.ok, detail=detail, error=prep.error)
 
@@ -562,7 +563,8 @@ def run_advance(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
 
 
 def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool = True,
-                source_ids=(), batch_name: str = "", target_accounts=()) -> ActionResult:
+                source_ids=(), batch_name: str = "", target_accounts=(),
+                release_held: bool = True) -> ActionResult:
     """Auto-prepare (review-first, milestone 1): answer every pending moment/caption gate via the LLM
     responder, then advance — looped until no gate remains — so finished clips land in Review WITHOUT
     the operator hand-writing a caption. Gates are answered ONLY by the LLM, so the gates always answer
@@ -572,7 +574,9 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     This is the Make-clips click, so it carries queued footage the WHOLE way: every bound held source
     (queue-gate `pending` + a batch) is released to `catalogued` first, then respond+advance cuts it.
     `detail["released"]` reports how many it took. Passing `source_ids` binds those unbound pending
-    sources first (default line name `queue-{iso}`) so intake is one POST: tick accounts, Make clips."""
+    sources first (default line name `queue-{iso}`) so intake is one POST: tick accounts, Make clips.
+    `release_held=False` skips that global catalog (release_batch already released its own line).
+    `ok` is False whenever the summary reports source errors>0 — a source in error is not a green prepare."""
     from fanops.pipeline import advance
     from fanops.accounts import Accounts
     from fanops.responder import get_responder
@@ -614,10 +618,13 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
             # Unbound (no batch_id) stays held on purpose: no batch means no target accounts, so there is
             # nothing to cut it for. Released INSIDE the lease so the release and the advance that consumes
             # it are one owned window — no daemon tick can interleave between them.
-            with Ledger.transaction(cfg) as led:
-                for sid, s in list(led.sources.items()):
-                    if s.state is SourceState.pending and s.batch_id:
-                        led.set_source_state(sid, SourceState.catalogued); released += 1
+            # release_held=False: a caller already catalogued the intended line (release_batch A);
+            # do not sweep sibling B.
+            if release_held:
+                with Ledger.transaction(cfg) as led:
+                    for sid, s in list(led.sources.items()):
+                        if s.state is SourceState.pending and s.batch_id:
+                            led.set_source_state(sid, SourceState.catalogued); released += 1
             for _ in range(10):                                # respond -> advance until stable (no gate left)
                 try:
                     responder.answer_pending(cfg)              # the LLM responder answers the gates
@@ -643,8 +650,11 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
     extra = {k: v for k, v in bind_detail.items() if k != "sources"}
     if bind_detail:
         extra["bound"] = bind_detail.get("sources")
+    detail = {**(summary or {}), "released": released, **extra}
     if not done:
-        return ActionResult(ok=False, detail={**(summary or {}), "released": released, **extra},
+        return ActionResult(ok=False, detail=detail,
                             error="auto-prepare did not finish — gates still pending after 10 passes "
                             "(is the LLM CLI working?); run Prepare again or answer them in the Gates tab")
-    return ActionResult(ok=True, detail={**(summary or {}), "released": released, **extra})
+    if int(detail.get("errors") or 0) > 0:
+        return ActionResult(ok=False, detail=detail, error="prepare completed with source errors")
+    return ActionResult(ok=True, detail=detail)
