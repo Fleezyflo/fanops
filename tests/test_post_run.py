@@ -26,7 +26,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z", accou
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="98432",
                       platform=Platform.instagram, caption="ship it",
-                      scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
+                      scheduled_time=when, state=PostState.queued, public_url="https://www.instagram.com/p/98432/"))
     led.save()                                          # persist so the self-loading publish_due sees it
 
 
@@ -251,7 +251,7 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pk", parent_id="c_k", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pk"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/pk/"))
     led.save()
     import fanops.post.run as run
     def boom(led_, cfg_, clip_id, backend=None, **kw):
@@ -271,7 +271,7 @@ def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
     _mom1(led)
     led.add_clip(Clip(id="c_ns", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pns", parent_id="c_ns", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://pns"))  # no scheduled_time
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="https://www.instagram.com/p/pns/"))  # no scheduled_time
     led.save()
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert Ledger.load(cfg).posts["pns"].state is PostState.queued   # CULM-4: parked, never auto-published
@@ -292,7 +292,7 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pa", parent_id="c_a", account="a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
                       platform=Platform.instagram, caption="x", media_urls=["https://h/v.mp4"],  # http -> no live upload
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pa"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/pa/"))
     led.save()
     import fanops.post.run as run
     seen = {}
@@ -316,7 +316,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     led.add_clip(Clip(id="c_sub", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="psub", parent_id="c_sub", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://psub"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="https://www.instagram.com/p/psub/"))
     led.save()
     import fanops.post.run as run
     spy = mocker.spy(run, "ensure_clip_media")
@@ -334,7 +334,7 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/1/"))
     led.save()
     import fanops.post.run as run
     # c_a upload raises a NON-auth error; c_b uploads fine; poster.publish succeeds (submitted)
@@ -369,7 +369,7 @@ def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocke
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/1/"))
     led.save()
     import fanops.post.run as run
     mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
@@ -402,7 +402,7 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     led.add_clip(Clip(id="c_auth", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pauth", parent_id="c_auth", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pauth"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/pauth/"))
     led.save()
     import fanops.post.run as run
     mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
@@ -429,7 +429,7 @@ def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeyp
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
+                          scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="https://www.instagram.com/p/1/"))
     led.save()
     import fanops.post.run as run
     def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
@@ -462,7 +462,7 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mo
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued, media_urls=["https://h/v.mp4"],
-                      scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
+                      scheduled_time="2020-01-01T00:00:00Z", public_url="https://www.instagram.com/p/p1/"))
     led.save()
     _stub_ok_poster(mocker, cfg)
     publish_due(cfg, now="2020-01-02T00:00:00Z")
@@ -479,7 +479,7 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="bad", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive but parseable -> due when past
+                      scheduled_time="2026-06-01 09:00", public_url="https://www.instagram.com/p/bad/"))   # naive but parseable -> due when past
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")            # must NOT raise
     led = Ledger.load(cfg)
@@ -497,7 +497,7 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
     led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="garbage", parent_id="c2", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="not-a-timestamp", public_url="dryrun://garbage"))
+                      scheduled_time="not-a-timestamp", public_url="https://www.instagram.com/p/garbage/"))
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")   # must NOT raise
     assert Ledger.load(cfg).posts["garbage"].state is PostState.failed
@@ -518,7 +518,7 @@ def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatc
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="pv", parent_id="clip_1", account="a", account_id="98432",
                       platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
-                      state=PostState.queued, media_urls=[f"file://{vfile}"], public_url="dryrun://pv"))
+                      state=PostState.queued, media_urls=[f"file://{vfile}"], public_url="https://www.instagram.com/p/pv/"))
     led.save()
     uploaded = []
     def fake_upload(cfg_, path, **kw):

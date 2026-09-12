@@ -27,7 +27,7 @@ def _seed(cfg):
         led.add_moment(Moment(id="md", parent_id="s1", content_token="D", start=3, end=5, reason="d"))
         led.add_clip(Clip(id="cd", parent_id="md", path="/cd.mp4", state=ClipState.rendered))
         led.add_post(Post(id="pd", parent_id="cd", account="a", account_id="1", platform=Platform.instagram,
-                          caption="never", state=PostState.awaiting_approval, public_url="dryrun://pd"))
+                          caption="never", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/pd/"))
 
 
 # ---- action: preview ----

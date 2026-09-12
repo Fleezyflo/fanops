@@ -153,7 +153,7 @@ def test_home_no_zero_result_for_matched_batch(tmp_path):
     led = Ledger.load(cfg)
     b = create_batch(led, name="Real", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000003Z")
     led.add_post(Post(id="p_rb", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, batch_id=b.id, public_url="dryrun://p_rb")); led.save()
+                      caption="x", state=PostState.queued, batch_id=b.id, public_url="https://www.instagram.com/p/p_rb/")); led.save()
     assert b'data-warn="zero-result"' not in _client(cfg).get("/").data   # matched target -> no false alarm
 
 def test_media_serves_variant_when_present(tmp_path):
@@ -356,7 +356,7 @@ def _seed_xacct_route(cfg):
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_1", account="a", account_id="ig_a",
                           platform=Platform.instagram, caption="on A", state=PostState.published,
-                          scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_a"))
+                          scheduled_time="2026-06-01T00:00:00Z", public_url="https://www.instagram.com/p/p_a/"))
 
 def test_crosspost_route_mints_on_target(tmp_path):
     cfg = Config(root=tmp_path); _seed_xacct_route(cfg)
@@ -392,7 +392,7 @@ def test_review_renders_removed_hook_badge(tmp_path, monkeypatch):
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p1/"))
     r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
     assert b"hook removed" in r.data and b"made it and lost everything" in r.data
@@ -409,7 +409,7 @@ def _seed_removed_hook(cfg):
                               reason="r", state=MomentState.clipped, hook_removed="made it and lost everything"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p1/"))
 
 
 def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):

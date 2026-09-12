@@ -20,7 +20,7 @@ def _seed(cfg, n=2):
         cid = f"c{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
-                          caption="c", state=PostState.awaiting_approval, public_url="dryrun://p"))
+                          caption="c", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p/"))
     led.save()
 
 def _client(cfg):
@@ -66,7 +66,7 @@ def test_account_at_prefix_resolves_bare_handle(tmp_path):
     cid = "c0"; (cdir / f"{cid}.mp4").write_bytes(b"V")
     led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p0", parent_id=cid, account="markmakmouly", account_id="1", platform=Platform.instagram,
-                      caption="c", state=PostState.awaiting_approval, public_url="dryrun://p"))
+                      caption="c", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p/"))
     led.save()
     html = _client(cfg).get("/review?account=@markmakmouly").data.decode()
     assert "review-feed" in html and "No work for" not in html

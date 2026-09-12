@@ -29,7 +29,7 @@ def _add_analyzed(led, pid, account, aid, hook, lift, *, platform=Platform.insta
     led.add_clip(Clip(id=cid, parent_id=mid, path=f"/{cid}.mp4", state=ClipState.rendered))
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=aid, platform=platform,
                       caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
-                      public_url=f"dryrun://{cid}"))
+                      public_url=f"https://www.instagram.com/p/{cid}/"))
 
 
 def _seed_on_disk_ledger(cfg: Config) -> None:

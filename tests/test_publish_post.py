@@ -227,7 +227,7 @@ def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98", platform=Platform.instagram,
                       caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
-                      render_id=rid, media_urls=[f"file://{vf}"], public_url="dryrun://p1"))
+                      render_id=rid, media_urls=[f"file://{vf}"], public_url="https://www.instagram.com/p/p1/"))
     led.save()
     calls = {"n": 0}
     def up(cfg, backend=None):
