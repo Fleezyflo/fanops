@@ -41,16 +41,20 @@ def _cooldown_delay_s(streak: int) -> int:
 
 
 def _load_cooldown_blob(cfg: Config) -> dict:
-    """Raw cooldown JSON or {}. Corrupt / missing → {} (fail open)."""
+    """Raw cooldown JSON. Missing → {} (no freeze yet). Corrupt / non-object → ControlFileError."""
     p = _cooldown_path(cfg)
     if not p.exists():
         return {}
+    from fanops.errors import ControlFileError, reason as _reason
     try:
         import json
         raw = json.loads(p.read_text())
-    except (OSError, ValueError, TypeError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError, TypeError) as e:
+        raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+    if not isinstance(raw, dict):
+        raise ControlFileError(
+            f"{p.name} invalid: top-level must be an object, got {type(raw).__name__}")
+    return raw
 
 
 def _utc_day(now: datetime) -> str:
@@ -248,7 +252,7 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
     Per-account freeze lives under accounts[user]={until,streak,reason,day,used}. A single
     dead account must not idle the tick while a peer can still scrape. used is an XHR
     counter, not a skip gate. With no scrape-user list, fall back to the top-level until
-    freeze. Corrupt / unreadable → fail OPEN. Never sleeps."""
+    freeze. Corrupt / unreadable raises ControlFileError (refresh refuses). Never sleeps."""
     raw = _load_cooldown_blob(cfg)
     if not raw:
         return None

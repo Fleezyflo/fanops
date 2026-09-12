@@ -216,14 +216,18 @@ def load_measurements(cfg) -> dict[str, dict]:
     `graph_id`, `measured_at`, `from`, and the RECORD_NUM_FIELDS / RECORD_STR_FIELDS contract.
 
     `from` is harvest attribution. A record missing every RANK_FIELDS metric, graph id, or timestamp
-    is dropped. Absent / corrupt / legacy file -> {}. Never raises."""
+    is dropped. Absent file -> {} (no cache yet). Corrupt JSON or a non-object top-level raise
+    ControlFileError — missing and torn are not the same silent {}."""
+    from fanops.errors import ControlFileError, reason as _reason
     p = cfg.hashtags_path
     if not p.exists(): return {}
     try:
         raw = json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
-        return {}
-    if not isinstance(raw, dict): return {}
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
+        raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+    if not isinstance(raw, dict):
+        raise ControlFileError(
+            f"{p.name} invalid: top-level must be an object, got {type(raw).__name__}")
     out: dict[str, dict] = {}
     for k, v in raw.items():
         tag = _norm(k) if isinstance(k, str) else ""

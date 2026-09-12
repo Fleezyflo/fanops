@@ -314,22 +314,14 @@ def _persona_for_account(acc: Account, reg) -> "object | None":
 def _hydrate_from_personas(accts: "Accounts", cfg: Config) -> None:
     """A1: override each LINKED account's persona voice, corpus, levers (content_focus/selection_scope/hook_angle), cut spec (clip_profile/framing), and per-dimension directives IN MEMORY from its Persona (the source of truth
     once linked), so every consumer reading a.persona sees the persona's value and an operator edit takes
-    effect on the next load — with ZERO consumer rewiring. FAIL-OPEN: no personas.json, a dangling persona_id,
-    or any error leaves the account's inline values exactly as today (byte-identical when unlinked). The
-    personas import is lazy (personas imports accounts in migrate -> avoid a cycle). Voice-match: an unlinked
-    account whose inline persona equals a Persona.voice still hydrates (derived cut spec + levers) in memory."""
-    from fanops.errors import fail_open
-    # Same scope as the prior bare except: only the lazy import + Personas.load fail-open. A mid-loop
-    # error still propagates (hydrate semantics unchanged). Breadcrumb via fail_open, never silent.
-    loaded: dict = {}
-    with fail_open("accounts._hydrate_from_personas"):
-        from fanops.personas import Personas, resolved_cut_spec
-        loaded["reg"] = Personas.load(cfg)
-        loaded["resolved_cut_spec"] = resolved_cut_spec
-    reg = loaded.get("reg")
-    if reg is None:
-        return                                       # corrupt/unreadable personas.json -> inline values stand
-    resolved_cut_spec = loaded.get("resolved_cut_spec")
+    effect on the next load — with ZERO consumer rewiring. Absent personas.json still yields an empty
+    registry so inline values stand; a dangling persona_id skips that row. Personas.load ControlFileError
+    (corrupt/mis-shaped personas.json) propagates — Accounts.load must not stay green on a torn registry.
+    The personas import is lazy (personas imports accounts in migrate -> avoid a cycle). Voice-match: an
+    unlinked account whose inline persona equals a Persona.voice still hydrates (derived cut spec + levers)
+    in memory."""
+    from fanops.personas import Personas, resolved_cut_spec
+    reg = Personas.load(cfg)
     for acc in accts.accounts:
         per = _persona_for_account(acc, reg)
         if per is None:
