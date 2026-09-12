@@ -528,13 +528,14 @@ def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, mo
     """Empty/garbage session among listed users must not be ok=True (presence of `{}` is not a PASS)."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "b")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
+    assert any_scrape_session(cfg) is False
     row = doctor._hashtag_scrape_check(cfg)
     assert row is None or row.get("ok") is not True
 
@@ -543,17 +544,38 @@ def test_doctor_hashtag_scrape_garbage_session_is_not_ok(tmp_path, monkeypatch):
     """Garbage session file must not be a green PASS; password must not leak into the row."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "u")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("not-json{{{")
+    assert any_scrape_session(cfg) is False
     row = doctor._hashtag_scrape_check(cfg)
     assert row is None or row.get("ok") is not True
     blob = "" if row is None else f"{row.get('hint','')}{row.get('label','')}"
     assert "secret-password" not in blob
+
+
+def test_doctor_hashtag_scrape_envelope_is_present(tmp_path, monkeypatch):
+    """A dump_settings envelope is session-present (still no live IG probe)."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "b")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text(json.dumps({
+        "uuids": {"uuid": "u", "phone_id": "p"},
+        "authorization_data": {"ds_user_id": "1"},
+    }))
+    assert any_scrape_session(cfg) is True
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is not None and row["ok"] is True and row["hint"] == ""
+    assert "present" in row["label"]
 
 
 def test_doctor_ast_never_references_persist_or_freeze():

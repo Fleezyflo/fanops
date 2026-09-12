@@ -2,9 +2,10 @@
 
 Composes existing guards (Accounts.validate, cutover-safety preflight, toolchain presence) into ONE
 operator view: PASS/FAIL per item with the exact next action, plus informational notes. Does not
-create platform accounts or obtain poster API keys. Scrape check (`_hashtag_scrape_check`) is session presence only (HT3) — no live
-Instagram probe; it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
-writes live in `learn_doctor` (`assay.dangerous`), not in this module.
+create platform accounts or obtain poster API keys. Scrape check (`_hashtag_scrape_check`) is envelope presence only (HT3) — no live
+Instagram probe; empty `{}` / garbage is not a session. It does not call `_persist_cooldown` /
+`_freeze_for` (Layer A owns freeze). Sidecar assay writes live in `learn_doctor` (`assay.dangerous`),
+not in this module.
 """
 from __future__ import annotations
 import logging
@@ -63,16 +64,18 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     """Hashtag Layer A: session/envelope presence only — no live Instagram tag or API probe (HT3).
 
     Soft setup incompleteness (not configured / no session yet) is N/A — omit the check
-    (MOL-965: never ok=True pretend PASS). `open_client` / `probe_resolve` are accepted for
-    call-site compat but ignored; doctor must not hit Instagram."""
+    (MOL-965: never ok=True pretend PASS). A file that is `{}` or unreadable is FAIL, not PASS.
+    `open_client` / `probe_resolve` are accepted for call-site compat but ignored; doctor must not hit Instagram."""
     del open_client, probe_resolve
-    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_configured
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_configured, scrape_session_path, scrape_users
     lbl = "hashtag Layer A scrape session present"
     if not scrape_configured(cfg):
         return None  # N/A — setup incomplete, not a green PASS
-    if not any_scrape_session(cfg):
-        return None  # N/A — credentials without session is setup incompleteness
-    return _check(lbl, True, "")
+    if any_scrape_session(cfg):
+        return _check(lbl, True, "")
+    if any(scrape_session_path(cfg, u).exists() for u in scrape_users(cfg)):
+        return _check(lbl, False, "scrape session file is empty or unreadable — run fanops hashtags scrape-login")
+    return None  # N/A — credentials without session is setup incompleteness
 
 
 def _postiz_reach_check(cfg: Config, *, probe=None):

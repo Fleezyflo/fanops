@@ -1,5 +1,6 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -70,9 +71,26 @@ def scrape_user_usable(cfg: Config, user: str) -> bool:
     return scrape_session_path(cfg, user).exists() or bool(scrape_password_for(user))
 
 
+def _session_is_envelope(path: Path) -> bool:
+    """True when path is an instagrapi dump_settings object — not missing, `{}`, or garbage.
+
+    Doctor and any_scrape_session must not treat file presence as a session (HT3 is offline
+    envelope shape, not a live IG probe). dump_settings always writes `uuids` and/or
+    `authorization_data` dicts; empty `{}` and non-JSON fail closed.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    uuids, auth = data.get("uuids"), data.get("authorization_data")
+    return (isinstance(uuids, dict) and bool(uuids)) or (isinstance(auth, dict) and bool(auth))
+
+
 def any_scrape_session(cfg: Config) -> bool:
-    """True when any listed scrape user has a session file on disk (doctor soft-ok gate)."""
-    return any(scrape_session_path(cfg, u).exists() for u in scrape_users(cfg))
+    """True when any listed scrape user has an instagrapi envelope (file presence is not a session)."""
+    return any(_session_is_envelope(scrape_session_path(cfg, u)) for u in scrape_users(cfg))
 
 
 def scrape_configured(cfg: Config) -> bool:
