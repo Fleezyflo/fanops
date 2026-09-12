@@ -4,8 +4,9 @@
 The Postiz public API hides Post.error (an ERROR row of GET /public/v1/posts carries only `state`),
 so classification runs on the stored Temporal envelope. These tests pin the two real failure shapes
 observed live 2026-08-10 (workflow-gate "Refresh channel needed"; Graph subcode 2207077 media-fetch)
-and the fail-open guards: no docker, malformed ids, nonzero exit, timeout, unparseable rows — each
-degrades to {} / (unknown, "") rather than raising or inventing detail."""
+and the fail-open guards: no docker, malformed ids, unparseable rows — each degrades to {} /
+(unknown, "") rather than inventing detail. TimeoutExpired propagates; nonzero docker/psql
+exit raises rather than looking like success-empty."""
 import base64
 import os
 import subprocess
@@ -101,7 +102,8 @@ def test_fetch_swallows_nonzero_exit_and_timeout(tmp_path, monkeypatch):
     _path_docker(tmp_path, monkeypatch)
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="boom"))
-    assert pe.fetch_error_details(["cmsabcdefgh"]) != {}
+    with pytest.raises(RuntimeError, match="postiz error lookup failed"):
+        pe.fetch_error_details(["cmsabcdefgh"])
 
     def raise_timeout(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 10)

@@ -1007,6 +1007,7 @@ def test_an_error_row_on_a_published_post_is_recorded_never_failed(tmp_path, mon
     cfg = Config(root=tmp_path)
     _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL, postiz_state="PUBLISHED")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pp"]
     assert p.postiz_state == "ERROR"
@@ -1075,6 +1076,7 @@ def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monke
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None,
                             "error": "API access blocked."}])
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
@@ -1110,17 +1112,15 @@ def test_a_failed_row_carries_the_real_cause_when_the_db_read_resolves(tmp_path,
 
 
 def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, monkeypatch, mocker):
-    # The degrade contract: a shortfall of the DB read (remote stack, no docker, timeout) must leave
+    # The degrade contract: a shortfall of the DB read (no docker / OSError launching it) must leave
     # the stamp byte-identical to the pre-enrichment behavior — unknown kind, "(no detail)" reason —
-    # never a half-invented cause.
-    from types import SimpleNamespace
+    # never a half-invented cause. Nonzero docker/psql and TimeoutExpired raise (test_postiz_errors).
     from fanops.models import ErrorKind
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
-    mocker.patch("fanops.post.postiz_errors.subprocess.run",
-                 return_value=SimpleNamespace(returncode=1, stdout="", stderr="no docker"))
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
