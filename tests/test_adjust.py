@@ -20,7 +20,7 @@ def _analyzed_post(led, lift, pid, cid, mid, sid):
                           state=MomentState.clipped))
     led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://1"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/1/"))
 
 # Retirement now needs a real POOL (adjust._MIN_SCORED_N / _MIN_DISTINCT_SCORES), so every fixture
 # below that asserts on losers carries at least that many distinctly-scored posts. The n=3/n=4 pools
@@ -32,7 +32,7 @@ def _pool(led, pairs, degraded=()):
             metrics["lift_degraded"] = True
         led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics=metrics, public_url="dryrun://c"))
+                          state=PostState.analyzed, metrics=metrics, public_url="https://www.instagram.com/p/c/"))
     return led
 
 # The live shape this ticket was measured against: the whole distribution sits at or under 3.01, so
@@ -47,7 +47,7 @@ def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      metrics={"error": "boom"}, public_url="dryrun://pf"))
+                      metrics={"error": "boom"}, public_url="https://www.instagram.com/p/pf/"))
     # winner_pct=0.5 -> top 4 winners; retire_pct=0.5 -> bottom 4, of which the two under the floor go
     r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
     assert set(r["winners"]) == {"p1", "p3", "p5", "p6"}
@@ -184,7 +184,7 @@ def test_retire_suppresses_the_lineage_without_relabelling_posts(tmp_path):
     for pid, st in (("pAw", PostState.awaiting_approval), ("pQ", PostState.queued),
                     ("pNR", PostState.needs_reconcile)):
         led.add_post(Post(id=pid, parent_id="cL", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=st, public_url="dryrun://1"))
+                          caption="x", state=st, public_url="https://www.instagram.com/p/1/"))
     led = retire(led, ["pL"])
     assert led.posts["pAw"].state is PostState.awaiting_approval  # stored label UNTOUCHED — no write-time copy
     assert led.posts["pQ"].state is PostState.queued              # ditto: derivation, not relabelling
@@ -209,7 +209,7 @@ def test_amplify_respects_per_source_budget(tmp_path):
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="dryrun://p1"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="https://www.instagram.com/p/p1/"))
     led = amplify(led, cfg, ["p1"], max_amplify_per_source=3)
     # at the cap, the source is neither re-requested nor state-flipped
     assert led.sources["s1"].state is SourceState.moments_decided
@@ -229,7 +229,7 @@ def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="dryrun://p1"))
+                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="https://www.instagram.com/p/p1/"))
     led = amplify(led, cfg, ["p1"])
     rid = latest_request_id(cfg, "moments", "s1")
     response_path(cfg, "moments", "s1").write_text(MomentDecision(
@@ -289,7 +289,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
 # ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
 def _ap(led, pid, lift, account="a", platform=Platform.instagram):
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/c/"))
 
 def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
     # A1: @big (6 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True
@@ -376,7 +376,7 @@ def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch):
     led.add_clip(Clip(id="c_s1", parent_id="m_s1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="s1", parent_id="c_s1", account="small", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      metrics={"lift_score": 40}, public_url="dryrun://s1"))
+                      metrics={"lift_score": 40}, public_url="https://www.instagram.com/p/s1/"))
     led.save()
     glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
     assert "s1" not in glob["winners"]                       # crowded out globally

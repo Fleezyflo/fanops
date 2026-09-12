@@ -59,7 +59,7 @@ def _seed_due_postiz_post(cfg, *, when="2020-01-01T12:00:00Z"):
                               state=ClipState.queued))
         led.add_post(Post(id="due_p1", parent_id="clip_1", account="ig", account_id="1",
                           platform=Platform.instagram, caption="fire", state=PostState.queued,
-                          scheduled_time=when, public_url="dryrun://clip_1"))
+                          scheduled_time=when, public_url="https://www.instagram.com/p/clip_1/"))
 
 
 def _seed_postiz_down_snapshot(cfg, *, status_code=502):

@@ -82,9 +82,13 @@ def test_write_audit_preserves_extra_kw(tmp_path):
 def _seed_queued_post(cfg: Config, post_id: str = "p1", *,
                      state: PostState = PostState.queued,
                      scheduled_iso: str = _NOW_ISO,
-                     public_url: str = "dryrun://p1") -> str:
+                     public_url: str | None = None) -> str:
     """Seed one (source, moment, clip, post) chain so the action APIs have something
     real to mutate. The post defaults to queued + scheduled now."""
+    from fanops.models import _POST_TERMINAL_REQUIRES_URL
+    if public_url is None:
+        public_url = (f"https://www.instagram.com/p/{post_id}/"
+                      if state in _POST_TERMINAL_REQUIRES_URL else f"dryrun://{post_id}")
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
@@ -155,7 +159,7 @@ def test_approve_posts_writes_audit_entry(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1", state=PostState.awaiting_approval)
-    _seed_queued_post(cfg, "p2", state=PostState.awaiting_approval, public_url="dryrun://p2")
+    _seed_queued_post(cfg, "p2", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions_approve import approve_posts
     res = approve_posts(cfg, ["p1", "p2"])
     assert res.ok, f"approve failed: {res}"
@@ -175,7 +179,7 @@ def test_reject_posts_writes_audit_entry(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1", state=PostState.awaiting_approval)
-    _seed_queued_post(cfg, "p2", state=PostState.awaiting_approval, public_url="dryrun://p2")
+    _seed_queued_post(cfg, "p2", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions_approve import reject_posts
     res = reject_posts(cfg, ["p1", "p2"])
     assert res.ok, f"reject failed: {res}"
@@ -197,7 +201,7 @@ def test_reject_posts_audits_only_what_it_discarded(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "dryrun")
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1", state=PostState.awaiting_approval)
-    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="dryrun://p2")
+    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions_approve import reject_posts
     assert reject_posts(cfg, ["p1", "p2", "nope"]).ok
     entries = [json.loads(line) for line in
@@ -220,7 +224,7 @@ def test_reschedule_bucket_writes_audit_entry(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1", scheduled_iso=iso_z(_NOW.replace(year=2020)))
     _seed_queued_post(cfg, "p2", scheduled_iso=iso_z(_NOW.replace(year=2020)),
-                     public_url="dryrun://p2")
+                     public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions import reschedule_bucket
     res = reschedule_bucket(cfg, now=_NOW)
     assert res.ok and res.detail["rescheduled"] == 2
@@ -257,7 +261,7 @@ def test_bulk_send_to_review_moves_posts(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1", state=PostState.published,
                      public_url="https://www.instagram.com/p/old/")
-    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="dryrun://p2")
+    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions import bulk_send_to_review
     res = bulk_send_to_review(cfg, ["p1", "p2"], reason="bad_batch_revert")
     assert res.ok, f"bulk_send_to_review failed: {res}"
@@ -289,8 +293,8 @@ def test_bulk_send_to_review_writes_audit_entry(tmp_path):
     action in the system (it undoes a publish-or-schedule batch). The reason field
     is the operator's intent ('bad_batch_revert' / 'config_drift_repair' / etc)."""
     cfg = Config(root=tmp_path)
-    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="dryrun://p1")
-    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="dryrun://p2")
+    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="https://www.instagram.com/p/p1/")
+    _seed_queued_post(cfg, "p2", state=PostState.queued, public_url="https://www.instagram.com/p/p2/")
     from fanops.studio.actions import bulk_send_to_review
     bulk_send_to_review(cfg, ["p1", "p2"], reason="bad_batch_revert")
     entries = [json.loads(line) for line in
@@ -324,7 +328,7 @@ def test_cli_bulk_send_to_review(tmp_path, monkeypatch, capsys):
     the CLI parity for the future Studio button."""
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
-    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="dryrun://p1")
+    _seed_queued_post(cfg, "p1", state=PostState.queued, public_url="https://www.instagram.com/p/p1/")
     from fanops.cli import main
     rc = main(["bulk-send-to-review", "p1", "--reason", "test_revert"])
     assert rc == 0

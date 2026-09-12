@@ -49,13 +49,13 @@ def test_home_accounts_panel_posted_total_and_badge(tmp_path):
     with Ledger.transaction(cfg) as led:
         _live_clip(led)
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.published, public_url="dryrun://p1"))
+                          caption="x", state=PostState.published, public_url="https://www.instagram.com/p/p1/"))
         led.add_post(Post(id="p2", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="y", state=PostState.analyzed, public_url="dryrun://p2"))
+                          caption="y", state=PostState.analyzed, public_url="https://www.instagram.com/p/p2/"))
         led.add_post(Post(id="p3", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="z", state=PostState.awaiting_approval, public_url="dryrun://p3"))
+                          caption="z", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p3/"))
         led.add_post(Post(id="p4", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="w", state=PostState.queued, public_url="dryrun://p4"))
+                          caption="w", state=PostState.queued, public_url="https://www.instagram.com/p/p4/"))
     panel = views.home_accounts_panel(cfg)
     assert len(panel) == 1
     assert panel[0]["posted_total"] == 2
@@ -95,7 +95,7 @@ def test_home_week_calendar_operator_tz_bucket(tmp_path, monkeypatch):
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c1", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.queued, scheduled_time=st, public_url="dryrun://p1"))
+                          caption="x", state=PostState.queued, scheduled_time=st, public_url="https://www.instagram.com/p/p1/"))
     cal = views.home_week_calendar(cfg)
     from fanops.timeutil import _operator_zone, parse_iso
     zone = _operator_zone(cfg)
@@ -168,7 +168,7 @@ def test_home_tile_badge_links_review(tmp_path):
     with Ledger.transaction(cfg) as led:
         _live_clip(led)
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p1"))
+                          caption="x", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p1/"))
     html = _client(cfg).get("/").data.decode()
     assert 'class="home-acct-badge">1</span>' in html
     assert '/review?account=a' in html

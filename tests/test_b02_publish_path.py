@@ -39,7 +39,7 @@ def _seed_queued(cfg, pid="p1", cid="c1", *, sched="2020-01-01T00:00:00Z", sub=N
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
                           caption="c", scheduled_time=sched, state=PostState.queued,
                           post_type="post", created_at="2026-07-16T13:31:00Z",
-                          media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
+                          media_urls=["https://cdn/v.mp4"], public_url="https://www.instagram.com/p/p1/",
                           submission_id=sub))
 
 

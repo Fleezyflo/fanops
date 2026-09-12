@@ -33,7 +33,7 @@ def _seed_one(cfg, *, pid, state=PostState.queued, when):
                               aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="x", state=state,
-                          scheduled_time=when, public_url=f"dryrun://{pid}"))
+                          scheduled_time=when, public_url=f"https://www.instagram.com/p/{pid}/"))
 
 
 # ---- A: the helper itself ----

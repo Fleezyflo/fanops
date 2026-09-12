@@ -28,7 +28,7 @@ def _seed(cfg):
         led.add_clip(Clip(id="c0", parent_id="m0", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         # P11/MOL-152: @a is cast on m0 via Moment.affinities (the single-owner gate input); @b owns nothing.
         led.moments["m0"].affinities = ["a"]
-        led.add_post(Post(id="p_a_m0", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_m0"))
+        led.add_post(Post(id="p_a_m0", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_a_m0/"))
 
 def _seed_with_post(cfg):
     # like _seed but @a's m0 post carries clip_profile="long" so its lane row renders the length-band spec chip.

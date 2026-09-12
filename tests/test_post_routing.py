@@ -124,9 +124,9 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
     with Ledger.transaction(cfg) as led:
         _lineage(led, "c1", "c2")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
-                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="https://www.instagram.com/p/pig/"))
         led.add_post(Post(id="ptk", parent_id="c2", account="tk", account_id="acc_abc", platform=Platform.tiktok,
-                          caption="c", state=PostState.queued, media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://ptk"))
+                          caption="c", state=PostState.queued, media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="https://www.instagram.com/p/ptk/"))
 
     seen = {}
     class _FakePoster:
@@ -154,7 +154,7 @@ def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
     with Ledger.transaction(cfg) as led:
         _lineage(led, "c1")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
-                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="https://www.instagram.com/p/pig/"))
     seen = {}
     class _FakePoster:
         def __init__(self, backend): self.backend = backend
