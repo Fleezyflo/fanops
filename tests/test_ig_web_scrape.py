@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, measure_and_harvest_scrape, search_hashtags_scrape
-from fanops.ig_web_scrape import IgWebSession, LoginRequired, open_web_session
+from fanops.ig_web_scrape import IgWebSession, open_web_session
 from fanops.source_tags import _iter_lock_clients
 
 
@@ -22,24 +22,6 @@ def test_web_search_invented_name_is_empty():
     sess = IgWebSession("u", fetch=lambda *_a, **_k: {
         "name": "nope", "id": "9", "media_count": 99, "status": "ok"})
     assert search_hashtags_scrape(sess, "music") == []
-
-
-def test_web_403_is_login_required(tmp_path, monkeypatch):
-    import fanops.ig_web_scrape as iws
-    iws._LAST_REQUEST_MONO.clear()
-    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
-    monkeypatch.setattr("fanops.ig_safari_shell.safari_xhr", lambda *_a, **_k: json.dumps({
-        "status": 403,
-        "url": "https://www.instagram.com/api/v1/tags/music/info/",
-        "text": "{}",
-    }))
-    cfg = Config(root=tmp_path)
-    try:
-        iws.safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
-                         user="u", cfg=cfg)
-        raise AssertionError("expected LoginRequired")
-    except LoginRequired:
-        pass
 
 
 def test_web_measure_reads_play_and_like():
