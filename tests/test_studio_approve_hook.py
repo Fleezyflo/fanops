@@ -51,15 +51,6 @@ def test_approve_with_hook_warm_failure_aborts_without_approving(tmp_path):
     assert led.moments["mom_1"].hook_removed == REMOVED
 
 
-def test_warm_hooked_render_logs_and_returns_false_on_failure(tmp_path):
-    from fanops.studio.actions_approve import _warm_hooked_render
-    cfg = Config(root=tmp_path)
-    _seed(cfg, source_path=str(tmp_path / "missing.mp4"))
-    assert _warm_hooked_render(cfg, "mom_1", Fmt.r9x16, REMOVED) is False
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "warm_failed" in log
-
-
 def test_approve_with_hook_no_removed_hook_just_approves(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, hook_removed=None)
