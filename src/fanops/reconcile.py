@@ -429,7 +429,7 @@ def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, s
     real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
                  if is_real_submission_id(info.get(k))), None)
     new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
-    captured_url = safe_public_url(info.get("publicUrl")) or safe_public_url(post.public_url)
+    captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
     reported_username = info.get("tiktokUsername")
     _rid = info.get("releaseId")
     _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
@@ -786,7 +786,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
                              if is_real_submission_id(info.get(k))), None)
                 new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
-                captured_url = safe_public_url(info.get("publicUrl")) or safe_public_url(post.public_url)
+                captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
                 reported_username = info.get("tiktokUsername")
                 if not (captured_url or "").strip():
                     from fanops.models import Platform as _Plat
