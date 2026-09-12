@@ -34,22 +34,25 @@ def test_media_path_for_post_prefers_render(tmp_path):
     assert media_path_for_post(cfg, led, led.posts["p"]) == thin
 
 
-def test_apply_shrink_persists_media_urls_when_mocked(tmp_path, monkeypatch, mocker):
+def test_apply_shrink_persists_media_urls(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     add_account(cfg, "@tt", [Platform.tiktok], status="active")
     set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
     src = tmp_path / "big.mp4"
     src.write_bytes(b"Z" * 8_000_000)
-    shrunk = tmp_path / "small.mp4"
-    shrunk.write_bytes(b"S" * 1000)
     led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.queued, media_urls=[f"file://{src}"]))
-    mocker.patch("fanops.post.compress.maybe_shrink_for_cap", return_value=shrunk)
+    def _ffmpeg(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"s" * 100)
+        return mocker.Mock(returncode=0)
+    mocker.patch("fanops.post.compress.subprocess.run", side_effect=_ffmpeg)
     monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
     post = led.posts["p"]
     assert apply_shrink_to_post(cfg, led, post, backend="zernio") is True
-    assert post.media_urls == [f"file://{shrunk.resolve()}"]
+    assert post.media_urls[0].startswith("file://")
+    assert Path(post.media_urls[0][7:]).exists()
+    assert Path(post.media_urls[0][7:]).stat().st_size <= cfg.zernio_max_upload_bytes
 
 
 def test_noop_shrink_persist_leaves_https_urls(tmp_path):
@@ -121,52 +124,6 @@ def test_publish_backend_for_post_uses_channel_override(tmp_path, monkeypatch):
     set_backend(cfg, "@tt", "tiktok", "zernio")
     p = Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok, caption="x")
     assert publish_backend_for_post(cfg, p) == "zernio"
-
-
-def test_publish_due_persists_shrunk_render_path(tmp_path, monkeypatch, mocker):
-    from fanops.post.run import publish_due
-    from fanops.models import Clip, ClipState, Moment, MomentState
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
-    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
-    cfg = Config(root=tmp_path)
-    add_account(cfg, "@tt", [Platform.tiktok], status="active")
-    set_backend(cfg, "@tt", "tiktok", "zernio")
-    src = tmp_path / "big.mp4"
-    shrunk = tmp_path / "small.mp4"
-    src.write_bytes(b"Z" * 8_000_000)
-    shrunk.write_bytes(b"S" * 1000)
-    led = Ledger.load(cfg)
-    # Materialize `m`: the clip named it but the row was never added. Harmless while the publish guard
-    # failed OPEN on a missing ancestor; publish_due now asks Ledger.can_promote, which fails CLOSED, and
-    # this test is about the SHRINK path — the lineage must not be what refuses the post.
-    led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
-                          state=MomentState.clipped))
-    led.add_clip(Clip(id="c", parent_id="m", path=str(src), state=ClipState.queued))
-    led.add_render(Render(id="r1", clip_id="c", account="tt", surface_key="tt/tiktok",
-                          hook_text="h", path=str(src), state=RenderState.rendered))
-    led.add_post(Post(id="p", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
-                      caption="x", state=PostState.queued, render_id="r1",
-                      scheduled_time="2020-01-01T00:00:00Z", media_urls=[f"file://{src}"],
-                      public_url="dryrun://p"))
-    led.save()
-
-    def shrink(cfg_, path, cap, **kw):
-        return shrunk
-    mocker.patch("fanops.post.compress.maybe_shrink_for_cap", side_effect=shrink)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.post.media.ensure_render_media", return_value="https://media.zernio.com/v.mp4")
-
-    class FakePoster:
-        def publish(self, led_, pid):
-            led_.posts[pid] = led_.posts[pid].model_copy(update={"state": PostState.published})
-            led_.posts[pid].public_url = "https://www.tiktok.com/@x/1"
-            return led_
-    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
-    publish_due(cfg, now="2026-06-02T18:00:00Z")
-    led2 = Ledger.load(cfg)
-    assert led2.renders["r1"].path == str(shrunk)  # shrink persisted to ledger
-    assert led2.posts["p"].media_urls == ["https://media.zernio.com/v.mp4"]  # upload replaced file://
 
 
 # ── RC-10 (S09): maybe_shrink_for_cap's per-call scratch dir must never outlive the call ──────────

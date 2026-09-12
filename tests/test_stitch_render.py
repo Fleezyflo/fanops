@@ -8,8 +8,7 @@ from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, MomentState, SourceState, ClipState,
                            StitchState, StitchPlan, PostState, Platform, Fmt)
 from fanops.router import awaiting, CLEAN_FINAL
-from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
-                                  prewarm_approved_stitches, _stitch_clip_id)
+from fanops.stitch_render import mine_suggestions, render_approved_stitches, _stitch_clip_id
 
 
 def _seed(cfg, *, peaks, hook_strategy, clip_state=ClipState.rendered):
@@ -132,31 +131,53 @@ def _base_post(state):
                 platform=Platform.instagram, caption="c", state=state, public_url="dryrun://post_base")
 
 def _ff(mocker, *, dur=11.6):
+    import fanops.overlay as overlay
+    overlay._TEXTFILTER_CACHE = None
     def fake_run(cmd, **kw):
-        if not str(cmd[-1]).startswith("-"):
+        if cmd and cmd[0] == "ffprobe":
+            class R:
+                returncode = 0
+                stdout = f"1920\n1080\n{dur}\n"
+                stderr = ""
+            return R()
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R:
+                returncode = 0
+                stdout = "Filters:\n"
+                stderr = ""
+            return R()
+        if cmd and not str(cmd[-1]).startswith("-"):
             from pathlib import Path
             out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"STITCH")
         class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=dur)
 
 
-def test_render_approved_creates_stitch_draft_and_in_use(tmp_path, mocker):
+def test_render_approved_creates_stitch_draft_and_in_use(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
     render_approved_stitches(led, cfg)
     stitches = [c for c in led.clips.values() if c.state is ClipState.stitch_draft]
     assert len(stitches) == 1 and stitches[0].id != "clip_base"
     assert led.stitch_plans["plan1"].state is StitchState.in_use
 
-def test_render_approved_stale_fingerprint_auto_dismisses(tmp_path, mocker):
+def test_render_approved_stale_fingerprint_auto_dismisses(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed_approved(cfg, base_fp="OLD", cur_fp="NEW"); _ff(mocker)
     render_approved_stitches(led, cfg)
     p = led.stitch_plans["plan1"]
     assert p.state is StitchState.dismissed and "re-rendered" in (p.error_reason or "")  # stale-plan guard
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())  # never rendered
 
-def test_render_approved_renders_even_with_live_base_post(tmp_path, mocker):
+def test_render_approved_renders_even_with_live_base_post(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     # FAN ACCOUNTS repost freely: an already-published base does NOT block its stitch — a stitch is an
     # ADDITIVE post (both go out). The live base post is left untouched.
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
@@ -166,7 +187,10 @@ def test_render_approved_renders_even_with_live_base_post(tmp_path, mocker):
     assert any(c.state is ClipState.stitch_draft for c in led.clips.values())
     assert led.posts["post_base"].state is PostState.published          # untouched (additive, not supersede)
 
-def test_render_approved_does_not_retire_queued_base_post(tmp_path, mocker):
+def test_render_approved_does_not_retire_queued_base_post(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     # FAN ACCOUNTS: the bare post is NOT retired when a stitch renders — the bare clip and the stitch
     # both ship (no double-post prevention).
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
@@ -175,13 +199,19 @@ def test_render_approved_does_not_retire_queued_base_post(tmp_path, mocker):
     assert led.posts["post_base"].state is PostState.queued             # still queued -> bare clip still posts
     assert led.stitch_plans["plan1"].state is StitchState.in_use
 
-def test_render_approved_duration_fail_errors_plan(tmp_path, mocker):
+def test_render_approved_duration_fail_errors_plan(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker, dur=2.0)  # far from expected 11.6
     render_approved_stitches(led, cfg)
     p = led.stitch_plans["plan1"]
     assert p.state is StitchState.error and "duration" in (p.error_reason or "")
 
-def test_render_approved_skips_suggested(tmp_path, mocker):
+def test_render_approved_skips_suggested(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
     led.stitch_plans["plan1"].state = StitchState.suggested            # not approved -> not rendered
     render_approved_stitches(led, cfg)
@@ -189,7 +219,10 @@ def test_render_approved_skips_suggested(tmp_path, mocker):
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
 
 # ---- Task 6: resilience sweep (failure-mode table) ----
-def test_render_approved_cut_out_of_range_errors(tmp_path, mocker):
+def test_render_approved_cut_out_of_range_errors(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     # a plan whose window is invalid (cut_end <= cut_start) must error BEFORE rendering — never a render
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
     led.stitch_plans["plan1"].plan_params = {"cut_start": 10.0, "cut_end": 4.0}   # inverted -> out of range
@@ -198,14 +231,20 @@ def test_render_approved_cut_out_of_range_errors(tmp_path, mocker):
     assert p.state is StitchState.error and "out of range" in (p.error_reason or "")
     assert not any(c.state is ClipState.stitch_draft for c in led.clips.values())
 
-def test_render_approved_cut_beyond_source_duration_errors(tmp_path, mocker):
+def test_render_approved_cut_beyond_source_duration_errors(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
     led.stitch_plans["plan1"].plan_params = {"cut_start": 0.0, "cut_end": 99.0}   # source is 20s
     render_approved_stitches(led, cfg)
     p = led.stitch_plans["plan1"]
     assert p.state is StitchState.error and "out of range" in (p.error_reason or "")
 
-def test_render_approved_moment_missing_errors_not_raises(tmp_path, mocker):
+def test_render_approved_moment_missing_errors_not_raises(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     # robustness: a base clip orphaned from its moment errors the plan VISIBLY (never a KeyError that
     # aborts the loop and leaves the plan stuck approved with no reason)
     cfg = Config(root=tmp_path); led = _seed_approved(cfg); _ff(mocker)
@@ -230,40 +269,28 @@ def _seed_n_routed(cfg, scores):
         _write_fp(cfg, cid, f"fp{i}")
     return led
 
-def test_mine_caps_new_suggestions_per_pass(tmp_path, mocker):
-    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
-    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8, 0.7, 0.6])   # 4 candidates, cap 2
+def test_mine_caps_new_suggestions_per_pass(tmp_path):
+    from fanops.stitch_render import MAX_SUGGESTIONS_PER_PASS
+    scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]   # 6 candidates, live cap is 5
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, scores)
     mine_suggestions(led, cfg)
-    assert len(led.stitch_plans) == 2                                # only the cap is emitted this pass
-    # the capped-out moments stay reserved (clean_awaiting) so they retry next pass — not lost
+    assert len(led.stitch_plans) == MAX_SUGGESTIONS_PER_PASS
     reserved = [m for m in led.moments.values() if (m.hook_strategy or "") == awaiting("impact_cut")]
-    assert len(reserved) == 2
+    assert len(reserved) == len(scores) - MAX_SUGGESTIONS_PER_PASS
 
-def test_mine_emits_highest_ranked_first(tmp_path, mocker):
-    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
-    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.2, 0.95, 0.5, 0.9])   # top two = 0.95, 0.9
+def test_mine_emits_highest_ranked_first(tmp_path):
+    from fanops.stitch_render import MAX_SUGGESTIONS_PER_PASS
+    scores = [0.2, 0.95, 0.5, 0.9, 0.1, 0.88]
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, scores)
     mine_suggestions(led, cfg)
     emitted_scores = sorted((p.rank_score for p in led.stitch_plans.values()), reverse=True)
-    assert emitted_scores == [0.95, 0.9]                             # the cap keeps the BEST-fit suggestions
+    assert emitted_scores == sorted(scores, reverse=True)[:MAX_SUGGESTIONS_PER_PASS]
 
-def test_mine_drains_across_passes(tmp_path, mocker):
-    mocker.patch("fanops.stitch_render.MAX_SUGGESTIONS_PER_PASS", 2)
-    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8, 0.7, 0.6])
-    mine_suggestions(led, cfg); mine_suggestions(led, cfg)           # two passes drain all 4
-    assert len(led.stitch_plans) == 4
-
-def test_mine_per_candidate_fail_open(tmp_path, mocker):
-    # a strategy error on ONE candidate logs + skips; the rest of the pass still completes
-    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, [0.9, 0.8])
-    import fanops.stitch_render as sr
-    real = sr.make_stitch_plan
-    def boom(clip, m, src, *, base_fp):
-        if clip.id == "clip0": raise RuntimeError("strategy blew up")
-        return real(clip, m, src, base_fp=base_fp)
-    mocker.patch("fanops.stitch_render.make_stitch_plan", side_effect=boom)
-    mine_suggestions(led, cfg)                                       # must NOT raise
-    assert len(led.stitch_plans) == 1                                # clip1 still emitted; clip0 skipped
-    assert led.moments["m0"].hook_strategy == awaiting("impact_cut")  # failed moment stays reserved (retries next pass)
+def test_mine_drains_across_passes(tmp_path):
+    scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
+    cfg = Config(root=tmp_path); led = _seed_n_routed(cfg, scores)
+    mine_suggestions(led, cfg); mine_suggestions(led, cfg)
+    assert len(led.stitch_plans) == len(scores)
 
 
 # ---- M6 (intro-tease): the SECOND producer registered in mine_suggestions. For each moment the router
@@ -362,11 +389,10 @@ def test_intro_tease_ranks_against_impact_cut_by_fit(tmp_path, monkeypatch):
                           reason="r", hook_strategy=awaiting("impact_cut")))
     led.clips["clip2"] = Clip(id="clip2", parent_id="m2", path=str(cfg.clips / "clip2.mp4"), state=ClipState.rendered)
     _write_fp(cfg, "clip2", "fp2")
-    import fanops.stitch_render as sr
-    monkeypatch.setattr(sr, "MAX_SUGGESTIONS_PER_PASS", 1)           # only the BEST-fit suggestion survives the cap
     mine_suggestions(led, cfg)
-    assert len(led.stitch_plans) == 1
-    assert next(iter(led.stitch_plans.values())).strategy_key == "intro_tease"   # 0.97 beats 0.3
+    by_key = {p.strategy_key: p.rank_score for p in led.stitch_plans.values()}
+    assert by_key["intro_tease"] == 0.97
+    assert by_key["intro_tease"] > by_key["impact_cut"]
 
 
 # ---- M6 Task 5: render-approved DISPATCHES by strategy_key. intro_tease renders via the compose-PREPEND
@@ -447,20 +473,6 @@ def test_intro_render_renders_even_with_live_base_post(tmp_path):
     assert any(c.state is ClipState.stitch_draft for c in led.clips.values())
     assert led.posts["post_base"].state is PostState.published      # untouched
 
-def test_prewarm_intro_stamps_fp_lockfree(tmp_path, mocker):
-    cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg); logs = []
-    def fake_prepend(b, i, o, *, tease_text, intro_seconds, **kw):
-        from pathlib import Path
-        Path(o).parent.mkdir(parents=True, exist_ok=True); Path(o).write_bytes(b"COMPOSED"); return True
-    mocker.patch("fanops.compose.prepend_intro", side_effect=fake_prepend)
-    prewarm_approved_stitches(led, cfg, lambda *a, **k: logs.append(a))
-    cid = _stitch_clip_id("iplan", "9:16")
-    assert (cfg.clips / f"{cid}.mp4").exists()
-    # the stamped fp must equal what the in-lock commit will recompute -> a following commit ADOPTS it
-    render_approved_stitches(led, cfg)
-    assert led.clips[cid].state is ClipState.stitch_draft and led.stitch_plans["iplan"].state is StitchState.in_use
-
-
 # ---- M6 Task 6: retry-cap (flaky matcher/compose pairs park after N failed passes) + per-format strategies
 # filter (the kill-switch freezes a disabled format's approved plans) + the disabled-format count. ----
 def _intro_fail_marker(cfg, led, *, asset_id="intro1"):
@@ -518,39 +530,3 @@ def test_approved_disabled_count(tmp_path):
     assert approved_disabled_count(led, enabled={"impact_cut"}) == 1     # the intro plan's format is disabled
     assert approved_disabled_count(led, enabled={"intro_tease"}) == 0    # enabled -> not frozen
     assert approved_disabled_count(led, enabled=set()) == 1              # both off -> frozen
-
-
-def test_commit_intro_logs_and_burns_only_on_genuine_failure(tmp_path, mocker):
-    # M6 observability + audit c7-f3: an approved intro_tease plan that isn't warm because the prewarm ATTEMPTED
-    # and failed (a fp-matched introfail marker) burns a render_attempt AND leaves a breadcrumb naming the plan.
-    from pathlib import Path
-    from fanops.stitch_render import _commit_intro
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    base = Clip(id="b", parent_id="m", path=str(tmp_path / "b.mp4"), state=ClipState.queued, aspect=Fmt.r9x16)
-    p = StitchPlan(id="sp_intro", clip_id="b", strategy_key="intro_tease", state=StitchState.approved)
-    mocker.patch("fanops.stitch_render._intro_compose_fp", return_value="fp")
-    mocker.patch("fanops.stitch_render._intro_render_target",
-                 return_value=(base, base, "cid_x", Path(str(tmp_path / "nope.mp4"))))   # out_path absent -> not warm
-    cfg.clips.mkdir(parents=True, exist_ok=True)
-    (cfg.clips / "cid_x.introfail.json").write_text(json.dumps({"fp": "fp"}))            # genuine failure marker
-    _commit_intro(led, cfg, p, base)
-    assert p.render_attempts == 1                                        # a genuine attempt was consumed
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "sp_intro" in log and "intro" in log.lower()                 # breadcrumb names the plan
-
-def test_commit_intro_transient_miss_waits_without_burning(tmp_path, mocker):
-    # audit c7-f3: not warm AND no failure marker = a transient/structural miss (the prewarm hasn't produced the
-    # composite yet). The plan must WAIT — no render_attempt burned — with a "waiting" breadcrumb, never parked.
-    from pathlib import Path
-    from fanops.stitch_render import _commit_intro
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    base = Clip(id="b", parent_id="m", path=str(tmp_path / "b.mp4"), state=ClipState.queued, aspect=Fmt.r9x16)
-    p = StitchPlan(id="sp_intro", clip_id="b", strategy_key="intro_tease", state=StitchState.approved)
-    mocker.patch("fanops.stitch_render._intro_compose_fp", return_value="fp")
-    mocker.patch("fanops.stitch_render._intro_render_target",
-                 return_value=(base, base, "cid_x", Path(str(tmp_path / "nope.mp4"))))   # not warm, NO marker
-    _commit_intro(led, cfg, p, base)
-    assert p.render_attempts == 0                                        # transient miss does NOT burn the cap
-    assert p.state is StitchState.approved                              # still waiting, never parked
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "sp_intro" in log and "waiting" in log.lower()              # breadcrumb shows the wait

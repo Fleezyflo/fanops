@@ -1,13 +1,13 @@
 # MOL-150 (P9): owner-moment render spec — no variant_hook / creative_variation / per-account re-resolve.
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, Moment, Source, ClipState, MomentState, Fmt, PostState, Post
 from fanops.accounts import Accounts
 from fanops.crosspost import crosspost_clips, render_spec
 from fanops.studio.actions_approve import approve_posts
+import fanops.overlay as overlay
 
 
 def _seed_accounts(cfg, accounts):
@@ -38,6 +38,31 @@ def _seed_captioned_clip(led, cfg, moment, surfaces=None):
     led.add_clip(clip)
 
 
+def _stub_ffmpeg(mocker):
+    overlay._TEXTFILTER_CACHE = None
+    captured: list = []
+
+    def fake_run(cmd, **kw):
+        captured.append(list(cmd))
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R:
+                returncode = 0
+                stdout = "Filters:\n"
+                stderr = ""
+            return R()
+        if cmd and not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"x")
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    return captured
+
+
 def test_render_reads_moment_cut_spec(tmp_path):
     cfg = Config(root=tmp_path)
     m = _moment(clip_profile="long", framing="top")
@@ -51,10 +76,9 @@ def test_render_reads_moment_cut_spec(tmp_path):
 
 def test_post_stamp_from_moment_not_account(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
-    monkeypatch.setattr("fanops.config.Config.resolve_clip_profile", lambda self, acct=None: "short")
-    monkeypatch.setattr("fanops.config.Config.resolve_top_bias", lambda self, acct=None: True)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
+                          "status": "active", "clip_profile": "short", "framing": "center"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(clip_profile="long", framing="top", hook="SHARED"))
     led.save()
@@ -91,40 +115,35 @@ def test_no_creative_variation(tmp_path):
 
 def test_moment_renders_once_per_aspect(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
-    calls = []
-    def _render(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-        calls.append((moment_id, aspect))
-        cid = f"clip_{aspect.value.replace(':', 'x')}"
-        dst = cfg.clips / f"{cid}.mp4"; dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(b"x")
-        clip = Clip(id=cid, parent_id=moment_id, path=str(dst), aspect=aspect, state=ClipState.rendered)
-        led.clips[cid] = clip
-        return led, clip
-    mocker.patch("fanops.crosspost.render_moment", side_effect=_render)
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
+    captured = _stub_ffmpeg(mocker)
     cfg = Config(root=tmp_path)
-    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram", "twitter"], "status": "active"}])
+    _seed_accounts(cfg, [{"handle": "a", "account_id": "1", "platforms": ["instagram", "twitter"],
+                          "status": "active"}])
     led = Ledger.load(cfg)
     _seed_captioned_clip(led, cfg, _moment(hook="H"),
                          surfaces=(_surf("a"), f"{_surf('a').split('/')[0]}/twitter"))
     led.save()
-    crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(calls) == 1 and calls[0] == ("mom_1", Fmt.r16x9)
+    led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    encodes = [c for c in captured if c and c[0] == "ffmpeg" and "-i" in c]
+    assert len(encodes) == 1
+    assert any(c.aspect is Fmt.r16x9 for c in led.clips.values())
 
 
-def test_supercut_branch_survives_render_fork_deletion(tmp_path, monkeypatch):
+def test_supercut_branch_survives_render_fork_deletion(tmp_path, mocker, monkeypatch):
     from fanops import clip as clipmod
-    calls = []
-    def _sc(src, dst, spans, aspect_value, **kw):
-        calls.append(1)
-        Path(dst).parent.mkdir(parents=True, exist_ok=True)
-        Path(dst).write_bytes(b"x")
-        return SimpleNamespace(returncode=0)
-    monkeypatch.setattr(clipmod, "render_supercut_reframed", _sc)
-    monkeypatch.setattr(clipmod, "_supercut_span_entries", lambda *a, **k: ([], None))
-    monkeypatch.setattr("fanops.overlay.ffmpeg_has_textfilter", lambda: False)
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
+    _stub_ffmpeg(mocker)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
     led.add_moment(_moment(segments=[(0.0, 3.0), (10.0, 13.0)], hook="SUPER", start=0, end=13))
+    out = tmp_path / "out.mp4"
     ok, realized = clipmod.render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
-                                              hook="SUPER", out_path=str(tmp_path / "out.mp4"), top_bias=False)
-    assert calls and ok is True and realized == 6.0
+                                              hook="SUPER", out_path=str(out), top_bias=False)
+    assert ok is True and realized == 6.0
+    assert out.exists()

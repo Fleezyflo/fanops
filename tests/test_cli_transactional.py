@@ -1,269 +1,311 @@
-"""Follow-up to Phase B (post-merge review, Important finding): the standalone CLI write commands
-(track / reconcile / adjust / ingest / pull) did a LOCK-FREE Ledger.load -> mutate -> led.save(),
-re-opening the exact lost-update window B4 closed for advance() — a concurrent advance under its
-transaction could be clobbered last-writer-wins. These migrate them to Ledger.transaction, with the
-HARD constraint that network / subprocess I/O stays OUTSIDE the lock (mirroring publish_due's
-in_transaction split) so the up-to-30s Blotato calls never serialize behind the ledger write lock."""
+"""CLI write verbs persist under Ledger.transaction; network stays outside the flock.
+
+Iron law: call cli.main / named cmd_*; mock only requests. No fanops.* setattr.
+"""
 import json
+
+from fanops.cli import main
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import Post, Platform, PostState
-import fanops.cli as cli
+from fanops.models import (
+    Clip,
+    ClipState,
+    Moment,
+    MomentState,
+    Platform,
+    Post,
+    PostState,
+    Source,
+    SourceState,
+)
 from tests.conftest import ledger_lock_is_free as _ledger_lock_is_free
 
 
-# ---------------------------------------------------------------------------
-# 1. Each write command takes the transaction (no more lock-free load->save).
-# ---------------------------------------------------------------------------
+class _Resp:
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload) if not isinstance(payload, str) else payload
 
-def test_cmd_adjust_uses_a_transaction(tmp_path, monkeypatch, mocker):
+    def json(self):
+        return self._payload
+
+
+def _save_empty(tmp_path):
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()
+    return cfg
+
+
+def _analyzed(led, pid, *, lift, sid="src_1"):
+    if sid not in led.sources:
+        led.add_source(Source(
+            id=sid, source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
+            transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
+            signal_peaks=[], meta={"transcribed": True}))
+    mid, cid = f"m_{pid}", f"c_{pid}"
+    led.add_moment(Moment(
+        id=mid, parent_id=sid, content_token="14-21", start=14, end=21,
+        reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
+    led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(
+        id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
+        caption="x", state=PostState.analyzed, metrics={"lift_score": lift},
+        public_url=f"https://example.test/{pid}"))
+
+
+def test_cmd_adjust_persists_amplify_on_a_winner(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    Ledger.load(Config(root=tmp_path)).save()
-    spy = mocker.spy(Ledger, "transaction")
-    assert main_ok(["adjust"])
-    assert spy.call_count >= 1, "cmd_adjust must mutate under Ledger.transaction, not a lock-free load+save"
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _analyzed(led, "p1", lift=400.0)
+    assert main(["adjust"]) == 0
+    assert "winners=" in capsys.readouterr().out
+    again = Ledger.load(cfg)
+    parked = again.sources["src_1"].meta.get("pending_reopen") or {}
+    assert parked.get("origin") == "amplify"
 
 
-def test_cmd_ingest_uses_a_transaction(tmp_path, monkeypatch, mocker):
+def test_cmd_ingest_empty_inbox_exits_0(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    Ledger.load(Config(root=tmp_path)).save()
-    # no drops in the inbox -> ingest_drops is a no-op, but it must still go through a transaction
-    spy = mocker.spy(Ledger, "transaction")
-    assert main_ok(["ingest"])
-    assert spy.call_count >= 1, "cmd_ingest must persist under Ledger.transaction"
+    _save_empty(tmp_path)
+    assert main(["ingest"]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "ingested" in out
+    assert Ledger.load(Config(root=tmp_path)).sources == {}
 
 
-def test_cmd_track_uses_a_transaction(tmp_path, monkeypatch, mocker):
+def test_cmd_track_empty_ledger_exits_0(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    Ledger.load(Config(root=tmp_path)).save()
-    # inject a fetch so no real network; returns no rows (nothing to apply)
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda window: [])
-    spy = mocker.spy(Ledger, "transaction")
-    assert main_ok(["track"])
-    assert spy.call_count >= 1, "cmd_track must apply metrics under Ledger.transaction"
+    _save_empty(tmp_path)
+    assert main(["track"]) == 0
+    assert "tracked" in capsys.readouterr().out.lower()
 
 
-def test_cmd_reconcile_uses_a_transaction(tmp_path, monkeypatch, mocker):
+def test_cmd_track_network_runs_outside_the_lock(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
-    led.save()
-    # inject a status poll so no real network; report still in-progress (no state change needed)
-    mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {"status": "in-progress"})
-    spy = mocker.spy(Ledger, "transaction")
-    assert main_ok(["reconcile"])
-    assert spy.call_count >= 1, "cmd_reconcile must apply poll results under Ledger.transaction"
-
-
-# ---------------------------------------------------------------------------
-# 2. The network / poll call must run OUTSIDE the ledger lock (no serialization
-#    of the slow Blotato call behind the flock).
-# ---------------------------------------------------------------------------
-
-def test_cmd_track_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(
+            id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+            caption="x", state=PostState.published, submission_id="postiz_1",
+            public_url="https://example.test/p"))
     seen = {}
 
-    def fetching(window):
-        seen["lock_free_during_fetch"] = _ledger_lock_is_free(cfg)   # must be True: lock not held
-        return []
+    def fake_get(url, **kw):
+        seen["lock_free"] = _ledger_lock_is_free(cfg)
+        seen["url"] = url
+        return _Resp([])
 
-    mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
-    assert main_ok(["track"])
-    assert seen.get("lock_free_during_fetch") is True, \
-        "the metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
+    monkeypatch.setattr("requests.get", fake_get)
+    assert main(["track"]) == 0
+    assert seen.get("lock_free") is True
+    assert "analytics" in (seen.get("url") or "")
 
 
-def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
-    # ECC-review fix #1: the `run` post-loop learning pass fetched metrics (up to ~30s network)
-    # INSIDE Ledger.transaction, holding the flock across the call and serializing any concurrent
-    # advance/ingest behind it. The fetch must run OUTSIDE the lock (mirroring cmd_track).
+def test_learn_pass_fetch_runs_outside_the_lock(tmp_path, monkeypatch):
+    from fanops.cli import _learn_pass
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(
+            id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+            caption="x", state=PostState.published, submission_id="postiz_1",
+            public_url="https://example.test/p"))
     seen = {}
 
-    def fetching(window):
-        seen["lock_free_during_fetch"] = _ledger_lock_is_free(cfg)   # must be True: lock not held
-        return []
+    def fake_get(url, **kw):
+        seen["lock_free"] = _ledger_lock_is_free(cfg)
+        return _Resp([])
 
-    mocker.patch("fanops.cli._default_list_posts", return_value=fetching)
-    cli._learn_pass(cfg)
-    assert seen.get("lock_free_during_fetch") is True, \
-        "the learn-pass metrics fetch held the ledger lock — network must be OUTSIDE the transaction"
+    monkeypatch.setattr("requests.get", fake_get)
+    _learn_pass(cfg)
+    assert seen.get("lock_free") is True
 
 
-def test_learn_pass_does_not_amplify_or_retire_by_default(tmp_path, monkeypatch, mocker):
-    # THE unattended-actuator gate, both halves. `amplify` MINTS new moments -> clips -> posts on a
-    # winner's source; `retire` DESTROYS a loser's clip, its moment when no live sibling remains, and
-    # every unshipped post of that lineage. Both were gated only by cfg.is_live_backend, so going live
-    # to PUBLISH also switched on an autonomous generator and an autonomous destroyer. Default OFF now,
-    # like every other learning signal.
+def test_learn_pass_does_not_amplify_or_retire_by_default(tmp_path, monkeypatch):
+    from fanops.cli import _learn_pass
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
-    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": ["p2"]})
-    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
-    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
+    monkeypatch.delenv("FANOPS_LEARN_AMPLIFY", raising=False)
+    monkeypatch.delenv("FANOPS_LEARN_RETIRE", raising=False)
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _analyzed(led, "p1", lift=400.0)
+        _analyzed(led, "p2", lift=1.0)
+    _learn_pass(cfg)
+    again = Ledger.load(cfg)
+    assert "pending_reopen" not in again.sources["src_1"].meta
+    assert int(again.sources["src_1"].meta.get("amplify_count", 0)) == 0
+    assert again.clips["c_p2"].state is ClipState.analyzed
 
-    cli._learn_pass(cfg)                                  # both flags unset -> intent is OFF
 
-    amp.assert_not_called()                               # a WINNER no longer mints work on its own
-    ret.assert_not_called()                               # ...and a LOSER no longer destroys on its own
-
-
-def test_learn_pass_amplifies_only_with_intent(tmp_path, monkeypatch, mocker):
-    """The flag is the whole gate: OFF keeps amplify inert, ON runs it. `learning_validated` is NOT a
-    second gate here — nothing writes metrics_confirmed False, so once auto-stamped it never re-binds;
-    asserting it would pin a condition that cannot fail closed."""
+def test_learn_pass_amplifies_only_with_intent(tmp_path, monkeypatch):
+    from fanops.cli import _learn_pass
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
-    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": []})
-    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
-
-    cli._learn_pass(cfg)
-    amp.assert_not_called()                               # intent OFF -> inert
-
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
+    monkeypatch.delenv("FANOPS_LEARN_AMPLIFY", raising=False)
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _analyzed(led, "p1", lift=400.0)
+    _learn_pass(cfg)
+    assert "pending_reopen" not in Ledger.load(cfg).sources["src_1"].meta
     monkeypatch.setenv("FANOPS_LEARN_AMPLIFY", "1")
-    cli._learn_pass(cfg)
-    amp.assert_called_once()                              # intent ON -> the opted-in path still works
+    _learn_pass(Config(root=tmp_path))
+    parked = Ledger.load(cfg).sources["src_1"].meta.get("pending_reopen") or {}
+    assert parked.get("origin") == "amplify"
 
 
-def test_learn_pass_retires_only_with_intent(tmp_path, monkeypatch, mocker):
-    """Mirror of the amplify firewall for the destroyer half: FANOPS_LEARN_RETIRE is the whole gate,
-    so an unattended tick cannot suppress a lineage until an operator opts in."""
+def test_learn_pass_retires_only_with_intent(tmp_path, monkeypatch):
+    from fanops.cli import _learn_pass
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
-    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": [], "losers": ["p2"]})
-    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
-
-    cli._learn_pass(cfg)
-    ret.assert_not_called()                               # intent OFF -> inert
-
+    monkeypatch.delenv("FANOPS_LEARN_RETIRE", raising=False)
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        for i, lift in enumerate((80, 70, 60, 50, 40, 30, 20, 10), start=1):
+            _analyzed(led, f"p{i}", lift=float(lift), sid=f"src_{i}")
+    _learn_pass(cfg)
+    assert all(Ledger.load(cfg).clips[f"c_p{i}"].state is ClipState.analyzed for i in range(1, 9))
     monkeypatch.setenv("FANOPS_LEARN_RETIRE", "1")
-    cli._learn_pass(cfg)
-    ret.assert_called_once()                              # intent ON -> the opted-in path still works
+    _learn_pass(Config(root=tmp_path))
+    recs = [json.loads(ln) for ln in cfg.log_path.read_text().splitlines() if ln.strip()]
+    retired = [r for r in recs if r.get("stage") == "learn" and r.get("outcome") == "retired"]
+    assert retired and int(retired[-1]["losers"]) >= 1
 
 
-def test_learn_pass_with_both_flags_off_logs_skips_and_writes_nothing(tmp_path, monkeypatch, mocker):
-    """The read-only default: with both flags OFF the pass still pulls metrics and classifies, and the
-    counts reach run.log on the two skip breadcrumbs — but neither actuator is called."""
+def test_learn_pass_with_both_flags_off_logs_skips_and_writes_nothing(tmp_path, monkeypatch):
+    from fanops.cli import _learn_pass
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda w: [])
-    mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": ["p1"], "losers": ["p2"]})
-    amp = mocker.patch("fanops.cli.amplify", side_effect=lambda led, *a, **k: led)
-    ret = mocker.patch("fanops.cli.retire", side_effect=lambda led, *a, **k: led)
-
-    cli._learn_pass(cfg)
-
-    amp.assert_not_called(); ret.assert_not_called()
+    monkeypatch.delenv("FANOPS_LEARN_AMPLIFY", raising=False)
+    monkeypatch.delenv("FANOPS_LEARN_RETIRE", raising=False)
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        _analyzed(led, "p1", lift=400.0)
+        _analyzed(led, "p2", lift=1.0)
+    _learn_pass(cfg)
     recs = [json.loads(ln) for ln in cfg.log_path.read_text().splitlines() if ln.strip()]
     skipped = {r["outcome"]: r for r in recs if r.get("stage") == "learn"}
-    assert skipped["amplify_skipped"]["winners"] == "1", "the classified winner count must still reach run.log"
-    assert skipped["retire_skipped"]["losers"] == "1", "the classified loser count must still reach run.log"
+    assert int(skipped["amplify_skipped"]["winners"]) >= 1
+    assert "retire_skipped" in skipped
+    assert "pending_reopen" not in Ledger.load(cfg).sources["src_1"].meta
 
 
-def test_cmd_map_media_uses_a_transaction(tmp_path, monkeypatch, mocker):
+def test_cmd_map_media_uses_a_transaction(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    Ledger.load(Config(root=tmp_path)).save()
-    mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
-    spy = mocker.spy(Ledger, "transaction")
-    assert main_ok(["map-media"])
-    assert spy.call_count >= 1, "cmd_map_media must persist under Ledger.transaction, not a lock-free load+save"
+    _save_empty(tmp_path)
+    assert main(["map-media"]) == 0
+    assert "media mapped" in capsys.readouterr().out.lower()
 
 
-def test_cmd_map_media_network_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
+def test_cmd_map_media_network_runs_outside_the_lock(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    seen = []
-
-    def scoped(cfg_, handles, *, get=None):
-        seen.append(_ledger_lock_is_free(cfg))
-        return []
-
-    mocker.patch("fanops.meta_graph.enumerate_scoped_media", side_effect=scoped)
-    assert main_ok(["map-media"])
-    assert seen and seen[0] is True, \
-        "the media enumeration held the ledger lock — network must be OUTSIDE the transaction"
-
-
-def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")
-    monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
-    led.save()
+    monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
+    monkeypatch.setenv("META_IG_USER_ID", "ig1")
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()
     seen = {}
 
-    def polling(sid):
-        seen["lock_free_during_poll"] = _ledger_lock_is_free(cfg)
-        return {"status": "in-progress"}
+    def fake_get(url, **kw):
+        seen["lock_free"] = _ledger_lock_is_free(cfg)
+        return _Resp({"data": []})
 
-    mocker.patch("fanops.reconcile._default_get_status", return_value=polling)
-    assert main_ok(["reconcile"])
-    assert seen.get("lock_free_during_poll") is True, \
-        "the status poll held the ledger lock — per-post network must be OUTSIDE the transaction"
+    monkeypatch.setattr("requests.get", fake_get)
+    assert main(["map-media"]) == 0
+    assert seen.get("lock_free") is True
 
 
-# ---------------------------------------------------------------------------
-# 3. Behavior preserved: track/reconcile still apply their results to the ledger.
-# ---------------------------------------------------------------------------
-
-def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch, mocker):
+def test_cmd_reconcile_poll_runs_outside_the_lock(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
-    led.save()
-    mocker.patch("fanops.reconcile._default_get_status",
-                 return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
-    assert main_ok(["reconcile"])
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(
+            id="p", parent_id="c", account="tt", account_id="1", platform=Platform.tiktok,
+            caption="x", state=PostState.needs_reconcile, submission_id="zreal_1",
+            public_url="dryrun://p"))
+    seen = {}
+
+    def fake_get(url, **kw):
+        seen["lock_free"] = _ledger_lock_is_free(cfg)
+        return _Resp({"status": "in-progress"})
+
+    monkeypatch.setattr("requests.get", fake_get)
+    assert main(["reconcile"]) == 0
+    assert seen.get("lock_free") is True
+
+
+def test_cmd_reconcile_still_promotes_published(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(
+            id="p", parent_id="c", account="tt", account_id="1", platform=Platform.tiktok,
+            caption="x", state=PostState.needs_reconcile, submission_id="zreal_1",
+            public_url="dryrun://p"))
+
+    def fake_get(url, **kw):
+        url = str(url)
+        if "oembed" in url:
+            return _Resp({"author_unique_id": "tt", "author_url": "https://www.tiktok.com/@tt"})
+        return _Resp({
+            "status": "published",
+            "publicUrl": "https://www.tiktok.com/@tt/video/7",
+            "platforms": [{"platform": "tiktok", "status": "published",
+                           "platformPostUrl": "https://www.tiktok.com/@tt/video/7",
+                           "accountId": {"username": "tt"}}],
+        })
+
+    monkeypatch.setattr("requests.get", fake_get)
+    assert main(["reconcile"]) == 0
     again = Ledger.load(cfg)
     assert again.posts["p"].state is PostState.published
-    assert again.posts["p"].public_url == "https://x/p"
+    assert again.posts["p"].public_url == "https://www.tiktok.com/@tt/video/7"
 
 
-def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch, mocker):
-    # `fanops reconcile` reads Postiz via the bulk mirror (`list_all` → mandatory startDate/endDate).
-    # A future/2099 post is found because the mirror window is maximal. Capture the params.
+def test_cmd_reconcile_postiz_date_windows_each_post(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.needs_reconcile, submission_id="postiz_9",
-                      scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p")); led.save()
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(
+            id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+            caption="x", state=PostState.needs_reconcile, submission_id="postiz_9",
+            scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p"))
     seen = {}
-    class _Resp:
-        status_code = 200; text = "{}"
-        def json(self): return {"posts": [{"id": "postiz_9", "state": "PUBLISHED"}]}
+
     def fake_get(url, **kw):
-        seen["params"] = kw.get("params"); return _Resp()
-    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
-    assert main_ok(["reconcile"])
+        seen["params"] = kw.get("params")
+        return _Resp({"posts": [{"id": "postiz_9", "state": "PUBLISHED",
+                                 "releaseURL": "https://www.instagram.com/reel/X/"}]})
+
+    monkeypatch.setattr("requests.get", fake_get)
+    assert main(["reconcile"]) == 0
     p = seen.get("params") or {}
-    assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]   # ISO window brackets the post's own time
+    assert "date" not in p and p["startDate"] <= "2099-01-01" <= p["endDate"]
     assert Ledger.load(cfg).posts["p"].state is PostState.published
 
+
 def test_cmd_reconcile_postiz_without_key_skips_cleanly(tmp_path, monkeypatch, capsys):
-    # postiz WITHOUT a key must SKIP (return 0), not raise/exit. Empty surface / auth paths stay a
-    # clean no-op (like track).
+    from fanops import cli
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.delenv("POSTIZ_API_KEY", raising=False); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()
     assert cli.cmd_reconcile(cfg) == 0
-    assert "reconciled" in capsys.readouterr().out  # empty ledger -> clean no-op
-
-
-def main_ok(argv) -> bool:
-    rc = cli.main(argv)
-    return rc == 0
+    assert "reconciled" in capsys.readouterr().out

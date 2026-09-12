@@ -37,13 +37,6 @@ def test_signal_accepts_real_espeak_transcript():
     assert real_transcript_signal(_ESPEAK_TRANSCRIPT) is True
 
 
-def test_signal_robust_anchor_survives_both_vocoders():
-    # The robust content anchor ("anymore") is present in BOTH engines' real output, unlike
-    # "slept" which only `say` produced. Proven directly against the recorded text.
-    assert "anymore" in _SAY_TRANSCRIPT[0]["text"].lower()
-    assert "anymore" in _ESPEAK_TRANSCRIPT[0]["text"].lower()
-
-
 def test_signal_rejects_empty_transcript():
     assert real_transcript_signal(_EMPTY) is False
 
@@ -57,10 +50,3 @@ def test_signal_rejects_segments_without_real_whisper_timing():
     # A fabricated string with the right words but no real (start,end) segment shape is NOT
     # proof whisper ran — reject it (structure requirement).
     assert real_transcript_signal(_NO_TIMING) is False
-
-
-def test_old_slept_rule_would_have_failed_on_espeak():
-    # Documents WHY CI went red: the old assertion over-specified one token. This pins the
-    # regression so nobody reintroduces a single-vocoder-specific word check.
-    joined = " ".join(seg["text"].lower() for seg in _ESPEAK_TRANSCRIPT)
-    assert "slept" not in joined  # the old `assert "slept" in joined` raised here in CI

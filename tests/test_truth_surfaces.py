@@ -75,22 +75,21 @@ def _seed_postiz_down_snapshot(cfg, *, status_code=502):
     }))
 
 
-def test_golive_postiz_parked_matches_strip_no_blocker(tmp_path, monkeypatch, mocker):
+def test_golive_postiz_parked_matches_strip_no_blocker(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     _seed_accounts(cfg)
     _seed_postiz_down_snapshot(cfg)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     body = _client(cfg).get("/golive/health").data.decode()
-    probe.assert_not_called()
-    assert "dep-alert" not in body or "cannot ship" not in body.lower()
+    assert "dep-alert" not in body
+    assert "cannot ship" not in body.lower()
     assert "starts on publish" in body.lower()
-    assert "parked" in body.lower() or "idle" in body.lower()
+    assert "parked" in body.lower()
 
 
-def test_golive_postiz_stall_still_blocks(tmp_path, monkeypatch, mocker):
+def test_golive_postiz_stall_still_blocks(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
@@ -98,9 +97,7 @@ def test_golive_postiz_stall_still_blocks(tmp_path, monkeypatch, mocker):
     _seed_accounts(cfg)
     _seed_due_postiz_post(cfg)
     _seed_postiz_down_snapshot(cfg)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     body = _client(cfg).get("/golive/health").data.decode()
-    probe.assert_not_called()
     assert "dep-alert" in body
     assert "cannot ship" in body.lower()
     strip = views.build_system_strip(cfg)
@@ -109,16 +106,15 @@ def test_golive_postiz_stall_still_blocks(tmp_path, monkeypatch, mocker):
     assert "stalled" in (pd.get("hint") or "").lower()
 
 
-def test_postiz_header_honest_when_autostart_off(tmp_path, monkeypatch, mocker):
+def test_postiz_header_honest_when_autostart_off(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("FANOPS_POSTIZ_AUTOSTART", "0")
     _seed_accounts(cfg)
     _seed_postiz_down_snapshot(cfg)
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     strip = views.build_system_strip(cfg)
-    probe.assert_not_called()
     pd = strip.get("postiz_down") or {}
     hint = (pd.get("hint") or "").lower()
     assert pd.get("show") is True

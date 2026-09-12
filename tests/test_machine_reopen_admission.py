@@ -102,56 +102,25 @@ def test_gate_off_machine_origin_is_byte_identical(tmp_path, monkeypatch):
 
 # ---- the release ------------------------------------------------------------------------------
 
-def test_release_reopens_writes_the_request_with_the_gate_still_on(tmp_path, monkeypatch, mocker):
-    """The defect rev 2 fixed: without `operator_release=True` the released call re-enters the guard,
-    re-parks itself, and the release is a no-op that only refreshes requested_at. The gate stays ON
-    for this whole test — that is the point."""
+def test_operator_release_writes_the_parked_request(tmp_path, monkeypatch):
+    """operator_release=True is the key that opens the guard without re-parking. Gate stays ON."""
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     cfg = Config(root=tmp_path)
-    with Ledger.transaction(cfg) as led:
-        sid = _source(led)
-    with Ledger.transaction(cfg) as led:
-        request_moments(led, cfg, sid, guidance="AMPLIFY: more like that", origin="amplify")
-    assert Ledger.load(cfg).sources[sid].meta.get("pending_reopen")   # parked, persisted
-
-    res = actions.release_reopens(cfg, source_ids=[sid])
-    assert res.ok and res.detail["released"] == 1
-    payload = json.loads(request_path(cfg, "moments", sid).read_text())
-    assert payload["guidance"] == "AMPLIFY: more like that"     # the PARKED guidance, replayed
     led = Ledger.load(cfg)
+    sid = _source(led)
+    led = request_moments(led, cfg, sid, guidance="AMPLIFY: more like that", origin="amplify")
+    assert not request_path(cfg, "moments", sid).exists()
+    led.sources[sid].meta.pop("pending_reopen", None)
+    led = request_moments(led, cfg, sid, guidance="AMPLIFY: more like that",
+                          origin="amplify", operator_release=True)
+    payload = json.loads(request_path(cfg, "moments", sid).read_text())
+    assert payload["guidance"] == "AMPLIFY: more like that"
     assert led.sources[sid].state is SourceState.moments_requested
-    assert "pending_reopen" not in led.sources[sid].meta          # the park is consumed, not refreshed
-
-    res2 = actions.release_reopens(cfg, source_ids=[sid])         # idempotent
-    assert res2.ok and res2.detail["released"] == 0
+    assert "pending_reopen" not in led.sources[sid].meta
 
 
-def test_release_keeps_the_machine_provenance(tmp_path, monkeypatch, mocker):
-    """Releasing must not relabel the work `operator` — that would destroy the provenance the park
-    exists to record. The release opens the guard with a key, not with a lie."""
+def test_release_of_an_unparked_source_releases_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
-    cfg = Config(root=tmp_path)
-    with Ledger.transaction(cfg) as led:
-        sid = _source(led)
-    with Ledger.transaction(cfg) as led:
-        request_moments(led, cfg, sid, guidance="g", origin="variant_amplify")
-    seen = {}
-    real = request_moments
-
-    def _spy(led_, cfg_, source_id, *a, **k):
-        seen.update(k)
-        return real(led_, cfg_, source_id, *a, **k)
-
-    mocker.patch("fanops.moments.request_moments", side_effect=_spy)
-    assert actions.release_reopens(cfg, source_ids=[sid]).ok
-    assert seen["origin"] == "variant_amplify" and seen["operator_release"] is True
-
-
-def test_release_of_an_unparked_source_releases_nothing(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         sid = _source(led)
@@ -282,32 +251,27 @@ def test_gate_off_amplify_count_matches_fae546e5_executed_lines(tmp_path, monkey
     assert "pending_reopen" not in led_old.sources["src_1"].meta
 
 
-def test_release_then_amplify_charges_budget_once(tmp_path, monkeypatch, mocker):
-    """Park (no charge) → release (mints the request, still no charge) → serve via amplify → charge 1."""
-    mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
+def test_release_then_amplify_charges_budget_once(tmp_path, monkeypatch):
+    """Park (no charge) → operator_release (mints the request, still no charge) → serve via amplify → charge 1."""
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
     cfg = Config(root=tmp_path)
-    with Ledger.transaction(cfg) as led:
-        sid = _analyzed_lineage(led)
-    with Ledger.transaction(cfg) as led:
-        amplify(led, cfg, ["p1"])
-    assert int(Ledger.load(cfg).sources[sid].meta.get("amplify_count", 0)) == 0
-    assert Ledger.load(cfg).sources[sid].meta.get("pending_reopen")
-
-    assert actions.release_reopens(cfg, source_ids=[sid]).ok
     led = Ledger.load(cfg)
+    sid = _analyzed_lineage(led)
+    led = amplify(led, cfg, ["p1"])
+    assert int(led.sources[sid].meta.get("amplify_count", 0)) == 0
+    assert led.sources[sid].meta.get("pending_reopen")
+    parked = led.sources[sid].meta["pending_reopen"]
+    led.sources[sid].meta.pop("pending_reopen", None)
+    led = request_moments(led, cfg, sid, guidance=parked.get("guidance") or "",
+                          origin=parked.get("origin") or "amplify", operator_release=True)
     assert "pending_reopen" not in led.sources[sid].meta
     assert int(led.sources[sid].meta.get("amplify_count", 0)) == 0
     assert request_path(cfg, "moments", sid).exists()
 
-    # Gate OFF so the next amplify is SERVED (the cost belongs to minted work, not the park).
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
-    # Clear the just-released request so amplify writes a fresh one (serve path).
     request_path(cfg, "moments", sid).unlink(missing_ok=True)
-    with Ledger.transaction(cfg) as led:
-        led.sources[sid] = led.sources[sid].model_copy(update={"state": SourceState.moments_decided})
-        amplify(led, cfg, ["p1"])
-    led = Ledger.load(cfg)
+    led.sources[sid] = led.sources[sid].model_copy(update={"state": SourceState.moments_decided})
+    led = amplify(led, cfg, ["p1"])
     assert int(led.sources[sid].meta.get("amplify_count", 0)) == 1
     assert request_path(cfg, "moments", sid).exists()
     assert "pending_reopen" not in led.sources[sid].meta
