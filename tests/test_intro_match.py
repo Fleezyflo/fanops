@@ -2,7 +2,8 @@
 # request_intro_match writes one agent gate per router-reserved (clean_awaiting_strategy:intro_tease)
 # moment carrying the clip context vs the candidate third-party intro assets; the llm responder answers ranked
 # pairings; ingest writes them onto Moment.intro_matches for the producer. Gated on cfg.intro_tease ONLY
-# (gates are always answered by the LLM now), FAIL-OPEN (corrupt answer -> moment stays unmatched, never wedges).
+# (gates are always answered by the LLM now). No answer -> unmatched (never wedges). A CORRUPT answer is
+# fail-closed: never applied, and a run.log breadcrumb is required — unmatched-without-log is silent matcher death.
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -89,6 +90,8 @@ def test_ingest_noop_until_response(tmp_path, monkeypatch):
     request_intro_match(led, cfg)
     ingest_intro_match(led, cfg)                                                      # no response yet
     assert led.moments["m1"].intro_matches is None
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "corrupt_response" not in log                                             # pending-empty is not matcher death
 
 def test_ingest_filters_unknown_asset_and_textless_pairings(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch); led = _seed(cfg)
@@ -100,10 +103,13 @@ def test_ingest_filters_unknown_asset_and_textless_pairings(tmp_path, monkeypatc
     ingest_intro_match(led, cfg)
     assert [m["asset_id"] for m in led.moments["m1"].intro_matches] == ["i2"]          # only the real, renderable pairing
 
-def test_ingest_failopen_on_corrupt_response(tmp_path, monkeypatch):
+def test_ingest_failclosed_on_corrupt_response(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch); led = _seed(cfg)
     request_intro_match(led, cfg)
     for key in pending(cfg, kind="intro_match"):
         response_path(cfg, "intro_match", key).write_text("{not json")
-    ingest_intro_match(led, cfg)                                                      # must not raise
-    assert led.moments["m1"].intro_matches is None                                    # corrupt -> unmatched
+    ingest_intro_match(led, cfg)
+    assert led.moments["m1"].intro_matches is None                                    # corrupt never applied
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "corrupt_response" in log                                                  # required breadcrumb; unmatched-without-log is silent matcher death
+    assert pending(cfg, kind="intro_match")                                           # fail-closed: gate still pending, not landed as success
