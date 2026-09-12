@@ -14,7 +14,6 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
-from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
 
 
@@ -133,9 +132,9 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     reader = status_reader or (lambda c, iv: daemon.status(c, interval=iv))
     try:
         st = reader(cfg, interval)
-    except Exception:
-        with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug(
+            "doctor.daemon status read degrade: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     # Observe snapshot miss/stale → UNKNOWN (required), not "no heartbeat" FAIL lie (MOL-965 WP3).
     snap_fr = st.get("snapshot_freshness")
     if snap_fr and snap_fr != "fresh":
@@ -155,9 +154,9 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
         age = st.get("heartbeat_age_s")
         if age is None:
             age = daemon._heartbeat_age_s(cfg)
-    except Exception:
-        with fail_open("doctor.daemon heartbeat age read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug(
+            "doctor.daemon heartbeat age read degrade: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     # (b) past-due backlog — fail-open ledger read; parity filters match publish_due (can_promote + active account)
     now = datetime.now(timezone.utc)
     backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
@@ -240,9 +239,9 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     st = None
     try:
         st = reader(cfg, interval)
-    except Exception:
-        with fail_open("doctor.deploy status read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            pass
+    except Exception as exc:
+        logging.getLogger("fanops.doctor").debug(
+            "doctor.deploy status read degrade: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     if not st or not st.get("loaded"):
         return None                                              # N/A — pump not loaded
     running = daemon._last_heartbeat_code(cfg)
@@ -378,7 +377,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     # 5. hashtag-scrape cooldown — optional enrichment; Severity.WARN (non-blocking). Surface WHY Layer A
     #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains.
     try:
-        from fanops.fanops_hashtags import _read_active_cooldown, _OUTAGE_REMEDY
+        from fanops.hashtag_scrape_policy import _OUTAGE_REMEDY, _read_active_cooldown
         cool = _read_active_cooldown(cfg, datetime.now(timezone.utc))
         if cool:
             reason = cool.get("reason") or "cooldown"
@@ -388,9 +387,8 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                 "hashtag Layer A not in cooldown",
                 severity="warn",
                 hint=f"scrape frozen ({reason}) until {until} — {remedy}"))
-    except Exception:
-        with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
-            raise
+    except Exception as exc:
+        log.debug("doctor.scrape-cooldown sensor degrade: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
 
     return out
 
