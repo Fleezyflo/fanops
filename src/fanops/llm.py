@@ -572,7 +572,7 @@ def _grok_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
                         return parsed
-                except Exception:
+                except (json.JSONDecodeError, ValueError):
                     pass
                 salvaged = _salvage_json(text, schema)
                 if salvaged is not None:
