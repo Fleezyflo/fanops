@@ -111,7 +111,9 @@ def test_schedule_dryrun_guard_banner(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_LIVE", raising=False)
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, state=PostState.queued, when=_FUTURE)
     html = _client(cfg).get("/schedule?account=@a").data.decode()
-    assert "schedule-guard" in html and "dryrun" in html.lower()
+    assert "schedule-guard" in html
+    guard = html.split("schedule-guard", 1)[1].split("</p>", 1)[0]
+    assert "Publishing is off" in guard
 
 def test_publish_page_dryrun_guard_banner(tmp_path, monkeypatch):
     monkeypatch.delenv("FANOPS_LIVE", raising=False)
