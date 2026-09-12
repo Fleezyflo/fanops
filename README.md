@@ -59,6 +59,7 @@ Machine-health channels: [docs/MACHINE_HEALTH.md](docs/MACHINE_HEALTH.md) (`/hea
 | [docs/MACHINE_HEALTH.md](docs/MACHINE_HEALTH.md) | Primary = doctor; projections; `/healthz` process-only |
 | [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) | What actually enforces each rule |
 | [docs/ENGINEERING_STANDARDS.md](docs/ENGINEERING_STANDARDS.md) | Craft guidance (not a gate) |
+| [docs/audit/MASTER_MAP.md](docs/audit/MASTER_MAP.md) + [docs/CODEMAPS/partition.json](docs/CODEMAPS/partition.json) + [docs/audit/PRODUCTION_SCORE.md](docs/audit/PRODUCTION_SCORE.md) | Production audit map, C-cluster partition, ship score |
 
 ## Rules and how they are enforced
 

@@ -195,3 +195,7 @@ Both scripts are pure stdlib, deterministic, and safe to re-run after any code c
 not require the 10 subsystem trace documents to be regenerated (those are the semantic layer, run
 via Sonnet agents per cluster, only needed when the intent of a specific area changes materially,
 not on every edit).
+
+## Live partition (2026-09-12)
+
+Machine-readable C1–C10 map: [partition.json](partition.json). Authoritative module set: `git ls-files 'src/fanops/**/*.py'`. S-subsystem totality is enforced separately by `python -m tools.arch ci` (ARCH-001).

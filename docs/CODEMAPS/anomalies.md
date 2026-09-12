@@ -158,3 +158,17 @@ genuinely dead: `persist_post_shrink` (lazy import at `studio/actions.py:396`) a
 `ensure_channel` / `set_status` / `set_ig_user_id` (aliased `_accounts_*` imports in
 `studio/golive.py`). All are corrected above. The remaining 10 dead-code entries were re-verified
 by grepping for both the bare name and every `<name> as <alias>` binding across the tree.
+
+## Re-verification 2026-09-12
+
+Production audit pass re-read live `src/fanops/` against this frozen ledger and `docs/CODEMAPS/partition.json` (196 modules, C1–C10 operator map). Authority for publish/wipe/dryrun invariants remains `tools/arch` + `.reports/architecture/INVARIANT_AUDIT.md`, not this file.
+`ledger_wipe.snapshot_is_restorable` still logs via stdlib `logging`, not surfaced `get_logger` — C1-F01 unchanged; wipe-guard mis-surfacing is open.
+`persona_directives.persona_facts` now logs on store load failure (C4 anomalies entry stale); reclassify as fixed for surfacing, broad catch remains a low-severity note.
+`meta_graph._read_queries` corrupt-file path still returns `None` without a log line — C7-F01 unchanged.
+`studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)` — the C10 wiring bug cited in Summary counts is **closed**; anomalies bullets referencing `views.py`-only wiring are stale.
+`responder.py` ValidationError infinite-pending gate fixed per MOL-254/W5; C6 bullet is historical — guarded by `tests/test_responder.py`.
+`build_system_strip` sub-read failures now log via `get_logger` (MOL-123) — prior C10 “silent nav strip” gap is closed in code; trace docs may still describe the old behavior.
+New modules since 2026-07 (health_*, cli_*, ledger_sqlite, reframe_*, source_tags_*, canary_*, etc.) had no row in the frozen cluster table; partition.json assigns them by stem heuristics + import-graph vote — operator map is current, semantic traces are not.
+ARCH-001 S-subsystem totality in `derived/modules.json` is orthogonal to C-cluster coverage; both must stay in sync via their respective gates (`python -m tools.arch ci` vs `test_live_partition_covers_every_module`).
+Install extras ([asr], [framing], [studio]) documented in `docs/CONFIG.md` with failure posture; doctor/transcribe/studio import paths spot-checked against cited symbols.
+Pack findings in `docs/audit/packs/` supersede per-cluster severity prose here when they disagree on open vs closed status.

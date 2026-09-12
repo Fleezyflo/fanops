@@ -9,6 +9,14 @@ writes both `.env` and `os.environ`) or **`.env`/shell-ONLY** (no UI). `Set` col
 (never operator), **deprecated** = vestigial (not Studio-settable). Defaults are the CODE defaults. (Absolute var counts are intentionally omitted — a
 hardcoded total rots; the `FANOPS_*` name-set here is instead enforced against the code by `ARCH-003`.)
 
+## Install extras and failure posture
+
+| Extra | When required | Absent / misconfigured behavior | Evidence |
+|-------|----------------|----------------------------------|----------|
+| [asr] | Transcribe (clip path) | Per-source `SourceState.error`; `ToolchainMissingError`; doctor fails faster-whisper | `transcribe.py:21`, `_fw_available`; `doctor.py:408-410` |
+| [framing] | `cfg.smart_framing` ON | `_framing_runtime_or_raise` fails loud; OFF → centered crop fail-open | `framing.py:6-8,90-131`; `pyproject.toml` `[framing]` |
+| [studio] | `fanops studio` server | `studio.app` imports Flask; `cmd_studio` → `create_app`; missing → `ImportError` | `pyproject.toml:21-22`; `cli.py:1268,1314` |
+
 ## Bootstrap (process environment only)
 | Var | Default | Effect | Set |
 |---|---|---|---|
