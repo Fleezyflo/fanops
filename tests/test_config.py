@@ -224,7 +224,8 @@ def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "")
     assert Config(root=tmp_path).burn_subs is True            # blank stays ON
     monkeypatch.setenv("FANOPS_BURN_SUBS", "maybe")
-    assert Config(root=tmp_path).burn_subs is True            # anything not an off-word stays ON
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).burn_subs                       # junk refuses (not silently ON)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     assert Config(root=tmp_path).burn_subs is False
     monkeypatch.setenv("FANOPS_BURN_SUBS", "off")
