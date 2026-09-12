@@ -1,5 +1,6 @@
 # tests/test_moments_segments.py — S2 supercut consumer forks + authoring (MOL-177)
 import json
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, MomentState, MomentPick)
@@ -26,26 +27,35 @@ def test_dedup_empty_segments_coerces_to_envelope():
 
 def test_hook_frames_distributed_across_spans_total_budget(tmp_path, mocker):
     cfg = Config(root=tmp_path)
-    calls: list[tuple[float, float, int]] = []
-    def _fake_kf(video, start, end, *, count, out_dir, **kw):
-        calls.append((start, end, count)); return [f"{start:.0f}-{end:.0f}-{count}"]
-    mocker.patch("fanops.moments.extract_keyframes", side_effect=_fake_kf)
+    ss_times: list[float] = []
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"JPG")
+        ss_times.append(float(cmd[cmd.index("-ss") + 1]))
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.keyframes.subprocess.run", side_effect=fake_run)
     src = Source(id="s1", source_path=str(tmp_path / "v.mp4"), duration=60.0)
     (tmp_path / "v.mp4").write_bytes(b"x")
     spans = [(10.0, 20.0), (30.0, 45.0), (50.0, 55.0)]
     frames = _window_frames(cfg, src, 10.0, 55.0, segments=spans)
     assert 1 <= len(frames) <= 3
-    assert sum(c for _, _, c in calls) <= 3
-    assert all(s >= 10 and e <= 55 for s, e, _ in calls)
-    assert not any(s >= 20 and e <= 30 for s, e, _ in calls)
+    assert len(ss_times) <= 3
+    assert all(10 <= t <= 55 for t in ss_times)
+    assert not any(20 < t < 30 for t in ss_times)
 
 def test_hook_frames_single_window_unchanged(tmp_path, mocker):
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.moments.extract_keyframes", return_value=["a", "b", "c"])
+    def fake_run(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"JPG")
+        class R: returncode = 0; stderr = ""
+        return R()
+    mocker.patch("fanops.keyframes.subprocess.run", side_effect=fake_run)
     src = Source(id="s1", source_path=str(tmp_path / "v.mp4"), duration=60.0)
     (tmp_path / "v.mp4").write_bytes(b"x")
-    assert _window_frames(cfg, src, 14.0, 28.0) == ["a", "b", "c"]
-    assert _window_frames(cfg, src, 14.0, 28.0, segments=None) == ["a", "b", "c"]
+    a = _window_frames(cfg, src, 14.0, 28.0)
+    b = _window_frames(cfg, src, 14.0, 28.0, segments=None)
+    assert len(a) == 3 and len(b) == 3
+    assert all(p.endswith(".jpg") for p in a + b)
 
 def test_hook_peaks_scoped_to_segments(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
