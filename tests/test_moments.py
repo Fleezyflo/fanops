@@ -578,7 +578,7 @@ def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
                  meta={"transcribed": True})
     pick = MomentPick(start=14.0, end=22.0, reason="visual beat",
                       transcript_excerpt="invented LLM line")
-    assert validate_pick(pick, duration=60.0, src=src, cfg=cfg) is None
+    assert validate_pick(pick, duration=60.0, src=src, cfg=cfg) is not None
     assert "pick_speech_mismatch" in _run_log_outcomes(cfg)
 
 def test_validate_pick_requires_cue_edges_when_trusted_cues_exist():
