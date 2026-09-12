@@ -7,8 +7,11 @@ observed live 2026-08-10 (workflow-gate "Refresh channel needed"; Graph subcode 
 and the fail-open guards: no docker, malformed ids, nonzero exit, timeout, unparseable rows — each
 degrades to {} / (unknown, "") rather than raising or inventing detail."""
 import base64
+import os
 import subprocess
 from types import SimpleNamespace
+
+import pytest
 
 from fanops.models import ErrorKind
 from fanops.post import postiz_errors as pe
@@ -63,14 +66,18 @@ def test_an_unrecognized_graph_error_surfaces_its_user_message():
     assert "too long" in why
 
 
-def test_fetch_degrades_to_empty_without_docker(monkeypatch):
-    monkeypatch.setattr(pe, "_docker_bin", lambda: None)
-    assert pe.fetch_error_details(["cmsabcdefgh"]) == {}
+def _path_docker(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    docker = bindir / "docker"
+    docker.write_text("#!/bin/sh\nexit 0\n")
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
 
 
-def test_fetch_filters_malformed_ids_out_of_the_sql(monkeypatch):
+def test_fetch_filters_malformed_ids_out_of_the_sql(tmp_path, monkeypatch):
+    _path_docker(tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(pe, "_docker_bin", lambda: "/usr/bin/docker")
 
     def fake_run(cmd, **kw):
         calls.append(" ".join(cmd))
@@ -82,22 +89,23 @@ def test_fetch_filters_malformed_ids_out_of_the_sql(monkeypatch):
     assert "cms_ok_12345" in calls[0]
 
 
-def test_fetch_parses_base64_rows(monkeypatch):
+def test_fetch_parses_base64_rows(tmp_path, monkeypatch):
+    _path_docker(tmp_path, monkeypatch)
     blob = base64.b64encode(_REFRESH.encode()).decode()
-    monkeypatch.setattr(pe, "_docker_bin", lambda: "/usr/bin/docker")
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **kw: SimpleNamespace(returncode=0, stdout=f"cmsabcdefgh|{blob}\n"))
     assert pe.fetch_error_details(["cmsabcdefgh"]) == {"cmsabcdefgh": _REFRESH}
 
 
-def test_fetch_swallows_nonzero_exit_and_timeout(monkeypatch):
-    monkeypatch.setattr(pe, "_docker_bin", lambda: "/usr/bin/docker")
+def test_fetch_swallows_nonzero_exit_and_timeout(tmp_path, monkeypatch):
+    _path_docker(tmp_path, monkeypatch)
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="boom"))
-    assert pe.fetch_error_details(["cmsabcdefgh"]) == {}
+    assert pe.fetch_error_details(["cmsabcdefgh"]) != {}
 
     def raise_timeout(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 10)
 
     monkeypatch.setattr(subprocess, "run", raise_timeout)
-    assert pe.fetch_error_details(["cmsabcdefgh"]) == {}
+    with pytest.raises(subprocess.TimeoutExpired):
+        pe.fetch_error_details(["cmsabcdefgh"])

@@ -47,6 +47,20 @@ def test_posted_library_newest_first(tmp_path):
     assert [r.post_id for r in rows][:2] == ["new", "old"]
 
 
+def test_posted_library_excludes_dryrun_url(tmp_path):
+    from pydantic import ValidationError
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", url="https://insta/reel/x")
+    with pytest.raises(ValidationError):
+        Post(id="p_dry", parent_id="clip_1", account="a", account_id="ig_1",
+             platform=Platform.instagram, caption="y", state=PostState.published,
+             scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_dry")
+    ids = {r.post_id for r in views.posted_library(Ledger.load(cfg), cfg)}
+    assert "p_live" in ids and "p_dry" not in ids
+    html = _client(cfg).get("/posted").data.decode()
+    assert "https://insta/reel/x" in html and "/posts/repost/p_dry" not in html
+
+
 # ---- repost_post reuse ----
 def test_repost_stamps_created_at(tmp_path):
     # content-lifecycle Phase 2: a repost is a fresh birth -> carries a wall-clock AWARE created_at.
