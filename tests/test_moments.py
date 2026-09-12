@@ -622,20 +622,21 @@ def test_request_moments_logs_speech_untrusted_dropped(tmp_path):
     assert dropped and dropped[0]["count"] == "1"
 
 def test_ingest_logs_excerpt_overwritten(tmp_path):
+    # LOW_LOGPROB window: invented LLM excerpt is not a substitute for trusted speech.
+    # ingest_moments must not mint; an excerpt_overwritten breadcrumb is not a ledger moment.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
                           transcript=[{**LOW_LOGPROB, "start": 14.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
+    pick = MomentPick(start=14.0, end=28.0, reason="bar lands",
+                      transcript_excerpt="totally invented LLM junk line")
+    src = led.sources["src_1"]
+    assert validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg) is not None
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=28.0, reason="bar lands",
-                                    transcript_excerpt="totally invented LLM junk line")])
-    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
-    overwritten = [r for r in recs if r["outcome"] == "excerpt_overwritten"]
-    assert overwritten and overwritten[0]["token"] == "14.00-28.00"
-    assert not led.moments_of("src_1")[0].transcript_excerpt
+    led = _ingest_picks(led, cfg, "src_1", [pick])
+    assert not led.moments_of("src_1")
 
 def test_validate_pick_rejects_bad_bounds():
     assert validate_pick(MomentPick(start=5, end=3, reason="r"), duration=20.0) is not None  # end<start
@@ -786,24 +787,23 @@ def test_request_moment_hooks_is_write_once(tmp_path):
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-34.00") == rid1
 
 def test_request_moment_hooks_opens_gate_when_no_trusted_speech(tmp_path):
-    # Speech-trust does not auto-answer hook=None. No media file → ASR cannot retry, so the
-    # author still opens (never a silent hookless clip). ingest stays pending until a response.
+    # Untrusted LOW_LOGPROB window must not mint. No media file is not a license to open
+    # a hook gate on frames+reason — deferral (no gate) AND no ledger moment.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
                           transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
+    pick = MomentPick(start=14.0, end=28.0, reason="visual beat")
+    src = led.sources["src_1"]
+    assert validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg) is not None
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=28.0, reason="visual beat")])
+    led = _ingest_picks(led, cfg, "src_1", [pick])
     led = request_moment_hooks(led, cfg, "src_1")
-    from fanops.agentstep import read_response, latest_request_id
-    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-28.00") is not None
-    assert read_response(cfg, "moment_hooks", "src_1.14.00-28.00", MomentHookDecision) is None
-    led = ingest_moment_hooks(led, cfg, "src_1")
-    assert led.moments_of("src_1")[0].state is MomentState.picked
-    assert led.moments_of("src_1")[0].hook is None
-    assert led.sources["src_1"].state is SourceState.picks_decided
+    from fanops.agentstep import latest_request_id
+    assert not led.moments_of("src_1")
+    assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-28.00") is None
 
 
 def test_request_moment_hooks_uses_live_excerpt_not_stale(tmp_path):
@@ -822,7 +822,7 @@ def test_request_moment_hooks_uses_live_excerpt_not_stale(tmp_path):
 
 def test_request_moment_hooks_defers_when_asr_retry_needed(tmp_path, monkeypatch):
     # Real file, isolation never ran, window has no trusted speech → do NOT open the author
-    # on frames+reason. Produce force-retried ASR first.
+    # on frames+reason, and do NOT mint a moment from untrusted ASR. Keep deferral.
     monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     mp4 = cfg.sources / "src_1.mp4"
@@ -833,10 +833,14 @@ def test_request_moment_hooks_defers_when_asr_retry_needed(tmp_path, monkeypatch
                           transcript=[{**LOW_LOGPROB, "start": 10.0, "end": 28.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
+    pick = MomentPick(start=14.0, end=28.0, reason="visual beat")
+    src = led.sources["src_1"]
+    assert validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg) is not None
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=28.0, reason="visual beat")])
+    led = _ingest_picks(led, cfg, "src_1", [pick])
     led = request_moment_hooks(led, cfg, "src_1")
     from fanops.agentstep import latest_request_id
+    assert not led.moments_of("src_1")
     assert latest_request_id(cfg, "moment_hooks", "src_1.14.00-28.00") is None
 
 
@@ -950,18 +954,20 @@ def test_ingest_overwrites_junk_excerpt(tmp_path):
     assert m.transcript_excerpt == "they slept on me here"
 
 def test_ingest_degraded_yields_empty_excerpt(tmp_path):
+    # Legacy/degraded ASR (no quality keys) is not trusted speech. Empty excerpt is not a mint.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
                           transcript=[{**LEGACY_EN, "start": 14.0, "end": 18.0}],
                           signal_peaks=[{"t": 16.0, "kind": "scene_cut", "score": 0.6}],
                           meta={"transcribed": True}))
+    pick = MomentPick(start=14.0, end=28.0, reason="bar lands",
+                      transcript_excerpt="they slept on me")
+    src = led.sources["src_1"]
+    assert validate_pick(pick, duration=src.duration or 0.0, src=src, cfg=cfg) is not None
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=28.0, reason="bar lands",
-                                    transcript_excerpt="they slept on me")])
-    m = led.moments_of("src_1")[0]
-    assert not m.transcript_excerpt
+    led = _ingest_picks(led, cfg, "src_1", [pick])
+    assert not led.moments_of("src_1")
 
 def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
@@ -1510,8 +1516,13 @@ def test_targeted_intersect_active_empty_warns(tmp_path, mocker):
 
 # --- MOL-230: vision finalizer recovers a well-formed MomentDecision on the pick gate ---
 def test_vision_finalizer_yields_valid_moment_decision(mocker):
-    """Prose-only vision turn -> schema-only finalizer -> valid MomentDecision (not None/degraded)."""
+    """Prose-only vision turn -> schema-only finalizer -> MomentDecision, then real validate_pick.
+    Schema parse is not grounding: an off-transcript window against the request transcript must fail."""
     from fanops.responder import _default_claude_model
+    req = {"source_id": "src_1", "duration": 60.0,
+           "frames": ["/f/a.jpg", "/f/b.jpg"],
+           "transcript": [{"start": 10, "end": 28, "text": "bar"}],
+           "signal_peaks": [], "language": "en", "guidance": ""}
     pick = {"start": 10.0, "end": 28.0, "reason": "the bar lands as the beat drops"}
     decision = {"picks": [pick]}
     prose = "I reviewed the attached frames. Strong energy mid-source but returning prose."
@@ -1522,10 +1533,13 @@ def test_vision_finalizer_yields_valid_moment_decision(mocker):
     run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
     from fanops import llm as _llm
     mocker.patch("fanops.responder.claude_json_meta", _llm.claude_json_meta)  # undo hermetic autouse; exercise real finalizer
-    out = _default_claude_model("moments", {"source_id": "src_1", "duration": 60.0,
-                                            "frames": ["/f/a.jpg", "/f/b.jpg"],
-                                            "transcript": [{"start": 10, "end": 28, "text": "bar"}],
-                                            "signal_peaks": [], "language": "en", "guidance": ""})
+    out = _default_claude_model("moments", req)
     dec = MomentDecision(**out)
     assert len(dec.picks) == 1 and dec.picks[0].start == 10.0 and dec.picks[0].end == 28.0
     assert run.call_count == 2
+    src = Source(id=req["source_id"], source_path="/x", duration=req["duration"],
+                 language=req["language"], transcript=req["transcript"])
+    for p in dec.picks:
+        validate_pick(p, duration=req["duration"], src=src)
+    off = MomentPick(start=40.0, end=50.0, reason="invented window with no transcript overlap")
+    assert validate_pick(off, duration=req["duration"], src=src) is not None

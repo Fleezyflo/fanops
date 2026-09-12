@@ -6,7 +6,7 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import SourceState
-from fanops.errors import ToolchainMissingError
+from fanops.errors import ToolchainMissingError, DownloadError
 from fanops.ingest import (ingest_drops, sha256_of, is_excluded, scan_local, probe_dimensions,
                            has_video_stream, download_url, stage_inbox_candidates, _archive_dir)
 
@@ -168,7 +168,6 @@ def test_download_url_surfaces_ytdlp_failure(tmp_path, mocker):
     # succeeded. The operator gets NO signal the pull failed (silent failure). A non-zero rc must
     # surface a typed, cli.main-catchable error carrying the stderr tail -> clean exit 2. This is NOT
     # ToolchainMissingError (yt-dlp is present, the URL is dead) and NOT TimeoutExpired (it returned).
-    from fanops.errors import DownloadError
     cfg = Config(root=tmp_path)
     class R: returncode = 1; stdout = ""; stderr = "ERROR: [youtube] xyz: Video unavailable"
     mocker.patch("fanops.ingest.subprocess.run", return_value=R())
@@ -176,12 +175,13 @@ def test_download_url_surfaces_ytdlp_failure(tmp_path, mocker):
         download_url(cfg, "https://example.com/dead")
 
 def test_download_url_succeeds_on_zero_rc(tmp_path, mocker):
-    # The happy path: rc 0 -> no raise. download_url now returns the media files it produced (audit c0-f1);
-    # a no-op download (yt-dlp wrote nothing — mocked) yields the empty set, never an error.
+    # rc 0 with an empty inbox delta is not success: yt-dlp wrote nothing. download_url must
+    # raise DownloadError (cli.main -> exit 2), not return set() so cmd_pull prints success.
     cfg = Config(root=tmp_path)
     class R: returncode = 0; stdout = ""; stderr = ""
     mocker.patch("fanops.ingest.subprocess.run", return_value=R())
-    assert download_url(cfg, "https://example.com/ok") == set()
+    with pytest.raises(DownloadError):
+        download_url(cfg, "https://example.com/ok")
 
 def test_catalogues_and_probes(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put(cfg.inbox / "a.mp4", b"V")

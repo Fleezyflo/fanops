@@ -61,12 +61,17 @@ def test_source_progress_count_matrix(tmp_path):
 
 
 def test_source_progress_field_defs(tmp_path):
+    from fanops.pipeline_status import PendingIndex, _source_bucket
     cfg = _seed_progress_matrix(tmp_path)
     row = source_progress(cfg)["src_1"]
     assert isinstance(row, SourceProgress)
     assert row.title  # inbox basename or id
     assert row.state == "moments_decided"
-    assert row.bucket in ("actionable", "blocked_on_gates", "recoverable", "inventory")
+    led = Ledger.load(cfg)
+    idx = PendingIndex.build(cfg, led)
+    # captioned clips + awaiting posts are operator work, not inventory/blocked/recoverable
+    assert _source_bucket(led, "src_1", led.sources["src_1"], idx) == "actionable"
+    assert row.bucket == "actionable"
     assert _APPROVED_STATES == frozenset({
         PostState.queued, PostState.submitting, PostState.submitted,
         PostState.published, PostState.analyzed,
