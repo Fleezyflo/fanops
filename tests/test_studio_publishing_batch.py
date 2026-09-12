@@ -38,8 +38,9 @@ def _seed(cfg, n, *, state=PostState.queued, batch_id=None, batch_name=None, lif
         cid = f"clip_{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
         metrics = {LIFT_SCORE: lifts[i]} if (lifts is not None and i < len(lifts) and lifts[i] is not None) else {}
+        url = f"https://instagram.com/p/{i}" if state in (PostState.published, PostState.analyzed) else f"dryrun://p{i}"
         led.add_post(Post(id=f"p{i}", parent_id=cid, account=account, account_id="0", platform=Platform.instagram,
-                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics, public_url="dryrun://0"))
+                          caption="c", state=state, scheduled_time=FAR, batch_id=batch_id, metrics=metrics, public_url=url))
     led.save()
 
 
@@ -103,8 +104,28 @@ def test_schedule_small_bucket_no_pagination(tmp_path):
 
 def test_schedule_offset_clamps_never_500(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, 3)
+    c = _client(cfg)
     for q in ("9999", "-5", "abc"):
-        assert _client(cfg).get(f"/schedule?offset={q}").status_code == 200
+        r = c.get(f"/schedule?month=2099-06&offset={q}")
+        assert r.status_code == 200
+        html = r.data.decode()
+        assert "schedule-cal" in html and "schedule-cal-chip" in html
+
+def test_posted_library_and_rollup_exclude_dryrun_url(tmp_path):
+    # leftover published+dryrun:// is not a shipped row — must not increment Posted / rollup / /posted.
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    _seed(cfg, 1, state=PostState.published, batch_id="bx", batch_name="Drop")
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p_dry", parent_id="clip_0", account="a0", account_id="0",
+                          platform=Platform.instagram, caption="c", state=PostState.published,
+                          scheduled_time=FAR, batch_id="bx", public_url="dryrun://p_dry"))
+    rows = views.posted_library(Ledger.load(cfg), cfg, batch="bx")
+    assert {r.post_id for r in rows} == {"p0"}
+    roll = views.posted_batch_rollup(rows)
+    assert roll["posted"] == 1
+    html = _client(cfg).get("/posted?batch=bx").data.decode()
+    assert "/posts/repost/p0" in html and "/posts/repost/p_dry" not in html
+
 
 def test_posted_paginates_and_day_head_re_emits_on_page2(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, GPS + 5, state=PostState.published)

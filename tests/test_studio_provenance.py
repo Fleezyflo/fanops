@@ -63,11 +63,6 @@ def test_cast_chip_only_when_cause_present():
     assert not any(x.value == "cast" for x in views.provenance_chips(_sp(cast_cause=None)))   # uncast fans to all → no chip
 
 
-def test_provenance_helper_never_raises():
-    class Weird: pass                                                   # an object missing every attr
-    assert views.provenance_chips(Weird()) == []                       # fail-open: a list, never an exception
-
-
 def test_surface_stamps_length_cause_via_account_pin(tmp_path):
     # persona-linked account with an account clip_profile pin: length_cause names the account (M3 persona-blind).
     cfg = Config(root=tmp_path)

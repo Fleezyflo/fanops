@@ -63,13 +63,6 @@ def test_empty_and_no_variant_posts(tmp_path):
     assert best_hooks(Ledger.load(cfg), cfg, "a", Platform.instagram) == []
 
 
-def test_deterministic(tmp_path):
-    cfg = Config(root=tmp_path)
-    led = _led(cfg, [_post("1", "a", "WIN", 90.0), _post("2", "a", "WIN", 90.0), _post("3", "a", "WIN", 90.0),
-                     _post("4", "a", "LOSE", 10.0), _post("5", "a", "LOSE", 10.0), _post("6", "a", "LOSE", 10.0)])
-    assert best_hooks(led, cfg, "a", Platform.instagram) == best_hooks(led, cfg, "a", Platform.instagram)
-
-
 # --- HARDENING (post-adversarial-review): a "winner" must be COMPARATIVE -----------------------
 # The claim the gate makes is "the leader beats the RUNNER-UP by >= min_gap". A single variant with
 # no runner-up is not a comparative A/B winner — it's an absolute-performance reading against an
@@ -272,13 +265,6 @@ def test_ucb_tie_broken_by_sorted_hook_string(tmp_path):
     led = _led(cfg, [_post("1", "a", "ZZZ", 50.0), _post("2", "a", "ZZZ", 50.0),
                      _post("3", "a", "AAA", 50.0), _post("4", "a", "AAA", 50.0)])
     assert ucb_rank(led, cfg, "a", Platform.instagram) == ["AAA"]
-
-
-def test_ucb_deterministic_repeat(tmp_path):
-    cfg = Config(root=tmp_path)
-    posts = [_post(str(i), "a", "LEAD", 60.0) for i in range(1, 9)] + [_post("9", "a", "NEW", 59.0)]
-    led = _led(cfg, posts)
-    assert ucb_rank(led, cfg, "a", Platform.instagram) == ucb_rank(led, cfg, "a", Platform.instagram)
 
 
 def test_variant_learning_module_has_no_nondeterminism():

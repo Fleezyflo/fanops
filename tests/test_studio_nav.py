@@ -57,9 +57,12 @@ def test_offrail_routes_stay_reachable(tmp_path):
     # U13: Blocked/Lift/Live library left the RAIL but the routes must still resolve (deep links / bookmarks).
     cfg = Config(root=tmp_path); _seed(cfg)
     c = _client(cfg)
-    for path, want in REACHABLE_ROUTES.items():
-        r = c.get(path)
-        assert r.status_code == want, f"{path} expected {want}, got {r.status_code}"
+    gates = c.get("/gates")
+    assert gates.status_code == 200 and b"Processing decisions" in gates.data
+    lift = c.get("/lift")
+    assert lift.status_code == 301 and "/posted" in lift.headers["Location"]
+    live = c.get("/live-library")
+    assert live.status_code == 301 and "view=live" in live.headers["Location"]
 
 def test_offrail_routes_absent_from_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
