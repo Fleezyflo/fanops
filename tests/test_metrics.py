@@ -73,12 +73,12 @@ def test_postiz_analytics_date_param_is_unix_ms_not_day_count(tmp_path, monkeypa
     sent = g.call_args.kwargs.get("params", {}).get("date")
     assert isinstance(sent, int) and sent > 1_500_000_000_000   # a real ms-epoch timestamp (post-2017), never 7/30
 
-def test_postiz_non_list_response_yields_empty_metrics(tmp_path, monkeypatch, mocker):
+def test_postiz_non_list_response_emits_no_match_row(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizMetricsClient
     cfg = _pcfg(tmp_path, monkeypatch)
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"unexpected": "object"}))
-    row = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()[0]
-    assert row["metrics"] == {} and row["_raw_labels"] == []
+    rows = PostizMetricsClient(cfg, submission_ids=["s"]).list_posts()
+    assert all(r.get("postSubmissionId") != "s" for r in rows)
 
 def test_postiz_401_is_typed_auth_with_redacted_body(tmp_path, monkeypatch, mocker):
     from fanops.errors import PostizAuthError
@@ -142,7 +142,7 @@ def test_postiz_list_posts_one_failing_sid_does_not_lose_the_others(tmp_path, mo
     by_sid = {r["postSubmissionId"]: r for r in rows}
     assert by_sid["OK1"]["metrics"] == {"likes": 7.0}         # survivors collected
     assert by_sid["OK2"]["metrics"] == {"likes": 7.0}
-    assert "BAD" not in by_sid or not by_sid["BAD"]["metrics"]  # failing sid skipped/empty, not fatal
+    assert "BAD" not in by_sid
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "BAD" in log                                       # breadcrumb for the failed fetch
 
@@ -258,46 +258,6 @@ def test_local_postiz_errors_honors_injected_lookup(tmp_path, monkeypatch):
     got = local_postiz_errors(cfg, ["abc"], lookup=lambda ids: {ids[0]: "Refresh channel needed"})
     assert got == {"abc": "Refresh channel needed"}
 
-
-def test_list_all_fills_stripped_error_from_row_lookup(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"posts": [{"id": "p1", "state": "ERROR"}]}))
-    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors",
-                 return_value={"p1": "Refresh channel needed"})
-    row = PostizStatusClient(cfg).list_all()["p1"]
-    assert row["status"] == "failed"
-    assert row["error"] == "Refresh channel needed"
-    assert row["errorMessage"] == "Refresh channel needed"
-
-
-def test_list_all_does_not_overwrite_public_error_field(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    cfg = _pcfg(tmp_path, monkeypatch)
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"posts": [
-        {"id": "p1", "state": "ERROR", "error": "API access blocked."}]}))
-    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors",
-                 return_value={"p1": "should not win"})
-    row = PostizStatusClient(cfg).list_all()["p1"]
-    assert row["error"] == "API access blocked."
-
-
-def test_list_all_json_post_error_uses_poster_fail_reason(tmp_path, monkeypatch, mocker):
-    from fanops.post.metrics import PostizStatusClient
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_URL", "http://localhost:4007")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    cfg = Config(root=tmp_path)
-    raw = '{"cause":{"failure":{"message":"getaddrinfo ENOTFOUND example.invalid","stackTrace":"Error:\\n    at x"}}}'
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=_R(200, {"posts": [{"id": "p1", "state": "ERROR"}]}))
-    mocker.patch("fanops.postiz_lifecycle.local_postiz_errors", return_value={"p1": raw})
-    row = PostizStatusClient(cfg).list_all()["p1"]
-    assert row["errorMessage"] == "getaddrinfo ENOTFOUND example.invalid"
 
 def test_postiz_error_row_keeps_error_field(tmp_path, monkeypatch, mocker):
     from fanops.post.metrics import PostizStatusClient

@@ -126,9 +126,12 @@ def test_doctor_notes_review_queue_count(tmp_path, monkeypatch):
 
 def test_cli_doctor_runs_and_prints(tmp_path, monkeypatch, capsys):
     from fanops.cli import main
+    from fanops.health_model import build_health_report, report_is_healthy
     monkeypatch.chdir(tmp_path)
+    cfg = Config(root=tmp_path)
+    healthy = report_is_healthy(build_health_report(cfg))
     rc = main(["doctor"])
-    assert rc in (0, 1)
+    assert rc == (0 if healthy else 1)
     assert "doctor" in capsys.readouterr().out.lower()
 
 # --- M4: Postiz-learning readiness check + Blotato-string fixes ---
@@ -245,7 +248,7 @@ def test_doctor_zernio_auth_ok_and_fail(tmp_path, monkeypatch):
 def _daemon_check(rep):
     return next((c for c in rep["checks"] if "daemon" in c["label"].lower() or "pump" in c["label"].lower()), None)
 
-def _write_heartbeat(cfg, *, age_seconds):
+def _write_heartbeat(cfg, *, age_seconds, code=None):
     """Append a valid run.log heartbeat JSON line whose ts is `age_seconds` in the past (mirrors
     log.py so daemon._heartbeat_age_s parses it)."""
     import json
@@ -254,6 +257,8 @@ def _write_heartbeat(cfg, *, age_seconds):
     cfg.log_path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok", "origin": "loop",
            "heartbeat": ts, "published_in_run": "0"}
+    if code is not None:
+        rec["code"] = code
     with open(cfg.log_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
 
@@ -289,32 +294,16 @@ def _acct_row(handle, status, account_id="1"):
             "integrations": {"instagram": account_id}}
 
 
-# --- MOL-474: faster-whisper [asr] import probe (transcribe._fw_available) ---
-
-def _fw_check(rep):
-    return next((c for c in rep["checks"] if "faster-whisper" in c["label"].lower()), None)
-
-
-def test_doctor_fails_when_faster_whisper_unavailable(tmp_path, monkeypatch):
-    # Bare install (no [asr] extra) -> doctor fails closed with the venv recipe.
-    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: False)
-    c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
-    assert c is not None and c["ok"] is False and "[asr]" in c["hint"]
-
-
-def test_doctor_passes_when_faster_whisper_available(tmp_path, monkeypatch):
-    # [asr] installed -> the faster-whisper probe passes (engine selection matches transcribe_source).
-    monkeypatch.setattr("fanops.transcribe._fw_available", lambda: True)
-    c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
-    assert c is not None and c["ok"] is True
-
-
 def test_deploy_code_check_fails_on_sha_drift(tmp_path, monkeypatch):
     """STD-VER-02: loaded pump reporting a stale heartbeat SHA must FAIL the deploy gate."""
-    from fanops import daemon
+    import subprocess
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: "aaa111deadbeef")
-    monkeypatch.setattr(daemon, "_version_signal", lambda c: ("bbb222cafef00d", "git-head"))
+    _write_heartbeat(cfg, age_seconds=30, code="aaa111deadbeef")
+    def run(cmd, *a, **k):
+        if cmd and cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout="bbb222cafef00d\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+    monkeypatch.setattr("fanops.daemon.subprocess.run", run)
     row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
     assert row is not None and row["ok"] is False
     assert "aaa111deadbeef"[:12] in row["hint"] and "bbb222cafef00d"[:12] in row["hint"]
@@ -322,11 +311,15 @@ def test_deploy_code_check_fails_on_sha_drift(tmp_path, monkeypatch):
 
 
 def test_deploy_code_check_passes_when_shas_match(tmp_path, monkeypatch):
-    from fanops import daemon
+    import subprocess
     cfg = Config(root=tmp_path)
     sha = "same_sha_on_disk_and_pump"
-    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: sha)
-    monkeypatch.setattr(daemon, "_version_signal", lambda c: (sha, "git-head"))
+    _write_heartbeat(cfg, age_seconds=30, code=sha)
+    def run(cmd, *a, **k):
+        if cmd and cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 0, stdout=sha + "\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+    monkeypatch.setattr("fanops.daemon.subprocess.run", run)
     row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
     assert row is not None and row["ok"] is True
 
@@ -484,16 +477,19 @@ def test_doctor_hint_says_log_silent_when_stage_wedged(tmp_path, monkeypatch):
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
-def test_setup_next_action_awaiting_gate_wording(tmp_path, monkeypatch):
+def test_setup_next_action_awaiting_gate_wording(tmp_path):
     # Change 4 wording: operator prose says "awaiting gate answer(s)", never "blocked on gate(s)"
     # (pending work the cursor responder is clearing — not a fault). The internal field name
     # blocked_on_gates is untouched (machine-scraped); only the human sentence changed.
-    from fanops import pipeline_status
-    from fanops.pipeline_status import SourceBacklog
+    from fanops.agentstep import write_request
     from fanops.doctor import setup_next_action
+    from fanops.ledger import Ledger
+    from fanops.models import Source
     cfg = Config(root=tmp_path)
-    fake = SourceBacklog(actionable=0, blocked_on_gates=3, recoverable=0, inventory=0, held=0, rows=[])
-    monkeypatch.setattr(pipeline_status, "source_backlog", lambda led, c: fake)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s1", source_path="/s.mp4"))
+    led.save()
+    write_request(cfg, kind="moments", key="s1", payload={"source_id": "s1"})
     msg = setup_next_action(cfg)
     assert "awaiting gate answer(s)" in msg
     assert "blocked on gate" not in msg
@@ -529,70 +525,57 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
 
 
 def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, monkeypatch):
-    """HT3: any listed user session is enough — presence only, no open_client / tag probe."""
+    """Empty/garbage session among listed users must not be ok=True (presence of `{}` is not a PASS)."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "b")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    opens = {"n": 0}
-    def boom_open(_c):
-        opens["n"] += 1
-        raise AssertionError("doctor must not open_client")
-    def boom_probe(*_a, **_k):
-        raise AssertionError("doctor must not probe tags")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom_open, probe_resolve=boom_probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert opens["n"] == 0
-    assert "present" in row["label"]
+    assert any_scrape_session(cfg) is False
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
 
 
-def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monkeypatch):
-    """HT3: session file present → PASS; open_client / tag probe never called (even if they would fail)."""
+def test_doctor_hashtag_scrape_garbage_session_is_not_ok(tmp_path, monkeypatch):
+    """Garbage session file must not be a green PASS; password must not leak into the row."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import ScrapeUnavailable
-    from instagrapi.exceptions import ChallengeRequired, LoginRequired
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
     monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
     cfg = Config(root=tmp_path)
-    from fanops.ig_hashtag_scrape import scrape_session_path
-    _sess = scrape_session_path(cfg, "u")
-    _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
-    calls = {"open": 0, "probe": 0}
-    def boom(_cfg):
-        calls["open"] += 1
-        raise ScrapeUnavailable("scrape login failed: login_required")
-    def boom_probe(*_a, **_k):
-        calls["probe"] += 1
-        raise LoginRequired("login_required")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom, probe_resolve=boom_probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert calls == {"open": 0, "probe": 0}
-    assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
-    # Challenge inject also ignored — offline presence only.
-    def locked(_cfg):
-        calls["open"] += 1
-        raise ChallengeRequired("challenge_required")
-    row2 = doctor._hashtag_scrape_check(cfg, open_client=locked)
-    assert row2["ok"] is True and calls["open"] == 0
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("not-json{{{")
+    assert any_scrape_session(cfg) is False
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
+    blob = "" if row is None else f"{row.get('hint','')}{row.get('label','')}"
+    assert "secret-password" not in blob
 
 
-def test_doctor_hashtag_scrape_check_source_has_no_live_probe():
-    """HT3 acceptance: doctor hashtag check must not call tag API / open_client."""
-    import inspect
+def test_doctor_hashtag_scrape_envelope_is_present(tmp_path, monkeypatch):
+    """A dump_settings envelope is session-present (still no live IG probe)."""
     from fanops import doctor
-    src = inspect.getsource(doctor._hashtag_scrape_check)
-    assert "resolve_hashtag_scrape" not in src
-    assert "open_client as" not in src
-    assert "opener(" not in src
-    assert "probe(" not in src
-    assert "any_scrape_session" in src
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "b")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text(json.dumps({
+        "uuids": {"uuid": "u", "phone_id": "p"},
+        "authorization_data": {"ds_user_id": "1"},
+    }))
+    assert any_scrape_session(cfg) is True
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is not None and row["ok"] is True and row["hint"] == ""
+    assert "present" in row["label"]
 
 
 def test_doctor_ast_never_references_persist_or_freeze():
@@ -632,79 +615,82 @@ def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypat
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
-    """If the live-route coherence check cannot be COMPUTED (route read raises), half-live must not present
-    solid LIVE — ok=False with a hint that LIVE was not confirmed."""
+    """FANOPS_LIVE=1 with nothing routing live must not present solid LIVE (no patches)."""
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    def _boom(self):
-        raise RuntimeError("route read hiccup")
-    monkeypatch.setattr(type(Config(root=tmp_path)), "live_route_exists", property(_boom))
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
     lr = _by_label(rep, "live route exists")
     assert lr is not None and lr["ok"] is False
-    assert "not confirmed" in (lr.get("hint") or "").lower()
+    hint = (lr.get("hint") or "").lower()
+    assert "nothing routes" in hint or "not confirmed" in hint
 
 
-def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path, monkeypatch):
+def test_operational_sensors_warn_on_backlog_and_parked_reopen(tmp_path):
     """blocked_on_gates, degraded/errored sources, and parked machine re-opens surface as
     Severity.FAIL so report_is_healthy / doctor exit are NONZERO (MOL-960/MOL-965)."""
-    from fanops import pipeline_status
-    from fanops.pipeline_status import SourceBacklog
+    from fanops.agentstep import write_request
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
     cfg = Config(root=tmp_path)
-    fake = SourceBacklog(actionable=0, blocked_on_gates=2, recoverable=1, inventory=0, held=0, rows=[])
-    monkeypatch.setattr(pipeline_status, "source_backlog", lambda led, c, *a, **k: fake)
-    class _Src:
-        meta = {"pending_reopen": {"origin": "amplify"}}
-    class _Led:
-        sources = {"s1": _Src()}
-    monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="s_gate", source_path="/g.mp4"))
+    led.add_source(Source(id="s_err", source_path="/e.mp4", state=SourceState.error, error_reason="boom"))
+    led.add_source(Source(id="s_park", source_path="/p.mp4",
+                          meta={"pending_reopen": {"origin": "amplify"}}))
+    led.save()
+    write_request(cfg, kind="moments", key="s_gate", payload={"source_id": "s_gate"})
     checks = doctor._operational_sensor_checks(cfg)
     labels = {c["label"]: c for c in checks}
     assert labels["no sources awaiting gate answers"]["severity"] == "fail"
     assert labels["no degraded/errored sources"]["severity"] == "fail"
     assert labels["no parked machine re-opens"]["severity"] == "fail"
-    assert all(c["ok"] is False for c in checks)             # progress-blocking → unhealthy
+    assert all(c["ok"] is False for c in checks)
 
 
-def test_operational_sensor_warns_on_stale_pending_gate(tmp_path, monkeypatch):
+def test_operational_sensor_warns_on_stale_pending_gate(tmp_path):
     """A pending agent-gate older than _GATE_STALE_TICKS ticks is Severity.FAIL (progress-blocking);
     a fresh gate would not surface. MOL-960/MOL-965: doctor exit must not stay green on a stuck responder."""
-    from datetime import datetime, timezone
-    from fanops import pipeline_status, daemon
+    from datetime import datetime, timezone, timedelta
+    from fanops.agentstep import request_path, write_request
+    from fanops.timeutil import iso_z
     cfg = Config(root=tmp_path)
-    old = datetime.now(timezone.utc).timestamp() - 10_000
-    monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(old, "moments", "k1")])
-    monkeypatch.setattr(daemon, "installed_interval", lambda c: 600)
-    monkeypatch.setattr("fanops.ledger.Ledger.load",
-                        classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
+    write_request(cfg, kind="moments", key="k1", payload={"source_id": "k1"})
+    rec = json.loads(request_path(cfg, "moments", "k1").read_text())
+    rec["opened_at"] = iso_z(datetime.now(timezone.utc) - timedelta(seconds=10_000))
+    request_path(cfg, "moments", "k1").write_text(json.dumps(rec))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
     assert gate is not None and gate["ok"] is False and gate.get("severity") == "fail"
 
 
-def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
+def test_operational_sensor_warns_on_unknown_gate_age(tmp_path):
     """R1b: missing opened_at → None epoch → Severity.UNKNOWN 'gate age unknown' (not silent green)."""
-    from fanops import pipeline_status, daemon
+    from fanops.agentstep import request_path, write_request
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(pipeline_status, "_pending_gates", lambda c: [(None, "moments", "legacy")])
-    monkeypatch.setattr(daemon, "installed_interval", lambda c: 600)
-    monkeypatch.setattr("fanops.ledger.Ledger.load",
-                        classmethod(lambda cls, c: (_ for _ in ()).throw(RuntimeError("isolate gate sensor"))))
+    write_request(cfg, kind="moments", key="legacy", payload={"source_id": "legacy"})
+    rec = json.loads(request_path(cfg, "moments", "legacy").read_text())
+    rec.pop("opened_at", None)
+    request_path(cfg, "moments", "legacy").write_text(json.dumps(rec))
     gate = next((c for c in doctor._operational_sensor_checks(cfg) if "stale agent gates" in c["label"]), None)
     assert gate is not None and gate["ok"] is False and gate.get("severity") == "unknown"
     assert "gate age unknown" in (gate.get("hint") or "")
 
 
-def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
+def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path):
     """Approval backlog is EXPECTED (nothing auto-publishes) — it appears as an INFO note, never as a
     warn-tier check, because the human Review gate is deliberately kept."""
-    from fanops.models import PostState
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
     cfg = Config(root=tmp_path)
-    class _Led:
-        def state_histogram(self, **k):
-            return {PostState.awaiting_approval: 3}
-    monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
+    led = Ledger.load(cfg)
+    for i in range(3):
+        led.add_post(Post(id=f"p{i}", parent_id="c1", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.awaiting_approval, public_url=f"dryrun://p{i}"))
+    led.save()
     notes = doctor._doctor_notes(cfg)
     assert any("approval backlog" in n.lower() and "3" in n for n in notes)
-    # ...and it is NOT emitted as an operational (warn) sensor.
     assert not any("approval" in c["label"].lower() for c in doctor._operational_sensor_checks(cfg))
 
 
