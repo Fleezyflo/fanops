@@ -2571,6 +2571,7 @@
     "fanops.studio.views_library": {
       "compile": [
         "fanops.config",
+        "fanops.errors",
         "fanops.ledger",
         "fanops.models",
         "fanops.studio.views_common"
@@ -2993,7 +2994,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 53,
+    "fanops.errors": 54,
     "fanops.escalation": 6,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
@@ -3326,7 +3327,7 @@
     "fanops.studio.views_golive": 2,
     "fanops.studio.views_hashtags": 5,
     "fanops.studio.views_home": 6,
-    "fanops.studio.views_library": 4,
+    "fanops.studio.views_library": 5,
     "fanops.studio.views_live": 3,
     "fanops.studio.views_posted": 7,
     "fanops.studio.views_results": 2,
@@ -5175,7 +5176,7 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 823,
+    "compile_edges_G1": 824,
     "lazy_edges": 459,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 113,

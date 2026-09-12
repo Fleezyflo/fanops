@@ -783,7 +783,7 @@
     "fanops.post.postiz_errors": [
       {
         "call": "subprocess.run",
-        "line": 70
+        "line": 71
       }
     ],
     "fanops.postiz_lifecycle": [

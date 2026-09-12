@@ -4,9 +4,11 @@ from fanops.ledger import Ledger
 from fanops.tagging import should_tag, decide_tag, ARTIST_HANDLE, _parse
 
 def test_should_tag_minority_and_deterministic():
+    # SHA1("c|a")[:8] % 1000 / 1000 = 0.486 → False; SHA1("clip1|a") = 0.111 → True
+    assert should_tag("c", "a", rate=0.25) is False
+    assert should_tag("clip1", "a", rate=0.25) is True
     n = sum(should_tag(f"clip{i}", "a", rate=0.25) for i in range(100))
     assert 10 <= n <= 45
-    assert should_tag("c", "a", rate=0.25) == should_tag("c", "a", rate=0.25)
 
 def test_decide_tag_respects_no_sync_window(tmp_path):
     led = Ledger.load(Config(root=tmp_path))

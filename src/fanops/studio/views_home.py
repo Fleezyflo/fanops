@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from fanops.config import Config
-from fanops.errors import fail_open
+from fanops.errors import ControlFileError, fail_open
 from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState
 from fanops.timeutil import parse_iso
@@ -200,10 +200,10 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
 
 
 def home_status(cfg: Config) -> HomeStatus:
-    """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
+    """Lock-free read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs build_health_report on every load) +
-    headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger -> zeroed counts +
-    batches=None + empty by_account, never a 500."""
+    headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger raises
+    ControlFileError (the Home route maps that to HTTP 200; this helper does not re-swallow)."""
     from fanops.studio import views as _views
     accounts = _views.golive_accounts(cfg)                   # once-bound, already fail-open (no build_health_report on /)
     mode = _views._publish_mode_label(cfg)                    # provider-aware (M3); 'dryrun' when not live
@@ -238,7 +238,9 @@ def home_status(cfg: Config) -> HomeStatus:
                   "failed_oversize": fb.get("oversize", 0),
                   "posted": st[PostState.published] + st[PostState.analyzed]}
         by_account = dict(Counter(p.account for p in led.posts.values()))
-    except Exception as exc:                          # the first page an operator sees must never 500
+    except ControlFileError:
+        raise
+    except Exception as exc:                          # GET / 200-on-non-control-file is the route owner
         from fanops.log import get_logger
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
         counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
@@ -248,10 +250,10 @@ def home_status(cfg: Config) -> HomeStatus:
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:
-    """Lock-free, fail-open batch list for the Home entry point — each row deep-links ?batch=<id> into Review
+    """Lock-free batch list for the Home entry point — each row deep-links ?batch=<id> into Review
     and carries posts_born + a zero-result flag (a non-empty target that birthed NO post — the silent
     crosspost batch_target_skip outcome, surfaced). Newest-first by created_at (None sinks last), tie-broken
-    by id. Torn ledger -> [] + logged, never a 500. Surfaces the outcome; computes no skip logic."""
+    by id. Torn ledger raises ControlFileError. Surfaces the outcome; computes no skip logic."""
     try:
         led = Ledger.load(cfg)
         out = []
@@ -265,6 +267,8 @@ def home_batches(cfg: Config) -> list[HomeBatch]:
                                  is_emptied=is_emptied, is_zero_result=is_zero_result))
         out.sort(key=lambda h: (h.created_at or "", h.id), reverse=True)
         return out
+    except ControlFileError:
+        raise
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("home_batches", "-", "error", err=str(exc)[:160])

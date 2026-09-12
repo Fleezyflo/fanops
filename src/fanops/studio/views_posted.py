@@ -306,25 +306,21 @@ def account_median_deltas(rows) -> list:
     statistics.median over the account's MEASURED lift scores. Groups by `account`; a group with <2 measured rows
     is degenerate (a median vs a single point) and left at None — mirroring lineage_stats' judgment of only
     ranking within `measured`. An unmeasured row (lift None/non-numeric) is excluded from the median AND never
-    stamped. Pure over the already-built list — NO ledger read. Fail-open: any error returns the input rows
-    unchanged (additive fields stay at their None defaults). Same order and length as the input."""
-    try:
-        groups: dict = {}
-        for r in rows:
-            acct = getattr(r, "account", None)
-            if acct: groups.setdefault(acct, []).append(r)
-        ann: dict = {}
-        for grp in groups.values():
-            measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
-                        and not isinstance(r.lift_score, bool)]
-            if len(measured) < 2: continue     # a median vs a single data point is degenerate
-            med = statistics.median(r.lift_score for r in measured)
-            for r in measured:
-                ann[id(r)] = {"delta_vs_account_median": round(r.lift_score - med, 4)}
-        return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
-    except Exception as exc:
-        logger.warning("delta_vs_account_median: stats pass failed (%s)", exc)
-        return rows   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
+    stamped. Pure over the already-built list — NO ledger read. Fail-closed: a row that raises is not
+    returned as a silent pass-through (same as lineage_stats). Same order and length as the input."""
+    groups: dict = {}
+    for r in rows:
+        acct = getattr(r, "account", None)
+        if acct: groups.setdefault(acct, []).append(r)
+    ann: dict = {}
+    for grp in groups.values():
+        measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
+                    and not isinstance(r.lift_score, bool)]
+        if len(measured) < 2: continue     # a median vs a single data point is degenerate
+        med = statistics.median(r.lift_score for r in measured)
+        for r in measured:
+            ann[id(r)] = {"delta_vs_account_median": round(r.lift_score - med, 4)}
+    return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
 
 
 def metric_peaks(rows) -> dict:

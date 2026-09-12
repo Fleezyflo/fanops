@@ -103,11 +103,6 @@ def test_lineage_ranks_within_the_passed_set():
     assert next(r for r in filtered if r.post_id == "b").rank == 1
 
 
-def test_lineage_never_raises():
-    class Weird: pass
-    views.lineage_stats([Weird(), Weird()])              # missing every attr -> fail-open, no exception
-
-
 def test_lineage_returns_new_rows_originals_untouched():
     # MOL-70: lineage_stats must NOT mutate the caller-owned rows — it returns a NEW annotated list.
     originals = [_row("a", "clip_1", 0.9), _row("b", "clip_1", 0.5)]
@@ -250,14 +245,20 @@ def test_posted_link_is_a_labeled_affordance_not_a_raw_url(tmp_path):
     assert ">https://insta/p_live<" not in html          # the raw URL is NO LONGER the visible link text
 
 
-def test_posted_link_dryrun_row_labels_no_link_not_pending():
-    """published + dryrun:// cannot rest — the Posted dryrun-chip row is unconstructible."""
+def test_posted_link_dryrun_row_labels_no_link_not_pending(tmp_path):
+    """published + dryrun:// cannot rest — /posted must not list a dryrun chip next to a live permalink."""
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Post(id="p_nourl", parent_id="clip_np", account="a", account_id="ig_1",
              platform=Platform.instagram, caption="fire", state=PostState.published,
              scheduled_time="2026-06-01T00:00:00Z", public_url="dryrun://p_nourl",
              metrics={LIFT_SCORE: 0.5})
+    cfg = Config(root=tmp_path)
+    _seed_published(cfg, pid="p_live", lift=0.5)
+    html = _client(cfg).get("/posted").data.decode()
+    assert "https://insta/p_live" in html
+    assert "/posts/repost/p_nourl" not in html
+    assert ">dryrun<" not in html
 
 
 # ── MOL-51: per-row action weights ranked deliberately (U8: repost actions folded into one menu) ──────

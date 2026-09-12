@@ -8,7 +8,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.errors import fail_open
+from fanops.errors import ControlFileError, fail_open
 from fanops.ledger import Ledger
 # Facade re-exports: the names consumers reach via `fanops.studio.views` / `views.X` (templates / app.py /
 # tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
@@ -191,13 +191,15 @@ class PersonasPage:
 def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage":
     """The Personas-page read-model: every persona as a card (linked account handles + levers)
     + every account's current persona link (connect dropdown). Posted hashtags are the source lock.
-    Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface never 500s),
-    mirroring golive_accounts. `led` is accepted for call-compat; the surface reads no ledger."""
+    Corrupt personas.json / unreadable control files raise ControlFileError (route layer maps to 200).
+    `led` is accepted for call-compat; the surface reads no ledger."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
                                      hook_directive, caption_directive, resolved_cut_spec, manifest)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
+    except ControlFileError:
+        raise
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("personas", "-", "read_error", err=str(exc)[:160])
