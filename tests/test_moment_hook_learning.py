@@ -77,19 +77,25 @@ def test_proven_hook_styles_none_accounts(tmp_path, monkeypatch):
     _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     assert proven_hook_styles(led, cfg, None) == []
 
-def test_proven_hook_styles_fail_open(tmp_path, monkeypatch, mocker):
-    _on(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg); _gated_winner(led, "a", "WIN_A")
-    mocker.patch("fanops.moment_hook_learning.best_hooks", side_effect=RuntimeError("boom"))
-    assert proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram]))) == []   # logged + []
-
-def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch, mocker):
-    # reuses caption.py's scorer selection: variant_ucb on -> ucb_rank, off -> best_hooks.
-    _on(monkeypatch); monkeypatch.setenv("FANOPS_VARIANT_UCB", "on")
+def test_proven_hook_styles_uses_ucb_when_variant_ucb_on(tmp_path, monkeypatch):
+    # Real scorers, not patched: seed a surface where greedy and UCB disagree, then pin that
+    # FANOPS_VARIANT_UCB selects ucb_rank's winner (and off selects best_hooks).
+    from fanops.variant_learning import best_hooks, ucb_rank
+    _on(monkeypatch)
+    monkeypatch.setenv("FANOPS_VARIANT_UCB_C", "50")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    ucb = mocker.patch("fanops.moment_hook_learning.ucb_rank", return_value=["UCB_WIN"])
-    bh = mocker.patch("fanops.moment_hook_learning.best_hooks", return_value=["GREEDY"])
-    out = proven_hook_styles(led, cfg, _accts(cfg, ("a", [Platform.instagram])))
-    assert out == ["UCB_WIN"] and ucb.called and not bh.called
+    greedy, explore, runner = "you already know this", "watch this next", "keep going then"
+    plat = Platform.instagram
+    for i in range(3): _vpost(led, f"ag{i}", "a", greedy, 100.0, plat)
+    for i in range(3): _vpost(led, f"ar{i}", "a", runner, 50.0, plat)
+    _vpost(led, "ax0", "a", explore, 80.0, plat)
+    accts = _accts(cfg, ("a", [plat]))
+    assert best_hooks(led, cfg, "a", plat) == [greedy]
+    assert ucb_rank(led, cfg, "a", plat) == [explore]
+    monkeypatch.delenv("FANOPS_VARIANT_UCB", raising=False)
+    assert proven_hook_styles(led, cfg, accts) == [greedy]
+    monkeypatch.setenv("FANOPS_VARIANT_UCB", "on")
+    assert proven_hook_styles(led, cfg, accts) == [explore]
 
 
 # ---- C3: the HOOK prompt ignores learned_hooks; presence of the key is a no-op ----
