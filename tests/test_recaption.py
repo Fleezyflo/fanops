@@ -11,6 +11,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (CaptionItem, CaptionSet, Clip, ClipState, Moment, MomentState,
                            Platform, Post, PostState, Source)
+from fanops.caption_compose import posted_text_for
 from fanops.recaption import _journal_path, run_recaption
 from fanops.source_tags import source_tag_locks_path
 from fanops.timeutil import iso_z
@@ -118,6 +119,10 @@ def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
     assert p.caption == "fresh" and 0 < len(p.hashtags) <= 4   # model sentence, tags stay the vetted array
     assert "#slept" in p.hashtags                                  # lock member survives the vet
     assert "#junkjunkjunk" not in p.hashtags                        # junk cannot reach a post
+    text = posted_text_for(cfg, led, p)
+    assert text.startswith("fresh")
+    assert "#slept" in text
+    assert "#junkjunkjunk" not in text
     assert p.state is PostState.awaiting_approval                   # approval lifecycle untouched
     assert p.edited_at
     clip = led.clips["clip_1"]

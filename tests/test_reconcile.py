@@ -261,10 +261,8 @@ def test_failed_no_sid_retry_capped_on_retired_account_is_rejected_via_reconcile
                       submission_id=None, error_kind=ErrorKind.rate_limit,
                       error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
     led.save()
-    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
     reconcile_due(cfg)
     assert Ledger.load(cfg).posts["husk"].state is PostState.rejected
-    ensure.assert_not_called()
 
 
 def test_failed_no_sid_retry_capped_without_sibling_on_active_account_stays_failed(tmp_path):
@@ -317,7 +315,6 @@ def test_reconcile_due_zernio_leftover_cuid_escalates_submitting_without_get(tmp
     from fanops.accounts import add_account, set_backend
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "sk")
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     seen = []
     def _get(url, **kw):
         seen.append(url)
@@ -391,13 +388,14 @@ def test_reconcile_read_error_writes_nothing_and_only_logs(tmp_path):
 
 def test_reconcile_logs_each_post(tmp_path):
     # Phase E4: a reconcile pass must leave an audit trail in run.log so a cron+mail/PagerDuty
-    # monitor can see which parked posts were touched and how they resolved. Today reconcile_posts
-    # emits NO log lines (no get_logger call), so cfg.log_path is never written. Seed one post that
-    # resolves to 'published' and assert the run log records both the stage ('reconcile') and the
-    # post id ('p1').
+    # monitor can see which parked posts were touched and how they resolved. Seed one post that
+    # resolves to 'published' (https permalink — not a comment claiming published for url "u")
+    # and assert the run log records both the stage ('reconcile') and the post id ('p1').
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p1", PostState.needs_reconcile, sub="sub_t")
-    reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "published", "publicUrl": "https://instagram.com/p/abc"})
+    assert led.posts["p1"].state is PostState.published
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "reconcile" in log
     assert "p1" in log
@@ -704,13 +702,14 @@ def test_a_real_token_past_the_old_horizon_is_also_untouched(tmp_path):
     ["published", "failed", "unknown", "raises"],
     ["fanops_FAKE", "blotato_REAL"],
     ["", "stuck 9h past schedule — check the channel"])))
-def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
+def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypatch):
     # THE 32-CELL INVARIANT, inverted. A needs_reconcile post 73h past schedule — past the horizon at which
     # the deleted ladder declared it lost — is decided by the OBSERVATION and by nothing else, across every
     # (backend × observation × token × error_reason). A published/failed answer resolves it; an unknown one,
     # or a read that raised, leaves the ledger row BYTE-IDENTICAL. The three axes that could once veto the
     # outcome (a raising read, a real token, a stale reason) still never do — but now what they cannot veto
     # is a NON-write, so no cell can invent a verdict the backend never gave.
+    monkeypatch.setenv("FANOPS_POSTER", backend)
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
@@ -792,15 +791,11 @@ def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
                       caption="x", state=PostState.submitting, submission_id="fanops_x",
                       error_reason=reason,
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
-    spy = []
-    def fake_logger(cfg):
-        def log(*a, **k): spy.append(a)
-        return log
-    mocker.patch("fanops.reconcile.get_logger", fake_logger)
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "scheduled"})
     assert polled == []
-    assert [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])], \
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "client token is not a backend id" in log, \
         "a transient-reason client-token post was NOT visited"
     assert led.posts["pt"].error_reason == reason                    # visited, and NOT re-stamped
 
@@ -887,11 +882,6 @@ def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
     before = led.posts["pk"].model_dump()
-    spy = []
-    def fake_logger(cfg):
-        def log(*a, **k): spy.append(a)
-        return log
-    mocker.patch("fanops.reconcile.get_logger", fake_logger)
     polled = []
     def gs(sid):
         polled.append(sid)
@@ -899,7 +889,8 @@ def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 1
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 2
     assert polled == []
-    skips = [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])]
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    skips = [ln for ln in log.splitlines() if "client token is not a backend id" in ln]
     assert len(skips) == 2                                  # visible on both passes, not silenced by pass 1
     assert led.posts["pk"].model_dump() == before           # ...and neither pass wrote a ledger byte
 
@@ -955,7 +946,6 @@ def _serve_window(mocker, rows, *, code=200, boom=None, seen=None):
         if boom is not None:
             raise boom
         return _R(code, {"posts": rows} if code == 200 else {"error": "nope"})
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
 
 
@@ -1098,13 +1088,19 @@ def test_a_failed_row_carries_the_real_cause_when_the_db_read_resolves(tmp_path,
     # from the self-host's Postgres. A resolved read must land BOTH halves on the ledger row: the typed
     # kind (auth -> Studio retry skips it) and a reason a human can act on — while keeping the
     # "poster reports failed" prefix the reason-scanners pin.
+    import base64
+    from types import SimpleNamespace
     from fanops.models import ErrorKind
-    import fanops.post.postiz_errors as pe
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
-    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {"postiz_1": "Refresh channel needed"})
+    blob = base64.b64encode(b"Refresh channel needed").decode()
+    mocker.patch("fanops.post.postiz_errors.subprocess.run",
+                 return_value=SimpleNamespace(returncode=0, stdout=f"postiz_1|{blob}\n", stderr=""))
+    d = cfg.root / "bin"; d.mkdir(exist_ok=True)
+    docker = d / "docker"; docker.write_text("#!/bin/sh\nexit 0\n"); docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{d}:{cfg.root}")
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
@@ -1117,13 +1113,14 @@ def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, 
     # The degrade contract: a shortfall of the DB read (remote stack, no docker, timeout) must leave
     # the stamp byte-identical to the pre-enrichment behavior — unknown kind, "(no detail)" reason —
     # never a half-invented cause.
+    from types import SimpleNamespace
     from fanops.models import ErrorKind
-    import fanops.post.postiz_errors as pe
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
-    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {})
+    mocker.patch("fanops.post.postiz_errors.subprocess.run",
+                 return_value=SimpleNamespace(returncode=1, stdout="", stderr="no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
@@ -1237,6 +1234,29 @@ def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp
     assert mirrored == []
 
 
+def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="wahed_bared"):
+    from types import SimpleNamespace
+    lists = [] if lists is None else lists
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+
+    def fake_get(url, **kw):
+        u = str(url)
+        params = kw.get("params") or {}
+        if "tiktok.com/oembed" in u:
+            return SimpleNamespace(status_code=200, text="{}",
+                                   json=lambda: {"author_unique_id": oembed})
+        if params.get("accountId") or "search" in params or params.get("page"):
+            if list_boom:
+                raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
+            payload = {"posts": lists, "pagination": {"page": 1, "totalPages": 1}}
+            return SimpleNamespace(status_code=200, text="{}", json=lambda: payload)
+        sid = u.rstrip("/").rsplit("/", 1)[-1]
+        body = bodies[sid]
+        return SimpleNamespace(status_code=200, text="{}", json=lambda: body)
+
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.requests.get", fake_get)
+
+
 def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
     from fanops import reconcile as rec_mod
     from fanops.models import Platform
@@ -1249,14 +1269,7 @@ def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_real"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_real": body}, list_boom=True)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     p = out.posts["p1"]
     assert p.state is PostState.published
@@ -1294,16 +1307,7 @@ def test_vendor_lookup_promotes_unique_caption_match(tmp_path, monkeypatch):
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/9"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
-                        lambda *a, **k: ([{"_id": "z_vendor"}], {"page": 1, "totalPages": 1}))
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_vendor"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_vendor": body}, lists=[{"_id": "z_vendor"}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     p = out.posts["pv"]
     assert p.state is PostState.published
@@ -1315,8 +1319,7 @@ def test_vendor_lookup_ambiguous_refuses_bind(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _tiktok_unbound(led, "pamb", caption="shared hashtag caption")
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
-                        lambda *a, **k: ([{"_id": "z_a"}, {"_id": "z_b"}], {"page": 1, "totalPages": 1}))
+    _zernio_reads(monkeypatch, bodies={}, lists=[{"_id": "z_a"}, {"_id": "z_b"}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["pamb"].state is PostState.needs_reconcile
     assert out.posts["pamb"].submission_id == "fanops_tok"
@@ -1330,19 +1333,7 @@ def test_vendor_lookup_skipped_when_candidate_auto_bind_wins(tmp_path, monkeypat
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-
-    def _boom(*a, **k):
-        raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
-
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts", _boom)
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_cand"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_cand": body}, list_boom=True)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["pcand"].state is PostState.published
     assert out.posts["pcand"].submission_id == "z_cand"

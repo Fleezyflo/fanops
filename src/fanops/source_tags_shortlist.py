@@ -66,43 +66,32 @@ def _transcript_file_prose(cfg, source) -> str:
 
 
 def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
-    """One LLM pass. Non-empty catalog: keep ∩ catalog. Empty catalog: name the pile."""
+    """One LLM pass. keep ∩ catalog. Empty catalog: [] — never invent."""
     from fanops.llm import claude_json_meta
     allowed = _dedupe_norm(catalog)[:_CATALOG_CAP]
+    if not allowed:
+        return []
     raw_title = getattr(source, "title", None)
     title = raw_title.strip() if isinstance(raw_title, str) and raw_title.strip() else ""
     title_line = f"title: {title}\n" if title else ""
     language = getattr(source, "language", None) or ""
-    if allowed:
-        prompt = (
-            "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
-            "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
-            "(artist/subject that actually appear, genre, format, topic).\n"
-            "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
-            "Do not invent a name that is not in the catalog.\n"
-            f"{title_line}"
-            f"language: {language}\n"
-            f"transcript: {excerpt or ''}\n"
-            f"catalog: {', '.join(allowed)}\n"
-            "Return at most 12 keep names, catalog order unless a clearer fit comes first."
-        )
-    else:
-        prompt = (
-            "You name Instagram hashtags for THIS video for a fan account that reposts it.\n"
-            "keep = real hashtag names a person would search to find THIS clip "
-            "(artist/subject that actually appear, genre, format, topic).\n"
-            "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding, #fyp.\n"
-            "Do not invent a glued slogan. Names must be plausible Instagram hashtags.\n"
-            f"{title_line}"
-            f"language: {language}\n"
-            f"transcript: {excerpt or ''}\n"
-            "Return at most 12 keep names."
-        )
+    prompt = (
+        "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
+        "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
+        "(artist/subject that actually appear, genre, format, topic).\n"
+        "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
+        "Do not invent a name that is not in the catalog.\n"
+        f"{title_line}"
+        f"language: {language}\n"
+        f"transcript: {excerpt or ''}\n"
+        f"catalog: {', '.join(allowed)}\n"
+        "Return at most 12 keep names, catalog order unless a clearer fit comes first."
+    )
     data, _model, _unread = claude_json_meta(prompt, _RESEARCH_SCHEMA)
     keep = data.get("keep") if isinstance(data, dict) else None
     if not isinstance(keep, list):
         return []
-    allow = set(allowed) if allowed else None
+    allow = set(allowed)
     out: list[str] = []
     for raw in keep:
         if not isinstance(raw, str):
@@ -110,7 +99,7 @@ def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
         n = _norm(raw)
         if not n or n in out:
             continue
-        if allow is not None and n not in allow:
+        if n not in allow:
             continue
         out.append(n)
         if len(out) >= _RESEARCH_CAP:

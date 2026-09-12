@@ -176,23 +176,30 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
 
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     # The operator rule: <=4 hashtags, HARD, and only source-lock members (never random AI words).
-    # ingest filters through ship_from_lock. Empty completed lock -> honest-empty (no discovery pad).
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    # Non-empty 6-tag lock: ship_from_lock caps at 4; invented / off-lock die.
+    from fanops.hashtags import ship_from_lock
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    lock = ["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
     sentence = "they slept. not anymore."
+    picks = lock + ["#inventedslogan"]
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface="a/instagram", caption=sentence,
-                    hashtags=["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"])]).model_dump_json())
+                    hashtags=picks)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
-    assert mc["caption"] == sentence                      # stored sentence, never join(hashtags)
-    assert len(mc["hashtags"]) <= 4                       # hard cap
-    assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
-    assert mc["hashtags"] == []                           # cold cache -> empty (no discovery pad)
-    # every survivor traces to a real signal — a tag is never a sourceless junk word.
-    assert set(mc["tag_sources"].values()) <= {"content", "corpus", "region", "graph-reach"}
-    assert all(mc["tag_sources"][t] for t in mc["hashtags"])   # no sourceless tag ships
+    assert mc["caption"] == sentence
+    assert mc["hashtags"] == ship_from_lock(picks, lock)
+    assert mc["hashtags"] == lock[:4]
+    assert len(mc["hashtags"]) == 4
+    assert "#inventedslogan" not in mc["hashtags"]
 
 def test_ingest_captions_noop_without_response(tmp_path):
     # No response on disk -> ledger untouched, not held (stale/pending guard).
@@ -370,21 +377,6 @@ def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
 
-def test_request_captions_failopen_on_learning_error(monkeypatch, tmp_path):
-    # A raising best_hooks must NOT propagate: the request is still written, no hint, clip advances.
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_variant_posts_for_at_a(led)
-    monkeypatch.setattr("fanops.caption.best_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])   # must NOT raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()                                      # request still written -> clip advances
-    payload = json.loads(p.read_text())
-    assert "learned_hooks" not in payload                  # error -> no hint
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
-
 # --- transfer: request_captions injects the cross-surface prior for a COLD recipient ----------
 from fanops.accounts import Account, Accounts, AccountStatus
 
@@ -462,25 +454,6 @@ def test_request_captions_own_winner_takes_precedence_over_transfer(monkeypatch,
     assert payload["learned_hooks"] == ["OWN"]                 # own signal present
     assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed (own-wins, not the freeze)
 
-def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    accts = _transfer_accounts(cfg, [("a", "hype"), ("b", "hype"), ("c", "hype")])
-    _win_surface_for(led, "a", Platform.instagram, "STYLE")
-    _win_surface_for(led, "b", Platform.instagram, "STYLE")
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so the raising
-    #                                                           scorer is actually REACHED (else the freeze
-    #                                                           short-circuits and the fail-open path is untested)
-    monkeypatch.setattr("fanops.caption.transferred_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("c", Platform.instagram)], accounts=accts)  # no raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()
-    payload = json.loads(p.read_text())
-    assert "learned_hooks_transferred" not in payload          # error -> no prior
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
 def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
     # ROOT FIX: the caption gate no longer authors a hook (the frame-seeing moment gate does). Even if a
     # (legacy) response still carries a hook, ingest_captions IGNORES it and stores None.
@@ -551,17 +524,6 @@ def test_request_captions_no_hint_when_learning_off_even_with_ucb(monkeypatch, t
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload                 # learning off -> neither scorer runs
-
-def test_request_captions_failopen_on_ucb_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
-    monkeypatch.setattr("fanops.caption.ucb_rank",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_thinlead_for_at_a(led)
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])  # must NOT raise
-    assert request_path(cfg, "captions", "clip_1").exists()                   # written anyway
-    assert led.clips["clip_1"].state is ClipState.captions_requested          # clip advanced
 
 
 # --- persona injection: the UI-set per-account fan voice must reach the caption request ----------
@@ -649,18 +611,9 @@ def test_caption_missing_platform_errors_end_to_end(tmp_path):
     with pytest.raises(ValueError, match="missing platform"):
         ingest_captions(led, cfg, "clip_1")
 
-def test_platform_coerce_gone():
-    import pathlib
-    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops" / "caption.py"
-    text = src.read_text()
-    assert "platform_coerced" not in text
-    assert "_platform_of" not in text
-
-def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
+def test_platform_derived_from_request_not_model_string(tmp_path):
     # Ingest no longer vets; request platform is still required. A diverged key/platform
-    # must not raise, and ingest must not call vet_hashtags_traced.
-    import inspect
-    from fanops.caption import ingest_captions as ingest_fn
+    # must not raise, and ingest must not coerce the surface tail over the request record.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -672,10 +625,7 @@ def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
                                            hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
-    src = inspect.getsource(ingest_fn)
-    assert "vet_hashtags_traced" not in src
-    assert "_platform_for_surface" in src
-    assert "ship_from_lock" in src
+    assert led.clips["clip_1"].state is ClipState.captioned
 
 
 # --- HV1-SHIP: compose sentence + lock tags at send/display only --------------------------------

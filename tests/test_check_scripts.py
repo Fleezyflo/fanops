@@ -247,30 +247,45 @@ def test_pre_push_hook_runs_no_pytest():
     assert "refs/heads/main" in code, "pre-push must still guard main"
 
 
+def _noncomment(text: str) -> str:
+    return "\n".join(ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#"))
+
+
 def test_check_sh_excludes_slow_marker():
     """check.sh must deselect slow cross-face proofs for fast local scoped runs."""
-    check = CHECK.read_text()
+    import re
+    code = _noncomment(CHECK.read_text())
     markers = (REPO / "scripts" / "gate_markers.py").read_text()
-    assert "gate_markers" in check
+    m = re.search(r"_PYTEST_MARKER=.*?print\(gate_markers\.(\w+)\)", code, re.S)
+    assert m is not None and m.group(1) == "PYTEST_FAST"
     assert 'PYTEST_FAST = "not integration and not slow"' in markers
 
 
 def test_check_full_default_excludes_slow():
     """Default check-full.sh skips slow; CHECK_FULL_SLOW=1 mirrors CI unit (-m 'not integration')."""
+    import re
     full = (REPO / "scripts" / "check-full.sh").read_text()
+    code = _noncomment(full)
     markers = (REPO / "scripts" / "gate_markers.py").read_text()
-    assert "ruff check ." in full
-    assert "gate_markers" in full
+    assert "ruff check ." in code
+    m = re.search(
+        r'CHECK_FULL_SLOW.*?then\s+MARKER=.*?print\(gate_markers\.(\w+)\).*?else\s+MARKER=.*?print\(gate_markers\.(\w+)\)',
+        code, re.S)
+    assert m is not None, f"MARKER if/else not found in executable check-full.sh:\n{code}"
+    assert m.group(1) == "PYTEST_WITH_SLOW"
+    assert m.group(2) == "PYTEST_FAST"
     assert 'PYTEST_FAST = "not integration and not slow"' in markers
-    assert 'CHECK_FULL_SLOW:-' in full or "CHECK_FULL_SLOW" in full
     assert 'PYTEST_WITH_SLOW = "not integration"' in markers
 
 
 def test_check_full_slow_env_mirrors_ci():
     """CHECK_FULL_SLOW=1 must run the CI unit marker expression (includes slow)."""
-    full = (REPO / "scripts" / "check-full.sh").read_text()
-    assert "CHECK_FULL_SLOW" in full
-    assert "not integration" in full
+    import re
+    code = _noncomment((REPO / "scripts" / "check-full.sh").read_text())
+    m = re.search(
+        r'CHECK_FULL_SLOW.*?then\s+MARKER=.*?print\(gate_markers\.(\w+)\)',
+        code, re.S)
+    assert m is not None and m.group(1) == "PYTEST_WITH_SLOW"
 
 
 def test_scopes_studio_module_to_studio_test(sandbox):

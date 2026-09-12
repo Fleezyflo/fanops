@@ -18,14 +18,14 @@
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 291,
+      "line": 292,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     },
     {
       "evidence": "__import__",
       "kind": "dynamic_import",
-      "line": 313,
+      "line": 314,
       "module": "fanops.studio.actions_run",
       "why": "the import target is computed at runtime; no static edge is derivable"
     }
