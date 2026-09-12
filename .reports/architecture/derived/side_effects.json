@@ -333,31 +333,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 123
+        "line": 124
       },
       {
         "call": "Ledger.transaction",
-        "line": 143
+        "line": 144
       },
       {
         "call": "Ledger.transaction",
-        "line": 168
+        "line": 169
       },
       {
         "call": "Ledger.transaction",
-        "line": 204
+        "line": 205
       },
       {
         "call": "Ledger.transaction",
-        "line": 247
+        "line": 248
       },
       {
         "call": "Ledger.transaction",
-        "line": 503
+        "line": 504
       },
       {
         "call": "Ledger.transaction",
-        "line": 617
+        "line": 624
       }
     ],
     "fanops.studio.actions_schedule": [
@@ -751,11 +751,11 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 196
+        "line": 218
       },
       {
         "call": "subprocess.run",
-        "line": 334
+        "line": 356
       }
     ],
     "fanops.media_probe": [

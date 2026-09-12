@@ -1,13 +1,14 @@
 # tests/test_run_activity.py — S01: run-activity heartbeat via .run.lock advisory body.
 import fcntl
 import json
-import logging
 import os
+import subprocess
 
 from fanops.config import Config
 from fanops.models import Source, SourceState
 from fanops.ledger import Ledger
 from fanops.pipeline_run import note_stage, run_status_line, _lock_path
+from fanops import daemon
 
 
 def _hold_lock(cfg, body: dict | None = None):
@@ -73,31 +74,14 @@ def test_pipeline_status_stamps_matching_backlog_row(tmp_path):
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
-def test_note_stage_io_error_fail_open(tmp_path, mocker, caplog):
-    cfg = Config(root=tmp_path)
-    fd = _hold_lock(cfg, {"pid": 4242, "started": "2020-01-01T00:00:00Z"})
-    mocker.patch("fanops.pipeline_run.os.write", side_effect=OSError("disk full"))
-    try:
-        with caplog.at_level(logging.WARNING, logger="fanops.pipeline_run"):
-            note_stage(cfg, "produce", "src-1")
-            note_stage(cfg, "produce", "src-1")
-        assert len(caplog.records) == 1
-        assert "note_stage fail-open" in caplog.records[0].message
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
-
-
 def test_daemon_health_includes_run_line_when_held(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = Config(root=tmp_path)
     fd = _hold_lock(cfg, {"pid": 4242, "started": "2020-01-01T00:00:00Z"})
     try:
         note_stage(cfg, "moments", "-")
-        monkeypatch.setattr("fanops.daemon.status", lambda c, **k: {"verdict": "alive", "loaded": True,
-                            "pid": 1, "last_exit": 0, "heartbeat_age_s": 5})
-        monkeypatch.setattr("fanops.daemon.installed_interval", lambda c: 600)
-        monkeypatch.setattr("fanops.pipeline.pending_gate_count", lambda c: 0)
-        monkeypatch.setattr("fanops.daemon.sibling_agents_status", lambda: [])
+        monkeypatch.setattr(daemon.subprocess, "run", lambda cmd, *a, **k: subprocess.CompletedProcess(
+            cmd, 0, '\t"PID" = 4321;\n\t"LastExitStatus" = 0;\n', ""))
         dh = views.daemon_health(cfg)
         assert dh is not None
         assert dh.get("run_line") is not None

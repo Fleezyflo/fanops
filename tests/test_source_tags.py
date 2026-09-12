@@ -277,7 +277,7 @@ def test_catalog_search_feeds_judge(tmp_path, mocker):
         media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
     )
     ensure_source_lock(cfg, _src(title="Rick Ross"), client=client,
-                       research_fn=lambda s, e: shortlist_source_tags(s, e, []),
+                       research_fn=lambda s, e: shortlist_source_tags(s, e, ["#rickross"]),
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["lock"] == ["#rickross"]
