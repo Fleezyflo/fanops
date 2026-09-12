@@ -94,6 +94,7 @@ def test_ambiguous_evidence_is_explicit_insufficient():
     assert not comp.is_actionable
     assert comp.x_min is None and comp.cx is None            # no geometry -> caller keeps its safe default
     assert comp.confidence == pytest.approx(0.125)
+    assert comp.kind != FB_DOMINANT                          # INSUFFICIENT is not a silent centre
 
 
 # ---- 6. no detections: INSUFFICIENT for empty frames, {} and None ---------------------------------------

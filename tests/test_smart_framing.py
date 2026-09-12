@@ -1,12 +1,10 @@
 # tests/test_smart_framing.py — Smart framing (subject-aware reframe). The 9:16 crop SLIDES onto the
 # detected subject instead of the blind top/center guess: framing.subject_focus returns a normalized
 # centroid, clip.reframe_filter turns it into a clamped crop offset, and both render paths thread it
-# through ffmpeg_clip_cmd + the render fingerprint. Detection MISSES are FAIL-OPEN: a stub/flag returning
-# None -> focus=None -> today's centered crop, byte-identical. But the cv2 DEPENDENCY is now REQUIRED when
-# smart_framing is ON: with the extra ABSENT + smart_framing ON, _resolve_framing REFUSES (ToolchainMissingError)
-# rather than silently centre-crop (see the require_cv2 raise-tests below). cv2 is absent in the hermetic unit
-# job, so router tests stub the DETECTION functions (detect_window/speaker_track/subject_focus); the real
-# require_cv2 runtime builds a real detector (cv2 is installed in the unit lane) and the stubbed detection drives the router.
+# through ffmpeg_clip_cmd + the render fingerprint. When smart_framing is ON, cv2 is REQUIRED:
+# _resolve_framing / require_cv2 raise ToolchainMissingError rather than silently centre-crop.
+# Unattributed detection None is UNRESOLVED/UNKNOWN, not a centre 3-tuple as success. Detection
+# inputs are seeded via detect/track/saliency sidecars (write-path); ffmpeg is stubbed at subprocess.run.
 import json, re, shutil, subprocess, types
 from pathlib import Path
 import pytest
@@ -17,7 +15,8 @@ from fanops import framing
 from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut,
                          _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for)
 import fanops.clip as clipmod
-from fanops import overlay
+from fanops.errors import ToolchainMissingError
+from fanops.framing_outcomes import FramingEventType as _FE, FramingOutcome as _FO
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +24,24 @@ def _clear_yunet_cache():
     framing._reset_yunet_cache()
     yield
     framing._reset_yunet_cache()
+
+
+def _write_detect(cfg, src_id, start, end, stats):
+    p = cfg.agent_io / "framing" / f"{src_id}.detect.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"v": framing._DETECT_V, "windows": {f"{round(start, 2)}-{round(end, 2)}": stats}}))
+
+
+def _write_track(cfg, src_id, start, end, track):
+    p = cfg.agent_io / "framing" / f"{src_id}.track.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"v": framing._SIDECAR_V, "windows": {f"{round(start, 2)}-{round(end, 2)}": track}}))
+
+
+def _write_saliency(cfg, src_id, start, end, sal):
+    p = cfg.agent_io / "framing" / f"{src_id}.saliency.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"v": framing._SIDECAR_V, "windows": {f"{round(start, 2)}-{round(end, 2)}": sal}}))
 
 
 # ---------------------------------------------------------------- reframe_filter offset math ----
@@ -158,48 +175,45 @@ def test_smart_framing_off_words(tmp_path, monkeypatch, val, expected):
     assert Config(root=tmp_path).smart_framing is expected
 
 
-# ---------------------------------------------------------------- subject_focus (fail-open + cache) ----
-def test_subject_focus_no_extra_is_none(tmp_path, monkeypatch):
-    # cv2 absent (the CI default) -> None, and NO sidecar probe blows up. None is the fail-open signal.
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path=str(tmp_path / "s1.mp4"), width=1920, height=1080, duration=60.0)
-    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
+# ---------------------------------------------------------------- subject_focus (cache + miss) ----
+def test_require_cv2_is_fail_closed(tmp_path):
+    # No framing._cv2 patch. Missing extra/model/detector → ToolchainMissingError; present toolchain builds.
+    framing.require_cv2(Config(root=tmp_path))
 
 def test_subject_focus_non_positive_window_is_none(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080)
     assert framing.subject_focus(cfg, src, start=5.0, end=5.0) is None
 
-def test_subject_focus_returns_median_quad(tmp_path, monkeypatch):
+def test_subject_focus_returns_median_quad(tmp_path):
     # shape (fx,fy,fh,ey,fw): the dominant (largest-fh) face's median over the window. Legacy 4-tuple stats
     # carry no width, so fw is None (the clip geometry then falls back to today's centering on that axis).
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     stats = {"fps": 4.0, "frames": [[[0.8, 0.4, 0.2, 0.36]]] * 4 + [[]]}        # 4 of 5 frames have a face
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    _write_detect(cfg, "s1", 10.0, 14.0, stats)
     assert framing.subject_focus(cfg, src, start=10.0, end=14.0) == (0.8, 0.4, 0.2, 0.36, None)
 
-def test_subject_focus_picks_dominant_largest_face(tmp_path, monkeypatch):
+def test_subject_focus_picks_dominant_largest_face(tmp_path):
     # two faces per frame -> the LARGER (fh) one is the subject for the static lock.
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     stats = {"fps": 4.0, "frames": [[[0.2, 0.5, 0.10, 0.45], [0.8, 0.5, 0.30, 0.40]]] * 4}
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    _write_detect(cfg, "s1", 10.0, 14.0, stats)
     fx, fy, fh, ey, fw = framing.subject_focus(cfg, src, start=10.0, end=14.0)
     assert fx == 0.8 and fh == 0.30                                             # the bigger face wins
 
-def test_subject_focus_low_confidence_is_none(tmp_path, monkeypatch):
+def test_subject_focus_low_confidence_is_none(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     stats = {"fps": 4.0, "frames": [[[0.8, 0.4, 0.2, 0.36]]] + [[]] * 4}        # 1 of 5 -> conf 0.2 < 0.34
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    _write_detect(cfg, "s1", 10.0, 14.0, stats)
     assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
 
-def test_subject_focus_no_detection_is_none(tmp_path, monkeypatch):
+def test_subject_focus_no_detection_is_none(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)         # fail-open -> None
+    _write_detect(cfg, "s1", 10.0, 14.0, {"fps": 4.0, "frames": [[]] * 5})
     assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
 
 
@@ -209,38 +223,11 @@ def test_vendored_yunet_model_ships_in_package():
     mp = framing._model_path()
     assert mp.exists() and mp.suffix == ".onnx" and mp.stat().st_size > 100_000
 
-def test_detector_none_when_model_absent(monkeypatch, tmp_path):
-    # model asset missing -> _detector None -> detect_window None -> center crop (fail-open), never raises.
-    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "absent.onnx")
-    assert framing._detector(object()) is None
-
-def test_detector_none_on_old_cv2_without_yunet(monkeypatch, tmp_path):
-    # an OpenCV too old to expose FaceDetectorYN -> None, not an AttributeError crash.
-    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "m.onnx")
-    (tmp_path / "m.onnx").write_bytes(b"x" * 200_000)
-    class OldCv2: pass                                    # no FaceDetectorYN attribute
-    assert framing._detector(OldCv2()) is None
-
 def test_track_sidecar_stale_version_invalidated(tmp_path):
     # an older track sidecar (pre face-height/eyeline schema) must NOT be trusted -> recompute.
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"v": framing._SIDECAR_V - 1, "windows": {"10.0-14.0": [[0.0, 5.0, 0.5, 0.5]]}}))
     assert framing._load_cache(p) == {}                   # version mismatch -> empty -> re-probe
-
-def test_detect_window_samples_at_detection_resolution(tmp_path, monkeypatch):
-    # faces are undetectable at the 480px hook-author default; the grid pass must request higher-res frames.
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    seen = {}
-    def _grid(*a, **k):
-        seen["width"] = k.get("width"); return ["g0", "g1"]
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid)
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45)])
-    framing.detect_window(cfg, src, start=10.0, end=14.0)
-    assert seen["width"] == framing._KF_WIDTH and framing._KF_WIDTH >= 960
-
 
 # ---------------------------------------------------------------- active-speaker track (time-varying crop) ----
 def test_step_expr_is_a_hard_cut_not_a_pan():
@@ -402,139 +389,6 @@ def test_render_reframed_static_no_perframe_symbol():
     assert not hasattr(clipmod, "_render_perframe")
 
 
-def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(framing, "_cv2", lambda: None)                     # cv2 absent (CI) -> static path
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    assert framing.speaker_track(cfg, src, start=10.0, end=30.0, src_w=1920, src_h=1080) is None
-
-def _obs(loud_side, fhL=0.2, fhR=0.18):
-    # one frame's observation: each side -> ((fx,fy,fh,ey), mouth-motion). loud_side gets high motion.
-    L = ((0.22, 0.50, fhL, 0.45), 50.0 if loud_side == "L" else 5.0)
-    R = ((0.80, 0.45, fhR, 0.40), 50.0 if loud_side == "R" else 5.0)
-    return {"L": L, "R": R}
-
-def _grid(n):
-    return lambda *a, **k: [f"g{i}" for i in range(n)]
-
-def test_speaker_track_follows_active_speaker(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    half = round(5.0 * framing._ASD_FPS)                                    # 5s LEFT then 5s RIGHT at the real ASD fps
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(half * 2))
-    obs = [_obs("L")] * half + [_obs("R")] * half
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
-    tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
-    assert tr is not None and len(tr) == 2                                  # merged into LEFT-then-RIGHT
-    assert len(tr[0]) == 6                                                  # 6-tuple: t0,t1,fx,fy,fh,ey
-    assert abs(tr[0][2] - 0.22) < 0.01 and abs(tr[1][2] - 0.80) < 0.01      # fx follows the speaker
-    assert tr[0][4] == 0.2 and tr[1][4] == 0.18                            # face HEIGHT (p75) carried per segment (for zoom)
-    assert tr[0][0] == 0.0 and tr[-1][1] == 10.0                            # covers the whole window
-
-def test_speaker_track_switch_is_responsive(tmp_path, monkeypatch):
-    # the committed switch lands within hysteresis (_ASD_HOLD_S) of the real change, NOT the old ~1-4s lag.
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    half = round(5.0 * framing._ASD_FPS)
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(half * 2))
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * half + [_obs("R")] * half)
-    tr = framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080)
-    expected = (half + round(framing._ASD_HOLD_S * framing._ASD_FPS)) / framing._ASD_FPS   # commit = real turn + dwell
-    assert abs(tr[0][1] - expected) < 0.2                                   # boundary at ~5.0 + the short dwell, not laggy
-    assert tr[0][1] - 5.0 <= framing._ASD_HOLD_S + 0.2                      # dwell is small -> responsive
-
-def test_speaker_track_one_frame_blip_does_not_flip(tmp_path, monkeypatch):
-    # a single louder-RIGHT frame inside an all-LEFT window must NOT cause a cut (hysteresis dwell).
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    n = round(5.0 * framing._ASD_FPS)
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(n))
-    obs = [_obs("L")] * n; obs[n // 2] = _obs("R")                          # one blip
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: obs)
-    assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None   # 1 position -> None
-
-def test_speaker_track_one_dominant_face_is_none(tmp_path, monkeypatch):
-    # both visible but the SAME person always talks -> one position -> None (static focus is identical).
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    n = round(5.0 * framing._ASD_FPS)
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid(n))
-    monkeypatch.setattr(framing, "_track_observe", lambda cv2, det, frames: [_obs("L")] * n)
-    assert framing.speaker_track(cfg, src, start=0.0, end=5.0, src_w=1920, src_h=1080) is None
-
-
-# ---------------------------------------------------------------- motion_saliency (no-face follow) ----
-def test_motion_saliency_returns_change_centroid(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0", "g1", "g2"])
-    monkeypatch.setattr(framing, "_saliency_centroid", lambda cv2, frames: (0.7, 0.4))
-    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) == (0.7, 0.4)
-
-def test_motion_saliency_no_cv2_is_none(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) is None
-
-
-# ---------------------------------------------------------------- detect_window (single grid pass) ----
-def test_detect_window_builds_per_frame_face_stats(tmp_path, monkeypatch):
-    # ONE grid pass -> per-frame list of [cx,cy,fh,ey] faces, cached to a .detect.json sidecar.
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    faces = {"g0": [(0.25, 0.50, 0.20, 0.45)],
-             "g1": [(0.25, 0.50, 0.20, 0.45), (0.78, 0.45, 0.18, 0.40)]}
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0", "g1"])
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: faces[fp])
-    st = framing.detect_window(cfg, src, start=10.0, end=14.0)
-    assert st is not None
-    assert st["frames"] == [[[0.25, 0.5, 0.2, 0.45]],
-                            [[0.25, 0.5, 0.2, 0.45], [0.78, 0.45, 0.18, 0.4]]]
-    assert st["fps"] == framing._DETECT_FPS
-    sidecar = cfg.agent_io / "framing" / "s1.detect.json"
-    assert sidecar.exists() and json.loads(sidecar.read_text())["v"] == framing._DETECT_V
-
-def test_detect_window_no_cv2_is_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(framing, "_cv2", lambda: None)             # extra absent -> None (fail-open)
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    assert framing.detect_window(cfg, src, start=10.0, end=14.0) is None
-
-def test_detect_window_empty_grid_is_none(tmp_path, monkeypatch):
-    # ffmpeg gave no frames -> None (fail-open to center crop), never a crash.
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [])
-    assert framing.detect_window(cfg, src, start=10.0, end=14.0) is None
-
-def test_detect_window_caches_and_skips_reprobe(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    calls = {"n": 0}
-    def _grid(*a, **k):
-        calls["n"] += 1; return ["g0"]
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _grid)
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45)])
-    a = framing.detect_window(cfg, src, start=10.0, end=14.0)
-    b = framing.detect_window(cfg, src, start=10.0, end=14.0)        # cache hit -> no second grid
-    assert a == b and calls["n"] == 1
-
 def test_detect_sidecar_version_invalidated(tmp_path):
     p = tmp_path / "old.detect.json"
     p.write_text(json.dumps({"v": framing._DETECT_V - 1, "windows": {"10.0-14.0": {"frames": []}}}))
@@ -608,64 +462,47 @@ def test_classify_degraded_legacy_not_talk():
     assert ct in (framing.CT_MUSIC, framing.CT_SILENT), f"degraded legacy must not classify as talk, got {ct!r}"
 
 
-# ---------------------------------------------------------------- _resolve_framing strategy router ----
-def test_resolve_multi_uses_track(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
-    monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: [(0.0, 5.0, 0.22, 0.5, 0.2, 0.45), (5.0, 10.0, 0.8, 0.45, 0.2, 0.4)])
-    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
-    assert track and focus is None and ct == framing.CT_MULTI
+# ---------------------------------------------------------------- _resolve_framing strategy router (sidecars) ----
+def test_resolve_multi_uses_track(tmp_path):
+    from tests.fixtures.speech_segments import talk_seg
+    cfg = Config(root=tmp_path)
+    src = _talk_src(transcript=[talk_seg("so tell me about your new record", start=0.0, end=8.0)])
+    two = {"fps": 4.0, "frames": [[[0.22, 0.5, 0.2, 0.45, 0.9, 0.12],
+                                   [0.80, 0.45, 0.2, 0.40, 0.9, 0.12]]] * 4}
+    track = [(0.0, 5.0, 0.22, 0.5, 0.2, 0.45), (5.0, 10.0, 0.8, 0.45, 0.2, 0.4)]
+    _write_detect(cfg, src.id, 0.0, 10.0, two)
+    _write_track(cfg, src.id, 0.0, 10.0, track)
+    _write_saliency(cfg, src.id, 0.0, 10.0, [])
+    focus, got, ct = clipmod._resolve_framing(cfg, src, 0.0, 10.0)
+    assert got and focus is None and ct == framing.CT_MULTI
 
-def test_resolve_multi_no_track_centres_conservatively(tmp_path, monkeypatch):
-    # E3: classified MULTI but no clean 2-shot track -> conservative CENTRE (both seats), NOT a one-person
-    # subject lock that would crop the other speaker out. subject_focus must NOT be called for a MULTI window.
-    from fanops.clip import _resolve_framing
-    cfg = Config(root=tmp_path); src = _talk_src()
-    called = {"focus": False}
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MULTI)
-    monkeypatch.setattr(framing, "speaker_track", lambda *a, **k: None)        # not a real 2-shot
-    def _focus(*a, **k):
-        called["focus"] = True; return (0.5, 0.5, 0.22, 0.4)
-    monkeypatch.setattr(framing, "subject_focus", _focus)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centred, both seats
-    assert called["focus"] is False                                           # E3: subject_focus not run for MULTI
+def test_resolve_single_uses_focus(tmp_path):
+    from tests.fixtures.speech_segments import talk_seg
+    cfg = Config(root=tmp_path)
+    src = _talk_src(transcript=[talk_seg("let me explain how this works", start=0.0, end=8.0)])
+    stats = {"fps": 4.0, "frames": [[[0.6, 0.45, 0.25, 0.4, 0.9, 0.14]]] * 4}
+    _write_detect(cfg, src.id, 0.0, 10.0, stats)
+    _write_track(cfg, src.id, 0.0, 10.0, [])
+    _write_saliency(cfg, src.id, 0.0, 10.0, [])
+    focus, track, ct = clipmod._resolve_framing(cfg, src, 0.0, 10.0)
+    assert focus is not None and abs(focus[0] - 0.6) < 0.01 and track is None and ct == framing.CT_SINGLE
 
-def test_resolve_single_uses_focus(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
+def test_resolve_no_people_unattributed_miss_is_unresolved(tmp_path):
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": []})
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_SINGLE)
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.6, 0.45, 0.25, 0.4))
-    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
-    assert focus == (0.6, 0.45, 0.25, 0.4) and track is None and ct == framing.CT_SINGLE
+    _write_detect(cfg, src.id, 0.0, 10.0, None)
+    _write_saliency(cfg, src.id, 0.0, 10.0, [])
+    r = framing._resolve(cfg, src, 0.0, 10.0, capture_failures=True)
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
 
-def test_resolve_music_no_face_uses_saliency(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[]]})
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_MUSIC)
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: None)        # no face
-    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: (0.7, 0.4))
-    focus, track, ct = _resolve_framing(cfg, src, 0.0, 10.0)
-    assert focus == (0.7, 0.4) and track is None and ct is None                # saliency 2-tuple, NO zoom
-
-def test_resolve_no_people_centers_when_no_motion(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
-    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centered (today)
-
-def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
+def test_resolve_smart_framing_off_never_constructs(tmp_path, monkeypatch):
+    import cv2
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    def _boom(*a, **k):
+        raise AssertionError("YuNet constructed while smart_framing is OFF")
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(_boom))
+    framing._reset_yunet_cache()
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5, 0.2, 0.4))   # would return, but gated off
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)
+    assert clipmod._resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)
 
 
 # ================================================ smart_framing: ONE-CONSTRUCTION, FAIL-LOUD prerequisite ====
@@ -673,111 +510,71 @@ def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
 # (framing._framing_runtime_or_raise / _detector cache) and reused for every render_moment / _resolve_framing.
 # A BROKEN PREREQUISITE — cv2 absent, FaceDetectorYN/.create missing, model file absent, FaceDetectorYN.create()
 # returning None, or FaceDetectorYN.create() raising — REFUSES loudly with ToolchainMissingError BEFORE any
-# centered output. A GENUINE DETECTION MISS (detector built OK, no face found) still fails open to centered.
-# No autouse/suite-wide bypass exists; these force the real enforcement path. cv2 is really installed in the
-# unit lane, so the refusals are induced by stubbing the specific seam (_cv2/_model_path/_detector), never by
-# no-op'ing the guard.
+# centered output. An unattributed detection miss is UNRESOLVED/UNKNOWN, not a centre 3-tuple as success.
+# Refusals are induced at the OpenCV constructor / model-path edge, never by patching framing._cv2 to None.
 
-def _fake_cv2_with_create(create):
-    return types.SimpleNamespace(FaceDetectorYN=types.SimpleNamespace(create=create))
+def _break_yunet_create(monkeypatch, *, result=None, exc=None):
+    import cv2
+    if exc is not None:
+        def _boom(*a, **k):
+            raise exc
+        monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(_boom))
+    else:
+        monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: result))
+    framing._reset_yunet_cache()
 
-# (1) refuse when _cv2() returns None
-def test_resolve_refuses_when_cv2_absent(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
-    cfg = Config(root=tmp_path); src = _talk_src()             # smart_framing default ON
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
 
-# (2) refuse when FaceDetectorYN or .create is unavailable (OpenCV too old)
 def test_resolve_refuses_when_facedetector_attr_missing(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
+    import cv2
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: object())     # no FaceDetectorYN attr at all
+    monkeypatch.setattr(cv2, "FaceDetectorYN", None)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (3) refuse when the vendored model is absent
 def test_resolve_refuses_when_model_missing(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
-    monkeypatch.setattr(framing, "_model_path", lambda: Path("/definitely/absent/yunet.onnx"))
+    orig = Path.exists
+    def exists(self):
+        if self.name == framing._MODEL:
+            return False
+        return orig(self)
+    monkeypatch.setattr(Path, "exists", exists)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (4a) refuse when the actual constructor returns None
 def test_resolve_refuses_when_constructor_returns_none(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))  # create()->None
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (4b) refuse when the actual constructor raises
 def test_resolve_refuses_when_constructor_raises(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
-    def _boom(*a, **k): raise RuntimeError("corrupt ONNX / OpenCV ABI mismatch")
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(_boom))
+    _break_yunet_create(monkeypatch, exc=RuntimeError("corrupt ONNX / OpenCV ABI mismatch"))
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (5) constructor-failure cases DO NOT reach detection-miss centering (they raise; detect_window never runs)
-def test_constructor_failure_does_not_center(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
-    cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))
-    called = {"detect": 0}
-    orig = framing.detect_window
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: called.__setitem__("detect", called["detect"] + 1) or orig(*a, **k))
-    with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
-    assert called["detect"] == 0                               # refused BEFORE detection -> no centered fallback path
-
-# (6) initialized detector + no face found -> centered (None,None,None), NOT a raise
-def test_initialized_no_face_centers(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    cfg = Config(root=tmp_path); src = _talk_src()
-    # a real-shaped runtime: create() returns a usable detector object; detection then finds nothing.
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())          # construction SUCCEEDS
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)      # ...but no face -> miss
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
-    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)       # centered, no raise
-
-# (7) render_moment reaches prerequisite enforcement and refuses on constructor failure
 def test_render_moment_refuses_on_constructor_failure(tmp_path, monkeypatch):
     from fanops.clip import render_moment
-    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))  # create()->None
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
 
-# (8) render_account_cut reaches prerequisite enforcement and refuses on constructor failure
 def test_render_account_cut_refuses_on_constructor_failure(tmp_path, monkeypatch):
-    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk", hook="", out_path=str(cfg.clips / "acct.mp4"))
 
-# (9) _supercut_span_entries reaches prerequisite enforcement and refuses (never partially renders)
 def test_supercut_span_entries_refuses_on_missing_prereq(tmp_path, monkeypatch):
     from fanops.clip import _supercut_span_entries
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         _supercut_span_entries(cfg, src, [(0.0, 3.0), (5.0, 8.0)])
 
@@ -788,95 +585,23 @@ def test_real_opencv_runtime_constructs(tmp_path):
     rt = framing._framing_runtime_or_raise(Config(root=tmp_path))
     assert rt.cv2 is not None and rt.detector is not None
 
-# (11) ONE process: many _resolve_framing invocations call FaceDetectorYN.create EXACTLY ONCE (integration:
-# needs real cv2 so the real constructor is the thing being counted)
-@pytest.mark.integration
-def test_one_resolve_constructs_detector_exactly_once(tmp_path, monkeypatch):
-    import cv2
-    from fanops.clip import _resolve_framing
-    calls = {"n": 0}
-    orig = cv2.FaceDetectorYN.create
-    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1) or orig(*a, **k))))
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [])  # ffmpeg-free, forces the miss path
-    cfg = Config(root=tmp_path); src = _talk_src()             # cold sidecar (fresh tmp root)
-    _resolve_framing(cfg, src, 0.0, 6.0)
-    assert calls["n"] == 1                                     # constructed ONCE for the process
-    _resolve_framing(cfg, src, 0.0, 6.0)                       # second resolution reuses cache
-    assert calls["n"] == 1                                     # still one create
-
-@pytest.mark.integration
-def test_framing_construction_and_extraction_counts_reported(tmp_path, monkeypatch, capsys):
-    # CI-authoritative instrumentation: with REAL cv2, measure process-scoped construction counts and
-    # decision record reports (constructor calls, detector objects, detect_window calls, grid extractions),
-    # and prove the sidecar cache makes a WARM second resolution do zero new construction/extraction.
-    import cv2
-    from fanops.clip import _resolve_framing
-    from fanops import framing as fr
-    n = {"create": 0, "grid": 0, "detect_window": 0}
-    orig_create = cv2.FaceDetectorYN.create
-    monkeypatch.setattr(cv2.FaceDetectorYN, "create",
-                        staticmethod(lambda *a, **k: (n.__setitem__("create", n["create"] + 1) or orig_create(*a, **k))))
-    # Return ONE synthetic frame so detect_window writes its sidecar (an empty grid -> stats None -> no cache,
-    # which would make the warm-cache assertion meaningless). YuNet finding no face in it is fine (miss->centered).
-    import numpy as np
-    def _one_frame(path, *a, **k):
-        n["grid"] += 1
-        f = tmp_path / "syn.png"; import cv2 as _c2
-        _c2.imwrite(str(f), np.full((540, 960, 3), 90, np.uint8))
-        return [str(f)]
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", _one_frame)
-    orig_dw = fr.detect_window
-    monkeypatch.setattr(fr, "detect_window",
-                        lambda *a, **k: (n.__setitem__("detect_window", n["detect_window"] + 1) or orig_dw(*a, **k)))
-    cfg = Config(root=tmp_path); src = _talk_src()             # COLD sidecar (fresh tmp root)
-
-    _resolve_framing(cfg, src, 0.0, 6.0)                        # first (cold) resolution
-    cold = dict(n)
-    print(f"[framing-counts] COLD resolution: FaceDetectorYN.create={cold['create']} "
-          f"detect_window={cold['detect_window']} grid_extract={cold['grid']}")
-    assert cold["create"] == 1, f"expected exactly ONE detector construction per process, got {cold['create']}"
-
-    for k in n: n[k] = 0
-    _resolve_framing(cfg, src, 0.0, 6.0)                        # second (WARM sidecar) resolution, same window
-    warm = dict(n)
-    print(f"[framing-counts] WARM resolution (same window): FaceDetectorYN.create={warm['create']} "
-          f"detect_window={warm['detect_window']} grid_extract={warm['grid']}")
-    assert warm["create"] == 0, f"warm resolution must reuse cached detector, got {warm['create']}"
-    assert warm["grid"] < cold["grid"], (
-        f"warm sidecar must reduce frame extraction ({warm['grid']} !< {cold['grid']})")
-    print("[framing-counts] init scope = PER-PROCESS (cached YuNet): "
-          f"create=1 once; warm sidecar cuts extraction {cold['grid']}->{warm['grid']}")
-
-# (13) OFF CONTRACT: the toggle is evaluated BEFORE the runtime build, so the retained OFF path never
-# requires OpenCV. If _resolve_framing ever built the runtime first, OFF would start demanding the extra.
-def test_resolve_off_never_constructs_runtime(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    def _boom_rt(cfg): raise AssertionError("framing runtime CONSTRUCTED while smart_framing is OFF")
-    def _boom_cv2(): raise AssertionError("cv2 consulted while smart_framing is OFF")
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", _boom_rt)
-    monkeypatch.setattr(framing, "_cv2", _boom_cv2)
-    cfg = Config(root=tmp_path); src = _talk_src()
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime, no cv2
-
-# (14) PROCESS-SCOPED YuNet reuse: many resolutions in one interpreter share one FaceDetectorYN.create.
 def test_framing_runtime_reuses_yunet_once_per_process(tmp_path, monkeypatch):
+    import cv2
     from concurrent.futures import ThreadPoolExecutor
-    from fanops.clip import _resolve_framing
     creates = {"n": 0}
+    orig = cv2.FaceDetectorYN.create
     def _create(*a, **k):
         creates["n"] += 1
-        return object()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(_create))
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
-    monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
-    cfg = Config(root=tmp_path); src = _talk_src()
+        return orig(*a, **k)
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(_create))
+    cfg = Config(root=tmp_path)
+    framing._reset_yunet_cache()
 
-    _resolve_framing(cfg, src, 0.0, 5.0)                                  # sequential x2
-    _resolve_framing(cfg, src, 0.0, 5.0)
-    with ThreadPoolExecutor(max_workers=2) as ex:                         # concurrent x2
-        list(ex.map(lambda _: _resolve_framing(cfg, src, 0.0, 5.0), range(2)))
+    def _once(_):
+        return framing._framing_runtime_or_raise(cfg)
+    _once(None); _once(None)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        list(ex.map(_once, range(2)))
 
     assert creates["n"] == 1, "FaceDetectorYN.create must run once per process, not per resolution"
     rt_a = framing._framing_runtime_or_raise(cfg)
@@ -914,26 +639,10 @@ def _capturing_run(captured):
 def _vf_of(cmd):
     return cmd[cmd.index("-vf") + 1]
 
-def test_account_cut_applies_detected_focus(tmp_path, mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)        # isolate the reframe (no subs chain)
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.8, 0.5, 0.2, 0.45]]]})
-    monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_SINGLE)
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5))   # a detected subject (2-tuple -> no zoom)
-    cfg = Config(root=tmp_path); led = _src_moment(cfg)
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
-    ok, _ = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
-                               hook="", out_path=str(cfg.clips / "acct.mp4"))
-    assert ok and ":1232:0," in _vf_of(captured["cmd"])                         # the x-offset reached the ffmpeg -vf
-
 def test_account_cut_off_flag_is_centered(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")                             # flag OFF -> focus never resolved
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
-    # subject_focus would return a focus, but the off flag must short-circuit it -> centered crop (today).
-    monkeypatch.setattr(framing, "subject_focus", lambda *a, **k: (0.8, 0.5))
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
@@ -960,14 +669,11 @@ def test_sidecar_loaders_reject_nondict_windows(tmp_path):
 # ---------------------------------------------------------------- real OpenCV/YuNet smoke (MOL-196) ----
 @pytest.mark.integration
 def test_real_yunet_detection_path_executes(tmp_path):
-    """MOL-196: every other detection test stubs cv2. This one proves the REAL OpenCV/YuNet path runs when
-    the [framing] extra is actually installed (the e2e CI job) — the vendored model loads into a real
-    cv2.FaceDetectorYN and detection runs end-to-end on a real image. Skips locally when cv2 is absent
-    (in CI's e2e job [framing] IS installed, so FANOPS_REQUIRE_E2E turns any skip here into a failure)."""
-    cv2 = framing._cv2()
-    if cv2 is None:
-        pytest.skip("cv2 (opencv-python-headless / [framing] extra) not installed")
+    """MOL-196: the REAL OpenCV/YuNet path. Fail-closed: ImportError / ToolchainMissingError is the
+    signal (no unit skip). FANOPS_REQUIRE_E2E already converts integration skips to failures."""
+    import cv2
     import numpy as np
+    framing.require_cv2(Config(root=tmp_path))
     det = framing._detector(cv2)
     assert det is not None, "vendored YuNet model failed to load into real cv2.FaceDetectorYN"
     img = tmp_path / "frame.png"
@@ -982,7 +688,7 @@ def test_detect_v_bumped():
     # cache version must be >=2 so stale 4-element (no-score) sidecars are invalidated on upgrade.
     assert framing._DETECT_V >= 2
 
-def test_detect_faces_includes_score(monkeypatch, tmp_path):
+def test_detect_faces_includes_score(tmp_path):
     # _detect_faces now returns 6-tuples (cx,cy,fh,ey,score,fw) — score is the YuNet confidence at f[14],
     # fw is the face-box WIDTH (E1, appended so score stays at [4]).
     # YuNet row: [x,y,w,h, rEyeX,rEyeY, lEyeX,lEyeY, noseX,noseY, rMX,rMY, lMX,lMY, score]
@@ -1043,7 +749,7 @@ def test_face_count_real_two_shot_is_multi():
     st = _stats([[left, right]] * 4)
     assert framing._face_count(st) == 2, "real 2-shot must remain MULTI (no regression)"
 
-def test_classify_phantom_decoy_routes_to_single(tmp_path, monkeypatch):
+def test_classify_phantom_decoy_routes_to_single():
     # end-to-end: phantom wall-art face next to a real speaker must NOT trigger multi-speaker switching.
     from tests.fixtures.speech_segments import talk_seg
     src = _talk_src(transcript=[talk_seg("here is my take on this", start=10.0, end=13.5)])
@@ -1053,26 +759,24 @@ def test_classify_phantom_decoy_routes_to_single(tmp_path, monkeypatch):
     ct = framing.classify_window(None, src, start=10.0, end=14.0, stats=st)
     assert ct == framing.CT_SINGLE, f"phantom decoy must route to SINGLE, got {ct!r}"
 
-def test_subject_focus_picks_real_speaker_over_phantom(tmp_path, monkeypatch):
+def test_subject_focus_picks_real_speaker_over_phantom(tmp_path):
     # off-center real speaker (score=0.87) must win over phantom decoy (score=0.64) as subject focus.
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
     real_face = [0.30, 0.50, 0.25, 0.45, 0.87]   # real speaker at x=0.30
     phantom   = [0.75, 0.48, 0.06, 0.43, 0.64]   # phantom near right edge
     stats = {"fps": 4.0, "frames": [[real_face, phantom]] * 4}
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: stats)
+    _write_detect(cfg, "s1", 10.0, 14.0, stats)
     fx, fy, fh, ey, fw = framing.subject_focus(cfg, src, start=10.0, end=14.0)
     assert abs(fx - 0.30) < 0.01, f"real speaker at x=0.30 must win; got fx={fx}"
 
-def test_detect_window_stores_score_in_sidecar(tmp_path, monkeypatch):
+def test_detect_window_round_trips_score_in_sidecar(tmp_path):
     # the detect sidecar must store 6-element faces (cx,cy,fh,ey,score,fw) so _pick_dominant_face uses the
     # score AND the geometry can use the width on a cache hit (E1).
     cfg = Config(root=tmp_path)
     src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: ["g0"])
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.45, 0.88, 0.15)])
+    stats = {"fps": 4.0, "frames": [[[0.5, 0.5, 0.2, 0.45, 0.88, 0.15]]]}
+    _write_detect(cfg, "s1", 10.0, 14.0, stats)
     st = framing.detect_window(cfg, src, start=10.0, end=14.0)
     assert st is not None
     assert len(st["frames"][0][0]) == 6, "detect sidecar must persist 6-element faces (score + width)"
