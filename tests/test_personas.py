@@ -282,12 +282,19 @@ def test_apply_auto_corpus_truncates_at_the_cap(tmp_path):
 def test_baked_personas_load():
     baked = P.baked_personas()
     assert 3 <= len(baked) <= 5
+    ids = [p.id for p in baked]
+    assert len(set(ids)) == len(ids)
     for p in baked:
         assert isinstance(p, P.Persona) and p.id and p.voice
         assert p.content_focus and p.hook_angle
         # a baked archetype ships its voice + levers, NEVER a corpus: hashtags are derived from platform
         # evidence, so a hand-written starter list would be exactly the unmeasured seeding this removed.
         assert p.hashtag_corpus == []
+    for i, a in enumerate(baked):
+        for b in baked[i + 1:]:
+            assert (a.voice != b.voice or list(a.cut_policy) != list(b.cut_policy)
+                    or a.hook_angle != b.hook_angle), (
+                f"{a.id} and {b.id} share voice, cut_policy, and hook_angle")
 
 
 def test_each_baked_persona_coherent(tmp_path):

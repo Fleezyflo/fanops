@@ -6,7 +6,7 @@ from fanops.config import Config
 from fanops.accounts import link_persona
 from fanops import personas as core
 from fanops.studio import views
-from fanops.persona_directives import casting_directive, hook_directive, caption_directive
+from fanops.persona_directives import casting_directive, hook_directive, caption_directive, derive_cut_spec
 from fanops.studio.app import _LEVER_EFFECTS
 
 
@@ -45,6 +45,10 @@ def test_lever_detail_rows_joins_option_effect(tmp_path):
     assert hook_row["option_effect"] in ("", None, "—")   # free text -> no vocabulary effect to join
     pol_row = next(r for r in rows if r["key"] == "cut_policy")
     assert _LEVER_EFFECTS["cut_policy"]["punchlines"] in pol_row["option_effect"]
+    story = p.model_copy(update={"cut_policy": ["storytelling"]})
+    assert derive_cut_spec(p)[1] == "center"
+    assert derive_cut_spec(story)[1] == "top"
+    assert str(casting_directive(p)) != str(casting_directive(story))
 
 
 def test_account_provenance_persona_derived_clip_profile(tmp_path):

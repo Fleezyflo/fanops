@@ -1,5 +1,5 @@
 # tests/test_persona_directives.py — MOL-171
-from fanops.personas import Persona, casting_directive, hook_directive
+from fanops.personas import Persona, casting_directive, hook_directive, baked_personas
 from fanops.persona_directives import Directive, _FOCUS_CLAUSE, _base_voice, _join
 
 def _snap_casting(p):
@@ -24,9 +24,23 @@ def test_directive_exposes_structured_fields():
     p = Persona(id="p", voice="a devoted fan", cut_policy=["punchlines"],
                 selection_scope="Favor accuracy.", hook_angle="curiosity gap")
     d = casting_directive(p)
-    assert d.select_rule and d.scope_lens and d.register == "a devoted fan"
-    assert hook_directive(p).mechanism_lean
+    assert d.select_rule.startswith("Clip for this account:")
+    assert d.scope_lens == "Favor accuracy."
+    assert d.register == "a devoted fan"
+    assert hook_directive(p).mechanism_lean == "curiosity gap"
 
 def test_every_string_consumer_still_works():
-    p = Persona(id="p", voice="bold", cut_policy=["punchlines"], hook_angle="curiosity gap")
-    assert str(casting_directive(p)) and str(hook_directive(p))
+    # compiled bodies must differ across archetypes (or carry a named clause) — not a truthy str()
+    baked = baked_personas()
+    casts = [str(casting_directive(p)) for p in baked]
+    hooks = [str(hook_directive(p)) for p in baked]
+    assert len(set(casts)) > 1
+    assert len(set(hooks)) > 1
+    punch = Persona(id="p", voice="bold", cut_policy=["punchlines"], hook_angle="curiosity gap")
+    story = Persona(id="s", voice="bold", cut_policy=["storytelling"], hook_angle="name the payoff")
+    assert "punchline" in str(casting_directive(punch))
+    assert "story" in str(casting_directive(story))
+    assert str(casting_directive(punch)) != str(casting_directive(story))
+    assert "curiosity gap" in str(hook_directive(punch))
+    assert "name the payoff" in str(hook_directive(story))
+    assert str(hook_directive(punch)) != str(hook_directive(story))
