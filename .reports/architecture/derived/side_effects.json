@@ -751,11 +751,15 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 218
+        "line": 229
       },
       {
         "call": "subprocess.run",
-        "line": 356
+        "line": 367
+      },
+      {
+        "call": "subprocess.run",
+        "line": 510
       }
     ],
     "fanops.media_probe": [
@@ -848,6 +852,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 41
   }
 }
