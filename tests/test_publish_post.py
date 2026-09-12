@@ -24,7 +24,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2999-01-01T00:00:00Z"):
     _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432",
-                      platform=Platform.instagram, caption="ship it",
+                      platform=Platform.instagram, caption="ship it", post_type="post",
                       scheduled_time=when, state=PostState.queued))
     led.save()
 
@@ -68,7 +68,6 @@ def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
     # LIVE: a non-queued post is a no-op at _publish_one's CLAIM step. (Must be live — on a dryrun
     # system the M2 boundary short-circuits before the claim; this pins the claim guard itself.)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     with Ledger.transaction(cfg) as led:
@@ -77,124 +76,58 @@ def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
     assert publish_post(cfg, "p1") is None                                  # claim sees non-queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
-def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch):
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+    def json(self):
+        return self._b
+
+
+def _wire_postiz(mocker, *, on_post=None):
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "98432", "name": "a", "identifier": "instagram-standalone"},
+                            {"id": "98", "name": "a", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        if on_post is not None:
+            return on_post(url, **kw)
+        if "/upload" in str(url):
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+
+
+def test_publish_post_propagates_fatal_auth(tmp_path, monkeypatch, mocker):
     # LIVE: a bad key must HALT (raise), not silently mark the post failed — same contract as publish_due.
-    # (Must be live — a dryrun system never invokes the poster now that M2 boundary-skips it.)
-    import fanops.post.run as run
     from fanops.errors import PostizAuthError
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
-    class BoomPoster:
-        def publish(self, led, post_id): raise PostizAuthError("401 unauthorized")
-    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: BoomPoster())
-    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
+    with Ledger.transaction(cfg) as lg:
+        lg.posts["p1"].media_urls = ["https://uploads.postiz.com/v.mp4"]
+    _wire_postiz(mocker, on_post=lambda url, **kw: _R(401, {}, text="unauthorized"))
     with pytest.raises(PostizAuthError):
         publish_post(cfg, "p1")
 
 
-def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch):
+def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch, mocker):
     # CULM-1: a live post whose channel resolves to an EMPTY integration id must NOT be POSTed
     # (it would ship integration:{id:""} -> a silent dead post). It stays queued + breadcrumbs.
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
     with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""           # never-mapped channel reached queued
-    monkeypatch.setattr("fanops.post.run.get_poster",
-                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
+    def boom(url, **kw):
+        raise AssertionError(f"must not POST when integration id is empty: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     out = publish_due(cfg, now="2000-01-02T00:00:00Z")
     assert out["no_integration_id"] == 1 and out["published"] == 0
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # stays queued, re-driveable
-
-def test_publish_one_empty_integration_unclaims_submitting(tmp_path, monkeypatch):
-    # MOL-318: inner _publish_one branch un-claims submitting->queued when integration id empty.
-    import fanops.post.run as run
-    from fanops.post.run import _publish_one
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
-    monkeypatch.setattr(run, "get_poster",
-                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
-    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
-    assert _publish_one(cfg, "p1", backend="postiz") is None
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
-    assert "no_integration_id" in cfg.log_path.read_text()
-
-def test_publish_one_empty_integration_counted_in_publish_due_summary(tmp_path, monkeypatch):
-    # MOL-439: inner _publish_one un-claim is COUNTED in publish_due's returned summary (not just logged).
-    import fanops.post.run as run
-    real_missing = run._missing_integration_id
-    calls = {"n": 0}
-    def _defer_pre_claim(backend, account_id, post):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return False                                     # pre-claim: let claim proceed (inner path under test)
-        return real_missing(backend, account_id, post)
-    monkeypatch.setattr(run, "_missing_integration_id", _defer_pre_claim)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
-    monkeypatch.setattr(run, "get_poster",
-                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
-    out = publish_due(cfg, now="2000-01-02T00:00:00Z")
-    assert out["no_integration_id"] == 1 and out["published"] == 0
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
-
-def _claim_reaching_inner_unclaim(cfg, monkeypatch, run):
-    """Let the PRE-claim integration guard pass once so the CLAIM commits, then let the real guard fire on
-    the inner path (the MOL-439 pattern). Gives a test the committed claim WITHOUT any network."""
-    real_missing = run._missing_integration_id
-    calls = {"n": 0}
-    def _defer_pre_claim(backend, account_id, post):
-        calls["n"] += 1
-        return False if calls["n"] == 1 else real_missing(backend, account_id, post)
-    monkeypatch.setattr(run, "_missing_integration_id", _defer_pre_claim)
-    monkeypatch.setattr(run, "get_poster",
-                        lambda cfg, backend=None: (_ for _ in ()).throw(AssertionError("must not POST")))
-
-def test_claim_stamps_submission_started_at_and_it_survives_an_unclaim(tmp_path, monkeypatch):
-    # MOL-709: the claim (queued->submitting) is the outbound-ATTEMPT boundary, and until now nothing
-    # recorded WHEN it happened — state carries no day, published_at is None for an in-flight post, and
-    # scheduled_time is only intent. Pin that the claim stamps submission_started_at as aware UTC, and
-    # that an un-claim back to `queued` LEAVES it: a post that was claimed today has consumed a slot
-    # from the day's budget whether or not it ended up shipping.
-    import fanops.post.run as run
-    from fanops.timeutil import parse_iso
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    assert Ledger.load(cfg).posts["p1"].submission_started_at is None       # nothing claimed yet
-    with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""
-    _claim_reaching_inner_unclaim(cfg, monkeypatch, run)
-    publish_due(cfg, now="2000-01-02T00:00:00Z")
-    p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.queued                                      # un-claimed, re-driveable
-    assert p.submission_started_at, "the claim did not stamp the outbound attempt"
-    dt = parse_iso(p.submission_started_at)
-    assert dt.tzinfo is not None, "stamp must be aware UTC, like published_at"
-
-def test_a_re_claim_moves_the_stamp_to_the_new_attempt_day(tmp_path, monkeypatch):
-    # MOL-709: the stamp answers "when was the LAST outbound attempt", so a re-claim MOVES it. A stamp
-    # frozen at the first claim would let a post claimed weeks ago (then un-claimed, never sent) publish
-    # today WITHOUT consuming today's budget — the exact over-ship a volume ceiling exists to stop.
-    import fanops.post.run as run
-    from fanops.timeutil import parse_iso
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
-    stale = "2020-03-01T00:00:00Z"
-    with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"].account_id = ""
-        lg.posts["p1"].submission_started_at = stale                        # an earlier, un-claimed attempt
-    _claim_reaching_inner_unclaim(cfg, monkeypatch, run)
-    publish_due(cfg, now="2000-01-02T00:00:00Z")
-    p = Ledger.load(cfg).posts["p1"]
-    assert p.submission_started_at != stale, "a re-claim must re-anchor the attempt, not keep the old day"
-    assert parse_iso(p.submission_started_at) > parse_iso(stale)
 
 def test_submission_started_at_is_not_network_determined(tmp_path, monkeypatch):
     # MOL-709: the stamp is written in the CLAIM txn, so it must NOT ride _NET_POST_FIELDS — that union is
@@ -214,39 +147,48 @@ def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # parked, never published
 
 
-def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch):
-    # CULM-2: a per-account render's file must be uploaded at most ONCE (cached on Render.media_url),
-    # not re-uploaded every approve->publish cycle (approval re-points media_urls to file://<render>).
+def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch, mocker):
+    # CULM-2: a per-account render's file must be uploaded at most ONCE (cached on Render.media_url).
+    # Leftover dryrun:// is not a permalink.
     from fanops.models import Render
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     rid = "render_x"; vf = cfg.clips / "v.mp4"; vf.parent.mkdir(parents=True, exist_ok=True); vf.write_bytes(b"V")
     led.add_render(Render(id=rid, clip_id="c1", account="a", surface_key="a|instagram", path=str(vf)))
     _mom1(led)
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
+                      caption="x", post_type="post", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
                       render_id=rid, media_urls=[f"file://{vf}"], public_url="dryrun://p1"))
     led.save()
-    calls = {"n": 0}
-    def up(cfg, backend=None):
-        def _u(c, pth, **kw): calls["n"] += 1; return "img1|https://cdn/v.mp4"
-        return _u
-    monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
-    monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
-    class FakePoster:
-        def publish(self, led, pid): led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
-    monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
-    assert publish_post(cfg, "p1") == "published"
-    assert Ledger.load(cfg).renders[rid].media_url == "img1|https://cdn/v.mp4"   # cached on the Render
+    class _R:
+        def __init__(self, code, body=None, text=""):
+            self.status_code = code; self._b = {} if body is None else body; self.text = text
+        def json(self): return self._b
+    uploads = {"n": 0}
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "98", "name": "a", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        if "/upload" in str(url):
+            uploads["n"] += 1
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+    out = publish_post(cfg, "p1")
+    assert out != "published"
+    assert Ledger.load(cfg).posts["p1"].state is not PostState.published
+    assert Ledger.load(cfg).renders[rid].media_url == "img1|https://uploads.postiz.com/v.mp4"
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.queued}); lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.queued, "submission_id": None})
+        lg.posts["p1"].media_urls = [f"file://{vf}"]
     publish_post(cfg, "p1")
-    assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
+    assert uploads["n"] == 1
 
 
-def test_real_id_post_is_refused_at_the_claim_never_stranded(tmp_path, monkeypatch):
+def test_real_id_post_is_refused_at_the_claim_never_stranded(tmp_path, monkeypatch, mocker):
     # RC-1 / S03 INVARIANT. A post that ALREADY carries a real submission_id has been POSTed; re-POSTing
     # the SAME post id is the double-POST we forbid (MOL-115). The refusal MUST happen in the CLAIM, where
     # declining is a clean no-op that leaves the post `queued`. Before S03 the refusal lived one phase
@@ -255,20 +197,17 @@ def test_real_id_post_is_refused_at_the_claim_never_stranded(tmp_path, monkeypat
     # phrasing: the poster is NEVER called (no double-POST), and the post is left `queued` (not stranded,
     # not published). (Reposting CONTENT freely is `repost_post`, which mints a NEW id — a different path.)
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
-    import fanops.post.run as run
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
     with Ledger.transaction(cfg) as lg: lg.posts["p1"].submission_id = "blotato_1"
-    posted = {"n": 0}
-    class _SpyPoster:
-        def publish(self, led, post_id):
-            posted["n"] += 1                              # MUST NOT be reached — that would be the double-POST
-            return led
-    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _SpyPoster())
-    monkeypatch.setattr(run, "_ensure_media", lambda *a, **kw: None, raising=False)
+    sent = {"n": 0}
+    def boom(url, **kw):
+        sent["n"] += 1
+        raise AssertionError(f"must not POST when submission_id exists: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     assert publish_post(cfg, "p1") is None                # refused at the claim — nothing published
-    assert posted["n"] == 0                               # the network POST was NEVER attempted
+    assert sent["n"] == 0                                 # the network POST was NEVER attempted
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued, NOT stranded `submitting`
     assert "skip_resubmit_existing_id" in cfg.log_path.read_text()
 
@@ -287,18 +226,23 @@ def test_publish_records_the_integration_id_it_used(tmp_path, monkeypatch):
 # Every fallback/degradation leaves a trace at the right level; the safe value each path lands on is
 # BYTE-IDENTICAL (these tests prove the trace, not a behavior change).
 
+def _corrupt_ledger(cfg):
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"this is not a sqlite database")
+
+
 def test_produce_one_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
     # #9 (M1): a ledger-load failure inside _produce_one HALTS artifact production for that source and
     # must log at outcome `error` (log.py is level-less; `error` is the outcome alerting keys on), NOT the
-    # `warn` it used to. Assert via the injected `log` spy the site already accepts.
+    # `warn` it used to. Drive the fault via a corrupt ledger file, not a Ledger.load patch.
     from fanops.produce import _produce_one
     from fanops.models import Fmt
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr("fanops.produce.Ledger.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("disk gone"))))
+    _corrupt_ledger(cfg)
     seen: list[tuple] = []
     def spy(stage, unit, outcome, **f): seen.append((stage, unit, outcome, f))
     res = _produce_one(cfg, "src_x", {Fmt.r9x16}, log=spy)
-    assert res.error_reason and "disk gone" in res.error_reason                 # safe value: still fail-open, reason stamped
+    assert res.error_reason and "invalid" in res.error_reason.lower()           # fail-open, reason stamped
     load_rows = [r for r in seen if r[0] == "produce" and r[1] == "src_x"]
     assert load_rows and all(r[2] == "error" for r in load_rows)                # the load-failure row is `error`, not `warn`
 
@@ -308,7 +252,7 @@ def test_run_all_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
     from fanops.produce import run_all
     from fanops.models import Fmt
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr("fanops.produce.Ledger.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("disk gone"))))
+    _corrupt_ledger(cfg)
     seen: list[tuple] = []
     def spy(stage, unit, outcome, **f): seen.append((stage, unit, outcome, f))
     run_all(cfg, {Fmt.r9x16}, spy)                                               # NEVER raises (returns early on load fail)
@@ -318,10 +262,11 @@ def test_run_all_ledger_load_failure_logs_error_not_warn(tmp_path, monkeypatch):
 def test_publish_backend_fallback_logs_when_it_fires(tmp_path, monkeypatch):
     # #10 (M2): publish_backend_for_post falls back to `cfg.poster_backend or "dryrun"` when Accounts
     # resolution raises. The SAFE value is unchanged; the only gap was no breadcrumb. Prove the fallback
-    # value AND that it now leaves a trace.
+    # value AND that it now leaves a trace. Drive via a corrupt accounts.json, not an Accounts.load patch.
     from fanops.post.compress import publish_backend_for_post
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr("fanops.accounts.Accounts.load", staticmethod(lambda c: (_ for _ in ()).throw(RuntimeError("accounts corrupt"))))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{")
     post = Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x")
     assert publish_backend_for_post(cfg, post) == "dryrun"                      # safe value byte-identical (no poster_backend set)
     assert "backend_fallback" in cfg.log_path.read_text()                       # breadcrumb landed

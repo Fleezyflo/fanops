@@ -128,9 +128,17 @@ def test_zernio_content_is_posted_text_for(tmp_path, monkeypatch, mocker):
 
 # ---- publish state machine (mirrors Postiz safety) ----
 def test_publish_submitted_on_2xx_with_id(tmp_path, monkeypatch, mocker):
+    from fanops.caption_compose import posted_text_for
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.zernio.requests.post", return_value=_R(201, {"_id": "z_1"}))
+    cap = {}
+    def _p(url, **kw):
+        cap["json"] = kw.get("json")
+        return _R(201, {"_id": "z_1"})
+    mocker.patch("requests.post", side_effect=_p)
     led = ZernioPoster(cfg).publish(led, "p1")
+    want = posted_text_for(cfg, led, led.posts["p1"])
+    assert want
+    assert cap["json"]["content"] == want
     assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "z_1"
 
 def test_publish_accepts_nested_post_id(tmp_path, monkeypatch, mocker):
@@ -188,7 +196,6 @@ def test_publish_network_error_parks_needs_reconcile(tmp_path, monkeypatch, mock
 
 def test_publish_429_then_success(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.zernio.time.sleep")
     mocker.patch("fanops.post.zernio.requests.post", side_effect=[_R(429, {}, text="rate"), _R(201, {"_id": "z_2"})])
     led = ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "z_2"

@@ -483,7 +483,8 @@ class PostizPoster:
         led.set_post_state(post_id, PostState.submitted)
         post = led.posts[post_id]
         post.submission_id = sid
-        post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid, body)) or post.public_url
+        post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
+                           or safe_public_url(post.public_url))
         return led
 
     def _existing_submission_for_payload(self, post, payload: dict) -> tuple[str | None, dict | None]:
@@ -594,7 +595,8 @@ class PostizPoster:
                 led.set_post_state(post_id, PostState.submitted)
                 post = led.posts[post_id]
                 post.submission_id = sid
-                post.public_url = safe_public_url(_postiz_permalink(self.cfg, sid, body)) or post.public_url
+                post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
+                                   or safe_public_url(post.public_url))
                 return led
             if resp.status_code == 401:
                 raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
