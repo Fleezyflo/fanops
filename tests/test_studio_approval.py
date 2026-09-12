@@ -482,20 +482,22 @@ def _seed_removed_hook_review(cfg):
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
 
 def test_review_shows_hook_choice_when_hook_removed(tmp_path):
-    # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever
-    # hook_removed is set (the OFF-mode approve_with_hook flow).
+    # Ghost flag: the stripped-hook badge still names what was killed; the dead moment-restore
+    # "Approve with hook" choice is not offered (per-surface hooks own the burn).
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"hook removed" in html
+    assert b"Approve with hook" not in html and b"hook-choice" not in html
 
 
 def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
-    # Legacy name kept: FANOPS_CREATIVE_VARIATION no longer gates the template (golive hardcodes OFF), so the
-    # restore choice remains visible when hook_removed is set.
+    # Product: ON-mode per-surface hooks own the burn, so the OFF-mode moment-restore choice must hide.
+    # Template `_card.html` still emits hook-choice whenever hook_removed is set — expected RED until hide.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"Approve with hook" not in html
+    assert b"hook-choice" not in html
 
 
 def test_approve_posts_large_batch_requires_confirm(tmp_path):
@@ -558,6 +560,9 @@ def test_approve_route_tells_the_operator_the_cap_dropped_one(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits", "p_long"]}).data.decode()
     assert "Approved 1" in html and "1 skipped" in html and _CAP_COPY in html
+    led = Ledger.load(cfg)
+    assert led.posts["p_fits"].state is PostState.queued
+    assert led.posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
     """The branch that would otherwise stay silent: `approved_scheduled` is only set when >=1 post promoted,
@@ -568,6 +573,7 @@ def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_long"]}).data.decode()
     assert "1 skipped" in html and _CAP_COPY in html
+    assert Ledger.load(cfg).posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path):
     # the negative control at the SURFACE: a clean approve renders no skip clause (a clause that always
@@ -607,42 +613,3 @@ def test_every_approve_route_still_admits_the_same_under_cap_post(tmp_path, rout
     r = route(cfg, "clip_fits")
     assert r.ok and r.detail["approved"] == 1 and r.detail["cut_over_cap"] == 0
     assert Ledger.load(cfg).posts["p_cap"].state is PostState.queued
-
-
-def _fake_burn(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-    """render_moment stand-in (the action imports it locally, so patch `fanops.clip.render_moment`) — no
-    ffmpeg, and a clean rendered clip so the hook restore proceeds instead of rolling back."""
-    c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
-    return led, c.model_copy(update={"state": ClipState.rendered, "hook_burn_failed": False})
-
-def test_approve_with_hook_route_tells_the_operator_the_cap_dropped_one(tmp_path, mocker):
-    # the banner branch MOL-797 could not reach: a with-hook result renders `detail.hook` copy, which named
-    # no drop at all — so this button could refuse the cut and report only "Approved 0 with hook restored".
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    html = _client(cfg).post("/posts/approve-with-hook/clip_long").data.decode()
-    assert "1 skipped" in html and _CAP_COPY in html
-
-def test_approve_with_hook_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path, mocker):
-    # the same negative control at the with-hook surface.
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_fits", acct="a", aid="1")
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    html = _client(cfg).post("/posts/approve-with-hook/clip_fits").data.decode()
-    assert "Approved 1 with hook restored" in html and _CAP_COPY not in html
-
-def test_approve_with_hook_does_not_spend_the_removed_hook_on_a_fully_dropped_clip(tmp_path, mocker):
-    # the cap is asked BEFORE the restore: a clip whose every post is over cap must not re-cut, and must
-    # keep `hook_removed` intact so the operator can still act on it after the cut is fixed.
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
-    burn = mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    r = actions.approve_with_hook(cfg, "clip_long", now=_NOW)
-    assert r.ok and r.detail["approved"] == 0 and r.detail["cut_over_cap"] == 1
-    assert burn.call_count == 1          # the off-lock pre-warm only — no in-transaction re-cut
-    led = Ledger.load(cfg)
-    assert led.moments["mom_1"].hook_removed == "lost it all" and led.moments["mom_1"].hook is None
