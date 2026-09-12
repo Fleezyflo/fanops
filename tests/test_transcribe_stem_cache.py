@@ -22,22 +22,27 @@ def test_whisper_retry_reuses_cached_stem_skips_demucs(tmp_path, mocker, monkeyp
     cfg = Config(root=tmp_path)
     path = str(cfg.sources / "src_1.mp4")
     _catalogued(cfg, path=path, sha256="deadbeef")
-    out_dir = cfg.agent_io / "transcripts"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")
-    iso = mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 1))
+    demucs_n = {"n": 0}
+    def fake_run(cmd, **kw):
+        if isinstance(cmd, (list, tuple)) and len(cmd) >= 3 and cmd[1] == "-m" and cmd[2] == "demucs":
+            demucs_n["n"] += 1
+            out = Path(cmd[cmd.index("-o") + 1])
+            d = out / "htdemucs" / Path(cmd[-1]).stem
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "vocals.mp3").write_bytes(b"VOCALS")
+            class R: returncode = 0; stderr = ""; stdout = ""
+            return R()
+        raise subprocess.TimeoutExpired(cmd, 1)
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     with Ledger.transaction(cfg) as led:
         led = transcribe_source(led, cfg, "src_1")
     assert led.sources["src_1"].state is SourceState.error
     assert led.sources["src_1"].meta.get("preserve_vocals_on_retry") is True  # MOL-814: stamped at timeout site
-    iso.assert_called_once()                                      # first pass ran demucs
-    (out_dir / "src_1.mp3").write_bytes(b"STEM")                  # demucs output landed before whisper died
-    iso.reset_mock()
-    mocker.patch("fanops.transcribe.subprocess.run", side_effect=subprocess.TimeoutExpired("whisper", 1))
+    assert demucs_n["n"] == 1                                      # first pass ran demucs
+    assert (cfg.agent_io / "transcripts" / "src_1.mp3").exists()   # isolate moved stem before whisper died
     with Ledger.transaction(cfg) as led:
         led = transcribe_source(led, cfg, "src_1")
-    iso.assert_not_called()                                       # retry reused stem — no demucs
+    assert demucs_n["n"] == 1                                       # retry reused stem — no demucs
     assert led.sources["src_1"].meta.get("vocals_isolated") is True
 
 

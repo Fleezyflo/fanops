@@ -1,14 +1,13 @@
 # tests/test_speech_trust_chain.py — Plan G: trusted segments downstream (subs + snap) end-to-end
+from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
 from fanops.clip import render_moment, snap_window, _trusted_transcript
-from fanops import overlay
 from tests.fixtures.speech_segments import talk_seg, LOW_LOGPROB, LEGACY_EN
 
 
 def _fake_run_writing_clip(captured):
-    from pathlib import Path
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
         if not str(cmd[-1]).startswith("-"):
@@ -24,10 +23,8 @@ def _vf_of(cmd):
 
 
 def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker, monkeypatch):
-    """Talk source: render follows the pick; transcript is not burned at render."""
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
+    """Talk source: render follows the pick; transcript captions are never burned (hook-only overlay)."""
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     junk = {**LOW_LOGPROB, "start": 9.4, "end": 9.8, "text": "junk start"}
     good = talk_seg("they slept on me", start=9.3, end=12.0)
     good_end = talk_seg("watch this part", start=15.0, end=17.2)
@@ -47,12 +44,12 @@ def test_talk_window_snap_uses_trusted_only_no_transcript_burn(tmp_path, mocker,
     assert float(cmd[cmd.index("-to") + 1]) == 6.5          # pick, not 9.3; not ss+to == 17.2
     assert "subtitles=" not in _vf_of(cmd)
     assert not list(cfg.clips.glob("*.ass"))
+    assert clip.path and Path(clip.path).exists()
 
 
 def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeypatch):
     """Music/b-roll window: only rejected ASR -> no junk in subs; snap ignores junk boundaries."""
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     tr = [{**LOW_LOGPROB, "start": 9.6, "end": 10.0, "text": "background noise"},
           {**LOW_LOGPROB, "start": 21.5, "end": 22.2, "text": "more noise"}]
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -64,7 +61,7 @@ def test_music_window_junk_excluded_from_subs_and_snap(tmp_path, mocker, monkeyp
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered
-    assert "subtitles=" not in _vf_of(captured["cmd"])     # no trusted lines -> no transcript burn
+    assert "subtitles=" not in _vf_of(captured["cmd"])     # no hook + hook-only overlay -> no transcript burn
     cmd = captured["cmd"]
     assert float(cmd[cmd.index("-ss") + 1]) == 10.0        # render follows the pick
     assert float(cmd[cmd.index("-to") + 1]) == 12.0

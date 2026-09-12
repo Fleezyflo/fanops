@@ -2,7 +2,8 @@
 import itertools
 from fanops.config import Config
 from fanops.personas import (CUT_POLICY, _FOCUS_CLAUSE, _FOCUS_PROFILE, _FRAMING_MAP,
-                             derive_cut_spec, lever_catalog, compose_breakdown, Persona)
+                             derive_cut_spec, lever_catalog, compose_breakdown, Persona,
+                             casting_directive)
 
 # ---------------------------------------------------------------------------------------------------------
 # GOLDEN snapshots — the EXACT current literals (captured from live code, 2026-06-27). These are the frozen
@@ -77,8 +78,8 @@ def test_compose_fingerprint_for_live_shaped_personas(tmp_path):
         Persona(id="burner-bold", voice="", cut_policy=["bold-statement", "hype"]),
     ]
     fps = {p.id: _fp(cfg, p) for p in personas}
-    assert len({fp[0] for fp in fps.values()}) == 3
-    assert {p.id: _fp(cfg, p) for p in personas} == fps
+    assert len(set(fps.values())) == 3
+    assert len({str(casting_directive(p)) for p in personas}) == 3
 
 def test_registry_is_a_pure_leaf():
     import fanops.persona_levers as pl
