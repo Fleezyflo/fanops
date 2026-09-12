@@ -259,8 +259,8 @@ def cmd_verify_live(cfg: Config) -> int:
     # MOL-113: READ-ONLY liveness report. For each published/analyzed post, ask the platform's own API about
     # THIS specific object via the confirm_post_live seam (IG per-object resolve / TikTok oEmbed) and print
     # confirmed/unconfirmed + owner. NEVER writes the ledger (load, iterate, print — no .save()); a run leaves
-    # 00_control byte-identical. Fail-open: a post with no creds / no confirmable signal is reported unconfirmed,
-    # never crashes. This is the on-demand mirror of the primitive MOL-117's gate consumes.
+    # 00_control byte-identical. Per-post: no creds / no confirmable signal is reported unconfirmed, never
+    # crashes. 0/N confirmed with nonempty targets is a nonzero exit (not a vacuous pass).
     from fanops.meta_graph import confirm_post_live
     from fanops.models import PostState
     led = Ledger.load(cfg)
@@ -276,7 +276,7 @@ def cmd_verify_live(cfg: Config) -> int:
         if res.get("confirmed"): confirmed += 1
         print(f"{p.id}\t{p.platform.value}\t{'LIVE' if res.get('confirmed') else 'unconfirmed'}\towner={res.get('owner')}")
     print(f"verify-live: {confirmed}/{len(targets)} confirmed live (read-only; ledger untouched)")
-    return 0
+    return 1 if targets and confirmed == 0 else 0
 
 def cmd_adjust(cfg: Config, winner_pct: float, retire_pct: float, lift_floor: float) -> int:
     # Phase-B-followup: wrap the whole classify->amplify->retire under one transaction (B4). No

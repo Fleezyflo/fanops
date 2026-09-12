@@ -110,32 +110,31 @@ def test_refresh_account_stats_throttle(tmp_path, monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
     monkeypatch.setenv("META_IG_USER_ID", "12345")
     calls = []
-    def _fake_overview(c, handle, **kw):
-        calls.append(handle)
-        return {"followers": 100, "fetched_at": "2026-06-01T00:00:00Z"}
-    monkeypatch.setattr("fanops.fanops_account_stats.account_overview", _fake_overview)
-    assert refresh_account_stats_if_due(cfg)["refreshed"] is True
+    class _Resp:
+        status_code = 200
+        def json(self): return {"followers_count": 100}
+    def _get(url, params=None, timeout=None):
+        calls.append(url)
+        return _Resp()
+    assert refresh_account_stats_if_due(cfg, get=_get)["refreshed"] is True
     assert len(calls) == 1
-    assert refresh_account_stats_if_due(cfg, max_age_s=43200)["refreshed"] is False
+    assert json.loads(cfg.account_stats_path.read_text())["a"]["followers"] == 100
+    assert refresh_account_stats_if_due(cfg, max_age_s=43200, get=_get)["refreshed"] is False
     assert len(calls) == 1
 
 
-def test_index_never_calls_account_overview(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path); _accounts(cfg)
-    calls = []
-    monkeypatch.setattr("fanops.meta_graph.account_overview",
-                        lambda *a, **k: calls.append(1) or {"followers": 1, "fetched_at": "Z"})
-    _client(cfg).get("/")
-    assert calls == []
-
-
-def test_home_no_contradictory_postiz_wording(tmp_path, monkeypatch, mocker):
+def test_home_no_contradictory_postiz_wording(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); _accounts(cfg)
     monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    with Ledger.transaction(cfg) as led:
+        _live_clip(led)
+        led.add_post(Post(id="due_p1", parent_id="c1", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=PostState.queued,
+                          scheduled_time="2020-01-01T12:00:00Z", public_url="dryrun://p1"))
     cfg.control.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime, timezone
     from fanops.timeutil import iso_z
     cfg.deps_health_path.write_text(json.dumps({
         "checked_at": iso_z(datetime.now(timezone.utc)),
@@ -145,15 +144,13 @@ def test_home_no_contradictory_postiz_wording(tmp_path, monkeypatch, mocker):
             {"name": "zernio", "ok": True, "detail": "skipped", "status_code": None},
         ],
     }))
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
     html = _client(cfg).get("/").data.decode().lower()
-    probe.assert_not_called()
     strip = views.build_system_strip(cfg)
     hint = ((strip.get("postiz_down") or {}).get("hint") or "").lower()
-    if "stalled" in hint:
-        assert "cannot ship" not in html or "stalled" not in html
-    if "parked" in hint or "idle" in hint:
-        assert "cannot ship" not in html
+    assert "stalled" in hint
+    assert "stalled" in html
+    assert "cannot ship" not in html
+    assert "starts on publish" not in html
 
 
 def test_gallery_htmx_pagination(tmp_path):

@@ -107,12 +107,13 @@ def test_review_renders_collapsible_batch_section(tmp_path):
     _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "<details" in html and "Launch Week" in html         # batch name in a collapsible <summary>
+    assert "clip_1" in html
 
 def test_review_unbatched_renders_ungrouped_section(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "Ungrouped" in html and b"c" in _client(cfg).get("/review?view=list").data   # card still renders
+    assert "Ungrouped" in html and "clip_1" in html   # card still renders
 
 
 # ---- Face 4 follow-up: B3 header / B4 excluded / C3 affinity / B2 filter ----
