@@ -84,13 +84,16 @@ def test_review_defines_moment_and_surface_at_most_once(tmp_path):
             led.add_clip(Clip(id=f"clip_{acct}", parent_id=f"mom_{acct}", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
             led.add_post(Post(id=f"p_{acct}", parent_id=f"clip_{acct}", account=acct, account_id="1", platform=Platform.instagram,
                               caption="c", state=PostState.awaiting_approval, scheduled_time=_z(now + timedelta(hours=3))))
-    # U6: bare /review is switcher-only — no glossary inline; legacy worklist on account=all defines moment once.
+    # U6: bare /review is switcher-only — no moment/surface glossary inline; page intro defines integration once.
+    # Legacy worklist on account=all defines moment once (still no surface — feed UX dropped it).
     bare = _client(cfg).get("/review").get_data(as_text=True)
     assert bare.count('data-term="moment"') == 0
     assert bare.count('data-term="surface"') == 0
+    assert bare.count('data-term="integration"') == 1
     legacy = _client(cfg).get("/review?account=all&view=list").get_data(as_text=True)
     assert legacy.count('data-term="moment"') == 1
     assert legacy.count('data-term="surface"') == 0          # feed UX dropped the inline surface glossary
+    assert legacy.count('data-term="integration"') == 1      # page intro, once
 
 
 def test_home_no_batch_glossary(tmp_path):
@@ -100,6 +103,7 @@ def test_home_no_batch_glossary(tmp_path):
     b = create_batch(led, name="B1", target_accounts=["a"], now_iso="2026-06-22T00:00:00.000001Z"); led.save()
     home = _client(cfg).get("/").get_data(as_text=True)
     assert home.count('data-term="batch"') == 0
+    assert home.count('data-term="moment"') == 1             # Home intro defines moment, never batch
     review = _client(cfg).get(f"/review?batch={b.id}").get_data(as_text=True)
     assert review.count('data-term="batch"') >= 1
 
@@ -120,6 +124,27 @@ def test_cast_present_when_on_variant_term_absent(tmp_path, monkeypatch):
     html = _client(cfg).get("/review").get_data(as_text=True)
     assert html.count('data-term="cast"') == 1
     assert 'data-term="variant"' not in html
+
+
+def test_golive_defines_integration_once(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert html.count('data-term="integration"') == 1
+
+
+def test_schedule_defines_surface_once(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    html = _client(cfg).get("/schedule").get_data(as_text=True)
+    assert html.count('data-term="surface"') == 1
+
+
+def test_posted_and_lift_define_variant_once(tmp_path):
+    cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
+    c = _client(cfg)
+    posted = c.get("/posted").get_data(as_text=True)
+    lift = c.get("/lift", follow_redirects=True).get_data(as_text=True)
+    assert posted.count('data-term="variant"') == 1
+    assert lift.count('data-term="variant"') == 1            # /lift 301s to /posted
 
 
 # ── no surface 500s with the glossary wired in ─────────────────────────────────────────────────────
