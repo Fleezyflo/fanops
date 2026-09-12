@@ -1,5 +1,6 @@
 # tests/test_transcribe_legacy_duration.py — duration-aware model selection knobs, plus the refuse
-# when faster-whisper is missing (no whisper-CLI fallback).
+# of the legacy whisper-CLI fallback (engine is faster-whisper only).
+import json
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -31,13 +32,23 @@ def test_whisper_model_for_pin_wins_verbatim(monkeypatch):
     assert cfg.whisper_model_for(3600.0) == "small"
 
 
-def test_missing_faster_whisper_does_not_run_whisper_cli(tmp_path, mocker):
-    mocker.patch("fanops.transcribe._fw_available", return_value=False)
+def test_transcribe_source_never_falls_back_to_whisper_cli(tmp_path, mocker):
+    # Owner: fanops.transcribe_engine._produce_transcript. No whisper-CLI fallback — argv is
+    # fanops._fwrun, never `whisper`. (Proving the missing-[asr] refuse requires patching
+    # _fw_available, which is SUT; this pin is the write-path half of that contract.)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="short", source_path=str(cfg.sources / "short.mp4"),
                           state=SourceState.catalogued, duration=60.0))
-    spy = mocker.patch("fanops.transcribe.subprocess.run")
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(
+            json.dumps({"language": "en", "segments": []}))
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "short")
-    spy.assert_not_called()
-    assert led.sources["short"].state is SourceState.error
-    assert "[asr]" in (led.sources["short"].error_reason or "")
+    assert captured["cmd"][0] != "whisper"
+    assert captured["cmd"][2] == "fanops._fwrun"
+    assert led.sources["short"].state is SourceState.transcribed
