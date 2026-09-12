@@ -22,18 +22,25 @@ def test_gc_accepts_valid_keep_days(tmp_path):
 # ---- content-lifecycle Phase 3: gc default from cfg.gc_keep_days + 05_scheduled cleanup ----
 def test_gc_cli_default_uses_cfg_keep_days(monkeypatch, tmp_path):
     # `fanops gc` with NO --keep-days resolves to cfg.gc_keep_days (not the old hardcoded 30).
+    import os, time, json
     from fanops.cli import main
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_GC_KEEP_DAYS", "7")
-    monkeypatch.setattr("fanops.cli.Config", lambda: Config(root=tmp_path))   # main() builds Config() with cwd
-    captured = {}
-    def _fake_gc(cfg, keep_days):
-        captured["keep_days"] = keep_days; return 0
-    monkeypatch.setattr("fanops.cli.cmd_gc", _fake_gc)
-    main(["gc"])
-    assert captured["keep_days"] == 7
-    captured.clear()
-    main(["gc", "--keep-days", "14"])    # explicit wins
-    assert captured["keep_days"] == 14
+    cfg = Config(root=tmp_path)
+    Ledger.load(cfg).save()
+    cfg.scheduled.mkdir(parents=True, exist_ok=True)
+    old = cfg.scheduled / "old.json"
+    recent = cfg.scheduled / "recent.json"
+    old.write_text(json.dumps({"x": 1}))
+    recent.write_text(json.dumps({"x": 2}))
+    old_t = time.time() - 10 * 86400
+    rec_t = time.time() - 3 * 86400
+    os.utime(old, (old_t, old_t))
+    os.utime(recent, (rec_t, rec_t))
+    assert main(["gc"]) == 0
+    assert not old.exists() and recent.exists()
+    assert main(["gc", "--keep-days", "2"]) == 0
+    assert not recent.exists()
 
 def test_gc_cleans_scheduled_payloads(tmp_path):
     # content-lifecycle Phase 3: gc removes OLD 05_scheduled/*.json dryrun payloads (older than cutoff),

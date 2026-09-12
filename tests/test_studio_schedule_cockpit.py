@@ -63,10 +63,11 @@ def test_reschedule_bucket_ignores_awaiting_and_published(tmp_path):
 
 
 # ---- routes ----
-def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
+def test_get_schedule_shows_publish_sendback_respread(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
     html = _client(cfg).get("/schedule").data
-    assert b"schedule-guard" in html            # dryrun guard, no integration ids
+    assert b"schedule-guard" in html
+    assert b"ig_integ_1" not in html       # schedule HTML does not render the integration id
     assert b"Publish" in html              # ship from the bucket
     assert b"Review" in html                # un-approve
     assert b"Re-spread" in html           # routine respread
@@ -81,8 +82,11 @@ def test_schedule_row_renders_lazy_clip_preview(tmp_path):
 
 def test_schedule_respread_route_moves_posts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", when=_z(_NOW + timedelta(hours=9)))
+    before = Ledger.load(cfg).posts["p1"].scheduled_time
     r = _client(cfg).post("/schedule/respread")
     assert r.status_code == 200
+    after = Ledger.load(cfg).posts["p1"].scheduled_time
+    assert after and after != before
 
 def test_schedule_unapprove_route_sends_back_to_review(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", state=PostState.queued)

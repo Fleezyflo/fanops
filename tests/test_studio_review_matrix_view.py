@@ -64,7 +64,7 @@ def test_matrix_focuses_newest_source_by_default(tmp_path):
 def test_matrix_uncast_channel_renders_dash(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?view=matrix").data.decode()
-    assert "—" in html                                               # m1 × @b·tiktok is uncast → em-dash cell
+    assert 'class="matrix-cell empty"' in html                       # m1 × @b·tiktok is uncast → empty cell, not a bare em-dash
 
 def test_view_list_renders_legacy_cards_not_matrix(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)

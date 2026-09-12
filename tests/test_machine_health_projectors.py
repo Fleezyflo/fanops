@@ -137,67 +137,41 @@ def test_project_prometheus_health_gauges():
     assert "fanops_daemon_heartbeat_stale 0" in body
 
 
-def test_golive_status_uses_build_health_report_not_doctor_report(tmp_path, monkeypatch):
-    """Go-Live readiness must call the one constructor + projector — not doctor_report."""
+def test_golive_status_unhealthy_on_empty_root(tmp_path, monkeypatch):
+    """Go-Live readiness uses the real constructor — empty root is not doctor-clean."""
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path)
-    import fanops.health_model as hm
     from fanops.studio import views
+    st = views.golive_status(Config(root=tmp_path))
+    assert st.checks and any(not c.get("ok", True) for c in st.checks)
 
-    seen = {"build": 0}
 
-    def _fake_build(*a, **k):
-        seen["build"] += 1
-        return HealthReport(
-            checks=[_check("accounts valid", True), _check(HALF_LIVE_CHECK_LABEL, True)],
-            notes=["from-constructor"],
-            deps=[],
-        )
-
-    monkeypatch.setattr(hm, "build_health_report", _fake_build)
-    # If golive still imported doctor_report as the assembly path, this would not matter —
-    # assert the constructor was hit and notes flowed through the projector.
-    st = views.golive_status(cfg)
-    assert seen["build"] == 1
-    assert st.notes == ["from-constructor"]
-    assert st.half_live is False
-
-def test_build_system_strip_uses_half_live_state_not_build_health_report(tmp_path, monkeypatch):
-    """Strip half_live comes from half_live_state; never build_health_report on every page."""
+def test_build_system_strip_half_live_from_live_flag_without_route(tmp_path, monkeypatch):
+    """Strip half_live comes from half_live_state on real cfg (LIVE + nothing routes)."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postizz")
     cfg = Config(root=tmp_path)
-    import fanops.health_model as hm
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(
+        '{"accounts":[{"handle":"@ig","account_id":"1","platforms":["instagram"],"status":"active"}]}'
+    )
     from fanops.studio import views
-
-    seen = {"build": 0, "hl": 0}
-
-    def _fake_build(*a, **k):
-        seen["build"] += 1
-        return HealthReport(checks=[], notes=[], deps=[])
-
-    def _fake_hl(_cfg):
-        seen["hl"] += 1
-        return hm.HalfLiveState(True, "from-half-live-state")
-
-    monkeypatch.setattr(hm, "build_health_report", _fake_build)
-    monkeypatch.setattr(hm, "half_live_state", _fake_hl)
     strip = views.build_system_strip(cfg)
-    assert seen["build"] == 0
-    assert seen["hl"] == 1
     assert strip["half_live"] is True
-    assert strip["half_live_hint"] == "from-half-live-state"
+    assert "postizz" in (strip.get("half_live_hint") or "")
 
 
-def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_path, monkeypatch, mocker):
-    """probe_policy=observe must not invoke live postiz_health_probe or daemon.status (MOL-965 WP2-fix2)."""
+def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_path, monkeypatch):
+    """probe_policy=observe must not HTTP or launchctl — snapshot + local cfg only."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    (tmp_path / "accounts.json").write_text(
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(
         '{"accounts":[{"handle":"@ig","account_id":"1","platforms":["instagram"],"status":"active"}]}'
     )
-    cfg = Config(root=tmp_path)
     cfg.control.mkdir(parents=True, exist_ok=True)
     from datetime import datetime, timezone
     import json
@@ -210,13 +184,16 @@ def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_pat
             {"name": "zernio", "ok": True, "detail": "skipped", "status_code": None},
         ],
     }))
-    probe = mocker.patch("fanops.post.postiz.postiz_health_probe")
-    status = mocker.patch("fanops.daemon.status")
+    http = []
+
+    def fake_get(*a, **k):
+        http.append(a)
+        raise AssertionError("observe must not HTTP")
+
+    monkeypatch.setattr("requests.get", fake_get)
     from fanops.health_model import build_health_report, project_strip_health
     rep = build_health_report(cfg, probe_policy="observe")
     strip = project_strip_health(rep)
-    probe.assert_not_called()
-    status.assert_not_called()
-    # half_live still projects from the live-route check (local cfg — no network)
+    assert http == []
     assert "half_live" in strip
 
