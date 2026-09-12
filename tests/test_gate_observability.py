@@ -11,7 +11,8 @@ import fanops.pipeline as pipeline
 
 
 def test_gate_kinds_is_the_single_source_of_all_three():
-    assert pipeline.GATE_KINDS == ("moments", "moment_hooks", "captions")
+    from fanops.responder import _SCHEMA
+    assert pipeline.GATE_KINDS == tuple(_SCHEMA)
 
 
 def test_blocked_note_flags_a_stuck_moment_hooks_gate():
@@ -37,3 +38,18 @@ def test_status_surfaces_awaiting_moment_hooks(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "awaiting_moment_hooks=" in out                    # every gate count is on `fanops status`
     assert "awaiting_captions=" in out
+
+
+def test_status_wait_line_for_pending_gate(tmp_path, capsys):
+    from fanops.agentstep import write_request
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", state=SourceState.catalogued))
+    led.save()
+    write_request(cfg, kind="moments", key="src_1.acct_a",
+                  payload={"source_id": "src_1", "duration": 10})
+    cmd_status(cfg)
+    out = capsys.readouterr().out
+    assert "wait=" in out

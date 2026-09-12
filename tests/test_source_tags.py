@@ -131,22 +131,21 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     assert "Choose ONLY from the catalog" in p or "only from the catalog" in p.lower()
 
 
-def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
-    captured = {}
+def test_shortlist_empty_catalog_does_not_invent(mocker):
+    """Empty catalog is fail-closed: never invent names (skill: never invent)."""
+    envelope = {"structured_output": {"keep": ["#rickross", "#hiphop"], "reject": []},
+                "result": "", "session_id": "s"}
 
-    def fake_claude(prompt, schema, **_k):
-        captured["prompt"] = prompt
-        return {"keep": ["#rickross", "#hiphop"]}, "m", False
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
     from fanops.source_tags import shortlist_source_tags
-    names = shortlist_source_tags(_src(title="Rick Ross talks tiers"), "he says nobody left to fight", [])
-    assert names == ["#rickross", "#hiphop"]
-    assert "Choose ONLY from the catalog" not in captured["prompt"]
-    assert "title: Rick Ross talks tiers" in captured["prompt"]
-    shortlist_source_tags(_src(title=None, sid="src_0492c4e71071"), "he says nobody left to fight", [])
-    assert "src_0492c4e71071" not in captured["prompt"]
-    assert "title:" not in captured["prompt"]
+    names = shortlist_source_tags(_src(title="Rick Ross talks tiers"),
+                                  "he says nobody left to fight", [])
+    assert names == []
 
 
 def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
@@ -378,7 +377,7 @@ def test_scrape_unavailable_leaves_sidecar_absent(tmp_path):
     assert SOURCE_TAG_LOCKS_NAME == "source_tag_locks.json"
 
 
-def test_no_graph_leaves_sidecar_absent(tmp_path):
+def test_no_graph_still_stamps_researched_at(tmp_path):
     """Graph absence must not withhold researched_at after scrape finishes."""
     cfg = _cfg(tmp_path)
     seen = {"research": 0}
@@ -894,7 +893,7 @@ def test_advance_calls_lock_ready_after_produce():
     assert "shortlist_source_tags" in src
 
 
-def test_graph_refused_writes_nothing(tmp_path):
+def test_graph_refused_still_stamps(tmp_path):
     from fanops.meta_graph import GraphRefused
     cfg = _cfg(tmp_path)
     client = _SearchClient({"music": [_Hit("music")]},

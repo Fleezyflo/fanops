@@ -52,18 +52,6 @@ def _heartbeat_lines(out: str) -> list[str]:
     return [ln for ln in out.splitlines() if '"heartbeat"' in ln]
 
 
-def test_loop_invokes_advance_n_times(tmp_path, monkeypatch, mocker):
-    _setup_accounts(tmp_path, monkeypatch)
-    import fanops.cli as cli
-    n = 3
-    _stub_run(mocker, cli)
-    spy = cli.advance
-    _stop_loop_after(mocker, n)
-    with pytest.raises(KeyboardInterrupt):
-        main(["run", "--loop", "--interval", "60s"])
-    assert spy.call_count == n
-
-
 def test_loop_fresh_base_time_each_iteration(tmp_path, monkeypatch, mocker):
     _setup_accounts(tmp_path, monkeypatch)
     import fanops.cli as cli

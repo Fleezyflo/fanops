@@ -391,13 +391,14 @@ def test_reconcile_read_error_writes_nothing_and_only_logs(tmp_path):
 
 def test_reconcile_logs_each_post(tmp_path):
     # Phase E4: a reconcile pass must leave an audit trail in run.log so a cron+mail/PagerDuty
-    # monitor can see which parked posts were touched and how they resolved. Today reconcile_posts
-    # emits NO log lines (no get_logger call), so cfg.log_path is never written. Seed one post that
-    # resolves to 'published' and assert the run log records both the stage ('reconcile') and the
-    # post id ('p1').
+    # monitor can see which parked posts were touched and how they resolved. Seed one post that
+    # resolves to 'published' (https permalink — not a comment claiming published for url "u")
+    # and assert the run log records both the stage ('reconcile') and the post id ('p1').
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p1", PostState.needs_reconcile, sub="sub_t")
-    reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "published", "publicUrl": "https://instagram.com/p/abc"})
+    assert led.posts["p1"].state is PostState.published
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "reconcile" in log
     assert "p1" in log
@@ -704,13 +705,14 @@ def test_a_real_token_past_the_old_horizon_is_also_untouched(tmp_path):
     ["published", "failed", "unknown", "raises"],
     ["fanops_FAKE", "blotato_REAL"],
     ["", "stuck 9h past schedule — check the channel"])))
-def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
+def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypatch):
     # THE 32-CELL INVARIANT, inverted. A needs_reconcile post 73h past schedule — past the horizon at which
     # the deleted ladder declared it lost — is decided by the OBSERVATION and by nothing else, across every
     # (backend × observation × token × error_reason). A published/failed answer resolves it; an unknown one,
     # or a read that raised, leaves the ledger row BYTE-IDENTICAL. The three axes that could once veto the
     # outcome (a raising read, a real token, a stale reason) still never do — but now what they cannot veto
     # is a NON-write, so no cell can invent a verdict the backend never gave.
+    monkeypatch.setenv("FANOPS_POSTER", backend)
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,

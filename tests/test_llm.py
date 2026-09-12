@@ -437,12 +437,14 @@ class TestExtractJsonObject:
 # --- MOL-241: wire JSON-repair into result-resolution tail ---
 
 def test_claude_json_salvages_prose_wrapped_result(mocker):
-    picks = {"picks": [{"id": "m1", "score": 0.9}]}
+    from fanops.llm import LlmSchemaError
+    picks = {"picks": [{"id": "m1", "score": 0.9}]}   # missing schema required field "x"
     prose = f'Here are my picks: {json.dumps(picks)}'
     envelope = {"structured_output": None, "result": prose, "session_id": "s"}
     class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    assert claude_json("pick moments", _SCHEMA) == picks
+    with pytest.raises(LlmSchemaError):
+        claude_json("pick moments", _SCHEMA)
 
 def test_claude_json_salvage_logs_warning_breadcrumb(mocker, caplog):
     import logging

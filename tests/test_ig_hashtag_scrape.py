@@ -425,15 +425,21 @@ def test_scrape_launch_argv_is_safari_never_google_chrome(tmp_path, monkeypatch)
     import fanops.ig_hashtag_scrape as igs
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "perca.late")
     cfg = Config(root=tmp_path)
-    argv = igs.scrape_chrome_launch_argv(cfg, "perca.late")
-    assert argv is not None
-    joined = " ".join(argv)
-    assert "Safari" in argv
-    assert argv[-1] == "perca"
-    assert "Google Chrome" not in joined
-    assert "9222" not in joined and "9223" not in joined
-    assert "remote-debugging" not in joined
-    assert "Application Support/Google/Chrome" not in joined
+    osa = []
+
+    def fake_co(cmd, *a, **k):
+        osa.append(list(cmd) if not isinstance(cmd, str) else cmd)
+        input_script = k.get("input") or ""
+        osa.append(input_script)
+        return "2\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
+    assert igs.launch_scrape_chrome(cfg, "perca.late") is True
+    blob = " ".join(str(x) for x in osa)
+    assert "Safari" in blob
+    assert "Google Chrome" not in blob
+    assert "9222" not in blob and "9223" not in blob
+    assert "remote-debugging" not in blob
 
 
 def test_scrape_login_cold_start_password_writes_envelope(tmp_path, monkeypatch):

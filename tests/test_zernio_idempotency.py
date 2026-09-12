@@ -679,6 +679,7 @@ def test_52_connecttimeout_is_retried(tmp_path, monkeypatch):
     rec = _Rec(requests.exceptions.ConnectTimeout("blip"), _R(201, {"_id": "z1"}))
     p = _publish(cfg, _post(), rec, monkeypatch)
     assert len(rec.calls) == 2 and p.state is PostState.submitted
+    assert rec.rids[0] == rec.rids[1]
 
 def test_52b_readtimeout_is_retried_as_idempotent_replay(tmp_path, monkeypatch):
     # Same x-request-id: a ReadTimeout retry is a replay, not a second create. Parking on the first

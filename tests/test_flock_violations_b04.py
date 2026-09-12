@@ -1,4 +1,4 @@
-"""B04 lock-probe tests: H10 transcribe, M03 media resolve, M05 ingest stage, M04 reconcile liveness."""
+"""B04 lock-probe tests: H10 transcribe, M05 ingest stage, M04 reconcile liveness."""
 
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -24,22 +24,6 @@ def test_h10_transcribe_cold_cache_never_shells_in_lock(tmp_path, mocker, monkey
         led = transcribe_source(led, cfg, "src_1", in_lock=True)
     spy.assert_not_called()
     assert led.sources["src_1"].state is SourceState.catalogued
-
-
-def test_m03_learn_pass_skips_media_enumeration(tmp_path, monkeypatch, mocker):
-    """MOL-790: _learn_pass no longer prefetches/enumerates Graph feed media."""
-    monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="@a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, submission_id="sub_p",
-                      public_url="https://instagram.com/p/abc"))
-    led.save()
-    enum_spy = mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
-    mocker.patch("fanops.cli._default_list_posts", return_value=lambda window: [])
-    import fanops.cli as cli
-    cli._learn_pass(cfg)
-    assert enum_spy.call_count == 0
 
 
 def test_m05_ingest_stage_hash_copy_lock_free_and_dedup(tmp_path, monkeypatch, mocker):

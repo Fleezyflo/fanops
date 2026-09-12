@@ -96,9 +96,13 @@ def test_dryrun_boundary_writes_preview_not_artifacts(tmp_path, monkeypatch):
     sidecar = cfg.scheduled / "p1.json"
     assert sidecar.exists()                                     # preview WAS written at the boundary
     assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600     # owner-only at rest (caption/media/target)
-    post = Ledger.load(cfg).posts["p1"]
+    led = Ledger.load(cfg)
+    post = led.posts["p1"]
     assert post.state is PostState.queued                      # still held at the boundary
     assert post.submission_id is None and post.public_url is None   # no fabricated distribution artifacts
+    from fanops.caption_compose import posted_text_for
+    payload = json.loads(sidecar.read_text())
+    assert payload["text"] == posted_text_for(cfg, led, post)
 
 
 def _ship_route_workspace(cfg):

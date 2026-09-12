@@ -403,6 +403,8 @@ def test_intensity_filter_is_new_function():
     assert callable(filter_peaks_by_intensity)
     assert not hasattr(sig, "filter_peaks_by_energy")
 
-def test_no_energy_key_referenced():
-    import inspect
-    assert "energy" not in inspect.signature(filter_peaks_by_intensity).parameters
+def test_peak_rank_score_uses_energy_when_present():
+    from fanops.signals import _peak_rank_score
+    assert _peak_rank_score({"energy": 0.95, "score": 0.1}) == 0.95
+    assert _peak_rank_score({"score": 0.4}) == 0.4
+    assert _peak_rank_score({"energy": None, "score": 0.2}) == 0.2

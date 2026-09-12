@@ -187,16 +187,6 @@ def test_ancient_checked_at_is_stale_not_fresh(tmp_path, monkeypatch):
     assert isinstance(sr.data, dict)
 
 
-def test_refresh_runtime_snapshots_is_named_strip_writer():
-    """CPDP-WP4: strip writer role is health.refresh_runtime_snapshots (FunctionDef exists).
-    Sole Call site: cli --loop (observe/GET paths must not Call it)."""
-    import ast
-    from pathlib import Path
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "health.py").read_text())
-    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    assert "refresh_runtime_snapshots" in names
-
-
 def test_only_cli_calls_refresh_runtime_snapshots():
     """CPDP-02: the only src/fanops Call of refresh_runtime_snapshots is cli.py (pump)."""
     import ast

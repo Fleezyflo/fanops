@@ -19,16 +19,24 @@ def test_web_search_exact_name():
 
 
 def test_web_search_invented_name_is_empty():
-    sess = IgWebSession("u", fetch=lambda *_a, **_k: {"name": "nope", "media_count": 0, "status": "ok"})
-    assert search_hashtags_scrape(sess, "nope") == []
+    sess = IgWebSession("u", fetch=lambda *_a, **_k: {
+        "name": "nope", "id": "9", "media_count": 99, "status": "ok"})
+    assert search_hashtags_scrape(sess, "music") == []
 
 
-def test_web_403_is_login_required():
-    def fetch(method, url, body=None):
-        raise LoginRequired("web 403")
-    sess = IgWebSession("u", fetch=fetch)
+def test_web_403_is_login_required(tmp_path, monkeypatch):
+    import fanops.ig_web_scrape as iws
+    iws._LAST_REQUEST_MONO.clear()
+    monkeypatch.setattr(iws.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.ig_safari_shell.safari_xhr", lambda *_a, **_k: json.dumps({
+        "status": 403,
+        "url": "https://www.instagram.com/api/v1/tags/music/info/",
+        "text": "{}",
+    }))
+    cfg = Config(root=tmp_path)
     try:
-        sess.search_hashtags("music")
+        iws.safari_fetch("GET", "https://www.instagram.com/api/v1/tags/music/info/",
+                         user="u", cfg=cfg)
         raise AssertionError("expected LoginRequired")
     except LoginRequired:
         pass
@@ -159,15 +167,21 @@ def test_lock_walk_uses_unfrozen_users(tmp_path, monkeypatch):
     assert [c._fanops_scrape_user for c in clients] == ["mark", "wolf"]
 
 
-def test_scrape_launch_never_names_google_chrome():
-    from pathlib import Path
+def test_scrape_launch_never_names_google_chrome(tmp_path, monkeypatch):
+    from fanops.ig_hashtag_scrape import launch_scrape_chrome, safari_open_instagram, safari_profile_name
+    osa = []
 
-    from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_chrome_launch_argv, safari_profile_name
-    argv = scrape_chrome_launch_argv(Config(root=Path("/tmp")), "perca.late")
-    joined = " ".join(argv or [])
-    assert "Google Chrome" not in joined
-    assert "Safari" in joined
+    def fake_co(cmd, *a, **k):
+        osa.append(k.get("input") or "")
+        return "2\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
+    cfg = Config(root=tmp_path)
+    safari_open_instagram("perca.late")
+    assert launch_scrape_chrome(cfg, "perca.late") is True
+    blob = "\n".join(osa)
+    assert "Safari" in blob
+    assert "Google Chrome" not in blob
     assert safari_profile_name("cisumwolfhom") == "Personal"
     assert safari_profile_name("markmakmouly") == "mark"
     assert safari_profile_name("perca.late") == "perca"
