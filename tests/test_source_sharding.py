@@ -18,17 +18,17 @@ class _Proc:
         self.returncode = rc; self.stdout = stdout; self.stderr = stderr
 
 
-def _stub_ffprobe(mocker, *, duration: float, width: int = 1920, height: int = 1080):
-    def run(cmd, **kw):
+def _ffprobe(duration: float, width: int = 1920, height: int = 1080):
+    def handle(cmd, **kw):
         joined = " ".join(str(c) for c in cmd)
         if "codec_type" in joined:
             return _Proc(stdout="video\n")
         return _Proc(stdout=f"{width}\n{height}\n{duration}\n")
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=run)
+    return handle
 
 
-def _stub_ffmpeg_shard(mocker, *, fail_copy: bool = False, silence_stderr: str = ""):
-    def run(cmd, **kw):
+def _ffmpeg_shard(*, fail_copy: bool = False, silence_stderr: str = ""):
+    def handle(cmd, **kw):
         joined = " ".join(str(c) for c in cmd)
         if "silencedetect" in joined:
             return _Proc(stderr=silence_stderr)
@@ -38,30 +38,46 @@ def _stub_ffmpeg_shard(mocker, *, fail_copy: bool = False, silence_stderr: str =
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"PART-" + out.name.encode())
         return _Proc()
-    return mocker.patch("fanops.ingest_shard.subprocess.run", side_effect=run)
+    return handle
+
+
+def _patch_os(mocker, *, ffprobe, ffmpeg=None, record=None):
+    """One subprocess.run stub — ingest/media_probe/ingest_shard share the stdlib module."""
+    def run(cmd, **kw):
+        if record is not None:
+            record.append(cmd)
+        bin = Path(cmd[0]).name
+        if bin == "ffprobe":
+            return ffprobe(cmd, **kw)
+        if bin == "ffmpeg":
+            if ffmpeg is None:
+                raise AssertionError(f"ffmpeg must not run: {cmd}")
+            return ffmpeg(cmd, **kw)
+        raise AssertionError(f"unexpected binary {cmd[0]}")
+    return mocker.patch("subprocess.run", side_effect=run)
 
 
 def test_source_shard_min_off_never_calls_ffmpeg(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_SOURCE_SHARD_MIN", "0")
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "long.mp4")
-    _stub_ffprobe(mocker, duration=7200.0)
-    spy = mocker.patch("fanops.ingest_shard.subprocess.run")
+    cmds = []
+    _patch_os(mocker, ffprobe=_ffprobe(7200.0), record=cmds)
     led, counts = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1 and counts.added == 1
-    spy.assert_not_called()
+    assert not any(Path(c[0]).name == "ffmpeg" for c in cmds)
 
 
 def test_under_threshold_no_split(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "short.mp4", b"SHORT")
-    _stub_ffprobe(mocker, duration=1200.0)   # 20 min < default 45 min threshold
-    spy = mocker.patch("fanops.ingest_shard.subprocess.run")
+    cmds = []
+    _patch_os(mocker, ffprobe=_ffprobe(1200.0), record=cmds)
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
     src = next(iter(led.sources.values()))
     assert src.duration == 1200.0 and src.degraded_reason is None
-    spy.assert_not_called()
+    assert not any(Path(c[0]).name == "ffmpeg" for c in cmds)
 
 
 def test_shard_points_snaps_to_silence(mocker):
@@ -69,14 +85,14 @@ def test_shard_points_snaps_to_silence(mocker):
 [silencedetect @ 0x] silence_start: 1480.0
 [silencedetect @ 0x] silence_end: 1520.0 | silence_duration: 40.0
 """
-    mocker.patch("fanops.ingest_shard.subprocess.run",
+    mocker.patch("subprocess.run",
                  return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=stderr))
     points = shard_points(Path("/fake/long.mp4"), 3000.0, target_s=1500.0)
     assert points == [1500.0]
 
 
 def test_shard_points_hard_cut_when_silent_free(mocker):
-    mocker.patch("fanops.ingest_shard.subprocess.run",
+    mocker.patch("subprocess.run",
                  return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""))
     points = shard_points(Path("/fake/long.mp4"), 3000.0, target_s=1500.0)
     assert points == [1500.0]
@@ -85,8 +101,7 @@ def test_shard_points_hard_cut_when_silent_free(mocker):
 def test_shard_file_fail_open(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "long.mp4", b"LONGVIDEO")
-    _stub_ffprobe(mocker, duration=3600.0)
-    _stub_ffmpeg_shard(mocker, fail_copy=True)
+    _patch_os(mocker, ffprobe=_ffprobe(3600.0), ffmpeg=_ffmpeg_shard(fail_copy=True))
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
     src = next(iter(led.sources.values()))
@@ -97,8 +112,7 @@ def test_parts_inherit_batch_and_origin(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_SOURCE_SHARD_MIN", "1")
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "long.mp4", b"LONGMASTER")
-    _stub_ffprobe(mocker, duration=120.0)
-    _stub_ffmpeg_shard(mocker)
+    _patch_os(mocker, ffprobe=_ffprobe(120.0), ffmpeg=_ffmpeg_shard())
     led, _ = ingest_drops(Ledger.load(cfg), cfg, origin="upload", batch_id="batch_named")
     assert len(led.sources) == 2
     for s in led.sources.values():
@@ -113,23 +127,23 @@ def test_third_party_never_sharded(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_SOURCE_SHARD_MIN", "1")
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "long.mp4", b"TP")
-    _stub_ffprobe(mocker, duration=3600.0)
-    spy = mocker.patch("fanops.ingest_shard.subprocess.run")
+    cmds = []
+    _patch_os(mocker, ffprobe=_ffprobe(3600.0), record=cmds)
     led, _ = ingest_drops(Ledger.load(cfg), cfg, origin_kind="third_party")
     assert len(led.sources) == 1
-    spy.assert_not_called()
+    assert not any(Path(c[0]).name == "ffmpeg" for c in cmds)
 
 
 def test_part_stem_not_re_sharded(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_SOURCE_SHARD_MIN", "1")
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "foo-p01.mp4", b"PARTSTEM")
-    _stub_ffprobe(mocker, duration=3600.0)
-    spy = mocker.patch("fanops.ingest_shard.subprocess.run")
+    cmds = []
+    _patch_os(mocker, ffprobe=_ffprobe(3600.0), record=cmds)
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
     assert len(led.sources) == 1
     assert led.sources[next(iter(led.sources))].duration == 3600.0
-    spy.assert_not_called()
+    assert not any(Path(c[0]).name == "ffmpeg" for c in cmds)
 
 
 def test_stem_is_shard_part():
