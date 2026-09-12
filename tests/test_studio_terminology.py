@@ -129,4 +129,7 @@ def test_all_surfaces_200_with_terms(tmp_path):
     # U10: /lift now 301-redirects to the merged Results page (/posted); follow it so this still proves the
     # destination surface renders 200 with the glossary wired in.
     for path in ("/", "/gates", "/review", "/personas", "/golive", "/schedule", "/posted", "/lift"):
-        assert c.get(path, follow_redirects=True).status_code == 200, path
+        r = c.get(path, follow_redirects=True)
+        html = r.get_data(as_text=True)
+        assert r.status_code == 200, path
+        assert "data-term=" in html, path

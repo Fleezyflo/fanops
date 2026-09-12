@@ -81,7 +81,7 @@ def test_card_carries_excluded_names(tmp_path):
 def test_review_html_names_excluded_accounts(tmp_path):
     cfg = Config(root=tmp_path); _seed_batch_excluded(cfg)
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "b" in html and "c" in html and "excluded" in html   # the names reach the worklist, not just "2"
+    assert "b, c" in html and "excluded" in html   # named excluded handles, not a bare letter match
 
 
 # ── the card surface-spec consumes the _prov cause_chip macro (not a parallel hand-rolled chip) ─────
