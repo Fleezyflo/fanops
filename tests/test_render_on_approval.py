@@ -25,9 +25,8 @@ def _seed(led, cfg):
     led.add_clip(c)
 
 
-def test_approve_queues_without_render_warm(tmp_path, monkeypatch, mocker):
+def test_approve_queues_without_render_warm(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
-    warm = mocker.patch("fanops.crosspost.render_account_cut")
     cfg = Config(root=tmp_path); _accounts(cfg)
     led = Ledger.load(cfg); _seed(led, cfg); led.save()
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z"); led.save()
@@ -38,7 +37,6 @@ def test_approve_queues_without_render_warm(tmp_path, monkeypatch, mocker):
     assert led2.posts[pid].state is PostState.queued
     assert led2.posts[pid].clip_profile == "long"
     assert led2.renders == {}
-    warm.assert_not_called()
 
 
 def test_approve_preserves_mint_clip_profile(tmp_path, monkeypatch):

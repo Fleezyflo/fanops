@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% from "_term.html" import term %}
 {% block title %}Home{% endblock %}
 {% block body %}
   <h2>Home</h2>
+  <p class="muted">Footage in, a moment{{ term('moment') }} out — then review, schedule, ship.</p>
   {% if not status.accounts and not status.counts.sources %}
   <section class="home-onboarding" aria-labelledby="get-started-h">
     <h3 id="get-started-h">Get started</h3>

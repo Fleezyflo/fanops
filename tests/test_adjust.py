@@ -355,11 +355,32 @@ def test_per_surface_buckets_by_platform_not_just_account(tmp_path):
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
     assert "ig1" in on["winners"] and "tk1" in on["winners"]            # each platform's best wins
 
-def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch, mocker):
-    # A6: cmd_adjust passes cfg.adjust_per_surface into classify_outcomes — only when the flag is on.
+def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch):
+    # A6: FANOPS_ADJUST_PER_SURFACE=on must reach classify_outcomes. A small-account post that loses
+    # the GLOBAL ranking still wins its own surface and is amplified (request written). Spying
+    # classify_outcomes would green without that write.
     import fanops.cli as cli
-    monkeypatch.chdir(tmp_path); monkeypatch.setenv("FANOPS_ADJUST_PER_SURFACE", "on")
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    spy = mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": [], "losers": []})
-    cli.cmd_adjust(cfg, 0.3, 0.2, 20.0)
-    assert spy.call_args.kwargs.get("per_surface") is True
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_ADJUST_PER_SURFACE", "on")
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100)]:
+        _ap(led, pid, lift, account="big")
+    _ap(led, "s2", 5, account="small")
+    led.add_source(Source(id="s_small", source_path="/s.mp4", state=SourceState.moments_decided,
+                          duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
+                          signal_peaks=[], meta={"transcribed": True}))
+    led.add_moment(Moment(id="m_s1", parent_id="s_small", content_token="14-21", start=14, end=21,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.clipped))
+    led.add_clip(Clip(id="c_s1", parent_id="m_s1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="s1", parent_id="c_s1", account="small", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics={"lift_score": 40}, public_url="dryrun://s1"))
+    led.save()
+    glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
+    assert "s1" not in glob["winners"]                       # crowded out globally
+    assert cli.cmd_adjust(cfg, 0.3, 0.2, 20.0) == 0
+    again = Ledger.load(cfg)
+    assert again.sources["s_small"].state is SourceState.moments_requested
+    assert request_path(cfg, "moments", "s_small").exists()

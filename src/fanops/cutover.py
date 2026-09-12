@@ -71,8 +71,8 @@ def cutover_post(cfg: Config, account_id: str, *, confirmed: bool, post=None) ->
 
 def cutover_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
     """Step 3: pull the real metrics row for the cutover post and reconcile its fields against
-    track._W. Saves the raw row + reconciliation to cutover.json and stamps metrics_confirmed=True
-    (the flag Phase 2's validation gate keys off — the learning stack stays frozen until this runs).
+    track._W. Saves the raw row + reconciliation to cutover.json and stamps metrics_confirmed only
+    when track._shape_proves_learning proves the shape (likes-only / missing-saves stay frozen).
     Postiz dispatches to cutover_postiz (M2's per-post client + raw-label reconcile); any non-postiz
     backend fails closed (no other backend supported)."""
     if cfg.backend_has_creds("postiz"):

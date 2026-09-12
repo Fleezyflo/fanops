@@ -45,14 +45,20 @@ def test_preview_reports_would_remove_without_touching_ledger(tmp_path):
 # ---- action: typed confirm gate ----
 def test_confirm_wipe_refuses_wrong_typed_word(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    res = actions_wipe.confirm_wipe(cfg, typed="delete please")
-    assert not res.ok and "pd" in Ledger.load(cfg).posts   # nothing removed on a wrong confirm word
+    token = actions_wipe.preview_wipe(cfg).detail["token"]
+    res = actions_wipe.confirm_wipe(cfg, typed="delete please", token=token)
+    assert not res.ok
+    assert actions_wipe.CONFIRM_WORD in (res.error or "")
+    assert "pd" in Ledger.load(cfg).posts   # nothing removed on a wrong confirm word
 
 
 def test_confirm_wipe_refuses_empty_typed(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    res = actions_wipe.confirm_wipe(cfg, typed="")
-    assert not res.ok and "pd" in Ledger.load(cfg).posts
+    token = actions_wipe.preview_wipe(cfg).detail["token"]
+    res = actions_wipe.confirm_wipe(cfg, typed="", token=token)
+    assert not res.ok
+    assert actions_wipe.CONFIRM_WORD in (res.error or "")
+    assert "pd" in Ledger.load(cfg).posts
 
 
 def test_confirm_wipe_executes_on_exact_word_and_snapshots(tmp_path):
@@ -90,8 +96,11 @@ def test_wipe_preview_route_shows_counts_and_ids(tmp_path):
 
 def test_wipe_confirm_route_requires_typed_word(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
-    r = _client(cfg).post("/live-library/wipe/confirm", data={"confirm_text": "nope"})
+    token = actions_wipe.preview_wipe(cfg).detail["token"]
+    r = _client(cfg).post("/live-library/wipe/confirm",
+                          data={"confirm_text": "nope", "preview_token": token})
     assert r.status_code == 200
+    assert actions_wipe.CONFIRM_WORD in r.get_data(as_text=True)
     assert "pd" in Ledger.load(cfg).posts                 # wrong word -> no removal
 
 
@@ -116,6 +125,10 @@ def test_wipe_preview_empty_when_all_backed(tmp_path):
                           metrics={LIFT_SCORE: 0.5}))
     res = actions_wipe.preview_wipe(cfg)
     assert res.ok and res.detail["total"] == 0
+    token = res.detail["token"]
+    actions_wipe.confirm_wipe(cfg, typed=actions_wipe.CONFIRM_WORD, token=token)
+    led = Ledger.load(cfg)
+    assert "pk" in led.posts and "mk" in led.moments and "s1" in led.sources
 
 
 # ---- MOL-71: server-enforced preview-before-confirm (the preview token gate) ----
@@ -124,6 +137,19 @@ def test_preview_returns_a_token_for_the_would_remove_set(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     res = actions_wipe.preview_wipe(cfg)
     assert res.ok and res.detail.get("token")             # a non-empty token is present in the preview
+
+
+def test_preview_tokens_differ_for_different_would_remove_sets(tmp_path):
+    cfg_a = Config(root=tmp_path / "a"); _seed(cfg_a)
+    cfg_b = Config(root=tmp_path / "b"); _seed(cfg_b)
+    with Ledger.transaction(cfg_b) as led:
+        led.add_moment(Moment(id="md2", parent_id="s1", content_token="E", start=6, end=8, reason="e"))
+        led.add_clip(Clip(id="ce", parent_id="md2", path="/ce.mp4", state=ClipState.rendered))
+        led.add_post(Post(id="pe", parent_id="ce", account="a", account_id="1", platform=Platform.instagram,
+                          caption="extra", state=PostState.awaiting_approval, public_url="dryrun://pe"))
+    t_a = actions_wipe.preview_wipe(cfg_a).detail["token"]
+    t_b = actions_wipe.preview_wipe(cfg_b).detail["token"]
+    assert t_a and t_b and t_a != t_b
 
 
 def test_confirm_refuses_missing_token_even_with_right_word(tmp_path):

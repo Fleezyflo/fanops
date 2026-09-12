@@ -1,4 +1,5 @@
 # Review off-lock badge — True only when a completed source lock exists and the post carries a tag not on it.
+# Missing/incomplete lock is fail-open (not stale), not a "freshness" pass.
 import json
 
 from fanops.config import Config
@@ -43,7 +44,7 @@ def test_off_lock_tag_is_stale(tmp_path):
     assert _caption_corpus_stale(cfg, led, _post(hashtags=[])) is False
 
 
-def test_no_completed_lock_is_not_stale(tmp_path):
+def test_missing_or_incomplete_lock_fail_open_is_not_stale(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led(cfg)
     assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is False

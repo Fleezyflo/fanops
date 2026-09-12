@@ -564,8 +564,7 @@ def test_caption_prompt_no_transferred_key_is_byte_identical():
     from fanops.prompts import caption_prompt
     base = {"surfaces": [{"surface": "c/instagram", "platform": "instagram"}],
             "language": "en", "guidance": "g", "transcript_excerpt": "x"}
-    # absent transferred key -> identical to a payload that never had it (no stray block).
-    assert caption_prompt(dict(base)) == caption_prompt(dict(base))
+    # [] / None vs absent — no stray transferred block. Do not self-compare caption_prompt(base).
     assert "elsewhere" not in caption_prompt(base).lower()
     assert caption_prompt({**base, "learned_hooks_transferred": []}) == caption_prompt(base)
     assert caption_prompt({**base, "learned_hooks_transferred": None}) == caption_prompt(base)

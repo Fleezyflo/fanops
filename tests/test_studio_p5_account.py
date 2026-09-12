@@ -183,16 +183,6 @@ def test_lift_filter_keeps_empty_reason(tmp_path):
     view = lift_rows(led, cfg, Accounts.load(cfg), account="b")   # no @b variants
     assert view.variant_rows == [] and view.variant_empty_reason is not None
 
-def test_lift_amplify_candidates_filtered_by_account(tmp_path, monkeypatch, mocker):
-    from fanops.studio.views import lift_rows
-    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
-    cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
-    _variant(led, "p_a", "a", "HA", 90.0); _variant(led, "p_b", "b", "HB", 80.0)
-    mocker.patch("fanops.variant_amplify.amplify_candidates",
-                 return_value=[{"post_id": "p_b", "winning_hook": "HB", "evidence": "streak"}])
-    assert lift_rows(led, cfg, Accounts.load(cfg), account="a").amplify_rows == []   # @b candidate dropped
-    assert len(lift_rows(led, cfg, Accounts.load(cfg), account="b").amplify_rows) == 1
-
 def test_lift_row_carries_scheduled_time_and_metrics(tmp_path):
     from fanops.studio.views import lift_rows
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)

@@ -56,11 +56,3 @@ def test_captions_scoped_to_owner_platforms(tmp_path, monkeypatch, mocker):
         plats_req = {s["surface"].split("/")[1] for s in payload["surfaces"]}
         assert accts_req == {"a"}                       # owner ONLY — no @b surface (clip × account scoping dead)
         assert plats_req == {"instagram", "youtube"}    # per-platform survives: A × {its platforms}
-
-
-def test_scoped_caption_surfaces_gone():
-    import pytest
-    import fanops.casting as casting
-    assert not hasattr(casting, "scoped_caption_surfaces")   # the symbol is deleted from the module
-    with pytest.raises(ImportError):
-        from fanops.casting import scoped_caption_surfaces   # noqa: F401

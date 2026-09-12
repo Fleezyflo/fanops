@@ -16,7 +16,7 @@ from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, Clip
                            ErrorKind)
 from fanops.studio.views_common import GRID_PAGE_SIZE
 from fanops.studio.views_results import failure_rollup
-from fanops.studio.views_review import review_buckets, review_counts, review_progress
+from fanops.studio.views_review import review_buckets
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 def _z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -143,14 +143,12 @@ def test_live_strip_counts_agree_with_the_body_under_a_source_filter(tmp_path):
     assert 'data-awaiting="1"' in c.get("/review?account=a&source=src_2").data.decode()
 
 
-def test_live_strip_scope_matches_review_progress(tmp_path):
-    # The progress line and the strip are two renders of the same scoped set — they must not diverge.
+def test_live_strip_awaiting_is_the_batch_hand_count(tmp_path):
+    # Hand-count: _seed_two_batches puts exactly one awaiting post in batch bx (p_bx).
     cfg = Config(root=tmp_path); _seed_two_batches(cfg)
-    led = Ledger.load(cfg); accounts = Accounts.load(cfg)
-    scoped = review_buckets(led, accounts, cfg, now=NOW, account="a", batch="bx")
-    assert review_counts(scoped)["awaiting"] == review_progress(scoped)["awaiting"] == 1
     strip = _client(cfg).get("/review/live?account=a&batch=bx").data.decode()
-    assert _strip_awaiting(strip) == review_progress(scoped)["awaiting"]
+    assert "Awaiting <strong>1</strong>" in strip
+    assert _strip_awaiting(strip) == 1
 
 
 def test_no_phantom_new_work_banner_under_a_filter(tmp_path):
