@@ -618,7 +618,8 @@ class ZernioPoster:
             post = led.posts[post_id]
             post.submission_id = result.post_id
             if self._create_2xx_body is not None:
-                post.public_url = safe_public_url(_extract_zernio_permalink(self._create_2xx_body)) or post.public_url
+                post.public_url = (safe_public_url(_extract_zernio_permalink(self._create_2xx_body))
+                                   or safe_public_url(post.public_url))
             self._create_2xx_body = None
             if isinstance(result, IdempotentReplay):
                 # The ONLY behavioral difference from Created: an audit trail. A replay means a send DID
