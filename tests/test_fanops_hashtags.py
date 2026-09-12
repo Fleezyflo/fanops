@@ -1114,7 +1114,7 @@ def test_healthy_scrape_users_default_skips_loginrequired_freeze(tmp_path, monke
     assert _healthy_scrape_users(cfg, t0, require_budget_room=False) == []
 
 
-def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
+def test_corrupt_cooldown_fails_open(tmp_path):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1124,7 +1124,9 @@ def test_corrupt_cooldown_fails_open(tmp_path, monkeypatch):
     _cooldown_path(cfg).write_text("{not-json")
     client = _FakeClient({"#hiphop": 10})
     out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client, now=t0)
-    assert out["refreshed"] is True and client.media_calls  # corrupt → no cooldown gate
+    assert out["refreshed"] is False
+    assert client.media_calls == []
+    assert _cooldown_path(cfg).read_text() == "{not-json"
 
 
 def test_zero_progress_pass_preserves_hashtags_bytes(tmp_path, monkeypatch):

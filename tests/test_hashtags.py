@@ -1,5 +1,7 @@
 """Measurement cache reader + ingest lock membership (ship_from_lock)."""
 import json
+import pytest
+from fanops.errors import ControlFileError
 from fanops.hashtags import METRIC_FIELD, load_measurements
 
 # A measured menu, metric-ranked (what ranked_tags returns). Membership + rank in one list.
@@ -17,12 +19,14 @@ def _rec(value, *, gid="id-x", at="2026-07-20T00:00:00+00:00", frm=None):
 def test_load_measurements_absent_corrupt_and_mis_shaped(tmp_path):
     from fanops.config import Config
     cfg = Config(root=tmp_path)
-    assert load_measurements(cfg) == {}                    # absent -> {} (selection then ships short)
+    assert load_measurements(cfg) == {}                    # absent -> {} (no cache yet)
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.hashtags_path.write_text("{ corrupt")
-    assert load_measurements(cfg) == {}                     # corrupt -> {}, never raises
+    with pytest.raises(ControlFileError):
+        load_measurements(cfg)
     cfg.hashtags_path.write_text(json.dumps(["#a", "#b"]))
-    assert load_measurements(cfg) == {}                     # a list is not the cache shape
+    with pytest.raises(ControlFileError):
+        load_measurements(cfg)
 
 
 def test_load_measurements_drops_half_records_and_the_legacy_shape(tmp_path):

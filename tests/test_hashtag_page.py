@@ -121,6 +121,10 @@ def test_corrupt_cache_is_unreadable_and_the_page_still_renders(tmp_path):
     assert status.tags == [] and status.age is None      # no invented numbers on an unreadable file
     r = _client(cfg).get("/hashtags")
     assert r.status_code == 200
+    html = r.data.decode()
+    panel = html.split('id="hashtags-panel"', 1)[1]
+    assert "cache unreadable" in panel
+    assert "could not be parsed" in panel
 
 
 def test_absent_cache_is_empty_not_a_frozen_floor(tmp_path):
