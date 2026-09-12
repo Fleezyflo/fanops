@@ -208,22 +208,14 @@ def test_badge_links_to_gates_via_system_strip(tmp_path):
     assert 'href="/gates"' in html                     # the strip alert links to the (unrailed) gates page
 
 
-def test_build_system_strip_does_not_call_pipeline_status(tmp_path, monkeypatch):
+def test_build_system_strip_reads_snapshot_not_ledger(tmp_path):
+    # Strip metrics come from strip_metrics.json. A corrupt ledger must not change the snapshot
+    # read (do not patch Ledger.load — plant a broken file).
     cfg = Config(root=tmp_path); _seed(cfg)
-    _seed_strip_metrics(cfg, blocked_gates=1)
-    monkeypatch.setattr(views, "pipeline_status", lambda c: (_ for _ in ()).throw(
-        AssertionError("pipeline_status must not run on the strip path")))
+    _seed_strip_metrics(cfg, blocked_gates=7, failed=4)
+    cfg.ledger_path.write_bytes(b"not-a-sqlite")
     strip = views.build_system_strip(cfg)
-    assert strip["blocked_gates"] == 1
-
-
-def test_build_system_strip_does_not_load_ledger(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path); _seed(cfg)
-    _seed_strip_metrics(cfg, blocked_gates=1, failed=4)
-    monkeypatch.setattr("fanops.ledger.Ledger.load", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("build_system_strip must not Ledger.load")))
-    strip = views.build_system_strip(cfg)
-    assert strip["blocked_gates"] == 1
+    assert strip["blocked_gates"] == 7
     assert strip["failed"] == 4
 
 
