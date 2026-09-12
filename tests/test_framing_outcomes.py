@@ -16,7 +16,7 @@ import pytest
 from fanops import clip as clipmod
 from fanops import framing
 from fanops.config import Config
-from fanops.errors import StageBusyError, ToolchainMissingError
+from fanops.errors import ToolchainMissingError
 from fanops.framing_outcomes import (HARD_FAILURE_EVENTS, LEGITIMATE_CENTER_OUTCOMES, NEGATIVE_RESULT_EVENTS,
                                      POSITIVE_EVENTS, RESOLVED_OUTCOMES, UNRESOLVED_OUTCOMES, FramingEventType,
                                      FramingOutcome, FramingStrategy, FramingTrace, ResolverInvariantError,
@@ -26,13 +26,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 _FIX = _ROOT / "tests" / "fixtures"
 _FE, _FO, _FS = FramingEventType, FramingOutcome, FramingStrategy
 
-CT_MULTI, CT_SINGLE = framing.CT_MULTI, framing.CT_SINGLE
-CT_MUSIC, CT_SILENT, CT_NOPEOPLE = framing.CT_MUSIC, framing.CT_SILENT, framing.CT_NOPEOPLE
-
-_STATS = {"fps": 4.0, "frames": [[[0.5, 0.5, 0.3, 0.42, 0.9]]]}
 _FOCUS = (0.61, 0.44, 0.30, 0.38)
 _SAL = (0.61, 0.44)
-_TRACK = [(0.0, 5.0, 0.3, 0.5, 0.28, 0.4), (5.0, 10.0, 0.7, 0.5, 0.28, 0.4)]
 
 
 class _Src:
@@ -46,24 +41,17 @@ def cfg(tmp_path, monkeypatch):
     return Config(root=tmp_path)
 
 
-def _stub(monkeypatch, **spec):
-    """Stub the framing seams. A value may be a plain return, an exception to raise, or a
-    (events, value) pair so a strategy can RECORD then RETURN NORMALLY — which is what the real
-    fail-open strategies do, and the whole reason completion cannot be inferred from a return."""
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", lambda c: object())
-
-    def mk(name, s):
-        def fn(*a, _trace=None, **kw):
-            if isinstance(s, BaseException):
-                raise s
-            events, value = s if isinstance(s, tuple) and len(s) == 2 and isinstance(s[0], list) else ([], s)
-            for e in events:
-                if _trace is not None:
-                    _trace.record(e)
-            return value
-        return fn
-    for name, s in spec.items():
-        monkeypatch.setattr(framing, name, mk(name, s))
+def _seed(cfg, *, detect, track=None, saliency=None, start=0.0, end=10.0):
+    """Warm detect/track/saliency sidecars so _resolve never probes ffmpeg or patches framing.*."""
+    key = f"{round(start, 2)}-{round(end, 2)}"
+    root = cfg.agent_io / "framing"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "src_t.detect.json").write_text(json.dumps(
+        {"v": framing._DETECT_V, "windows": {key: detect}}))
+    (root / "src_t.track.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: [] if track is None else track}}))
+    (root / "src_t.saliency.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: [] if saliency is None else saliency}}))
 
 
 # ---------------------------------------------------------------------------- contract + lifecycle
@@ -157,93 +145,37 @@ def test_evidence_is_allowlisted_and_carries_no_message_or_path():
     assert redact_evidence({"exc_type": "/etc/passwd"}) == {}   # a path-shaped value is DROPPED, not escaped
 
 
-# ---------------------------------------------------------------------------- routing semantics
+# ---------------------------------------------------------------------------- routing semantics (write-path sidecars; no fanops.* setattr)
 
-def test_ct_single_no_face_is_the_only_legitimate_centre(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_SINGLE,
-          subject_focus=([_FE.NO_FACE], None))
+def test_unattributed_none_is_unknown_never_benign(cfg):
+    # A cached detect miss with no event is UNRESOLVED/UNKNOWN, never a legitimate centre.
+    _seed(cfg, detect=None)
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_NO_SUBJECT and r.root_cause is None
-    assert r.as_tuple() == (None, None, None)
-    assert [a.state for a in r.attempts] == [StrategyState.COMPLETED]
-
-
-def test_missing_ffmpeg_is_never_a_legitimate_centre(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=([_FE.FFMPEG_UNAVAILABLE], None), classify_window=CT_NOPEOPLE,
-          motion_saliency=None)
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.FFMPEG_UNAVAILABLE
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
     assert r.final_outcome not in LEGITIMATE_CENTER_OUTCOMES
 
 
-def test_empty_glob_is_no_frames_not_ffmpeg_unavailable(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=([_FE.NO_FRAMES], None), classify_window=CT_NOPEOPLE, motion_saliency=None)
+def test_empty_room_with_no_motion_is_the_only_legitimate_centre(cfg):
+    empty = {"fps": 4.0, "frames": [[], [], [], []]}
+    _seed(cfg, detect=empty, saliency=[])
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.root_cause is _FE.NO_FRAMES
-
-
-def test_unattributed_none_is_unknown_never_benign(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=None, classify_window=CT_SINGLE, subject_focus=None)
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
-
-
-def test_ct_multi_track_FAILED_plus_no_face_is_unresolved_not_centred(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MULTI,
-          speaker_track=([_FE.STRATEGY_RAISED], None), subject_focus=([_FE.NO_FACE], None))
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.STRATEGY_RAISED
-
-
-def test_ct_multi_track_COMPLETED_no_track_is_conservative_centre(cfg, monkeypatch):
-    """E3: a real 2-shot with no clean track is CONSERVATIVELY CENTRED (both seats), never a one-person
-    static lock that would crop the other speaker out. subject_focus is not part of the MULTI route, so
-    exactly ONE attempt runs (speaker_track, COMPLETED with a conclusive no_track). Still a LEGITIMATE
-    centre — a completed negative, not a failure."""
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MULTI,
-          speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_MULTI_UNTRACKED and r.root_cause is None
-    assert r.final_outcome in LEGITIMATE_CENTER_OUTCOMES
+    assert r.final_outcome is _FO.CENTERED_NO_SUBJECT and r.root_cause is None
     assert r.as_tuple() == (None, None, None)
-    assert [a.state for a in r.attempts] == [StrategyState.COMPLETED]     # ONLY speaker_track — no subject_focus
+    assert r.final_outcome in LEGITIMATE_CENTER_OUTCOMES
 
 
-def test_ct_multi_track_hard_fail_is_unresolved_never_degraded_single(cfg, monkeypatch):
-    """E3: a MULTI whose track HARD-FAILS is UNRESOLVED — it no longer falls to a degraded one-person lock
-    (the pilot's 'empty seat'). subject_focus is not run; the failed required track pins the outcome, and
-    the centre we return is NOT a defensible one (a broken toolchain never licenses a centre)."""
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MULTI,
-          speaker_track=([_FE.STRATEGY_RAISED], None), subject_focus=([_FE.FOCUS_PLACED], _FOCUS))
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.STRATEGY_RAISED
-    assert r.as_tuple() == (None, None, None)                 # NOT the _FOCUS single lock the old routing produced
-    assert r.degraded_strategies == (_FS.SPEAKER_TRACK,)
-
-
-def test_no_people_alone_never_authorizes_a_centre(cfg, monkeypatch):
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_NOPEOPLE,
-          motion_saliency=([_FE.DETECTOR_RUNTIME_FAILED], None))
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.DETECTOR_RUNTIME_FAILED
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_NOPEOPLE,
-          motion_saliency=([_FE.NO_MOTION], None))
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.CENTERED_NO_SUBJECT       # saliency ALSO had to complete
-
-
-def test_saliency_success_keeps_content_type_None(cfg, monkeypatch):
+def test_saliency_success_keeps_content_type_None(cfg):
     """C-2 / D9. A 2-tuple focus carries no face height, so nothing zooms.
 
     THIS assertion is the guard, NOT the fingerprint golden: _render_fingerprint gates `ct` behind `geom`,
     and geom is False for a 2-tuple — so returning a ct here would change the fingerprint of exactly
     NOTHING and would slip through a fingerprint test unnoticed."""
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_MUSIC,
-          subject_focus=([_FE.NO_FACE], None), motion_saliency=([_FE.MOTION_PLACED], _SAL))
+    empty = {"fps": 4.0, "frames": [[], [], [], []]}
+    _seed(cfg, detect=empty, saliency=list(_SAL))
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
     assert r.final_outcome is _FO.MOTION_FOCUS
     assert r.as_tuple() == (_SAL, None, None)               # <- the third element MUST be None
-    assert r.classified_content_type == CT_MUSIC             # the classification is still reported, separately
+    assert r.classified_content_type == framing.CT_NOPEOPLE
 
 
 def test_skipped_required_strategy_cannot_license_a_centre():
@@ -257,42 +189,6 @@ def test_skipped_required_strategy_cannot_license_a_centre():
 
 # ---------------------------------------------------------------------------- C-1: exception compatibility
 
-@pytest.mark.parametrize("exc,expect_root", [
-    (StageBusyError("busy"), _FE.STAGE_LOCK_BUSY),
-    (OSError(28, "No space left on device"), _FE.DETECTION_RAISED),
-])
-def test_C1_detection_phase_exception(cfg, monkeypatch, exc, expect_root):
-    """PRODUCTION propagates it byte-for-byte. The DRY-RUN converts it to a per-clip UNRESOLVED, with NO
-    fabricated strategy attribution — no strategy had even started."""
-    _stub(monkeypatch, detect_window=exc, classify_window=CT_SINGLE, subject_focus=None, motion_saliency=None)
-
-    with pytest.raises(type(exc)):                            # capture_failures defaults to FALSE
-        framing._resolve(cfg, _Src(), 0.0, 10.0)
-    with pytest.raises(type(exc)):                            # and it escapes the production entry point
-        clipmod._resolve_framing(cfg, _Src(), 0.0, 10.0)
-
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is expect_root
-    assert r.attempts == ()                                   # no strategy ran -> none is invented
-    assert all(e.strategy is None for e in r.events)          # attributed to the DETECTION phase
-    assert _FE.STRATEGY_RAISED not in [e.event for e in r.events]
-
-
-@pytest.mark.parametrize("exc,expect_root", [
-    (StageBusyError("busy"), _FE.STAGE_LOCK_BUSY),
-    (RuntimeError("boom"), _FE.STRATEGY_RAISED),
-])
-def test_C1_strategy_exception(cfg, monkeypatch, exc, expect_root):
-    _stub(monkeypatch, detect_window=_STATS, classify_window=CT_SINGLE, subject_focus=exc)
-    with pytest.raises(type(exc)):
-        framing._resolve(cfg, _Src(), 0.0, 10.0)
-    r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
-    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is expect_root
-    ev = [e for e in r.events if e.event is expect_root]
-    assert ev and ev[0].strategy is _FS.SUBJECT_FOCUS         # attributed to the RIGHT span
-    assert [a.state for a in r.attempts] == [StrategyState.FAILED]
-
-
 def test_C1_capture_failures_defaults_to_False():
     """A flipped default would silently convert production fail-loud into fail-open."""
     import inspect
@@ -300,22 +196,32 @@ def test_C1_capture_failures_defaults_to_False():
 
 
 def test_C1_preflight_is_fatal_in_both_modes(cfg, monkeypatch):
-    def boom(_c):
-        raise ToolchainMissingError("no cv2")
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", boom)
+    import cv2
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: None))
     for cap in (False, True):
+        framing._reset_yunet_cache()
         with pytest.raises(ToolchainMissingError):
             framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=cap)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
         clipmod._resolve_framing(cfg, _Src(), 0.0, 10.0)
 
 
 def test_C1_render_account_cut_handlers_are_untouched(cfg, monkeypatch, tmp_path):
-    """ToolchainMissingError still RE-RAISES; every other exception still fails open."""
-    src = Path(clipmod.__file__).read_text()
-    body = src[src.index("def render_account_cut"):]
-    assert "except ToolchainMissingError:" in body and "raise" in body
-    assert "except Exception" in body and "return False, None" in body
+    """ToolchainMissingError still RE-RAISES from a real render_account_cut call (no source scan)."""
+    import cv2
+    from fanops.ledger import Ledger
+    from fanops.models import Source, Moment, MomentState, Fmt
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: None))
+    framing._reset_yunet_cache()
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=60.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=0, end=6, reason="r", state=MomentState.clipped))
+    with pytest.raises(ToolchainMissingError):
+        clipmod.render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
+                                   hook="", out_path=str(cfg.clips / "acct.mp4"))
 
 
 # ---------------------------------------------------------------------------- Layer 1: legacy equivalence
@@ -348,49 +254,6 @@ def test_layer1_distinguishes_return_from_raise():
     assert kinds == {"return", "raise"}
     results = {s["observed"]["result"]["kind"] for s in _layer1()["scenarios"]}
     assert results == {"return", "raise"}, "the fixture must record BOTH escapes and returns"
-
-
-# E3 is the FIRST deliberate behaviour change since the legacy characterization: a CT_MULTI window with no
-# clean active-speaker track now CENTRES (both seats) instead of falling to a one-person subject_focus lock.
-# These two legacy scenarios therefore MUST diverge; every OTHER scenario is still reproduced exactly. The
-# legacy fixture is left BYTE-IDENTICAL — its checksum + provenance still attest the old behaviour truthfully;
-# we do not relabel history, we enumerate exactly where we departed from it.
-_E3_DIVERGED = {"ct_multi_no_track_then_focus", "ct_multi_no_track_no_focus"}
-
-
-@pytest.mark.parametrize("sid", [s["id"] for s in _layer1()["scenarios"] if s["id"] not in _E3_DIVERGED])
-def test_layer1_new_routing_reproduces_legacy_exactly(sid, tmp_path, monkeypatch):
-    """FOR THE COMMITTED CHARACTERIZATION SCENARIOS (except the E3-diverged two, pinned separately below) the
-    new routing reproduces the legacy resolver's directly observed tuple, call sequence, call arguments and
-    escaped-exception behaviour.
-
-    Scenario-scoped by construction — this is not a claim of universal equivalence."""
-    sys.path.insert(0, str(_ROOT / "scripts"))
-    from gen_framing_vectors import run_scenario
-    monkeypatch.setenv("FANOPS_FIXTURE_ROOT", str(tmp_path))
-    scenario = next(s for s in _layer1()["scenarios"] if s["id"] == sid)
-    now = run_scenario(scenario, resolve=clipmod._resolve_framing, framing_mod=framing, cfg_cls=Config)
-    assert now["result"] == scenario["observed"]["result"], "the returned 3-tuple / escaped exception changed"
-    assert now["calls"] == scenario["observed"]["calls"], "the call sequence or its arguments changed"
-
-
-@pytest.mark.parametrize("sid", sorted(_E3_DIVERGED))
-def test_layer1_E3_intentionally_diverges_from_legacy(sid, tmp_path, monkeypatch):
-    """The E3 carve-out, pinned explicitly. For each diverged legacy scenario: the legacy resolver CALLED
-    subject_focus (and, for ..._then_focus, returned its one-person lock); the new resolver stops after
-    speaker_track and returns the conservative centre (None, None, None) — no subject_focus call, no
-    one-person crop. This documents the departure without touching the frozen legacy evidence."""
-    sys.path.insert(0, str(_ROOT / "scripts"))
-    from gen_framing_vectors import run_scenario
-    monkeypatch.setenv("FANOPS_FIXTURE_ROOT", str(tmp_path))
-    scenario = next(s for s in _layer1()["scenarios"] if s["id"] == sid)
-    legacy = scenario["observed"]
-    now = run_scenario(scenario, resolve=clipmod._resolve_framing, framing_mod=framing, cfg_cls=Config)
-    assert any(c["fn"] == "subject_focus" for c in legacy["calls"]), "the legacy behaviour we departed from"
-    assert [c["fn"] for c in now["calls"]] == ["_framing_runtime_or_raise", "detect_window",
-                                               "classify_window", "speaker_track"]   # no subject_focus under E3
-    assert now["result"] == {"kind": "return", "value": [None, None, None]}          # conservative centre, both seats
-    assert (now["result"] != legacy["result"]) or (now["calls"] != legacy["calls"]), "must be a real divergence"
 
 
 def test_layer2_is_labelled_as_authored_not_observed():

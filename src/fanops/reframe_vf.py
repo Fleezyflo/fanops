@@ -167,9 +167,10 @@ def reframe_filter(aspect: str, src_w: int, src_h: int, *, top_bias: bool = Fals
     `focus` ((fx,fy) or (fx,fy,fh,ey)) locks + zooms a static subject; `track` (6-tuples with face height +
     eye-line) follows the active speaker with a smooth pan; `content_type` tunes the zoom (music wider). A
     focus with no face height never zooms -> byte-identical to before; focus=None AND track=None AND
-    top_bias=False is the exact centered crop of old. Every branch clamps in-bounds and falls open safely."""
+    top_bias=False is the exact centered crop of old. A stack-pair content_type is refused (not a
+    silent centre): the stack graph is ffmpeg_stack_cmd, never this -vf. Other branches clamp in-bounds."""
     if content_type == framing.RENDER_STACK_PAIR:
-        focus, content_type = None, None     # the stack renders via render_reframed's filter_complex, not here — centre defensively
+        raise ValueError("stack-pair is not a centre crop — render via ffmpeg_stack_cmd")
     tw, th = _TARGETS[aspect]
     if not src_w or not src_h:
         # unknown source: scale to fit + pad to exact target (never an impossible crop)
