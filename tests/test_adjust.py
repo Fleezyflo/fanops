@@ -9,11 +9,14 @@ from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.moments import ingest_moments
 from fanops.clip import render_aspects_for
 from fanops.models import Fmt
+from tests.fixtures.speech_segments import talk_seg
 
 def _analyzed_post(led, lift, pid, cid, mid, sid):
     if sid not in led.sources:
         led.add_source(Source(id=sid, source_path="/s.mp4", state=SourceState.moments_decided,
-                              duration=30.0, transcript=[{"start":14,"end":18,"text":"they slept on me"}],
+                              duration=30.0, language="en",
+                              transcript=[talk_seg("they slept on me", start=14, end=18),
+                                          talk_seg("second wave line here", start=16, end=30)],
                               signal_peaks=[], meta={"transcribed": True}))
     led.add_moment(Moment(id=mid, parent_id=sid, content_token="14-21", start=14, end=21,
                           reason="punchline + beat drop", transcript_excerpt="they slept on me",
@@ -224,7 +227,10 @@ def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
-                          transcript=[{"start":14,"end":18,"text":"they slept on me"}], signal_peaks=[]))
+                          language="en",
+                          transcript=[talk_seg("they slept on me", start=14, end=18),
+                                      talk_seg("second wave line here", start=16, end=30)],
+                          signal_peaks=[]))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))

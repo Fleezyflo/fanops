@@ -303,7 +303,8 @@ def download_url(cfg: Config, url: str) -> set[Path]:
     staging dir — cfg.inbox/.pull, NOT the shared inbox — audit c0-f1 / ING-6 / ING-12): a concurrent manual
     drop in the inbox is never in the stage, so it can never be conflated with this pull. cmd_pull threads the
     produced set into ingest_drops(origin="url", inbox=stage, origin_paths=...). Snapshot-diff is deliberate
-    over parsing yt-dlp stdout — version-independent and robust to the merge/post-process rename."""
+    over parsing yt-dlp stdout — version-independent and robust to the merge/post-process rename.
+    rc 0 with an empty stage delta raises DownloadError (not success / empty set)."""
     stage = _pull_stage(cfg)
     before = _inbox_media(stage)
     try:
@@ -321,7 +322,12 @@ def download_url(cfg: Config, url: str) -> set[Path]:
         tail = (r.stderr or r.stdout or "").strip().splitlines()
         why = tail[-1][:200] if tail else f"exit {r.returncode}"
         raise DownloadError(f"yt-dlp failed (exit {r.returncode}): {why}")
-    return _inbox_media(stage) - before          # the media files THIS pull produced, in its isolated stage
+    produced = _inbox_media(stage) - before          # the media files THIS pull produced, in its isolated stage
+    if not produced:
+        # rc 0 with an empty stage delta is not success: yt-dlp wrote nothing ingestable.
+        # Returning set() lets cmd_pull print "pulled -> 0 sources" as if it succeeded.
+        raise DownloadError("yt-dlp exited 0 but wrote no media")
+    return produced
 
 
 def scan_local(roots: list[Path]) -> list[str]:

@@ -180,7 +180,8 @@ def _drop_overlaps(picks: list[MomentPick]) -> list[MomentPick]:
 
 def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> str | None:
     """Return a reason string if the pick is invalid, else None. Duration is the picker's window —
-    no band floor, no scrap floor. Degenerate windows only."""
+    no band floor, no scrap floor. Degenerate windows, and (when src is given) untrusted /
+    LOW_LOGPROB / missing speech, are refused — fail closed, never mint on a breadcrumb."""
     if not (math.isfinite(pick.start) and math.isfinite(pick.end)):
         return f"non-finite timestamp ({pick.start}->{pick.end})"   # AUDIT H4
     if pick.end <= pick.start:
@@ -195,15 +196,17 @@ def validate_pick(pick: MomentPick, *, duration: float, src=None, cfg=None) -> s
         from fanops.transcribe import window_has_trusted_speech
         if not window_has_trusted_speech(src, pick.start, pick.end):
             get_logger(cfg)("moments", getattr(src, "id", "-"), "pick_speech_mismatch", warn=True)
+            return "no trusted speech"
     if src is not None:
         starts, ends = _cue_edge_sets(src)
-        if starts and ends:
-            spans = list(pick.segments) if pick.segments else [(pick.start, pick.end)]
-            for s, e in spans:
-                if round(float(s), _CUE_PREC) not in starts:
-                    return "start not a cue start"
-                if round(float(e), _CUE_PREC) not in ends:
-                    return "end not a cue end"
+        if not (starts and ends):
+            return "no trusted speech"   # untrusted / degraded / missing: do not skip the cue grid
+        spans = list(pick.segments) if pick.segments else [(pick.start, pick.end)]
+        for s, e in spans:
+            if round(float(s), _CUE_PREC) not in starts:
+                return "start not a cue start"
+            if round(float(e), _CUE_PREC) not in ends:
+                return "end not a cue end"
     return None
 
 # AGENT-2: the pick prompt must stay under the claude -p context ceiling. A long source's whole transcript
@@ -777,11 +780,11 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
-        if hook and src_lang:                       # language gate: hook script must match source language (fail-open when src_lang unknown)
+        if hook:                                    # language gate: hook script must match source language
             hook_lang = _hook_lang_base(hook)
-            if hook_lang is not None and hook_lang != src_lang:
+            if not src_lang or (hook_lang is not None and hook_lang != src_lang):
                 hook_removed = hook
-                hook = None                         # wrong language → ships CLEAN; Review can restore
+                hook = None                         # mismatch or unknown source language → ships CLEAN; Review can restore
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))
