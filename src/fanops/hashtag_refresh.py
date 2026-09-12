@@ -701,9 +701,9 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
 
     Configured = FANOPS_IG_SCRAPE_USER listed. Password / Chrome dumps / envelope json do not
     count. Envelope authority is the opener (`open_client`), not this gate — probing on every
-    on every tick would hit Instagram when the cache is still fresh. FAIL-OPEN: any error -> a
-    reason, NEVER raises. Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening
-    scrape — never sleeps.
+    on every tick would hit Instagram when the cache is still fresh. A torn cooldown file
+    refuses the tick (`refreshed: False`, no scrape). Any other error -> a reason, NEVER raises.
+    Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
     MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted.
     A skip under a freeze that has outlived the cadence also emits `scrape_outage` at
     `_outage_level` (MOL-794). Manual `fanops hashtags refresh` still runs Layer A via

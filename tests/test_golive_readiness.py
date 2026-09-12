@@ -119,9 +119,29 @@ def test_readiness_live_ready_row_all_green(tmp_path, monkeypatch):
 
 
 def test_readiness_window_always_true(tmp_path, monkeypatch):
+    """ChannelReadiness.window binds Config.account_window / daily_window — not a hardcoded True."""
+    from datetime import datetime, timezone
     cfg = _clean(monkeypatch, tmp_path)
-    _seed(cfg, [{"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active"}])
-    assert _ch(views.golive_status(cfg), "ig", "instagram").window is True
+    monkeypatch.setenv("FANOPS_OPERATOR_TZ", "UTC")
+    hour = datetime.now(timezone.utc).hour
+    open_h, close_h = (hour + 1, hour + 2) if hour <= 21 else (0, 1)
+    _seed(cfg, [
+        {"handle": "ig", "account_id": "", "platforms": ["instagram"], "status": "active",
+         "daily_window": [open_h, close_h]},
+        {"handle": "open24", "account_id": "", "platforms": ["instagram"], "status": "active"},
+    ])
+    assert cfg.account_window("ig") == (open_h, close_h)
+    assert cfg.account_window("open24") is None
+    st = views.golive_status(cfg)
+    assert _ch(st, "ig", "instagram").window is False
+    assert _ch(st, "open24", "instagram").window is True
+    r = _client(cfg).get("/golive")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    ig_card = html.split('data-handle="ig"', 1)[1].split("</article>", 1)[0]
+    open_card = html.split('data-handle="open24"', 1)[1].split("</article>", 1)[0]
+    assert "✗ window" in ig_card
+    assert "✓ window" in open_card
 
 
 def test_readiness_mapped_falls_back_to_account_id(tmp_path, monkeypatch):
