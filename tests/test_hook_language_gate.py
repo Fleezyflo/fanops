@@ -106,7 +106,7 @@ def test_english_source_english_hook_kept(tmp_path):
 
 
 def test_source_no_language_hook_kept(tmp_path):
-    """Source with no declared language → gate is skip (fail-open: hook kept)."""
+    """Unknown Source.language must not skip the language gate and ship the hook."""
     cfg = Config(root=tmp_path)
     led = _seed_led(cfg, language=None)
     led = _pick_and_request_hook(cfg, led)
@@ -114,7 +114,8 @@ def test_source_no_language_hook_kept(tmp_path):
     led = ingest_moment_hooks(led, cfg, "src_ar")
     m = led.moments_of("src_ar")[0]
     assert m.state is MomentState.decided
-    assert m.hook == "the part you will replay", "no source language → gate skip, hook kept"
+    assert m.hook is None, "unknown source language must not skip the language gate and ship the hook"
+    assert m.hook_removed == "the part you will replay"
 
 
 # --- Path C prompt does NOT mandate ENGLISH ---------------------------------------------------

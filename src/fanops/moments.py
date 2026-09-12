@@ -780,11 +780,11 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
-        if hook and src_lang:                       # language gate: hook script must match source language (fail-open when src_lang unknown)
+        if hook:                                    # language gate: hook script must match source language
             hook_lang = _hook_lang_base(hook)
-            if hook_lang is not None and hook_lang != src_lang:
+            if not src_lang or (hook_lang is not None and hook_lang != src_lang):
                 hook_removed = hook
-                hook = None                         # wrong language → ships CLEAN; Review can restore
+                hook = None                         # mismatch or unknown source language → ships CLEAN; Review can restore
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))
