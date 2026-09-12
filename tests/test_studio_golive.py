@@ -91,7 +91,11 @@ class _PostizOkHandler(BaseHTTPRequestHandler):
         if path.endswith("/integrations"):
             self._json(200, [{"id": "ig_1", "name": "throwaway", "platform": "instagram"}])
         elif "/analytics/post/" in path:
-            self._json(200, [{"label": "Likes", "data": [{"total": "10", "date": "2026-09-01"}]}])
+            # likes-only does not prove; saves does (track._shape_proves_learning).
+            pt = [{"total": "10", "date": "2026-09-01"}]
+            self._json(200, [{"label": "Likes", "data": pt},
+                             {"label": "Reach", "data": [{"total": "100", "date": "2026-09-01"}]},
+                             {"label": "Saves", "data": [{"total": "5", "date": "2026-09-01"}]}])
         else:
             self.send_response(404)
             self.end_headers()
