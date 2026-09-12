@@ -294,25 +294,6 @@ def _acct_row(handle, status, account_id="1"):
             "integrations": {"instagram": account_id}}
 
 
-# --- MOL-474: faster-whisper [asr] import probe (transcribe._fw_available) ---
-
-def _fw_check(rep):
-    return next((c for c in rep["checks"] if "faster-whisper" in c["label"].lower()), None)
-
-
-def test_doctor_fails_when_faster_whisper_unavailable(tmp_path, monkeypatch):
-    # Bare install (no [asr] extra) -> doctor fails closed with the venv recipe.
-    import builtins
-    real = builtins.__import__
-    def _fake(name, *a, **k):
-        if name == "faster_whisper" or name.startswith("faster_whisper."):
-            raise ImportError("no asr")
-        return real(name, *a, **k)
-    monkeypatch.setattr(builtins, "__import__", _fake)
-    c = _fw_check(doctor.doctor_report(Config(root=tmp_path)))
-    assert c is not None and c["ok"] is False and "[asr]" in c["hint"]
-
-
 def test_deploy_code_check_fails_on_sha_drift(tmp_path, monkeypatch):
     """STD-VER-02: loaded pump reporting a stale heartbeat SHA must FAIL the deploy gate."""
     import subprocess

@@ -859,11 +859,17 @@ def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, m
                           state=PostState.published, submission_id="sid-live-1",
                           public_url="https://instagram.com/p/x"))
     class _R:
-        status_code = 401
-        text = "denied"
+        def __init__(self, code, body):
+            self.status_code = code
+            self.text = str(body)
+            self._body = body
         def json(self):
-            return {}
-    mocker.patch("fanops.post.metrics.requests.get", return_value=_R())
+            return self._body
+    def fake_get(url, **kw):
+        if "analytics" in str(url):
+            return _R(401, "denied")
+        return _R(200, {"posts": []})
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
     rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
     assert rc == 0
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
