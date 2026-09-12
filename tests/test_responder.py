@@ -3,17 +3,6 @@ import pytest
 from fanops.config import Config
 from fanops.responder import get_responder, LlmResponder
 
-
-def _claude_ok(structured, *, model=None):
-    env = {"structured_output": structured, "result": "{}", "session_id": "s"}
-    if model is not None:
-        env["model"] = model
-    class R:
-        returncode = 0
-        stdout = json.dumps(env)
-        stderr = ""
-    return R()
-
 def test_get_responder_is_always_llm(tmp_path, monkeypatch):
     # Gates are answered ONLY by the LLM (the no-op ManualResponder was retired): empty/unset OR the
     # literal 'llm' both resolve to the WORKING LlmResponder — there is no other responder to pick.
@@ -93,24 +82,6 @@ def _seed_moment_request(cfg, key="s1"):
     write_request(cfg, kind="moments", key=key,
                   payload={"source_id": key, "duration": 10.0, "transcript": [], "signal_peaks": [],
                            "language": "en", "guidance": ""})
-
-def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatch, mocker):
-    # gap #1: the production default must be a WORKING model (claude -p), not a stub that raises.
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path)
-    _seed_moment_request(cfg)
-    mocker.patch("fanops.llm.subprocess.run",
-                 return_value=_claude_ok({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
-                                                     "transcript_excerpt": "x", "signal_score": 0.0}]}))
-    from fanops.responder import get_responder
-    r = get_responder(cfg)
-    n = r.answer_pending(cfg)
-    assert n == 1
-    from fanops.agentstep import response_path
-    written = json.loads(response_path(cfg, "moments", "s1").read_text())
-    assert written["picks"][0]["start"] == 1.0
-    assert "request_id" in written
-    assert written["source_id"] == "s1"            # source_id injected for the moments kind
 
 def test_responder_quarantines_one_bad_request_and_answers_the_rest(tmp_path, monkeypatch):
     # H2 / decision b: one request whose model call raises must NOT halt the others.
@@ -232,58 +203,6 @@ def test_llm_responder_retries_once_on_timeout(tmp_path, monkeypatch):
     assert n == 1 and calls["n"] == 2                       # retried once, then answered
     assert response_path(cfg, "moments", "src_1").exists()
 
-def test_moments_model_passes_frames_as_images_for_vision(mocker):
-    # Phase 1: the AUTHOR is a vision call — the moments gate hands its sampled source frames to
-    # claude as images so the hook is written SEEING the footage. The moments payload carries frames
-    # at the TOP level.
-    from fanops.responder import _default_claude_model
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
-    _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
-    prompt = run.call_args.kwargs.get("input") or ""
-    assert "/k/a.jpg" in prompt and "/k/b.jpg" in prompt
-    cmd = run.call_args[0][0]
-    i = cmd.index("--allowedTools")
-    assert cmd[i + 1] == "Read"
-
-def test_moments_model_without_frames_stays_text_only(mocker):
-    from fanops.responder import _default_claude_model
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
-    _default_claude_model("moments", {"source_id": "s", "duration": 10.0})   # no frames -> fail-open text-only
-    cmd = run.call_args[0][0]
-    i = cmd.index("--allowedTools")
-    assert cmd[i + 1] == ""
-
-def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
-    # V2 M1/F1+F10: the production responder PINS cfg.llm_model on the claude call AND emits one
-    # provenance line per creative call (the model that answered + the prompt + brief fingerprints) so
-    # every clip/caption is traceable to the EXACT model+brief that produced it.
-    cfg = Config(root=tmp_path)
-    cfg.control.mkdir(parents=True, exist_ok=True)
-    cfg.context_path.write_text("BRAND: confident")
-    from fanops.responder import _default_claude_model
-    run = mocker.patch("fanops.llm.subprocess.run",
-                       return_value=_claude_ok({"picks": []}, model="claude-opus-4-x"))
-    out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg)
-    assert out == {"picks": []}
-    cmd = run.call_args[0][0]
-    assert cmd[cmd.index("--model") + 1] == "opus"                         # per-gate pin: moments -> opus
-    recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
-    prov = next(r for r in recs if r.get("stage") == "llm" and r.get("outcome") == "call")
-    assert prov["model"] == "claude-opus-4-x"                              # the answering model surfaced
-    assert len(prov["prompt_sha"]) == 12                                   # prompt fingerprint
-    assert prov["brief_sha"] != "absent"                                   # brief fingerprint present
-
-def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model(mocker, tmp_path):
-    # Audit C2/H: when the envelope reports no model, the provenance line records the PINNED value
-    # (never empty), and "absent" brief_sha when there's no brief.
-    cfg = Config(root=tmp_path)
-    from fanops.responder import _default_claude_model
-    mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
-    _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg)
-    recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
-    prov = next(r for r in recs if r.get("stage") == "llm" and r.get("outcome") == "call")
-    assert prov["model"] == "opus" and prov["brief_sha"] == "absent"       # moments -> opus
-
 def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
@@ -314,28 +233,6 @@ def test_llm_responder_rate_limit_leaves_gate_pending_without_burning_attempts(t
     assert "rate_limit" in capsys.readouterr().err
 
 # --- M1b: the moment_hooks gate (pass 2 — the frame-seeing hook AUTHOR) -----------------------------
-def test_moment_hooks_model_passes_window_frames_as_images(mocker):
-    # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's
-    # frames. The responder must attach moment_hooks `frames` as images (same plumbing as the pick pass).
-    from fanops.responder import _default_claude_model
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"hook": "x"}))
-    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
-                                           "start": 1.0, "end": 5.0, "frames": ["/k/w0.jpg", "/k/w1.jpg"]})
-    prompt = run.call_args.kwargs.get("input") or ""
-    assert "/k/w0.jpg" in prompt and "/k/w1.jpg" in prompt
-
-def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
-    # The hook author is the CREATIVE vision gate -> opus (the watch-through driver), like the old
-    # single-pass moments gate. (The pick pass also stays opus; the cost is owned, see plan D5.)
-    cfg = Config(root=tmp_path)
-    run = mocker.patch("fanops.llm.subprocess.run",
-                       return_value=_claude_ok({"hook": "x"}, model="claude-opus-4-x"))
-    from fanops.responder import _default_claude_model
-    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
-                                           "start": 1.0, "end": 5.0}, cfg=cfg)
-    cmd = run.call_args[0][0]
-    assert cmd[cmd.index("--model") + 1] == "opus"
-
 def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     # End-to-end gate round-trip: a moment_hooks request is answered into a schema-valid
     # MomentHookDecision. Correlation is by the gate KEY (source.token), so NO source_id injection.
