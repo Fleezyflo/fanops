@@ -2,6 +2,7 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -365,14 +366,18 @@ def daemon_health(cfg: Config) -> Optional[dict]:
 
     Enriched with `interval`/`pending_gates` so the banner can frame a NOT-INSTALLED driver as OPT-IN
     rather than a fault; gates are always answered by the LLM, so there is no AI on/off to disclose."""
-    with fail_open("studio.views.daemon_health"):
+    try:
         from fanops import daemon
         from fanops import pipeline
         interval = daemon.installed_interval(cfg) or 600
         rep = daemon.status(cfg, interval=interval)
         pending_gates = None                                   # never let a torn agent_io dir 500 the banner
-        with fail_open("studio.views.daemon_health.pending_gates"):
+        try:
             pending_gates = pipeline.pending_gate_count(cfg)   # need-aware truth: claude runs ONLY to answer these
+        except Exception as exc:
+            logging.getLogger("fanops.studio.views").debug(
+                "studio.views.daemon_health.pending_gates fail-open: %s: %s",
+                type(exc).__name__, str(exc)[:200], exc_info=True)
         siblings = daemon.sibling_agents_status()
         from fanops.pipeline_run import run_status_line
         out = {**rep, "interval": interval,
@@ -382,7 +387,10 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         if run_line != "run=idle":
             out["run_line"] = run_line
         return out
-    return None
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views").debug(
+            "studio.views.daemon_health fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
+        return None
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
@@ -400,8 +408,12 @@ def daemon_health_strip(cfg: Config) -> Optional[dict]:
                 "hint": f"daemon strip snapshot {sr.freshness.value}"}
     snap = dict(sr.data) if isinstance(sr.data, dict) else {}
     pending_gates = None
-    with fail_open("studio.views.daemon_health_strip.pending_gates"):
+    try:
         pending_gates = pipeline.pending_gate_count(cfg)
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views").debug(
+            "studio.views.daemon_health_strip.pending_gates fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     age, stale, _iv = heartbeat_stale(cfg, interval=snap.get("interval") or 600)
     return project_daemon_strip(
         snap, age=age, stale=stale, pending_gates=pending_gates,

@@ -155,7 +155,6 @@
     "fanops.agentstep": {
       "compile": [
         "fanops.config",
-        "fanops.errors",
         "fanops.ids",
         "fanops.log"
       ],
@@ -673,7 +672,7 @@
         "fanops",
         "fanops.daemon",
         "fanops.errors",
-        "fanops.fanops_hashtags",
+        "fanops.hashtag_scrape_policy",
         "fanops.health_model",
         "fanops.ig_hashtag_scrape",
         "fanops.ledger",
@@ -866,7 +865,6 @@
         "fanops",
         "fanops.daemon",
         "fanops.doctor",
-        "fanops.errors",
         "fanops.field_shape",
         "fanops.health",
         "fanops.ledger",
@@ -2995,7 +2993,7 @@
     "fanops.digest": 4,
     "fanops.discover": 1,
     "fanops.doctor": 1,
-    "fanops.errors": 54,
+    "fanops.errors": 53,
     "fanops.escalation": 6,
     "fanops.fanops_account_stats": 0,
     "fanops.fanops_hashtags": 0,
@@ -3158,7 +3156,7 @@
     "fanops._fwrun": 1,
     "fanops.accounts": 5,
     "fanops.adjust": 5,
-    "fanops.agentstep": 4,
+    "fanops.agentstep": 3,
     "fanops.apply_common": 0,
     "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
@@ -4471,14 +4469,6 @@
       "to_level": 5
     },
     {
-      "from": "fanops.doctor",
-      "from_level": 4,
-      "jump": 1,
-      "same_scc": false,
-      "to": "fanops.fanops_hashtags",
-      "to_level": 5
-    },
-    {
       "from": "fanops.fanops_hashtags",
       "from_level": 5,
       "jump": 1,
@@ -5185,11 +5175,11 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 824,
-    "lazy_edges": 460,
+    "compile_edges_G1": 823,
+    "lazy_edges": 459,
     "lazy_edges_lateral": 59,
-    "lazy_edges_strictly_upward": 114,
-    "lazy_edges_to_equal_or_higher_level": 173,
+    "lazy_edges_strictly_upward": 113,
+    "lazy_edges_to_equal_or_higher_level": 172,
     "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9

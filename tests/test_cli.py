@@ -3,13 +3,15 @@ import pytest
 from fanops.cli import main
 
 def test_hashtags_cli_help_is_safari_sidecar(capsys):
+    """Current hashtags help is instagrapi envelope — no Chrome/Safari harvest."""
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "--help"])
     assert e.value.code == 0
     out = capsys.readouterr().out
     assert "instagrapi" in out.lower()
     assert "chrome" not in out.lower()
-    assert "Safari" in out or "safari" in out.lower() or "sidecar" in out.lower() or "lock" in out.lower()
+    assert "safari" not in out.lower()
+    assert "harvest" not in out.lower()
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "refresh", "--help"])
     assert e.value.code == 0

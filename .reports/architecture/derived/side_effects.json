@@ -541,7 +541,7 @@
       },
       {
         "call": "requests.get",
-        "line": 155
+        "line": 157
       }
     ],
     "fanops.post.metrics.zernio_read": [
@@ -579,19 +579,19 @@
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 366
+        "line": 351
       },
       {
         "call": "requests.post",
-        "line": 396
+        "line": 381
       },
       {
         "call": "requests.get",
-        "line": 427
+        "line": 412
       },
       {
         "call": "requests.post",
-        "line": 513
+        "line": 498
       }
     ]
   },
@@ -719,11 +719,11 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.check_output",
-        "line": 169
+        "line": 187
       },
       {
         "call": "subprocess.check_output",
-        "line": 211
+        "line": 229
       }
     ],
     "fanops.ingest": [

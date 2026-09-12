@@ -80,7 +80,9 @@ class PostizMetricsClient:
         if resp.status_code >= 300:
             raise RuntimeError(f"postiz analytics {resp.status_code}: {_safe(self.cfg, resp.text)}")
         arr = _json_or_raise(resp, "postiz analytics", self.cfg)
-        labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
+        if not isinstance(arr, list):
+            raise RuntimeError("postiz analytics: expected list body")
+        labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)]
         return _map_analytics(arr), labels
 
     def list_posts(self, window: str = "30d") -> list[dict]:

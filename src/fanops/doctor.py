@@ -2,9 +2,10 @@
 
 Composes existing guards (Accounts.validate, cutover-safety preflight, toolchain presence) into ONE
 operator view: PASS/FAIL per item with the exact next action, plus informational notes. Does not
-create platform accounts or obtain poster API keys. Scrape check (`_hashtag_scrape_check`) is session presence only (HT3) — no live
-Instagram probe; it does not call `_persist_cooldown` / `_freeze_for` (Layer A owns freeze). Sidecar assay
-writes live in `learn_doctor` (`assay.dangerous`), not in this module.
+create platform accounts or obtain poster API keys. Scrape check (`_hashtag_scrape_check`) is envelope presence only (HT3) — no live
+Instagram probe; empty `{}` / garbage is not a session. It does not call `_persist_cooldown` /
+`_freeze_for` (Layer A owns freeze). Sidecar assay writes live in `learn_doctor` (`assay.dangerous`),
+not in this module.
 """
 from __future__ import annotations
 import logging
@@ -63,16 +64,18 @@ def _hashtag_scrape_check(cfg: Config, *, open_client=None, probe_resolve=None) 
     """Hashtag Layer A: session/envelope presence only — no live Instagram tag or API probe (HT3).
 
     Soft setup incompleteness (not configured / no session yet) is N/A — omit the check
-    (MOL-965: never ok=True pretend PASS). `open_client` / `probe_resolve` are accepted for
-    call-site compat but ignored; doctor must not hit Instagram."""
+    (MOL-965: never ok=True pretend PASS). A file that is `{}` or unreadable is FAIL, not PASS.
+    `open_client` / `probe_resolve` are accepted for call-site compat but ignored; doctor must not hit Instagram."""
     del open_client, probe_resolve
-    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_configured
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_configured, scrape_session_path, scrape_users
     lbl = "hashtag Layer A scrape session present"
     if not scrape_configured(cfg):
         return None  # N/A — setup incomplete, not a green PASS
-    if not any_scrape_session(cfg):
-        return None  # N/A — credentials without session is setup incompleteness
-    return _check(lbl, True, "")
+    if any_scrape_session(cfg):
+        return _check(lbl, True, "")
+    if any(scrape_session_path(cfg, u).exists() for u in scrape_users(cfg)):
+        return _check(lbl, False, "scrape session file is empty or unreadable — run fanops hashtags scrape-login")
+    return None  # N/A — credentials without session is setup incompleteness
 
 
 def _postiz_reach_check(cfg: Config, *, probe=None):
@@ -132,7 +135,7 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
         st = reader(cfg, interval)
     except Exception:
         with fail_open("doctor.daemon status read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
+            pass
     # Observe snapshot miss/stale → UNKNOWN (required), not "no heartbeat" FAIL lie (MOL-965 WP3).
     snap_fr = st.get("snapshot_freshness")
     if snap_fr and snap_fr != "fresh":
@@ -154,7 +157,7 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
             age = daemon._heartbeat_age_s(cfg)
     except Exception:
         with fail_open("doctor.daemon heartbeat age read degrade:", log=logging.getLogger("fanops.doctor").debug):
-            raise
+            pass
     # (b) past-due backlog — fail-open ledger read; parity filters match publish_due (can_promote + active account)
     now = datetime.now(timezone.utc)
     backlog_n = 0; oldest_h = 0.0; backlog_unknown = False
@@ -375,7 +378,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     # 5. hashtag-scrape cooldown — optional enrichment; Severity.WARN (non-blocking). Surface WHY Layer A
     #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains.
     try:
-        from fanops.fanops_hashtags import _read_active_cooldown, _OUTAGE_REMEDY
+        from fanops.hashtag_scrape_policy import _OUTAGE_REMEDY, _read_active_cooldown
         cool = _read_active_cooldown(cfg, datetime.now(timezone.utc))
         if cool:
             reason = cool.get("reason") or "cooldown"
@@ -387,7 +390,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
                 hint=f"scrape frozen ({reason}) until {until} — {remedy}"))
     except Exception:
         with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
-            raise
+            pass
 
     return out
 

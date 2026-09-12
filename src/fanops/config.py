@@ -170,12 +170,16 @@ def bool_word(raw: str | None) -> bool | None:
 
 
 def env_bool(raw: str | None, *, default: bool) -> bool:
-    """A FANOPS_* flag read: on-word -> True, off-word -> False, unset/blank/unrecognized -> `default`.
-    Fail-open by construction — a typo'd flag never crashes an autonomous run, it keeps the documented
-    default. Every boolean Config property is one call to this, so `default` is the only thing a
+    """A FANOPS_* flag read: on-word -> True, off-word -> False, unset/blank -> `default`.
+    An unrecognized word is a refuse — a typo must not silently keep the documented default.
+    Every boolean Config property is one call to this, so `default` is the only thing a
     property body still has to state, and it states it as a value rather than as a re-spelled rule."""
+    if not (raw or "").strip():
+        return default
     parsed = bool_word(raw)
-    return default if parsed is None else parsed
+    if parsed is None:
+        raise ValueError(f"unrecognized bool value {raw!r}; valid: 1/0, true/false, yes/no, on/off")
+    return parsed
 
 
 def resolve_responder_mode(raw: str | None) -> str:

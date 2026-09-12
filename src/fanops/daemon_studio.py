@@ -220,9 +220,12 @@ def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_
             if resp.status != 200:
                 return None
             return json.loads(resp.read().decode())
+    except Exception as exc:
+        logging.getLogger("fanops.daemon").debug(
+            "daemon._studio_get_fingerprint fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
+        return None
     finally:
         conn.close()
-    return None
 
 
 def _studio_fingerprint_matches(expected: str, host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> bool:

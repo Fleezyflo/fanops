@@ -123,13 +123,14 @@ def daemon_progress(cfg: Config) -> tuple[bool, str | None, dict | None]:
     narrow "PID alive but stage silently hung" case, at the cost of up to _STAGE_HANG_CEILING_S (1h)
     detection lag (the ceiling MUST exceed the longest legitimate silent gap, or it false-flags a
     working pass). Returns the (alive_mid, line, snap) triple both callers destructure."""
-    from fanops.errors import fail_open
     from fanops import daemon
     snap = None; act = None
-    with fail_open("daemon_progress"):
+    try:
         from fanops.pipeline_run import run_stage_snapshot
         snap = run_stage_snapshot(cfg)
         act = daemon._newest_activity_ts(cfg)
+    except Exception as exc:
+        _log.debug("daemon_progress fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     silent_s = (datetime.now(timezone.utc) - act).total_seconds() if act else None
     # ALIVE: the log is fresh (still emitting) — working, however long the current stage runs.
     if silent_s is not None and silent_s < _STAGE_HANG_CEILING_S:
