@@ -1,15 +1,8 @@
 # tests/test_fail_open_logging_mol67.py
 """MOL-67 — fail-open logging discipline across read-helper layers.
 
-Each read-helper below swallows an exception and falls back to a safe default. The ticket's
-contract: every such swallow must LOG before falling back (so a persistently-recurring silent
-failure is findable), with NO behavior change — the fallback value/control-flow stays byte-identical.
-
-Per site we assert BOTH halves:
-  (a) the log fired — for cfg-in-scope sites via the structured run.log (cfg.log_path text carries the
-      component + tag, matching the get_logger(cfg) convention); for cfg-less sites via caplog on the
-      module logger (logging.getLogger(__name__), the house module-level convention).
-  (b) the fallback value is unchanged (return value / assigned default).
+Sites that still swallow must LOG before falling back. Sites whose leftover G-suite pin is
+fail-closed (_account_arg, lineage_stats) assert the exception propagates — no silent success.
 """
 import logging
 
@@ -116,19 +109,17 @@ def test_preview_media_returns_none_when_no_artifact(tmp_path):
     assert result is None
 
 
-# ── 7. studio/app_request._account_arg — except -> pass (cfg NOT reliably in scope: module logger) ──
-def test_account_arg_logs_on_resolve_error(tmp_path, monkeypatch, caplog):
+# ── 7. studio/app_request._account_arg — torn accounts.json must fail closed, not return raw ──
+def test_account_arg_fails_closed_on_unreadable_accounts(tmp_path):
     from fanops.studio import app as studio_app
     from fanops.studio import app_request
     cfg = _cfg(tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.mkdir()
     flask_app = studio_app.create_app(cfg)
-    monkeypatch.setattr("fanops.studio.views.resolve_account_handle",
-                        lambda v, c: (_ for _ in ()).throw(RuntimeError("resolve boom")))
     with flask_app.test_request_context("/?account=someone"):
-        with caplog.at_level(logging.WARNING, logger="fanops.studio.app_request"):
-            out = app_request._account_arg()
-    assert out == "someone"                                        # fallback: returns the raw handle unchanged
-    assert any(r.name == "fanops.studio.app_request" for r in caplog.records)
+        with pytest.raises(OSError):
+            app_request._account_arg()
 
 
 # ── 8. doctor.doctor_report half_live — except -> not solid LIVE (ok=False) ──
@@ -158,8 +149,8 @@ def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
     assert "postiz_down" in log_text
 
 
-# ── 10. studio/views_posted.lineage_stats — except -> pass (cfg-less: module logger) ──
-def test_lineage_stats_logs_on_error(tmp_path, caplog):
+# ── 10. studio/views_posted.lineage_stats — a row that raises must fail closed, not return input ──
+def test_lineage_stats_fails_closed_on_row_error():
     from fanops.studio import views_results
 
     class _BadRow:
@@ -168,11 +159,8 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
         def lift_score(self):
             raise RuntimeError("lift boom")
 
-    rows = [_BadRow(), _BadRow()]
-    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_posted"):
-        result = views_results.lineage_stats(rows)
-    assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
-    assert any(r.name == "fanops.studio.views_posted" for r in caplog.records)
+    with pytest.raises(RuntimeError, match="lift boom"):
+        views_results.lineage_stats([_BadRow(), _BadRow()])
 
 
 def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):

@@ -6,7 +6,6 @@ never cfg/app — lazy current_app imports inside individual parsers preserve th
 original Flask import order and keep this module cycle-free."""
 from __future__ import annotations
 
-import logging
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,8 +15,6 @@ from flask import request
 from fanops.config import Config
 from fanops.studio import views
 from fanops.timeutil import local_input_to_utc_z
-
-logger = logging.getLogger(__name__)
 
 
 def _bounded(cfg: Config, candidate) -> Path | None:
@@ -79,19 +76,16 @@ def _account_all_arg():
 def _account_arg():
     # P5: the per-account filter from ?account=. A blank/absent param -> None (the unfiltered "All"
     # view); read from request.args, so an htmx POST that carries account= in its action URL re-applies
-    # the same scope after a mutation (R1). Never raises; an unknown handle simply matches zero rows.
+    # the same scope after a mutation (R1). An unknown handle matches zero rows.
     # @-agnostic: operators may type @handle while accounts.json/ledger use bare handles.
     # S07: account=all -> None (mixed view) BEFORE resolve_account_handle ("all" is not a handle).
     v = (request.args.get("account") or "").strip()
     if not v or v.lower() == "all":
         return None
-    try:
-        from flask import current_app
-        cfg = current_app.config.get("FANOPS_CFG")
-        if cfg:
-            return views.resolve_account_handle(v, cfg)
-    except Exception:
-        logger.warning("account handle resolution failed (fail-open, using raw handle)", exc_info=True)
+    from flask import current_app
+    cfg = current_app.config.get("FANOPS_CFG")
+    if cfg:
+        return views.resolve_account_handle(v, cfg)
     return v
 
 
