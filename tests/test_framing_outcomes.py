@@ -311,11 +311,20 @@ def test_C1_preflight_is_fatal_in_both_modes(cfg, monkeypatch):
 
 
 def test_C1_render_account_cut_handlers_are_untouched(cfg, monkeypatch, tmp_path):
-    """ToolchainMissingError still RE-RAISES; every other exception still fails open."""
-    src = Path(clipmod.__file__).read_text()
-    body = src[src.index("def render_account_cut"):]
-    assert "except ToolchainMissingError:" in body and "raise" in body
-    assert "except Exception" in body and "return False, None" in body
+    """ToolchainMissingError still RE-RAISES from a real render_account_cut call (no source scan)."""
+    import cv2
+    from fanops.ledger import Ledger
+    from fanops.models import Source, Moment, MomentState, Fmt
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: None))
+    framing._reset_yunet_cache()
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          width=1920, height=1080, duration=60.0))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
+                          start=0, end=6, reason="r", state=MomentState.clipped))
+    with pytest.raises(ToolchainMissingError):
+        clipmod.render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
+                                   hook="", out_path=str(cfg.clips / "acct.mp4"))
 
 
 # ---------------------------------------------------------------------------- Layer 1: legacy equivalence

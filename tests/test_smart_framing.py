@@ -1,12 +1,10 @@
 # tests/test_smart_framing.py — Smart framing (subject-aware reframe). The 9:16 crop SLIDES onto the
 # detected subject instead of the blind top/center guess: framing.subject_focus returns a normalized
 # centroid, clip.reframe_filter turns it into a clamped crop offset, and both render paths thread it
-# through ffmpeg_clip_cmd + the render fingerprint. Detection MISSES are FAIL-OPEN: a stub/flag returning
-# None -> focus=None -> today's centered crop, byte-identical. But the cv2 DEPENDENCY is now REQUIRED when
-# smart_framing is ON: with the extra ABSENT + smart_framing ON, _resolve_framing REFUSES (ToolchainMissingError)
-# rather than silently centre-crop (see the require_cv2 raise-tests below). cv2 is absent in the hermetic unit
-# job, so router tests stub the DETECTION functions (detect_window/speaker_track/subject_focus); the real
-# require_cv2 runtime builds a real detector (cv2 is installed in the unit lane) and the stubbed detection drives the router.
+# through ffmpeg_clip_cmd + the render fingerprint. When smart_framing is ON, cv2 is REQUIRED:
+# _resolve_framing / require_cv2 raise ToolchainMissingError rather than silently centre-crop.
+# Unattributed detection None is UNRESOLVED/UNKNOWN, not a centre 3-tuple as success. Router tests
+# stub detect_window/speaker_track/subject_focus; they do not patch framing._cv2 to None.
 import json, re, shutil, subprocess, types
 from pathlib import Path
 import pytest
@@ -18,6 +16,8 @@ from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut
                          _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for)
 import fanops.clip as clipmod
 from fanops import overlay
+from fanops.errors import ToolchainMissingError
+from fanops.framing_outcomes import FramingEventType as _FE, FramingOutcome as _FO
 
 
 @pytest.fixture(autouse=True)
@@ -158,13 +158,10 @@ def test_smart_framing_off_words(tmp_path, monkeypatch, val, expected):
     assert Config(root=tmp_path).smart_framing is expected
 
 
-# ---------------------------------------------------------------- subject_focus (fail-open + cache) ----
-def test_subject_focus_no_extra_is_none(tmp_path, monkeypatch):
-    # cv2 absent (the CI default) -> None, and NO sidecar probe blows up. None is the fail-open signal.
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path=str(tmp_path / "s1.mp4"), width=1920, height=1080, duration=60.0)
-    assert framing.subject_focus(cfg, src, start=10.0, end=14.0) is None
+# ---------------------------------------------------------------- subject_focus (cache + miss) ----
+def test_require_cv2_is_fail_closed(tmp_path):
+    # No framing._cv2 patch. Missing extra/model/detector → ToolchainMissingError; present toolchain builds.
+    framing.require_cv2(Config(root=tmp_path))
 
 def test_subject_focus_non_positive_window_is_none(tmp_path):
     cfg = Config(root=tmp_path)
@@ -208,18 +205,6 @@ def test_vendored_yunet_model_ships_in_package():
     # the detector is useless without its model; assert the vendored asset is present + non-trivial.
     mp = framing._model_path()
     assert mp.exists() and mp.suffix == ".onnx" and mp.stat().st_size > 100_000
-
-def test_detector_none_when_model_absent(monkeypatch, tmp_path):
-    # model asset missing -> _detector None -> detect_window None -> center crop (fail-open), never raises.
-    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "absent.onnx")
-    assert framing._detector(object()) is None
-
-def test_detector_none_on_old_cv2_without_yunet(monkeypatch, tmp_path):
-    # an OpenCV too old to expose FaceDetectorYN -> None, not an AttributeError crash.
-    monkeypatch.setattr(framing, "_model_path", lambda: tmp_path / "m.onnx")
-    (tmp_path / "m.onnx").write_bytes(b"x" * 200_000)
-    class OldCv2: pass                                    # no FaceDetectorYN attribute
-    assert framing._detector(OldCv2()) is None
 
 def test_track_sidecar_stale_version_invalidated(tmp_path):
     # an older track sidecar (pre face-height/eyeline schema) must NOT be trusted -> recompute.
@@ -402,12 +387,6 @@ def test_render_reframed_static_no_perframe_symbol():
     assert not hasattr(clipmod, "_render_perframe")
 
 
-def test_speaker_track_no_extra_is_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(framing, "_cv2", lambda: None)                     # cv2 absent (CI) -> static path
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    assert framing.speaker_track(cfg, src, start=10.0, end=30.0, src_w=1920, src_h=1080) is None
-
 def _obs(loud_side, fhL=0.2, fhR=0.18):
     # one frame's observation: each side -> ((fx,fy,fh,ey), mouth-motion). loud_side gets high motion.
     L = ((0.22, 0.50, fhL, 0.45), 50.0 if loud_side == "L" else 5.0)
@@ -480,13 +459,6 @@ def test_motion_saliency_returns_change_centroid(tmp_path, monkeypatch):
     monkeypatch.setattr(framing, "_saliency_centroid", lambda cv2, frames: (0.7, 0.4))
     assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) == (0.7, 0.4)
 
-def test_motion_saliency_no_cv2_is_none(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) is None
-
-
 # ---------------------------------------------------------------- detect_window (single grid pass) ----
 def test_detect_window_builds_per_frame_face_stats(tmp_path, monkeypatch):
     # ONE grid pass -> per-frame list of [cx,cy,fh,ey] faces, cached to a .detect.json sidecar.
@@ -505,12 +477,6 @@ def test_detect_window_builds_per_frame_face_stats(tmp_path, monkeypatch):
     assert st["fps"] == framing._DETECT_FPS
     sidecar = cfg.agent_io / "framing" / "s1.detect.json"
     assert sidecar.exists() and json.loads(sidecar.read_text())["v"] == framing._DETECT_V
-
-def test_detect_window_no_cv2_is_none(tmp_path, monkeypatch):
-    monkeypatch.setattr(framing, "_cv2", lambda: None)             # extra absent -> None (fail-open)
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path="x.mp4", width=1920, height=1080, duration=60.0)
-    assert framing.detect_window(cfg, src, start=10.0, end=14.0) is None
 
 def test_detect_window_empty_grid_is_none(tmp_path, monkeypatch):
     # ffmpeg gave no frames -> None (fail-open to center crop), never a crash.
@@ -619,9 +585,8 @@ def test_resolve_multi_uses_track(tmp_path, monkeypatch):
     assert track and focus is None and ct == framing.CT_MULTI
 
 def test_resolve_multi_no_track_centres_conservatively(tmp_path, monkeypatch):
-    # E3: classified MULTI but no clean 2-shot track -> conservative CENTRE (both seats), NOT a one-person
-    # subject lock that would crop the other speaker out. subject_focus must NOT be called for a MULTI window.
-    from fanops.clip import _resolve_framing
+    # Unattributed no-track is UNRESOLVED/UNKNOWN, not a centre 3-tuple as success. subject_focus
+    # must NOT be called for a MULTI window.
     cfg = Config(root=tmp_path); src = _talk_src()
     called = {"focus": False}
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: {"frames": [[[0.2, 0.5, 0.2, 0.45]]]})
@@ -630,7 +595,8 @@ def test_resolve_multi_no_track_centres_conservatively(tmp_path, monkeypatch):
     def _focus(*a, **k):
         called["focus"] = True; return (0.5, 0.5, 0.22, 0.4)
     monkeypatch.setattr(framing, "subject_focus", _focus)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centred, both seats
+    r = framing._resolve(cfg, src, 0.0, 10.0, capture_failures=True)
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
     assert called["focus"] is False                                           # E3: subject_focus not run for MULTI
 
 def test_resolve_single_uses_focus(tmp_path, monkeypatch):
@@ -653,12 +619,12 @@ def test_resolve_music_no_face_uses_saliency(tmp_path, monkeypatch):
     assert focus == (0.7, 0.4) and track is None and ct is None                # saliency 2-tuple, NO zoom
 
 def test_resolve_no_people_centers_when_no_motion(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
     monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)         # centered (today)
+    r = framing._resolve(cfg, src, 0.0, 10.0, capture_failures=True)
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
 
 def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
     from fanops.clip import _resolve_framing
@@ -673,111 +639,89 @@ def test_resolve_smart_framing_off_is_none(tmp_path, monkeypatch):
 # (framing._framing_runtime_or_raise / _detector cache) and reused for every render_moment / _resolve_framing.
 # A BROKEN PREREQUISITE — cv2 absent, FaceDetectorYN/.create missing, model file absent, FaceDetectorYN.create()
 # returning None, or FaceDetectorYN.create() raising — REFUSES loudly with ToolchainMissingError BEFORE any
-# centered output. A GENUINE DETECTION MISS (detector built OK, no face found) still fails open to centered.
-# No autouse/suite-wide bypass exists; these force the real enforcement path. cv2 is really installed in the
-# unit lane, so the refusals are induced by stubbing the specific seam (_cv2/_model_path/_detector), never by
-# no-op'ing the guard.
+# centered output. An unattributed detection miss is UNRESOLVED/UNKNOWN, not a centre 3-tuple as success.
+# Refusals are induced at the OpenCV constructor / model-path edge, never by patching framing._cv2 to None.
 
-def _fake_cv2_with_create(create):
-    return types.SimpleNamespace(FaceDetectorYN=types.SimpleNamespace(create=create))
+def _break_yunet_create(monkeypatch, *, result=None, exc=None):
+    import cv2
+    if exc is not None:
+        def _boom(*a, **k):
+            raise exc
+        monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(_boom))
+    else:
+        monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: result))
+    framing._reset_yunet_cache()
 
-# (1) refuse when _cv2() returns None
-def test_resolve_refuses_when_cv2_absent(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
-    cfg = Config(root=tmp_path); src = _talk_src()             # smart_framing default ON
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
-    with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
 
-# (2) refuse when FaceDetectorYN or .create is unavailable (OpenCV too old)
 def test_resolve_refuses_when_facedetector_attr_missing(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
+    import cv2
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: object())     # no FaceDetectorYN attr at all
+    monkeypatch.setattr(cv2, "FaceDetectorYN", None)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (3) refuse when the vendored model is absent
 def test_resolve_refuses_when_model_missing(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
-    monkeypatch.setattr(framing, "_model_path", lambda: Path("/definitely/absent/yunet.onnx"))
+    orig = Path.exists
+    def exists(self):
+        if self.name == framing._MODEL:
+            return False
+        return orig(self)
+    monkeypatch.setattr(Path, "exists", exists)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (4a) refuse when the actual constructor returns None
 def test_resolve_refuses_when_constructor_returns_none(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))  # create()->None
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (4b) refuse when the actual constructor raises
 def test_resolve_refuses_when_constructor_raises(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
-    def _boom(*a, **k): raise RuntimeError("corrupt ONNX / OpenCV ABI mismatch")
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(_boom))
+    _break_yunet_create(monkeypatch, exc=RuntimeError("corrupt ONNX / OpenCV ABI mismatch"))
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
 
-# (5) constructor-failure cases DO NOT reach detection-miss centering (they raise; detect_window never runs)
 def test_constructor_failure_does_not_center(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))
+    _break_yunet_create(monkeypatch, result=None)
     called = {"detect": 0}
     orig = framing.detect_window
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: called.__setitem__("detect", called["detect"] + 1) or orig(*a, **k))
     with pytest.raises(ToolchainMissingError):
-        _resolve_framing(cfg, src, 0.0, 10.0)
+        clipmod._resolve_framing(cfg, src, 0.0, 10.0)
     assert called["detect"] == 0                               # refused BEFORE detection -> no centered fallback path
 
-# (6) initialized detector + no face found -> centered (None,None,None), NOT a raise
 def test_initialized_no_face_centers(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
     cfg = Config(root=tmp_path); src = _talk_src()
-    # a real-shaped runtime: create() returns a usable detector object; detection then finds nothing.
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: object()))
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())          # construction SUCCEEDS
-    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)      # ...but no face -> miss
+    monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)      # miss after a real runtime build
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
     monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)       # centered, no raise
+    r = framing._resolve(cfg, src, 0.0, 10.0, capture_failures=True)
+    assert r.final_outcome is _FO.UNRESOLVED and r.root_cause is _FE.UNKNOWN
 
-# (7) render_moment reaches prerequisite enforcement and refuses on constructor failure
 def test_render_moment_refuses_on_constructor_failure(tmp_path, monkeypatch):
     from fanops.clip import render_moment
-    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))  # create()->None
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
 
-# (8) render_account_cut reaches prerequisite enforcement and refuses on constructor failure
 def test_render_account_cut_refuses_on_constructor_failure(tmp_path, monkeypatch):
-    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(lambda *a, **k: None))
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk", hook="", out_path=str(cfg.clips / "acct.mp4"))
 
-# (9) _supercut_span_entries reaches prerequisite enforcement and refuses (never partially renders)
 def test_supercut_span_entries_refuses_on_missing_prereq(tmp_path, monkeypatch):
     from fanops.clip import _supercut_span_entries
-    from fanops.errors import ToolchainMissingError
     cfg = Config(root=tmp_path); src = _talk_src()
-    monkeypatch.setattr(framing, "_cv2", lambda: None)
+    _break_yunet_create(monkeypatch, result=None)
     with pytest.raises(ToolchainMissingError):
         _supercut_span_entries(cfg, src, [(0.0, 3.0), (5.0, 8.0)])
 
@@ -850,33 +794,31 @@ def test_framing_construction_and_extraction_counts_reported(tmp_path, monkeypat
 # (13) OFF CONTRACT: the toggle is evaluated BEFORE the runtime build, so the retained OFF path never
 # requires OpenCV. If _resolve_framing ever built the runtime first, OFF would start demanding the extra.
 def test_resolve_off_never_constructs_runtime(tmp_path, monkeypatch):
-    from fanops.clip import _resolve_framing
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     def _boom_rt(cfg): raise AssertionError("framing runtime CONSTRUCTED while smart_framing is OFF")
-    def _boom_cv2(): raise AssertionError("cv2 consulted while smart_framing is OFF")
     monkeypatch.setattr(framing, "_framing_runtime_or_raise", _boom_rt)
-    monkeypatch.setattr(framing, "_cv2", _boom_cv2)
     cfg = Config(root=tmp_path); src = _talk_src()
-    assert _resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime, no cv2
+    assert clipmod._resolve_framing(cfg, src, 0.0, 10.0) == (None, None, None)   # centered; no runtime
 
-# (14) PROCESS-SCOPED YuNet reuse: many resolutions in one interpreter share one FaceDetectorYN.create.
 def test_framing_runtime_reuses_yunet_once_per_process(tmp_path, monkeypatch):
+    import cv2
     from concurrent.futures import ThreadPoolExecutor
-    from fanops.clip import _resolve_framing
     creates = {"n": 0}
+    orig = cv2.FaceDetectorYN.create
     def _create(*a, **k):
         creates["n"] += 1
-        return object()
-    monkeypatch.setattr(framing, "_cv2", lambda: _fake_cv2_with_create(_create))
+        return orig(*a, **k)
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(_create))
     monkeypatch.setattr(framing, "detect_window", lambda *a, **k: None)
     monkeypatch.setattr(framing, "classify_window", lambda *a, **k: framing.CT_NOPEOPLE)
     monkeypatch.setattr(framing, "motion_saliency", lambda *a, **k: None)
     cfg = Config(root=tmp_path); src = _talk_src()
+    framing._reset_yunet_cache()
 
-    _resolve_framing(cfg, src, 0.0, 5.0)                                  # sequential x2
-    _resolve_framing(cfg, src, 0.0, 5.0)
+    clipmod._resolve_framing(cfg, src, 0.0, 5.0)                                  # sequential x2
+    clipmod._resolve_framing(cfg, src, 0.0, 5.0)
     with ThreadPoolExecutor(max_workers=2) as ex:                         # concurrent x2
-        list(ex.map(lambda _: _resolve_framing(cfg, src, 0.0, 5.0), range(2)))
+        list(ex.map(lambda _: clipmod._resolve_framing(cfg, src, 0.0, 5.0), range(2)))
 
     assert creates["n"] == 1, "FaceDetectorYN.create must run once per process, not per resolution"
     rt_a = framing._framing_runtime_or_raise(cfg)
@@ -960,14 +902,11 @@ def test_sidecar_loaders_reject_nondict_windows(tmp_path):
 # ---------------------------------------------------------------- real OpenCV/YuNet smoke (MOL-196) ----
 @pytest.mark.integration
 def test_real_yunet_detection_path_executes(tmp_path):
-    """MOL-196: every other detection test stubs cv2. This one proves the REAL OpenCV/YuNet path runs when
-    the [framing] extra is actually installed (the e2e CI job) — the vendored model loads into a real
-    cv2.FaceDetectorYN and detection runs end-to-end on a real image. Skips locally when cv2 is absent
-    (in CI's e2e job [framing] IS installed, so FANOPS_REQUIRE_E2E turns any skip here into a failure)."""
-    cv2 = framing._cv2()
-    if cv2 is None:
-        pytest.skip("cv2 (opencv-python-headless / [framing] extra) not installed")
+    """MOL-196: the REAL OpenCV/YuNet path. Fail-closed: ImportError / ToolchainMissingError is the
+    signal (no unit skip). FANOPS_REQUIRE_E2E already converts integration skips to failures."""
+    import cv2
     import numpy as np
+    framing.require_cv2(Config(root=tmp_path))
     det = framing._detector(cv2)
     assert det is not None, "vendored YuNet model failed to load into real cv2.FaceDetectorYN"
     img = tmp_path / "frame.png"

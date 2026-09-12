@@ -167,5 +167,12 @@ def test_pair_fingerprint_flips_and_others_are_stable():
 
 # ---- the defensive guard: a stray stack-pair focus never crashes reframe_filter ----
 def test_reframe_filter_guard_centres_a_stray_pair():
-    vf = clip.reframe_filter("9:16", 1920, 1080, focus=_pair_focus(), content_type=framing.RENDER_STACK_PAIR)
-    assert vf == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"    # centred (the pair renders via render_reframed, not here)
+    # A stray stack-pair must not look like a successful centre crop. Refuse is acceptable;
+    # silently emitting the blind-centre vf is the hole (THEATRE-FIX-F, expected RED while it centres).
+    centred = "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
+    try:
+        vf = clip.reframe_filter("9:16", 1920, 1080, focus=_pair_focus(),
+                                 content_type=framing.RENDER_STACK_PAIR)
+    except Exception:
+        return
+    assert vf != centred

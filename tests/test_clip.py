@@ -39,11 +39,9 @@ def test_clip_cmd_seek_is_output_relative_and_reframes():
     assert cmd[-1] == "/o/c.mp4"
 
 def test_reframe_filter_handles_vertical_source():
-    # wide source -> crop to 9:16; already-vertical -> scale/pad, never negative crop
-    wide = reframe_filter("9:16", 1920, 1080)
-    tall = reframe_filter("9:16", 1080, 1920)
-    assert "crop" in wide or "scale" in wide
-    assert "crop=ih*9/16" not in tall or "1080:1920" in tall  # no impossible crop on tall src
+    # wide source -> width-crop to 9:16; already-vertical -> scale-only, never a crop.
+    assert reframe_filter("9:16", 1920, 1080) == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
+    assert reframe_filter("9:16", 1080, 1920) == "scale=1080:1920,setsar=1"
 
 # ---- Theme 2: upper-third crop bias (aware reframe), default-OFF, byte-identical when off ----
 
@@ -564,7 +562,8 @@ def test_fit_window_default_keeps_long_pick():
     assert fit_window(10.0, 40.0, 120.0) == (10.0, 40.0)
 
 def test_fit_window_eof_clamps_when_hi_is_duration():
-    assert fit_window(10.0, 50.0, 30.0, lo=0.0, hi=30.0) == (10.0, 30.0)
+    # duration != hi so an honoured-hi clamp would be visible (end=20). hi is ignored; EOF uses duration.
+    assert fit_window(10.0, 50.0, 30.0, lo=0.0, hi=20.0) == (10.0, 30.0)
 
 def test_fit_window_optional_floor_does_not_pad():
     assert fit_window(10.0, 13.0, 120.0, lo=12.0, hi=22.0) == (10.0, 13.0)
@@ -979,14 +978,13 @@ def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
         if not str(cmd[-1]).startswith("-"):
             out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
         return type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)  # ffmpeg OS edge, not a fanops.* patch
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
     assert any("-filter_complex" in c for c in calls)         # supercut tried first
-    fallback = [c for c in calls if "-vf" in c][-1]           # envelope single-window fallback
-    assert "-filter_complex" not in fallback
-    ss = float(fallback[fallback.index("-ss") + 1])
-    assert 10.0 <= ss <= 14.0                                 # envelope window, not absolute span seek
+    # Silent ClipState.rendered after a failed supercut is the hole (THEATRE-FIX-F, expected RED
+    # while the envelope fallback is recorded as a successful intended render).
+    assert clip.state is ClipState.error
+    assert clip.error_reason
 
 def test_supercut_subtitle_fail_open_to_hook_only(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")

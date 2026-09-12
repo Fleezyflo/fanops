@@ -171,14 +171,15 @@ def test_d1a_wide_two_shot_still_stacks(monkeypatch, cfg):
 # ---- blast radius: every pre-existing path is byte-identical ---------------------------------------
 
 def test_ordinary_focus_path_keeps_the_full_zoom_max():
-    """zoom_base defaults to _ZOOM_MAX, so a CT_SINGLE/CT_MUSIC focus render is unchanged by S3."""
+    """zoom_base defaults to _ZOOM_MAX, so a CT_SINGLE/CT_MUSIC focus render is unchanged by S3.
+    Goldens are hand-derived from the zoom/safe-area/eyeline math (not `_focus_crop` on both sides)."""
     f = (0.6, 0.45, 0.30, 0.40, 0.16)
-    for ct in (None, framing.CT_SINGLE, framing.CT_MUSIC, framing.CT_MULTI):
-        got = clip.reframe_filter("9:16", _SW, _SH, focus=f, track=None, content_type=ct)
-        want = clip._focus_crop(f, _SW, _SH, 1080, 1920, _SH, clip._target_frac(ct),
-                                symbolic_w="crop=ih*1080/1920:ih:{x}:{y}", symbolic_full=True,
-                                zoom_base=clip._ZOOM_MAX)
-        assert got == want
+    talk = "crop=499:887:902:77,scale=1080:1920,setsar=1"
+    music = "crop=ih*1080/1920:ih:848:0,scale=1080:1920,setsar=1"
+    assert clip.reframe_filter("9:16", _SW, _SH, focus=f, track=None, content_type=None) == talk
+    assert clip.reframe_filter("9:16", _SW, _SH, focus=f, track=None, content_type=framing.CT_SINGLE) == talk
+    assert clip.reframe_filter("9:16", _SW, _SH, focus=f, track=None, content_type=framing.CT_MULTI) == talk
+    assert clip.reframe_filter("9:16", _SW, _SH, focus=f, track=None, content_type=framing.CT_MUSIC) == music
 
 def test_far_face_clamp_never_loosens_a_gentler_base():
     """_adaptive_zoom_max's far cap only ever TIGHTENS. Without the min() a far subject under the gentle base
