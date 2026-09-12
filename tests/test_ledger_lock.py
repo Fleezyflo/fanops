@@ -17,23 +17,24 @@ def _store(cfg) -> SqliteLedgerStore:
 
 
 def test_uncommitted_txn_does_not_wedge_save(tmp_path):
+    """A live BEGIN IMMEDIATE must stay open across save — closing first (or swallowing setup)
+    never proves that save does not wedge on a reserved writer."""
     cfg = Config(root=tmp_path)
     store = _store(cfg)
     led = Ledger.load(cfg)
     with store.lock():
         store.write_raw(led._to_doc())
-    conn = sqlite3.connect(store.db_path)
+    conn = sqlite3.connect(store.db_path, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM ledger_rows")
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM ledger_rows")
+        t0 = time.monotonic()
+        led.save()
+        assert time.monotonic() - t0 < 5.0
+        assert store.read_raw() is not None
+    finally:
         conn.close()
-    except Exception:
-        conn.close()
-    t0 = time.monotonic()
-    led.save()
-    assert time.monotonic() - t0 < 5.0
-    assert store.read_raw() is not None
 
 
 def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
@@ -59,18 +60,25 @@ def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
     finally:
         release.set()
         t.join(5)
+    acquired = False
+    with waiter_store.lock(timeout=0.5):
+        acquired = True
+    assert acquired
 
 
 def test_lock_released_after_commit_lets_next_acquirer_in(tmp_path):
+    """Hold the real store lock, second acquirer is LockBusyError, then acquire after release.
+    A BEGIN IMMEDIATE that commits before the waiter never overlaps."""
     cfg = Config(root=tmp_path)
     Ledger.load(cfg).save()
-    store = _store(cfg)
-    holder = sqlite3.connect(store.db_path, timeout=30.0)
-    holder.execute("BEGIN IMMEDIATE")
-    holder.commit()
-    holder.close()
+    holder_store = _store(cfg)
+    waiter_store = _store(cfg)
+    with holder_store.lock(timeout=30):
+        with pytest.raises(LockBusyError):
+            with waiter_store.lock(timeout=0.5):
+                pass
     acquired = False
-    with store.lock(timeout=0.5):
+    with waiter_store.lock(timeout=0.5):
         acquired = True
     assert acquired
 
