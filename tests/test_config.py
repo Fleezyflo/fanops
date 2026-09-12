@@ -197,7 +197,9 @@ def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, ca
     # operator saw learning frozen and no reason. Keep the fail-safe False, but log WHY.
     monkeypatch.setenv("FANOPS_LIVE", "1")                       # operator intends live
     monkeypatch.delenv("FANOPS_POSTER", raising=False)          # dryrun global -> no backend creds -> fall through
-    monkeypatch.setattr("fanops.accounts.load_accounts_safe", lambda cfg: (None, "corrupt accounts.json"))
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{,}")
     with caplog.at_level(logging.WARNING):
         live = Config(root=tmp_path).is_live_backend
     assert live is False                                        # still fail-safe (not provably live)
@@ -206,8 +208,9 @@ def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, ca
 def test_effective_publish_mode_logs_on_accounts_error(monkeypatch, tmp_path, caplog):
     # Accounts read failure → 'unknown' (never confident 'live').
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    def boom(cfg): raise RuntimeError("corrupt")
-    monkeypatch.setattr("fanops.accounts.Accounts.load", boom)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{,}")
     with caplog.at_level(logging.WARNING):
         mode = Config(root=tmp_path).effective_publish_mode()
     assert mode == "unknown"
@@ -221,7 +224,8 @@ def test_burn_subs_defaults_on_and_respects_env(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "")
     assert Config(root=tmp_path).burn_subs is True            # blank stays ON
     monkeypatch.setenv("FANOPS_BURN_SUBS", "maybe")
-    assert Config(root=tmp_path).burn_subs is True            # anything not an off-word stays ON
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).burn_subs                       # junk refuses (not silently ON)
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     assert Config(root=tmp_path).burn_subs is False
     monkeypatch.setenv("FANOPS_BURN_SUBS", "off")
@@ -659,16 +663,18 @@ def test_bool_word_is_tri_state_and_keeps_invalid_distinct_from_unset():
         assert bool_word(none) is None, none
 
 
-def test_env_bool_falls_back_to_the_declared_default_for_every_unrecognized_word():
-    """Every boolean Config property is one env_bool call, so this is the rule all 26 obey: an
-    on-word wins, an off-word wins, and unset/blank/garbage yields the property's declared default.
-    Fail-open by construction — a typo never crashes an autonomous run, it keeps the default."""
+def test_env_bool_unrecognized_words_must_not_silently_equal_default():
+    """An on-word wins, an off-word wins. An unrecognized WORD must not collapse to `default`
+    (that silent fail-open is a defect). Unset/blank may still mean 'use default'."""
     from fanops.config import env_bool
     for default in (True, False):
-        assert env_bool("1", default=default) is True          # an explicit word always wins
+        assert env_bool("1", default=default) is True
         assert env_bool("off", default=default) is False
-        for junk in (None, "", "   ", "garbage", "2", "-1", "1.5"):
-            assert env_bool(junk, default=default) is default, (junk, default)
+        for blank in (None, "", "   "):
+            assert env_bool(blank, default=default) is default
+        for junk in ("garbage", "maybe", "2", "-1", "1.5"):
+            with pytest.raises(ValueError):
+                env_bool(junk, default=default)
 
 
 def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path):
@@ -803,7 +809,8 @@ def test_auto_adopt_is_registered_boolenv(monkeypatch, tmp_path):
     with pytest.raises(ValidationError) as ei:
         _validate_settings()
     assert "FANOPS_AUTO_ADOPT" in str(ei.value)
-    assert Config(root=tmp_path).auto_adopt is True            # runtime fail-open ON
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).auto_adopt
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "false")
     Settings()  # must not raise
     assert Config(root=tmp_path).auto_adopt is False
