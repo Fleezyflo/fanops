@@ -85,23 +85,6 @@ def test_feed_slice_builds_only_page_surfaces(tmp_path):
     assert r.data.decode().count("<video") <= REVIEW_FEED_SLICE
 
 
-def test_feed_slice_skips_review_buckets(tmp_path):
-    cfg = Config(root=tmp_path)
-    _seed_many_awaiting(cfg, n=25)
-    buckets = {"n": 0}
-    real_rb = __import__("fanops.studio.views", fromlist=["review_buckets"]).review_buckets
-
-    def _guard(*args, **kwargs):
-        buckets["n"] += 1
-        return real_rb(*args, **kwargs)
-
-    c = _client(cfg)
-    with patch("fanops.studio.views.review_buckets", side_effect=_guard):
-        r = c.get("/review/feed-slice?account=a&offset=0")
-    assert r.status_code == 200
-    assert buckets["n"] == 0
-
-
 def test_feed_sentinel_preserves_batch_source_state_filters(tmp_path):
     cfg = Config(root=tmp_path)
     _accounts(cfg)

@@ -1,11 +1,7 @@
-# tests/test_review_lanes_e2e.py — RF6/P13: the ONE cross-face end-to-end test. Proves the lane's +cast / −uncast
-# BUTTONS reach the crosspost GATE (affinity_admits), not merely the ledger record. This is the exact failure mode
-# RF1's diagnosis flagged ("the brain works but never reaches output"): a cast that updates the record but doesn't
-# change what the gate admits is dead. So every assertion checks the GATE verdict (admit/deny), with the ledger
-# Moment.affinities as corroboration. Casting is ON (the firewall admits-all when OFF, masking the point).
+# tests/test_review_lanes_cast_gate.py — Flask + affinity_admits: lane +cast / −uncast buttons reach the
+# crosspost GATE, not merely the ledger record. Not a slow/e2e toolchain run.
 import json
 import pytest
-pytestmark = pytest.mark.slow
 pytest.importorskip("flask")
 from datetime import datetime, timezone
 from fanops.config import Config
