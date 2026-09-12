@@ -62,16 +62,14 @@ ListPosts = Callable[[str], list[dict]]
 
 def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
                            platform: Optional[Platform] = None, require_ig_retention: bool = False) -> bool:
-    """True when a live analyzed row proves the metric field-shape for learning unfreeze. Broader than
-    `not lift_degraded`: Postiz never delivers `retention`, so a Postiz-shaped row stays lift_degraded
-    yet proves the shape once `reach` + a primary engagement key (saves|shares) reconcile — mirroring
-    learn_doctor's reach gate, not an all-_W verdict. Still fails closed on present-but-null primaries
-    (D1) and on reach-only noise (likes+reach with no saves/shares). A full primary set (Postiz-shaped)
-    always proves. MOL-17: `platform` names the row's Platform so a metric the platform CANNOT deliver
-    (retention on Postiz/Zernio platforms via _PLATFORM_METRICS) is not counted a missing primary. MOL-18c:
-    `require_ig_retention` (default OFF, caller-gated on cfg.ig_retention_proof) tightens ONLY a platform
-    that CAN deliver retention to require it present-numeric — fail-OPEN for platform None/unknown or
-    a platform that structurally can't (prove exactly as today)."""
+    """True when a live analyzed row proves the metric field-shape for learning unfreeze. Fails closed
+    on present-but-null primaries (D1), reach-only / likes-only noise, and degraded Postiz (missing
+    saves — reach+shares is not enough). A full platform-available primary set always proves. `reach`
+    + `saves` still proves; TikTok also proves on reach+shares (Zernio pin). MOL-17: `platform` names
+    the row's Platform so a metric the platform CANNOT deliver is not a missing primary. MOL-18c:
+    `require_ig_retention` (default OFF, caller-gated on cfg.ig_retention_proof) tightens Instagram
+    to require present-numeric retention even though Postiz capability omits it (Graph can deliver
+    it). Fail-OPEN for platform None/unknown and for platforms that structurally can't (TikTok)."""
     if LIFT_SCORE not in metrics:
         return False
     w = _W if weights is None else weights
@@ -82,18 +80,20 @@ def _shape_proves_learning(metrics: dict, *, weights: Optional[dict] = None,
             continue
         if k in raw and (raw[k] is None or not isinstance(raw[k], (int, float)) or isinstance(raw[k], bool)):
             return False                                    # D1: explicit null/non-numeric in the live row
-    if require_ig_retention and _platform_delivers(platform, "retention") and platform is not None:
-        r = metrics.get("retention")                        # MOL-18c: IG must show retention to prove (flag ON)
+    if require_ig_retention and platform is Platform.instagram:
+        r = metrics.get("retention")                        # flag ON: IG must show retention to prove (Postiz map omits it)
         if not (isinstance(r, (int, float)) and not isinstance(r, bool)):
-            return False                                    # a retention-capable platform without it -> unproven
+            return False                                    # Instagram without retention -> unproven
     if not _missing_high_weight(metrics, weights, platform):
         return True                                         # full primary set (platform-available keys present)
     has_reach = isinstance(metrics.get("reach"), (int, float)) and not isinstance(metrics.get("reach"), bool)
-    has_eng = any(isinstance(metrics.get(k), (int, float)) and not isinstance(metrics.get(k), bool)
-                 for k in ("saves", "shares"))
-    if has_reach and has_eng:
-        return True                                         # Postiz-shaped proof
-    if isinstance(metrics.get("saves"), (int, float)) and not isinstance(metrics.get("saves"), bool):
+    has_saves = isinstance(metrics.get("saves"), (int, float)) and not isinstance(metrics.get("saves"), bool)
+    has_shares = isinstance(metrics.get("shares"), (int, float)) and not isinstance(metrics.get("shares"), bool)
+    if has_reach and has_saves:
+        return True                                         # reach + saves proves (Postiz/Zernio)
+    if platform is Platform.tiktok and has_reach and has_shares:
+        return True                                         # TikTok pin: reach+shares still proves without saves
+    if has_saves:
         return True                                         # Zernio-shaped: saves lands without reach
     return False
 
@@ -326,11 +326,11 @@ def pull_metrics(led: Ledger, cfg: Config, *, list_posts: Optional[ListPosts] = 
 def _auto_validate_metrics_shape(led: Ledger, cfg: Config) -> None:
     """De-gated learning (the operator's `fanops cutover metrics` step is removed): the FIRST real,
     non-degraded analyzed metric pulled from a LIVE backend PROVES the metric field-shape against _W —
-    exactly what the manual cutover reconciled by hand. Postiz-shaped rows stay lift_degraded (retention
-    is absent) yet still prove the shape once reach + saves|shares reconcile. Auto-stamp cutover.json `metrics_confirmed` so
-    `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row, so it
-    never falsely unfreezes; a DEGRADED row (a primary weighted key absent) is the unproven/mis-keyed case
-    the gate exists for and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
+    exactly what the manual cutover reconciled by hand. A degraded Postiz row (missing saves) does
+    NOT prove; likes-only / reach-only noise does not prove. Auto-stamp cutover.json `metrics_confirmed`
+    so `learning_validated` unfreezes with NO operator probe. dryrun never reaches a real analytics row,
+    so it never falsely unfreezes; a DEGRADED row is the unproven/mis-keyed case the gate exists for
+    and never stamps. Idempotent (skips once confirmed); the manual cutover still works."""
     log = get_logger(cfg)
     if not cfg.is_live:
         log("learning", "auto_validate", "frozen_not_live"); return   # dryrun never proves a real shape

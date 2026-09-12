@@ -82,9 +82,11 @@ def _integrations():
 # Task 1 — dispatch by backend
 def test_cutover_metrics_dispatches_postiz(tmp_path, monkeypatch):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 10, "shares": 2}, "_raw_labels": ["Likes", "Shares"]}]
+    # reach+saves is a proving shape — likes+shares alone must not stamp (THEATRE-PROD-LEARNING).
+    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 10, "shares": 2, "saves": 4, "reach": 5000},
+             "_raw_labels": ["Likes", "Shares"]}]
     out = cutover.cutover_metrics(cfg, "pz1", list_posts=lambda w: rows)
-    assert out["reconciliation"]["scored"] == ["likes", "shares"]
+    assert out["reconciliation"]["scored"] == ["likes", "reach", "saves", "shares"]
     state = json.loads(cfg.cutover_path.read_text())
     assert state["metrics_confirmed"] is True and state["backend"] == "postiz"
 
@@ -146,7 +148,9 @@ def test_postiz_post_401_redacted(tmp_path, monkeypatch, mocker):
 # Task 4 — Postiz metrics (real-label reconcile → confirmed field map)
 def test_postiz_metrics_records_raw_labels_and_confirms(tmp_path, monkeypatch):
     _postiz_env(monkeypatch); cfg = Config(root=tmp_path)
-    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 10, "shares": 2}, "_raw_labels": ["Likes", "Shares", "Saves"]}]
+    rows = [{"postSubmissionId": "pz1",
+             "metrics": {"likes": 10, "shares": 2, "saves": 4, "reach": 5000},
+             "_raw_labels": ["Likes", "Shares", "Saves"]}]
     out = cutover.cutover_metrics(cfg, "pz1", list_posts=lambda w: rows)
     assert out["postiz_labels"] == ["Likes", "Shares", "Saves"]                       # M3 records the RAW label set, no self-fetch
     state = json.loads(cfg.cutover_path.read_text())
