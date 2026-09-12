@@ -490,12 +490,13 @@ def test_review_shows_hook_choice_when_hook_removed(tmp_path):
 
 
 def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
-    # Legacy name kept: FANOPS_CREATIVE_VARIATION no longer gates the template (golive hardcodes OFF), so the
-    # restore choice remains visible when hook_removed is set.
+    # Product: ON-mode per-surface hooks own the burn, so the OFF-mode moment-restore choice must hide.
+    # Template `_card.html` still emits hook-choice whenever hook_removed is set — expected RED until hide.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"Approve with hook" not in html
+    assert b"hook-choice" not in html
 
 
 def test_approve_posts_large_batch_requires_confirm(tmp_path):
@@ -558,6 +559,9 @@ def test_approve_route_tells_the_operator_the_cap_dropped_one(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits", "p_long"]}).data.decode()
     assert "Approved 1" in html and "1 skipped" in html and _CAP_COPY in html
+    led = Ledger.load(cfg)
+    assert led.posts["p_fits"].state is PostState.queued
+    assert led.posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
     """The branch that would otherwise stay silent: `approved_scheduled` is only set when >=1 post promoted,
@@ -568,6 +572,7 @@ def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_long"]}).data.decode()
     assert "1 skipped" in html and _CAP_COPY in html
+    assert Ledger.load(cfg).posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path):
     # the negative control at the SURFACE: a clean approve renders no skip clause (a clause that always
@@ -624,6 +629,7 @@ def test_approve_with_hook_route_tells_the_operator_the_cap_dropped_one(tmp_path
     mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
     html = _client(cfg).post("/posts/approve-with-hook/clip_long").data.decode()
     assert "1 skipped" in html and _CAP_COPY in html
+    assert Ledger.load(cfg).posts["p_cap"].state is PostState.awaiting_approval
 
 def test_approve_with_hook_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path, mocker):
     # the same negative control at the with-hook surface.

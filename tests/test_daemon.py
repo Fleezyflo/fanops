@@ -549,12 +549,10 @@ def test_status_ignores_manual_heartbeat_without_loop_origin(tmp_path, monkeypat
     now = datetime.now(timezone.utc).isoformat()
     manual = json.dumps({"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
                          "heartbeat": now, "fanops_version": "0.3.0", "published_in_run": "0"})
-    loop = json.dumps({"ts": now, "level": "info", "stage": "heartbeat", "unit_id": "-", "outcome": "ok",
-                       "origin": "loop", "heartbeat": now, "fanops_version": "0.3.0", "published_in_run": "0"})
-    cfg.log_path.write_text(manual + "\n" + loop + "\n")
+    cfg.log_path.write_text(manual + "\n")  # MANUAL ONLY — no origin=loop line
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
     rep = daemon.status(cfg, interval=600)
-    assert rep["verdict"] == "alive"
+    assert rep["verdict"] != "alive"
 
 
 def test_stop_boots_out_label(tmp_path, monkeypatch):
@@ -713,7 +711,7 @@ def test_root_divergence_no_daemon_is_silent(tmp_path, monkeypatch):
     assert daemon.root_divergence(Config()) is None     # cwd fallback but no daemon installed -> no false alarm
 
 
-def test_cli_root_divergence_refuses_except_daemon_status(tmp_path, monkeypatch, mocker, capsys):
+def test_cli_root_divergence_refuses_except_daemon_status(tmp_path, monkeypatch, capsys):
     """CPDP-08: wrong-root unattended/CP verbs exit 2; daemon status is the diagnose allowlist."""
     from fanops.cli import main
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -726,12 +724,7 @@ def test_cli_root_divergence_refuses_except_daemon_status(tmp_path, monkeypatch,
     assert main(["doctor"]) == 2
     err = capsys.readouterr().err
     assert "ERROR:" in err and str(pinned.resolve()) in err
-    mocker.patch.object(daemon, "status", return_value={
-        "installed": True, "loaded": False, "pid": None, "last_exit": None,
-        "heartbeat_age_s": None, "last_success_age_s": None, "verdict": "not installed",
-        "pass_verdict": "no completed pass yet", "exec_fail": None, "run_line": None,
-        "root": str(other.resolve()), "daemon_root": str(pinned.resolve()),
-    })
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(1, "")))
     assert main(["daemon", "status"]) == 0
     out = capsys.readouterr().out
     assert "DIFFERS" in out

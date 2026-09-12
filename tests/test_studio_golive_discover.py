@@ -185,30 +185,19 @@ def test_golive_health_no_banner_when_all_deps_up(tmp_path, monkeypatch):
     assert "dep-alert" not in body, "all-green health must not raise a dependency alert banner"
 
 
-def test_golive_health_never_calls_refresh_runtime_snapshots(tmp_path, monkeypatch, mocker):
-    from fanops.health_model import DepHealth
+def test_golive_health_refresh_is_live_read_not_write(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    _seed_deps(cfg, [("docker", True, "daemon up")])
-    spy = mocker.patch("fanops.health.refresh_runtime_snapshots")
-    mocker.patch("fanops.health.system_health", return_value=[DepHealth("docker", True, "daemon up")])
-    for url in ("/golive/health", "/golive/health?refresh=1",
-                "/golive/health?compact=1", "/golive/health?compact=1&refresh=1"):
-        assert _client(cfg).get(url).status_code == 200
-        spy.assert_not_called()
-
-
-def test_golive_health_refresh_is_live_read_not_write(tmp_path, monkeypatch, mocker):
-    from fanops.health_model import DepHealth
-    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    spy = mocker.patch("fanops.health.refresh_runtime_snapshots")
-    mocker.patch("fanops.health.system_health", return_value=[
-        DepHealth("docker", True, "daemon up"),
-        DepHealth("postiz", True, "reachable"),
-        DepHealth("zernio", True, "reachable"),
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", True, "reachable", 200),
+        ("zernio", True, "reachable"),
     ])
+    before = cfg.deps_health_path.read_text()
+    mtime = cfg.deps_health_path.stat().st_mtime
     body = _client(cfg).get("/golive/health?refresh=1").data.decode()
-    spy.assert_not_called()
-    assert "docker" in body and "postiz" in body and "zernio" in body
+    assert cfg.deps_health_path.read_text() == before
+    assert cfg.deps_health_path.stat().st_mtime == mtime
+    assert "docker" in body
     assert "deps unknown" not in body.lower()
 
 

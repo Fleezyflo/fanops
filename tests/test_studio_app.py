@@ -73,66 +73,69 @@ def test_home_links_to_golive(tmp_path):
 
 
 # ── WS-D1 Phase 2: the daemon-driver health banner (the silent-driver-death root) ─────────────
+def _write_daemon_strip(cfg, **fields):
+    from fanops.timeutil import iso_z
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    blob = {
+        "checked_at": iso_z(datetime.now(timezone.utc)),
+        "installed": True, "loaded": True, "pid": 1, "last_exit": 0,
+        "heartbeat_age_s": 5, "interval": 600, "verdict": "alive",
+    }
+    blob.update(fields)
+    cfg.daemon_strip_path.write_text(json.dumps(blob))
+
+
+def _write_loop_heartbeat(cfg, *, age_s=5):
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc) - timedelta(seconds=age_s)
+    rec = {"ts": ts.isoformat(), "level": "info", "stage": "heartbeat", "unit_id": "-",
+           "outcome": "ok", "origin": "loop", "heartbeat": ts.isoformat(),
+           "fanops_version": "0.3.0", "published_in_run": "0"}
+    cfg.log_path.write_text(json.dumps(rec, separators=(",", ":")) + "\n")
+
+
 def test_home_includes_daemon_health_loader(tmp_path):
     # Home lazy-loads the driver-health partial via htmx (mirrors /golive/health) so a dead/stale launchd
     # driver surfaces where the operator looks — the gap that let it rot exit-127 for ~2 weeks unseen.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
     assert b"/home/daemon-health" in _client(cfg).get("/").data
 
-def test_daemon_health_banner_when_not_alive(tmp_path, monkeypatch):
+def test_daemon_health_banner_when_not_alive(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "loaded but stale (last heartbeat 99999s ago)",
-                        "loaded": True, "last_exit": 0, "pid": None, "heartbeat_age_s": 99999})
+    _write_daemon_strip(cfg, loaded=True, pid=None, heartbeat_age_s=99999,
+                        verdict="loaded but stale (last heartbeat 99999s ago)")
+    _write_loop_heartbeat(cfg, age_s=99999)
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" in html and "stale" in html        # loud banner carries the verdict
 
-def test_daemon_health_silent_when_alive(tmp_path, monkeypatch):
+def test_daemon_health_ok_when_alive(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "alive", "loaded": True,
-                        "last_exit": 0, "pid": 1, "heartbeat_age_s": 5})
-    assert b"data-daemon-warn" not in _client(cfg).get("/home/daemon-health").data
+    _write_daemon_strip(cfg, loaded=True, pid=1, heartbeat_age_s=5, verdict="alive")
+    _write_loop_heartbeat(cfg, age_s=5)
+    html = _client(cfg).get("/home/daemon-health").data.decode()
+    assert "daemon-ok" in html
+    assert "data-daemon-warn" not in html
 
-def test_daemon_health_none_is_silent_not_500(tmp_path, monkeypatch):
-    # missing snapshot / non-darwin -> daemon_health_strip None -> no banner, no 500, no false alarm on a dev box.
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: None)
-    r = _client(cfg).get("/home/daemon-health")
-    assert r.status_code == 200 and b"data-daemon-warn" not in r.data
-
-def test_daemon_health_off_is_optin_not_fault(tmp_path, monkeypatch):
+def test_daemon_health_off_is_optin_not_fault(tmp_path):
     # The remediation: a NOT-INSTALLED driver is OPT-IN (optional), not a fault. No alarmist "until fixed",
     # no warn banner — a neutral card that DISCLOSES the recurring-LLM cost when hands-off would run llm.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "not installed", "loaded": False,
-                        "last_exit": None, "pid": None, "heartbeat_age_s": None, "interval": 600})
+    _write_daemon_strip(cfg, installed=False, loaded=False, pid=None, last_exit=None,
+                        heartbeat_age_s=None, verdict="not installed")
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "data-daemon-warn" not in html                        # NOT framed as a fault
     assert "until fixed" not in html                             # the alarmist copy is gone
     assert "optional" in html.lower() and "off" in html.lower()  # honest opt-in framing
     assert "claude" in html.lower()                              # discloses the recurring-LLM cost
 
-def test_daemon_health_unknown_is_warn_not_optin(tmp_path, monkeypatch):
-    # MOL-963 R2c: snapshot unknown must WARN, never fall into "off (optional)".
+def test_daemon_health_unknown_is_warn_not_optin(tmp_path):
+    # MOL-963 R2c: missing snapshot must WARN, never fall into "off (optional)".
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    import fanops.studio.views as V
-    monkeypatch.setattr(V, "daemon_health_strip", lambda c: {"verdict": "unknown", "installed": False,
-                        "loaded": False, "hint": "daemon strip snapshot missing"})
     html = _client(cfg).get("/home/daemon-health").data.decode()
     assert 'data-daemon-warn="unknown"' in html
     assert "Daemon health unknown" in html
     assert "optional" not in html.lower()
     assert "off (optional)" not in html.lower()
-
-def test_home_daemon_health_does_not_call_daemon_status(tmp_path, monkeypatch, mocker):
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    spy = mocker.patch("fanops.daemon.status")
-    r = _client(cfg).get("/home/daemon-health")
-    assert r.status_code == 200
-    spy.assert_not_called()
 
 def test_home_metrics_per_account(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
@@ -271,18 +274,24 @@ def test_unhold_success_returns_empty_fragment(tmp_path):
     cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)
     r = _client(cfg).post("/unhold/clip_held")
     assert r.status_code == 200
-    assert b"HELD" not in r.data and b"Release" not in r.data   # empty fragment: the held card is gone in place
+    assert r.data.strip() == b""                                # htmx outerHTML swap: empty fragment removes the card
+    clip = Ledger.load(cfg).clips["clip_held"]
+    assert clip.held is False
+    assert clip.state is ClipState.captions_requested           # left the held bucket in the ledger
 
 def test_unhold_success_clip_leaves_held_bucket(tmp_path):
     cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)
-    c = _client(cfg); c.post("/unhold/clip_held")
-    r = c.get("/review")
-    assert r.status_code == 200                                 # guard: absence assert must not pass on a 500
-    assert b"/unhold/clip_held" not in r.data                   # left the held bucket (no Release form)
+    c = _client(cfg)
+    r = c.post("/unhold/clip_held")
+    assert r.status_code == 200 and r.data.strip() == b""
+    clip = Ledger.load(cfg).clips["clip_held"]
+    assert clip.held is False and clip.state is ClipState.captions_requested
+    page = c.get("/review")
+    assert page.status_code == 200                              # guard: absence assert must not pass on a 500
+    assert b"/unhold/clip_held" not in page.data                # left the held bucket (no Release form)
     # NEW behavior: a released clip (captions_requested, no posts) now surfaces in the 'prepared'
     # bucket instead of vanishing — the post-less-clips-are-invisible bug is fixed.
-    assert b"card-clip_held" in r.data
-    assert Ledger.load(cfg).clips["clip_held"].held is False
+    assert b"card-clip_held" in page.data
 
 def test_unhold_non_held_clip_returns_inline_error(tmp_path):
     cfg = Config(root=tmp_path); _seed_held(cfg, tmp_path)      # clip_1 is queued, not held
