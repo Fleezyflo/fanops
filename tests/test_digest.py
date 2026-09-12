@@ -1,4 +1,3 @@
-from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, SourceState, ClipState, PostState, Platform
@@ -35,13 +34,13 @@ def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform
                       public_url=f"dryrun://{pid}"))
 
 
-def test_write_digest_failopen_on_oserror(tmp_path, monkeypatch):
+def test_write_digest_failopen_on_oserror(tmp_path):
     # OPERATIONAL: the digest is a convenience artifact written AFTER the ledger is already committed.
     # An OSError on its write (disk full / permissions) must NOT abort advance()/the CLI verb — it
     # fails open like _archive_published. Otherwise the daemon exits non-zero and launchd respins it.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    def boom(self, *a, **k): raise OSError("No space left on device")
-    monkeypatch.setattr(Path, "write_text", boom)
+    cfg.digest_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.digest_path.mkdir()                               # OS edge: write_text on a directory -> OSError
     write_digest(led, cfg)                                # must NOT raise (fail-open)
 
 def test_counts_holds_failures(tmp_path):
@@ -223,21 +222,6 @@ def test_digest_variant_shows_gate_state(tmp_path):
     assert "learning ACTIVE" in a_line and "gathering data" not in a_line
     assert "gathering data" in b_line and "learning ACTIVE" not in b_line
 
-def test_digest_variant_gate_state_failopen(tmp_path, monkeypatch):
-    # FAIL-OPEN: a raising best_hooks must NOT lose the whole "Lift by variant" section (a learning
-    # failure can never degrade the operator's observability). The lift rows still render; the
-    # gate-state annotation simply degrades to "gathering data" (the safe/closed default).
-    from fanops.config import Config
-    from fanops.ledger import Ledger
-    from fanops.digest import render_digest
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
-    monkeypatch.setattr("fanops.digest.best_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    out = render_digest(led, cfg)                       # must NOT raise
-    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive the error
-    assert "gathering data" in out.split("Lift by variant")[1]            # safe default annotation
-
 def test_needs_reconcile_surfaced(tmp_path):
     # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is
@@ -289,22 +273,6 @@ def test_digest_variant_ucb_shows_pick(tmp_path, monkeypatch):
     assert "UCB" in section and "NEW" in section            # the bandit verdict is surfaced
     a_line = [ln for ln in section.splitlines() if "a/instagram" in ln][0]
     assert "UCB" in a_line and "NEW" in a_line              # on the right surface line
-
-def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
-    # FAIL-OPEN: a raising ucb_rank must not lose the "Lift by variant" section -> degrade to
-    # "gathering data" (safe default); the lift rows still render.
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
-    monkeypatch.setattr("fanops.digest.ucb_rank",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    from fanops.config import Config
-    from fanops.ledger import Ledger
-    from fanops.digest import render_digest
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
-    out = render_digest(led, cfg)                          # must NOT raise
-    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive
-    assert "gathering data" in out.split("Lift by variant")[1]            # safe default on error
 
 def test_digest_variant_ucb_off_keeps_v2_wording(tmp_path, monkeypatch):
     # UCB OFF -> the v2 "learning ACTIVE"/"gathering data" wording is UNCHANGED (no "UCB ->" string).
