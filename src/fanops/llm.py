@@ -23,7 +23,8 @@ is the accepted cost of riding the existing login instead of an API key. The cro
 therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
 Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
-import json, logging, random, subprocess, time
+import json, logging, os, random, subprocess, tempfile, time
+from fanops.config import _GROK_MODEL_ALIASES
 from fanops.errors import ToolchainMissingError
 from fanops.llm_errors import (
     LlmContextLimitError,
@@ -67,6 +68,9 @@ def _salvage_json(raw: str, schema: dict) -> dict | None:
 _CURSOR_SUPPORTS_VISION = False
 _CURSOR_MODEL_ALIASES: dict[str, str] = {}
 _CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
+_GROK_SUPPORTS_VISION = False
+_GROK_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
+_GROK_TOOLCHAIN_MARKERS = ("unknown model", "invalid params", "not logged in")
 
 # HTTP statuses claude -p surfaces (in the stdout envelope's api_error_status) when the request is
 # rejected pre-processing and is therefore SAFE to retry. A 429 is the common one (usage spike).
@@ -170,6 +174,13 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                 "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
         forced = Config().llm_model   # AUTO unless FANOPS_LLM_MODEL forces one
         return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
+    if transport == "grok":
+        if images and not _GROK_SUPPORTS_VISION:
+            raise ToolchainMissingError(
+                "FANOPS_LLM_TRANSPORT=grok but grok cannot run vision-grounded gates — "
+                "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
+        return _grok_json_meta(prompt, schema, timeout=timeout, images=images,
+                               model=model, read_root=read_root)
     return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
 
 
@@ -428,6 +439,146 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                 return salvaged, resolved, frames_unread
             raise LlmSchemaError(f"cursor-agent -p `result` was not JSON: {result[:300]}") from e
     raise LlmSchemaError(f"cursor-agent -p envelope had no structured_output or JSON result: {env}")
+
+def _resolve_grok_model(model: str | None) -> str:
+    if not model:
+        return "grok-4.6"
+    return _GROK_MODEL_ALIASES.get(model, model)
+
+def _build_grok_cmd(prompt_path: str, model: str | None, *, cwd: str, schema: dict,
+                    schema_flag: bool = True) -> list[str]:
+    resolved = _resolve_grok_model(model)
+    cmd = ["grok", "--no-auto-update", "--cwd", cwd, "--prompt-file", prompt_path]
+    if schema_flag:
+        cmd += ["--json-schema", json.dumps(schema)]
+    cmd += ["--output-format", "json", "--tools", "", "--disable-web-search", "--no-subagents",
+            "-m", resolved]
+    return cmd
+
+def _grok_env() -> dict:
+    e = os.environ.copy()
+    e.pop("XAI_API_KEY", None)
+    e.pop("GROK_CODE_XAI_API_KEY", None)
+    e.update({
+        "GROK_CLAUDE_HOOKS_ENABLED": "0",
+        "GROK_CLAUDE_MCPS_ENABLED": "0",
+        "GROK_CLAUDE_SKILLS_ENABLED": "0",
+        "GROK_CLAUDE_AGENTS_ENABLED": "0",
+        "GROK_CURSOR_HOOKS_ENABLED": "0",
+        "GROK_CURSOR_MCPS_ENABLED": "0",
+        "GROK_DISABLE_AUTOUPDATER": "1",
+    })
+    return e
+
+def _grok_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
+    rl = _rate_limit_status(returncode, stdout)
+    if rl is not None:
+        return rl
+    body = (stdout or stderr or "").lower()
+    if any(m in body for m in _GROK_RATE_LIMIT_MARKERS):
+        return 429
+    return None
+
+def _is_grok_toolchain(body: str) -> bool:
+    t = (body or "").lower()
+    return _is_toolchain_error(t) or any(m in t for m in _GROK_TOOLCHAIN_MARKERS)
+
+def _write_grok_prompt(path: str, text: str) -> None:
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, text.encode())
+    finally:
+        os.close(fd)
+
+def _grok_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
+                    images: list[str] | None = None, model: str | None = None,
+                    read_root: str | None = None) -> tuple[dict, str | None, bool]:
+    """Call `grok --prompt-file` with a JSON schema; return (object, model, frames_unread)."""
+    pin = _resolve_grok_model(model)
+    with tempfile.TemporaryDirectory(prefix="fanops-grok-") as tmpdir:
+        prompt_path = os.path.join(tmpdir, "prompt.txt")
+
+        def _run(prompt_text: str) -> dict:
+            def _attempt(schema_flag: bool) -> subprocess.CompletedProcess:
+                body_text = prompt_text if schema_flag else _prompt_side_schema(schema, prompt_text)
+                _write_grok_prompt(prompt_path, body_text)
+                delay = _RL_BASE_DELAY
+                for attempt in range(_MAX_RL_RETRIES + 1):
+                    try:
+                        r = subprocess.run(
+                            _build_grok_cmd(prompt_path, model, cwd=tmpdir, schema=schema,
+                                            schema_flag=schema_flag),
+                            check=False, capture_output=True, text=True,
+                            timeout=timeout, cwd=tmpdir, env=_grok_env())
+                    except (FileNotFoundError, OSError) as e:
+                        raise ToolchainMissingError(
+                            f"grok not found on PATH — install Grok CLI or set FANOPS_LLM_TRANSPORT=claude "
+                            f"({type(e).__name__})") from e
+                    except subprocess.TimeoutExpired as e:
+                        raise LlmTimeoutError(f"grok timed out after {timeout}s") from e
+                    rl = _grok_rate_limit_status(r.returncode, r.stdout, r.stderr)
+                    if rl is None:
+                        return r
+                    if attempt >= _MAX_RL_RETRIES:
+                        raise LlmRateLimitError(
+                            f"grok rate-limited (status={rl}) after {_MAX_RL_RETRIES} retries")
+                    logger.warning("grok rate-limited (status=%s) — backing off %.1fs "
+                                   "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
+                    _sleep(delay + random.uniform(0, delay))
+                    delay *= 2
+                return r
+            r = _attempt(True)
+            if _json_schema_flag_rejected(r.returncode, r.stderr or r.stdout):
+                logger.warning("grok CLI rejected --json-schema (outdated install?) — retrying with "
+                               "prompt-side schema")
+                r = _attempt(False)
+            if r.returncode != 0:
+                body = (r.stderr or r.stdout or "")[:300]
+                if _is_context_limit(body):
+                    raise LlmContextLimitError(f"grok context limit (rc={r.returncode}): {body}")
+                if _is_grok_toolchain(body):
+                    raise LlmToolchainError(f"grok toolchain error (rc={r.returncode}): {body}")
+                raise RuntimeError(f"grok failed (rc={r.returncode}): {body}")
+            try:
+                env = json.loads(r.stdout)
+            except Exception as e:
+                raise LlmSchemaError(
+                    f"grok output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
+            if not isinstance(env, dict):
+                raise LlmSchemaError(
+                    f"grok output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
+            return env
+
+        env = _run(prompt)
+
+        def _resolve_from_env(e: dict) -> dict | None:
+            so = e.get("structuredOutput")
+            if isinstance(so, dict):
+                return so
+            text = e.get("text")
+            if isinstance(text, str):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except Exception:
+                    pass
+                salvaged = _salvage_json(text, schema)
+                if salvaged is not None:
+                    logger.warning("grok text salvaged via JSON-repair (prose-wrapped reply)")
+                    return salvaged
+            return None
+
+        usage = env.get("modelUsage")
+        if isinstance(usage, dict) and usage:
+            first = next(iter(usage), None)
+            resolved = first if isinstance(first, str) and first.strip() else pin
+        else:
+            resolved = pin
+        obj = _resolve_from_env(env)
+        if obj is not None:
+            return obj, resolved, False
+        raise LlmSchemaError(f"grok envelope had no structuredOutput or JSON text: {env}")
 
 def claude_json(prompt: str, schema: dict, *, timeout: float = 300.0,
                 images: list[str] | None = None, model: str | None = None,

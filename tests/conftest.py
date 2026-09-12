@@ -181,7 +181,7 @@ def _hermetic_llm(monkeypatch):
     import shutil
     _real_which = shutil.which
     def _which(name, *a, **k):
-        if name in ("claude", "cursor-agent"):
+        if name in ("claude", "cursor-agent", "grok"):
             return f"/usr/bin/{name}"                     # pretend the LLM CLI is installed — never actually run
         return _real_which(name, *a, **k)
     monkeypatch.setattr("shutil.which", _which)
