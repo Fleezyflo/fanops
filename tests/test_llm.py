@@ -824,6 +824,21 @@ def test_grok_rate_limit_backoff_then_success(mocker, monkeypatch):
     assert claude_json("q", _SCHEMA) == {"x": 3}
     assert run.call_count == 3 and sleep.call_count == 2
 
+def test_grok_success_envelope_digits_are_not_rate_limit(mocker, monkeypatch):
+    # F0 success JSON is numeric-heavy (usage, cost, ids). Marker digits 429/503/529 must
+    # not fire on rc=0 — that would retry a good captions call into LlmRateLimitError.
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 1})
+    env["usage"] = {"input_tokens": 1429, "output_tokens": 503}
+    env["total_cost_usd"] = 0.0429
+    env["requestId"] = "req-429-503-529"
+    env["sessionId"] = "s529"
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    sleep = mocker.patch("fanops.llm._sleep")
+    assert claude_json("q", _SCHEMA) == {"x": 1}
+    assert run.call_count == 1 and sleep.call_count == 0
+
 def test_dispatch_claude_unchanged_when_not_grok(mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
     envelope = {"structured_output": {"x": 1}}

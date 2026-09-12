@@ -474,6 +474,8 @@ def _grok_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | 
     rl = _rate_limit_status(returncode, stdout)
     if rl is not None:
         return rl
+    if returncode == 0:
+        return None
     body = (stdout or stderr or "").lower()
     if any(m in body for m in _GROK_RATE_LIMIT_MARKERS):
         return 429
