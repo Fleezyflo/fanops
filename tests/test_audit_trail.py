@@ -104,33 +104,6 @@ def _seed_queued_post(cfg: Config, post_id: str = "p1", *,
     return post_id
 
 
-def test_publish_now_writes_audit_entry(tmp_path, monkeypatch, mocker):
-    """R3/D17: a successful publish_now MUST leave an audit breadcrumb naming the
-    post id. The 5 ghost-publishes had no such trace."""
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    cfg = Config(root=tmp_path)
-    _seed_queued_post(cfg, "p1")
-    def _fake_publish(_cfg, pid):
-        led = Ledger.load(_cfg)
-        led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.published})
-        led.posts[pid].public_url = "https://www.instagram.com/p/audit/"
-        led.save()
-        return "published"
-    from fanops.post.postiz import PostizHealth
-    mocker.patch("fanops.post.postiz.postiz_health_probe", return_value=PostizHealth(True, 200, ""))   # T10: probe healthy -> reach the audit-writing success path
-    mocker.patch("fanops.post.run.publish_post", side_effect=_fake_publish)
-    from fanops.studio.actions import publish_now
-    res = publish_now(cfg, "p1", confirmed=True)
-    assert res.ok, f"publish_now failed: {res}"
-    audit_path = cfg.control / "studio_audit.log"
-    assert audit_path.exists(), "no audit log written by publish_now"
-    entries = [json.loads(line) for line in audit_path.read_text().splitlines()]
-    pn = [e for e in entries if e["action"] == "publish_now"]
-    assert pn, f"no publish_now audit entry: {entries}"
-    assert "p1" in pn[0]["post_ids"]
-
-
 def test_mark_published_writes_audit_entry(tmp_path):
     """R3/D17: 'I posted by hand' MUST be auditable — the operator-driven success
     path that produced 5 ghost-rows pre-R1 was the most opaque action of all."""

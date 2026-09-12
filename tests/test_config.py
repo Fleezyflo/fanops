@@ -197,7 +197,9 @@ def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, ca
     # operator saw learning frozen and no reason. Keep the fail-safe False, but log WHY.
     monkeypatch.setenv("FANOPS_LIVE", "1")                       # operator intends live
     monkeypatch.delenv("FANOPS_POSTER", raising=False)          # dryrun global -> no backend creds -> fall through
-    monkeypatch.setattr("fanops.accounts.load_accounts_safe", lambda cfg: (None, "corrupt accounts.json"))
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{,}")
     with caplog.at_level(logging.WARNING):
         live = Config(root=tmp_path).is_live_backend
     assert live is False                                        # still fail-safe (not provably live)
@@ -206,8 +208,9 @@ def test_is_live_backend_logs_when_registry_unreadable(monkeypatch, tmp_path, ca
 def test_effective_publish_mode_logs_on_accounts_error(monkeypatch, tmp_path, caplog):
     # Accounts read failure → 'unknown' (never confident 'live').
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    def boom(cfg): raise RuntimeError("corrupt")
-    monkeypatch.setattr("fanops.accounts.Accounts.load", boom)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text("{,}")
     with caplog.at_level(logging.WARNING):
         mode = Config(root=tmp_path).effective_publish_mode()
     assert mode == "unknown"

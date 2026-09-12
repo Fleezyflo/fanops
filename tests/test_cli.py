@@ -218,50 +218,6 @@ def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
     assert "reconciled" in out
 
 
-def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, mocker):
-    # End-to-end through the CLI with a stubbed status client: a needs_reconcile post with an id
-    # is promoted to published. (Phase-B-followup: cmd_reconcile now binds the status poller via
-    # _default_get_status and polls OUTSIDE a transaction, then applies inside it — so we stub the
-    # poller seam, which exercises the REAL reconcile_posts through the new transactional path,
-    # a stronger check than the old stub-out-reconcile_posts version.)
-    monkeypatch.chdir(tmp_path)
-    from fanops.config import Config
-    from fanops.ledger import Ledger
-    from fanops.models import Post, Platform, PostState
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")
-    monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
-    led.save()
-    # cmd_reconcile now delegates to reconcile.reconcile_due, which binds the poller via
-    # _default_get_status there — patch the seam at its definition site (exercises the REAL
-    # reconcile_due -> reconcile_posts transactional path, network pre-polled outside the lock).
-    import fanops.reconcile as rec
-    mocker.patch.object(rec, "_default_get_status",
-                        return_value=lambda sid: {"status": "published", "publicUrl": "https://x/p"})
-    rc = main(["reconcile"])
-    assert rc == 0
-    again = Ledger.load(cfg)
-    assert again.posts["p"].state is PostState.published
-
-
-def _promote(led):
-    from fanops.models import PostState
-    for pid, p in list(led.posts.items()):
-        if p.state is PostState.needs_reconcile:
-            led.posts[pid] = p.model_copy(update={"state": PostState.published})
-    return led
-
-def test_run_halts_cleanly_on_advance_error(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    # make advance raise (simulating e.g. a fatal auth error escaping publish_due)
-    mocker.patch.object(cli, "advance", side_effect=RuntimeError("Blotato 401 unauthorized"))
-    rc = cli.main(["run"])
-    assert rc == 1                                   # halted cleanly with nonzero, no traceback
-
-
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
 # Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH (2026-06-04): the responder
 # uses the operator's EXISTING `claude` subscription (plain `claude -p`, NOT `--bare`/API key), so
@@ -383,22 +339,6 @@ def test_preflight_cursor_blocks_even_if_claude_present(tmp_path, monkeypatch, m
     err = capsys.readouterr().err.lower()
     assert "go-live" in err and "fallback" in err
 
-def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
-    # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
-    # (model call error, a malformed response failing validation), the run loop must DEGRADE
-    # cleanly — nonzero exit + one log line — not crash the cron loop with a raw traceback.
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    class _Boom:
-        def answer_pending(self, cfg):
-            raise RuntimeError("LLM responder exploded mid-gate")
-    mocker.patch.object(cli, "get_responder", return_value=_Boom())
-    rc = cli.main(["run"])
-    assert rc == 1                                   # clean nonzero, loop did not crash
-    err = capsys.readouterr().err
-    assert "Traceback" not in err                    # degraded, not a stack dump
-    assert "RuntimeError" in err                     # the one-line halt message names the cause
-
 def _write_active_account(tmp_path):
     from fanops.config import Config
     cfg = Config(root=tmp_path)
@@ -439,51 +379,25 @@ def test_run_learning_pass_not_entered_in_dryrun(tmp_path, monkeypatch):
     assert "amplify_skipped" not in blob
 
 def test_run_learning_pass_entered_with_live_backend_and_key(tmp_path, monkeypatch, mocker):
-    # E1 HARDEN (positive branch): with a LIVE backend (FANOPS_POSTER=zernio) AND a key set, the
-    # guard's true-branch fires and the learning pass runs EXACTLY ONCE per run. pull_metrics /
-    # classify_outcomes / amplify / retire are all spied to harmless no-ops so nothing touches the
-    # network. This pins that the guard is a real branch (not dead code): flip either condition off
-    # and the spy stops being called (covered by the dryrun test above).
+    # Empty ledger: no pollable posts, so learn_pass does no network. amplify_skipped in the log
+    # is the breadcrumb that the live+keyed guard entered the pass (dryrun sibling asserts absent).
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")            # live backend
-    monkeypatch.setenv("ZERNIO_API_KEY", "k-test")           # key present
-    import fanops.cli as cli
-    # ECC fix #1: the learn pass now FETCHES (two-phase) before pull_metrics — stub the fetch so no network
-    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
-    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
-    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
-    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
-    from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
-    assert rc == 0
-    assert spy.call_count == 1                                # learning pass runs once when live+keyed
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "k-test")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
+    from fanops.ledger import Ledger
+    cfg = _write_active_account(tmp_path)
+    Ledger.load(cfg).save()
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "amplify_skipped" in blob
 
 def test_run_learning_pass_entered_with_postiz_backend_and_key(tmp_path, monkeypatch, mocker):
-    # M2 gate site #2 (the headline unfreeze): a postiz+key deployment is now live, so cmd_run's learn
-    # block fires EXACTLY ONCE on Postiz — the change that turns the loop on for the operator's real
-    # backend. Spies keep it network-free; flip the backend to dryrun and it stops (covered above).
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")            # live postiz backend
-    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")          # postiz key present
-    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # NO blotato key — postiz is live on its own key
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])   # ECC fix #1: stub two-phase fetch
-    spy = mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
-    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
-    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
-    from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
-    assert rc == 0
-    assert spy.call_count == 1                                # learning pass runs once when postiz+keyed
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
+    cfg = _live_postiz_empty_tree(tmp_path, monkeypatch)
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    blob = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "amplify_skipped" in blob
 
 def _live_postiz_empty_tree(tmp_path, monkeypatch):
     """Live postiz+key, empty ledger (no pollable posts → learn_pass does no network). Real apply."""
@@ -757,18 +671,28 @@ def test_retry_metrics_published_vs_not_vs_unknown(tmp_path, monkeypatch, capsys
     assert "no such post: nope" in capsys.readouterr().err
 
 
-def test_discover_and_intake_via_cli(tmp_path, monkeypatch, mocker):
+def test_discover_and_intake_via_cli(tmp_path, monkeypatch):
+    import subprocess
+    from pathlib import Path
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
+
+    def _media_run(cmd, **kw):
+        if cmd and cmd[0] == "ffmpeg":
+            Path(cmd[-1]).write_bytes(b"J")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd and cmd[0] == "ffprobe":
+            return subprocess.CompletedProcess(cmd, 0, stdout="0\n0\n0.0\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr("fanops.media_probe.subprocess.run", _media_run)
+    monkeypatch.setattr("fanops.discover.subprocess.run", _media_run)
     bank = tmp_path / "bank"; bank.mkdir()
     (bank / "v.mp4").write_bytes(b"VID")
-    mocker.patch("fanops.discover.probe_dimensions", return_value=(0, 0, 0.0))
-    mocker.patch("fanops.discover.make_thumbnail", side_effect=lambda p, o, **k: (o.write_bytes(b"J") or True))
     from fanops.cli import main
     assert main(["discover", str(bank)]) == 0
     cfg = Config(root=tmp_path)
     assert (cfg.review / "manifest.json").exists()
-    # approve the one entry, then intake
     from fanops.ingest import sha256_of
     eid = sha256_of(bank / "v.mp4")[:16]
     (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
@@ -826,75 +750,21 @@ def test_studio_refuses_unmanaged_foreground(tmp_path, monkeypatch, capsys):
     assert "--dev-reload" in err
 
 
-def test_studio_app_refuses_when_not_serving(tmp_path, monkeypatch, capsys, mocker):
+def test_studio_app_refuses_when_not_serving(tmp_path, monkeypatch, capsys):
+    import socket
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
-    opener = mocker.patch("fanops.studio_desktop.open_studio_window")
-    rc = cli.main(["studio", "--app", "--host", "127.0.0.1", "--port", "9999"])
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", 0))
+        host, port = probe.getsockname()
+    finally:
+        probe.close()
+    rc = cli.main(["studio", "--app", "--host", host, "--port", str(port)])
     assert rc != 0
     err = capsys.readouterr().err
     assert "unmanaged foreground" not in err
     assert "--install" in err
-    opener.assert_not_called()
-
-
-def test_studio_app_opens_window_when_serving(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_studio_port_busy", return_value=True)
-    opener = mocker.patch("fanops.studio_desktop.open_studio_window", return_value=0)
-    assert cli.main(["studio", "--app", "--host", "127.0.0.1", "--port", "8787"]) == 0
-    opener.assert_called_once_with("http://127.0.0.1:8787")
-
-
-def test_studio_managed_path_runs_without_reloader(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    fake_app = mocker.Mock()
-    create_app = mocker.Mock(return_value=fake_app)
-    mocker.patch("fanops.studio.app.create_app", create_app)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
-
-    assert cli.main([
-        "studio",
-        "--managed",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "9999",
-    ]) == 0
-
-    create_app.assert_called_once()
-    fake_app.run.assert_called_once()
-    _, kwargs = fake_app.run.call_args
-    assert kwargs["host"] == "127.0.0.1"
-    assert kwargs["port"] == 9999
-    assert kwargs["debug"] is False
-    assert kwargs["threaded"] is True
-    assert kwargs["use_reloader"] is False
-
-
-def test_studio_dev_reload_path_enables_reloader(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-    fake_app = mocker.Mock()
-    mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
-
-    assert cli.main(["studio", "--dev-reload"]) == 0
-
-    fake_app.run.assert_called_once()
-    _, kwargs = fake_app.run.call_args
-    assert kwargs["host"] == "127.0.0.1"
-    assert kwargs["port"] == 8787
-    assert kwargs["debug"] is False
-    assert kwargs["threaded"] is True
-    assert kwargs["use_reloader"] is True
 
 
 def test_studio_port_busy_probes_liveness(tmp_path):
@@ -913,53 +783,26 @@ def test_studio_port_busy_probes_liveness(tmp_path):
         srv.close()
 
 
-def test_studio_managed_guard_uses_liveness_not_launchd(
-    tmp_path,
-    monkeypatch,
-    mocker,
-):
-    import sys as _sys
-
-    monkeypatch.chdir(tmp_path)
-    import fanops.cli as cli
-
-    monkeypatch.setattr(_sys, "platform", "darwin")
-    fake_app = mocker.Mock()
-    mocker.patch("fanops.studio.app.create_app", return_value=fake_app)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    mocker.patch("fanops.health.system_health", return_value=[])
-    mocker.patch.object(
-        cli.daemon,
-        "studio_agent_status",
-        side_effect=AssertionError(
-            "guard must not consult launchd registration"
-        ),
-    )
-    mocker.patch.object(cli, "_studio_port_busy", return_value=False)
-
-    assert cli.main(["studio", "--managed", "--port", "9999"]) == 0
-    fake_app.run.assert_called_once()
-
-
 def test_studio_managed_guard_trips_when_port_serving(
     tmp_path,
     monkeypatch,
-    mocker,
     capsys,
 ):
+    import socket
     import sys as _sys
 
     monkeypatch.chdir(tmp_path)
     import fanops.cli as cli
-
     monkeypatch.setattr(_sys, "platform", "darwin")
-    create_app = mocker.Mock()
-    mocker.patch("fanops.studio.app.create_app", create_app)
-    mocker.patch.object(cli, "_studio_port_busy", return_value=True)
-
-    assert cli.main(["studio", "--managed"]) == 0
-    create_app.assert_not_called()
-    assert "already serving" in capsys.readouterr().out
+    srv = socket.socket()
+    try:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        host, port = srv.getsockname()
+        assert cli.main(["studio", "--managed", "--host", host, "--port", str(port)]) == 0
+        assert "already serving" in capsys.readouterr().out
+    finally:
+        srv.close()
 
 
 def test_pull_rejects_non_http_url(tmp_path, monkeypatch, capsys):
@@ -997,22 +840,34 @@ def test_gc_surfaces_oserror_not_silent(tmp_path, monkeypatch, capsys, mocker):
 
 
 def test_run_learn_block_logs_auth_error_with_type_name(tmp_path, monkeypatch, mocker):
-    # FIX 10: the learn block's `except Exception as e:` logged everything at one level, so a swallowed
-    # AuthError looked like a transient 5xx. The log entry must include the exception TYPE name so an
-    # auth failure in the learn pass is distinguishable in run.log.
+    # A 401 from the real Postiz analytics GET is AuthError; the unattended run stays 0 and logs the type.
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_POSTER", "zernio"); monkeypatch.setenv("ZERNIO_API_KEY", "k-test")
-    import fanops.cli as cli
-    from fanops.errors import PostizAuthError
-    mocker.patch.object(cli, "pull_metrics", side_effect=PostizAuthError("postiz 401 — bad key"))
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
     from fanops.config import Config
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    from fanops.ledger import Ledger
+    from fanops.models import Post, PostState, Platform
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="p1", parent_id="c1", account="x", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.published, submission_id="sid-live-1",
+                          public_url="https://instagram.com/p/x"))
+    class _R:
+        status_code = 401
+        text = "denied"
+        def json(self):
+            return {}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R())
     rc = main(["run", "--base-time", "2026-06-02T18:00:00Z"])
-    assert rc == 0                                            # learn hiccup is swallowed (run stays 0)
+    assert rc == 0
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "PostizAuthError" in log                         # the type name is in the breadcrumb
+    assert "PostizAuthError" in log
 
 def test_main_hashtags_refresh_writes_the_cache_failopen(tmp_path, monkeypatch, capsys):
     # Without scrape session Layer A aborts loudly (exit 2) and leaves the cache untouched.

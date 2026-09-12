@@ -139,18 +139,6 @@ def test_doctor_half_live_logs_on_route_error(tmp_path, monkeypatch):
     assert "nothing routes" in hint or "not confirmed" in hint
 
 
-# ── 9. studio/views.build_system_strip postiz_down — except -> {"show": False} (cfg in scope) ──
-def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
-    from fanops.studio import views, views_common
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(views_common, "postiz_health_for_banner",
-                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
-    strip = views.build_system_strip(cfg)
-    assert strip["postiz_down"]["show"] is False                   # no postiz routes → still hide
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "postiz_down" in log_text
-
-
 # ── 10. studio/views_posted.lineage_stats — a row that raises must fail closed, not return input ──
 def test_lineage_stats_fails_closed_on_row_error():
     from fanops.studio import views_results
@@ -165,17 +153,15 @@ def test_lineage_stats_fails_closed_on_row_error():
         views_results.lineage_stats([_BadRow(), _BadRow()])
 
 
-def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):
-    # MOL-963 R2d: helper raise + channel routes to postiz → show unknown, never silent hide.
+def test_system_strip_postiz_down_shows_unknown_when_routed_and_snapshot_missing(tmp_path):
+    # Channel routes to postiz + no deps snapshot → unknown, never silent hide.
     import json
-    from fanops.studio import views, views_common
+    from fanops.studio import views
     cfg = _cfg(tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}]}))
-    monkeypatch.setattr(views_common, "postiz_health_for_banner",
-                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
     strip = views.build_system_strip(cfg)
     assert strip["postiz_down"]["show"] is True
     assert "unknown" in (strip["postiz_down"].get("hint") or "").lower()

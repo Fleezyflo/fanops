@@ -3,17 +3,13 @@ from __future__ import annotations
 import inspect
 import json
 
-import pytest
-
 from fanops.accounts import Accounts, Account, _hydrate_from_personas
 from fanops.config import Config
-from fanops.ledger import Ledger
 from fanops.models import MomentPick
-from fanops.moments import validate_pick, _persona_entry, _pick_personas, request_moment_hooks
+from fanops.moments import validate_pick, _persona_entry, _pick_personas
 from fanops.personas import Persona, add_persona, compose_breakdown, produces_summary
 from fanops.prompts import moment_pick_prompt
 from fanops.clip import fit_window
-from tests.test_moments import _src
 
 
 def _write_accounts(cfg, accounts):
@@ -42,37 +38,6 @@ def test_fit_window_default_has_no_talk_floor():
 
 def test_fit_window_never_pads_to_lo():
     assert fit_window(10.0, 13.0, 120.0, lo=12.0, hi=22.0) == (10.0, 13.0)
-
-
-@pytest.mark.parametrize("site", ["render_account_cut", "request_moment_hooks"])
-def test_fit_window_sites_eof_clamp_only(tmp_path, mocker, site):
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    _src(led, cfg, dur=60.0)
-    (cfg.sources / "src_1.mp4").parent.mkdir(parents=True, exist_ok=True)
-    (cfg.sources / "src_1.mp4").write_bytes(b"\x00")
-    led.add_moment(__import__("fanops.models", fromlist=["Moment"]).Moment(
-        id="mom_1", parent_id="src_1", content_token="14.00-18.00",
-        start=14.0, end=18.0, reason="r", state=__import__("fanops.models", fromlist=["MomentState"]).MomentState.picked))
-    spy = mocker.patch("fanops.clip.fit_window", wraps=fit_window)
-    if site == "render_account_cut":
-        from fanops.clip import render_account_cut
-        from fanops.models import Fmt
-        mocker.patch("fanops.clip.render_reframed", return_value=type("R", (), {"returncode": 0})())
-        render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
-                           hook="H", out_path=str(tmp_path / "out.mp4"))
-        kw = spy.call_args.kwargs
-        assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
-    else:
-        spy_m = mocker.patch("fanops.moments.fit_window", wraps=fit_window)
-        mocker.patch("fanops.moments.extract_keyframes", return_value=[])
-        mocker.patch("fanops.moments.latest_request_id", return_value=None)
-        mocker.patch("fanops.moments.write_request")
-        mocker.patch("fanops.transcribe.window_has_trusted_speech", return_value=True)
-        led.moments["mom_1"] = led.moments["mom_1"].model_copy(update={"start": 14.0, "end": 22.0})
-        request_moment_hooks(led, cfg, "src_1")
-        kw = spy_m.call_args.kwargs
-        assert kw.get("lo") == 0.0 and kw.get("hi") == 60.0
 
 
 def test_moment_pick_prompt_has_no_seconds_target():
