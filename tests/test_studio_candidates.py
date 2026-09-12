@@ -2,6 +2,8 @@
 # the Finder shuffle. `fanops discover` writes thumbnails to 00_review/; approving admits the
 # original via discover.intake + inbox ingest (creates a Source).
 import json
+import subprocess
+import types
 
 from fanops.config import Config
 from fanops.ids import make_id
@@ -31,11 +33,25 @@ def _candidate(cfg, content=b"VIDEO", eid=None):
     return eid, vid, digest
 
 
-def _ingest_mocks(mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 10.0))
-    mocker.patch("fanops.studio.actions_run.kick_prepare")
-    mocker.patch("fanops.digest.write_digest")
+def _stub_ffprobe(monkeypatch, dims=(1920, 1080, 10.0), *, video=True):
+    """Unit CI has no ffmpeg. Answer ffprobe at subprocess.run (not a fanops.* patch)."""
+    real = subprocess.run
+    w, h, dur = dims
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                stdout = "video\n" if video else ""
+                return subprocess.CompletedProcess(list(cmd), 0, stdout=stdout, stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout=f"{w}\n{h}\n{dur}\n", stderr="")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+def _no_spawn(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: types.SimpleNamespace(pid=424242))
 
 
 # ---- views.review_candidates ----
@@ -54,15 +70,17 @@ def test_empty_when_no_review_dir(tmp_path):
 
 
 # ---- actions.approve_candidate ----
-def test_approve_moves_to_approved(tmp_path, mocker):
+def test_approve_moves_to_approved(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
-    _ingest_mocks(mocker)
+    _stub_ffprobe(monkeypatch)
+    _no_spawn(monkeypatch)
     assert actions.approve_candidate(cfg, eid).ok
     assert (cfg.review / "approved" / f"{eid}.jpg").exists() and not (cfg.review / f"{eid}.jpg").exists()
 
-def test_approve_creates_source(tmp_path, mocker):
+def test_approve_creates_source(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); eid, _, digest = _candidate(cfg, content=b"ADMIT_ME")
-    _ingest_mocks(mocker)
+    _stub_ffprobe(monkeypatch)
+    _no_spawn(monkeypatch)
     res = actions.approve_candidate(cfg, eid)
     assert res.ok
     sid = make_id("src", digest)
@@ -71,33 +89,38 @@ def test_approve_creates_source(tmp_path, mocker):
     assert sid in led.sources
     assert (cfg.sources / f"{sid}.mp4").exists()
 
-def test_approve_missing_original_fails(tmp_path, mocker):
+def test_approve_missing_original_fails(tmp_path):
     cfg = Config(root=tmp_path); eid, vid, _ = _candidate(cfg)
     vid.unlink()
-    _ingest_mocks(mocker)
     res = actions.approve_candidate(cfg, eid)
     assert not res.ok and "original missing" in res.error
     assert (cfg.review / f"{eid}.jpg").exists()          # thumb not moved on honest failure
 
-def test_approve_retired_sha_is_dead_end(tmp_path, mocker):
+def test_approve_retired_sha_is_dead_end(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); eid, _, digest = _candidate(cfg, content=b"RETIRED")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_old", source_path="/old.mp4", state=SourceState.retired, sha256=digest))
-    _ingest_mocks(mocker)
+    _stub_ffprobe(monkeypatch)
+    _no_spawn(monkeypatch)
     res = actions.approve_candidate(cfg, eid)
     assert not res.ok and res.detail.get("retired_dedup") == ["src_old"]
     assert make_id("src", digest) not in Ledger.load(cfg).sources
     assert (cfg.review / f"{eid}.jpg").exists()          # restored for retry
     assert not (cfg.review / "approved" / f"{eid}.jpg").exists()
 
-def test_approve_ingest_failure_restores_thumbnail(tmp_path, mocker):
-    from fanops.studio.actions_common import ActionResult
+def test_approve_ingest_failure_restores_thumbnail(tmp_path, monkeypatch):
+    # ffprobe absent at the subprocess edge → catalogue_inbox fails; thumb restored.
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            raise FileNotFoundError("ffprobe")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
     cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
-    _ingest_mocks(mocker)
-    mocker.patch("fanops.studio.actions.catalogue_inbox",
-                 return_value=ActionResult(ok=False, error="ingest failed: ingest boom"))
     res = actions.approve_candidate(cfg, eid)
-    assert not res.ok and "ingest failed" in res.error
+    assert not res.ok and "ingest failed" in (res.error or "")
     assert (cfg.review / f"{eid}.jpg").exists()
     assert not (cfg.review / "approved" / f"{eid}.jpg").exists()
 
@@ -109,12 +132,11 @@ def test_approve_rejects_path_traversal(tmp_path):
     res = actions.approve_candidate(cfg, "../../etc/passwd")
     assert not res.ok
 
-def test_approve_wraps_os_error(tmp_path, mocker):
+def test_approve_wraps_os_error(tmp_path):
     # ecc:python-review: a read-only mount / disk-full / rename race must be a clean ActionResult,
-    # not a 500. Force the move to raise OSError.
+    # not a 500. `approved` as a file makes mkdir(dst.parent) raise OSError.
     cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
-    _ingest_mocks(mocker)
-    mocker.patch("pathlib.Path.rename", side_effect=OSError("read-only fs"))
+    (cfg.review / "approved").write_bytes(b"not-a-dir")
     res = actions.approve_candidate(cfg, eid)
     assert not res.ok and "approve failed" in res.error
 
@@ -127,10 +149,11 @@ def test_candidates_route_renders(tmp_path):
     r = app.test_client().get("/candidates")
     assert r.status_code == 200 and b"abc" in r.data
 
-def test_candidates_approve_route(tmp_path, mocker):
+def test_candidates_approve_route(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); eid, _, _ = _candidate(cfg)
-    _ingest_mocks(mocker)
+    _stub_ffprobe(monkeypatch)
+    _no_spawn(monkeypatch)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post(f"/candidates/approve/{eid}")
     assert r.status_code == 200 and (cfg.review / "approved" / f"{eid}.jpg").exists()
