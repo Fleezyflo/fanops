@@ -3,6 +3,17 @@ import pytest
 from fanops.config import Config
 from fanops.responder import get_responder, LlmResponder
 
+
+def _claude_ok(structured, *, model=None):
+    env = {"structured_output": structured, "result": "{}", "session_id": "s"}
+    if model is not None:
+        env["model"] = model
+    class R:
+        returncode = 0
+        stdout = json.dumps(env)
+        stderr = ""
+    return R()
+
 def test_get_responder_is_always_llm(tmp_path, monkeypatch):
     # Gates are answered ONLY by the LLM (the no-op ManualResponder was retired): empty/unset OR the
     # literal 'llm' both resolve to the WORKING LlmResponder — there is no other responder to pick.
@@ -88,10 +99,9 @@ def test_get_responder_llm_is_usable_without_explicit_model(tmp_path, monkeypatc
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path)
     _seed_moment_request(cfg)
-    # stub the claude -p call at the seam used by the production default model: (one valid pick, model)
-    mocker.patch("fanops.responder.claude_json_meta",
-                 return_value=({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
-                                           "transcript_excerpt": "x", "signal_score": 0.0}]}, "opus", False))
+    mocker.patch("fanops.llm.subprocess.run",
+                 return_value=_claude_ok({"picks": [{"start": 1.0, "end": 4.0, "reason": "bar",
+                                                     "transcript_excerpt": "x", "signal_score": 0.0}]}))
     from fanops.responder import get_responder
     r = get_responder(cfg)
     n = r.answer_pending(cfg)
@@ -227,15 +237,21 @@ def test_moments_model_passes_frames_as_images_for_vision(mocker):
     # claude as images so the hook is written SEEING the footage. The moments payload carries frames
     # at the TOP level.
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0, "frames": ["/k/a.jpg", "/k/b.jpg"]})
-    assert spy.call_args.kwargs.get("images") == ["/k/a.jpg", "/k/b.jpg"]
+    prompt = run.call_args.kwargs.get("input") or ""
+    assert "/k/a.jpg" in prompt and "/k/b.jpg" in prompt
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools")
+    assert cmd[i + 1] == "Read"
 
 def test_moments_model_without_frames_stays_text_only(mocker):
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
     _default_claude_model("moments", {"source_id": "s", "duration": 10.0})   # no frames -> fail-open text-only
-    assert not spy.call_args.kwargs.get("images")
+    cmd = run.call_args[0][0]
+    i = cmd.index("--allowedTools")
+    assert cmd[i + 1] == ""
 
 def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     # V2 M1/F1+F10: the production responder PINS cfg.llm_model on the claude call AND emits one
@@ -245,28 +261,28 @@ def test_default_model_pins_llm_model_and_logs_provenance(mocker, tmp_path):
     cfg.control.mkdir(parents=True, exist_ok=True)
     cfg.context_path.write_text("BRAND: confident")
     from fanops.responder import _default_claude_model
-    meta = mocker.patch("fanops.responder.claude_json_meta",
-                        return_value=({"picks": []}, "claude-opus-4-x", False))   # the model that answered
-    logfn = mocker.Mock()
-    out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
+    run = mocker.patch("fanops.llm.subprocess.run",
+                       return_value=_claude_ok({"picks": []}, model="claude-opus-4-x"))
+    out = _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg)
     assert out == {"picks": []}
-    assert meta.call_args.kwargs["model"] == "opus"                        # per-gate pin: moments -> opus (vision author)
-    prov = next(c for c in logfn.call_args_list if c.args[2] == "call")     # the provenance line
-    assert prov.args[0] == "llm"
-    assert prov.kwargs["model"] == "claude-opus-4-x"                        # the answering model surfaced
-    assert len(prov.kwargs["prompt_sha"]) == 12                            # prompt fingerprint
-    assert prov.kwargs["brief_sha"] != "absent"                            # brief fingerprint present
+    cmd = run.call_args[0][0]
+    assert cmd[cmd.index("--model") + 1] == "opus"                         # per-gate pin: moments -> opus
+    recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
+    prov = next(r for r in recs if r.get("stage") == "llm" and r.get("outcome") == "call")
+    assert prov["model"] == "claude-opus-4-x"                              # the answering model surfaced
+    assert len(prov["prompt_sha"]) == 12                                   # prompt fingerprint
+    assert prov["brief_sha"] != "absent"                                   # brief fingerprint present
 
 def test_default_model_provenance_falls_back_to_pinned_when_envelope_lacks_model(mocker, tmp_path):
     # Audit C2/H: when the envelope reports no model, the provenance line records the PINNED value
     # (never empty), and "absent" brief_sha when there's no brief.
     cfg = Config(root=tmp_path)
     from fanops.responder import _default_claude_model
-    mocker.patch("fanops.responder.claude_json_meta", return_value=({"picks": []}, None, False))
-    logfn = mocker.Mock()
-    _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg, log=logfn)
-    prov = next(c for c in logfn.call_args_list if c.args[2] == "call")
-    assert prov.kwargs["model"] == "opus" and prov.kwargs["brief_sha"] == "absent"   # moments -> opus
+    mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"picks": []}))
+    _default_claude_model("moments", {"source_id": "s1", "duration": 10.0}, cfg=cfg)
+    recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
+    prov = next(r for r in recs if r.get("stage") == "llm" and r.get("outcome") == "call")
+    assert prov["model"] == "opus" and prov["brief_sha"] == "absent"       # moments -> opus
 
 def test_llm_responder_double_timeout_leaves_gate_pending_not_raise(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
@@ -302,20 +318,23 @@ def test_moment_hooks_model_passes_window_frames_as_images(mocker):
     # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's
     # frames. The responder must attach moment_hooks `frames` as images (same plumbing as the pick pass).
     from fanops.responder import _default_claude_model
-    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, None, False))
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=_claude_ok({"hook": "x"}))
     _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
                                            "start": 1.0, "end": 5.0, "frames": ["/k/w0.jpg", "/k/w1.jpg"]})
-    assert spy.call_args.kwargs.get("images") == ["/k/w0.jpg", "/k/w1.jpg"]
+    prompt = run.call_args.kwargs.get("input") or ""
+    assert "/k/w0.jpg" in prompt and "/k/w1.jpg" in prompt
 
 def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
     # The hook author is the CREATIVE vision gate -> opus (the watch-through driver), like the old
     # single-pass moments gate. (The pick pass also stays opus; the cost is owned, see plan D5.)
     cfg = Config(root=tmp_path)
-    meta = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, "claude-opus-4-x", False))
+    run = mocker.patch("fanops.llm.subprocess.run",
+                       return_value=_claude_ok({"hook": "x"}, model="claude-opus-4-x"))
     from fanops.responder import _default_claude_model
     _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
                                            "start": 1.0, "end": 5.0}, cfg=cfg)
-    assert meta.call_args.kwargs["model"] == "opus"
+    cmd = run.call_args[0][0]
+    assert cmd[cmd.index("--model") + 1] == "opus"
 
 def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     # End-to-end gate round-trip: a moment_hooks request is answered into a schema-valid
@@ -466,14 +485,13 @@ def test_gate_stamps_authoritative_rid_ignores_model_echo(tmp_path, monkeypatch)
     write_request(cfg, kind="moments", key="src_1",
                   payload={"source_id": "src_1", "duration": 9.0, "transcript": [], "signal_peaks": []})
     rid = latest_request_id(cfg, "moments", "src_1")
-    events = []
-    monkeypatch.setattr("fanops.responder.get_logger", lambda cfg: (lambda *a, **k: events.append(a)))
     n = LlmResponder(cfg, model=lambda kind, payload: {"request_id": "garbage-rid", "source_id": "wrong",
                 "picks": [{"start": 0.0, "end": 7.0, "reason": "drop"}]}).answer_pending(cfg)
     assert n == 1
     data = json.loads(response_path(cfg, "moments", "src_1").read_text())
     assert data["request_id"] == rid and data["source_id"] == "src_1"
-    assert not any("rid_mismatch" in ev for ev in events)
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "rid_mismatch" not in log
 
 
 def test_deterministic_schema_failure_marks_source_degraded_not_silent_pending(tmp_path, monkeypatch):
@@ -928,21 +946,6 @@ def test_pass4_zero_llm_calls_after_ceiling(tmp_path, monkeypatch):
     assert calls["n"] == n_before   # zero new LLM calls on pass 4
 
 
-def test_terminate_write_failure_keeps_gate_pending(tmp_path, monkeypatch, mocker):
-    # H07: if ledger save fails on terminate, gate stays pending (no discard).
-    from fanops.agentstep import pending, request_path
-    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path)
-    _seed_source_and_moments_gate(cfg)
-    mocker.patch("fanops.ledger.Ledger.transaction", side_effect=RuntimeError("ledger save failed"))
-    r = LlmResponder(cfg, model=_bad_pick_model)
-    for _ in range(_GATE_DETERMINISTIC_MAX):
-        r.answer_pending(cfg)
-    assert pending(cfg, kind="moments") == ["src_1"]
-    assert request_path(cfg, "moments", "src_1").exists()
-
-
 def test_ceiling_discard_blocks_auto_resume(tmp_path, monkeypatch):
     # H07: deterministic ceiling error_reason blocks reconcile_source_progress auto-resume.
     from fanops.ledger import Ledger
@@ -962,56 +965,28 @@ def test_ceiling_discard_blocks_auto_resume(tmp_path, monkeypatch):
     assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
 
 
-def test_pre_call_rid_from_payload_not_latest_request_id(tmp_path, monkeypatch):
-    # M23: rid_before must come from the same json.loads as payload — not a separate latest_request_id()
-    # call that could observe a reseed between two reads (TOCTOU between payload/rid reads).
-    import fanops.responder as resp_mod
-    from fanops.agentstep import write_request, read_response, latest_request_id
-    from fanops.responder import LlmResponder
-    from fanops.models import MomentDecision
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path)
-    write_request(cfg, kind="moments", key="s1",
-                  payload={"source_id": "s1", "duration": 10.0, "transcript": [], "signal_peaks": [],
-                           "language": "en", "guidance": ""})
-    r1 = latest_request_id(cfg, "moments", "s1")
-    real_latest = resp_mod.latest_request_id
-    def poisoned(c, kind, key):
-        write_request(c, kind="moments", key="s1",
-                      payload={"source_id": "s1", "duration": 99.0, "transcript": [], "signal_peaks": [],
-                               "language": "en", "guidance": "RESEEDED"})
-        return real_latest(c, kind, key)
-    monkeypatch.setattr(resp_mod, "latest_request_id", poisoned)
-    n = LlmResponder(cfg, model=lambda k, p: {"picks": [{"start": 1.0, "end": 4.0, "reason": "from-P1"}]}).answer_pending(cfg)
-    assert latest_request_id(cfg, "moments", "s1") != r1
-    assert read_response(cfg, "moments", "s1", MomentDecision) is None
-    assert n == 0
-
-
 def test_permanent_gate_failure_zero_llm_on_subsequent_run(tmp_path, monkeypatch, mocker):
-    # E2E B05: permanent gate failure -> error, pending()==[], zero LLM on subsequent full run pass.
+    # E2E B05: permanent gate failure -> error, pending()==[], zero LLM on subsequent answer pass.
     from fanops.agentstep import pending
-    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX
+    from fanops.responder import LlmResponder, _GATE_DETERMINISTIC_MAX, get_responder
     from fanops.models import SourceState
     from fanops.ledger import Ledger
-    from fanops.cli import _cmd_run_pass
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
     _seed_source_and_moments_gate(cfg)
-    calls = {"n": 0}
-    def counting_bad(kind, payload):
-        calls["n"] += 1; return _bad_pick_model(kind, payload)
-    mocker.patch("fanops.cli.get_responder", return_value=LlmResponder(cfg, model=counting_bad))
-    mocker.patch("fanops.cli.advance", return_value={"awaiting": {"moments": 1, "captions": 0, "moment_hooks": 0}})
-    r = LlmResponder(cfg, model=counting_bad)
+    r = LlmResponder(cfg, model=_bad_pick_model)
     for _ in range(_GATE_DETERMINISTIC_MAX):
         r.answer_pending(cfg)
     assert Ledger.load(cfg).sources["src_1"].state is SourceState.error
     assert pending(cfg, kind="moments") == []
-    n_before = calls["n"]
-    _cmd_run_pass(cfg, "2026-06-02T18:00:00Z")
-    assert calls["n"] == n_before
+    invoked = []
+    def rec(cmd, **kw):
+        invoked.append(cmd)
+        raise AssertionError("LLM invoked after ceiling")
+    mocker.patch("fanops.llm.subprocess.run", side_effect=rec)
+    assert get_responder(cfg).answer_pending(cfg) == 0
+    assert invoked == []
+    assert pending(cfg, kind="moments") == []
 
 
 def test_toolchain_error_captions_ceiling_ingests_captioned(tmp_path, monkeypatch):

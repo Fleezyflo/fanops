@@ -37,6 +37,7 @@ def _fake_ffmpeg(mocker):
         class R: returncode = 0; stderr = ""; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
+    mocker.patch("fanops.clip_ffmpeg.subprocess.run", side_effect=fake_run)
 
 
 def test_caption_request_stale_when_surface_set_drifts(tmp_path):
@@ -259,12 +260,12 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
                           "a/youtube": {"caption": "a", "hashtags": []}}
     led.add_clip(clip)
     _fake_ffmpeg(mocker)
-    logfn = mocker.patch("fanops.crosspost.get_logger").return_value       # capture the run-log breadcrumbs
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     # @a skipped by the selection gate (not in [@b]); @b admitted but uncaptioned -> the cap-is-None net skips it.
     assert led.posts == {}                                                  # safe degradation: no post, no crash
     assert "clip_1" in led.clips                                            # the clip survives intact
-    skipped = {c.kwargs.get("surface") for c in logfn.call_args_list if c.args[2:3] == ("skipped_surface",)}
+    recs = [json.loads(x) for x in cfg.log_path.read_text().splitlines() if x.strip()]
+    skipped = {r.get("surface") for r in recs if r.get("outcome") == "skipped_surface"}
     # S6 (silent-post-drop breadcrumbs): EVERY skip now traces — @a's selection-deny (why=not_cast) AND @b's
     # missing-caption skip. Previously the selection-deny was silent, so only @b appeared; now the swap is
     # FULLY traced, never partially silent.
