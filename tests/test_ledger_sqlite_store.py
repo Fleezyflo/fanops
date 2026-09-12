@@ -1,5 +1,7 @@
 # tests/test_ledger_sqlite_store.py — MOL-347: SqliteLedgerStore parity + WAL properties.
 from __future__ import annotations
+import multiprocessing
+import os
 import sqlite3, threading
 import pytest
 from fanops.config import Config
@@ -106,27 +108,35 @@ def test_concurrent_reader_sees_committed_while_writer_holds_txn(tmp_path):
     assert store.read_raw() == doc_v2
 
 
+def _kill_mid_write(db_path: str, marker_path: str) -> None:
+    """Mutate the live db without COMMIT, prove the tear, then die without close/rollback."""
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM ledger_meta")
+    conn.execute("DELETE FROM ledger_rows")
+    conn.execute("INSERT INTO ledger_meta(key, value) VALUES('schema_version', '99')")
+    ver = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
+    with open(marker_path, "w", encoding="utf-8") as fh:
+        fh.write(ver[0] if ver else "")
+    os._exit(0)
+
+
 def test_killed_mid_write_recovers_prior_commit(tmp_path):
-    """Uncommitted txn rolled back on close — WAL reader still sees last COMMIT (no flock orphan)."""
+    """Killed mid-write must actually tear (writer sees schema 99) then recover doc_a.
+    `wal exists or db exists` is always true after the first commit — that is not a tear."""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc_a = _populated_ledger(cfg)._to_doc()
-    doc_b = dict(doc_a)
-    doc_b["variant_streaks"] = {"x|y": {"hook": "z", "fingerprint": "f", "streak": 9}}
     with store.lock():
         store.write_raw(doc_a)
-    conn = sqlite3.connect(store.db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM ledger_rows")
-        conn.execute("INSERT INTO ledger_meta(key, value) VALUES('schema_version', '99')")
-        conn.close()  # implicit ROLLBACK — simulates kill mid-write
-    except Exception:
-        conn.close()
+    marker = tmp_path / "tear.marker"
+    p = multiprocessing.Process(target=_kill_mid_write, args=(str(store.db_path), str(marker)))
+    p.start()
+    p.join(10)
+    assert p.exitcode == 0, f"tear setup died before mutating: exitcode={p.exitcode}"
+    assert marker.exists() and marker.read_text() == "99", "tear did not happen"
     assert store.read_raw() == doc_a
-    wal = store.db_path.with_name(store.db_path.name + "-wal")
-    assert wal.exists() or store.db_path.exists()
 
 
 def test_snapshot_restore_round_trip(tmp_path):
