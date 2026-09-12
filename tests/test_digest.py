@@ -18,7 +18,7 @@ def _arm_posts(led, arm_id, hook, lift, n, *, account="a", account_id="1", platf
         pid = f"{arm_id}_{i}"
         led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
                           platform=platform, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": lift}, public_url=f"dryrun://{pid}"))
+                          metrics={"lift_score": lift}, public_url=f"https://www.instagram.com/p/{pid}/"))
 
 
 def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform=Platform.instagram, metrics=None):
@@ -31,7 +31,7 @@ def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
                       platform=platform, caption="x", state=PostState.analyzed,
                       metrics=(metrics if metrics is not None else {"lift_score": lift}),
-                      public_url=f"dryrun://{pid}"))
+                      public_url=f"https://www.instagram.com/p/{pid}/"))
 
 
 def test_write_digest_failopen_on_oserror(tmp_path):
@@ -50,7 +50,7 @@ def test_counts_holds_failures(tmp_path):
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c", state=ClipState.held, held=True, held_reason="begging"))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      error_reason="blotato 422", public_url="dryrun://p1"))
+                      error_reason="blotato 422", public_url="https://www.instagram.com/p/p1/"))
     md = render_digest(led, cfg)
     assert "# FAN OPS Ledger Digest" in md
     assert "Sources" in md and "transcribed" in md
@@ -106,7 +106,7 @@ def test_empty_ledger_digest_has_no_sections(tmp_path):
 def test_none_reason_renders_fallback(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))  # error_reason None
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="https://www.instagram.com/p/pf/"))  # error_reason None
     md = render_digest(led, cfg)
     assert "Failures" in md and "(no reason given)" in md and "None" not in md.split("Failures")[1]
 
@@ -114,10 +114,10 @@ def test_published_unmeasured_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # a published post with NO metrics -> surfaced; a published post WITH metrics -> not
     led.add_post(Post(id="pm", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://pm"))  # no metrics
+                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="https://www.instagram.com/p/pm/"))  # no metrics
     led.add_post(Post(id="pok", parent_id="c", account="a", account_id="1",
                       platform=Platform.tiktok, caption="y", state=PostState.published,
-                      metrics={"saves": 5, "lift_score": 20.0}, public_url="dryrun://pok"))
+                      metrics={"saves": 5, "lift_score": 20.0}, public_url="https://www.instagram.com/p/pok/"))
     md = render_digest(led, cfg)
     assert "Published but unmeasured" in md
     assert "`pm`" in md.split("Published but unmeasured")[1]
@@ -229,7 +229,7 @@ def test_needs_reconcile_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="a", account_id="1",
                       platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
-                      error_reason="blotato 503: ambiguous, may be live", public_url="dryrun://prec"))
+                      error_reason="blotato 503: ambiguous, may be live", public_url="https://www.instagram.com/p/prec/"))
     md = render_digest(led, cfg)
     assert "Needs reconcile" in md
     section = md.split("Needs reconcile")[1]

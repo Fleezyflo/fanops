@@ -28,7 +28,7 @@ def _seed(cfg, pid, state=PostState.awaiting_approval, when=_FUTURE):
     with Ledger.transaction(cfg) as led:
         _c1_lineage(led)
         led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://c1"))
+                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/c1/"))
 
 
 def test_approve_posts_only_selected(tmp_path):
@@ -100,7 +100,7 @@ def _seed_review(cfg, *, state=PostState.awaiting_approval, pid="p1", when=_FUTU
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="EDIT ME", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
+                          platform=Platform.instagram, caption="EDIT ME", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/clip_1/"))
 
 
 def test_review_bucket_holds_awaiting_not_queued(tmp_path):
@@ -109,7 +109,7 @@ def test_review_bucket_holds_awaiting_not_queued(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, state=PostState.awaiting_approval, pid="p_await")
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_appr", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="approved", state=PostState.queued, scheduled_time=_FUTURE, public_url="dryrun://p_appr"))
+                          platform=Platform.instagram, caption="approved", state=PostState.queued, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p_appr/"))
     cards = views.review_buckets(Ledger.load(cfg), Accounts.load(cfg), cfg, now=_NOW)
     editable = [c for c in cards if c.bucket == "editable"]
     pids = {s.post_id for c in editable for s in c.surfaces}
@@ -141,7 +141,7 @@ def _seed_day_lineage(cfg, *, source_day, mint):
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", created_at=mint,
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p1/"))
 
 def test_get_review_renders_the_cards_own_minting_day_header(tmp_path):
     # content-lifecycle Phase 3 / MOL-801: the editable bucket emits a running day header keyed on the CARD's
@@ -180,7 +180,7 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
                 cid = f"clip_{sid}_{i}"
                 led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
                 led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="a", account_id="1", created_at=day,
-                                  platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://1"))
+                                  platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/1/"))
     p1 = _client(cfg).get("/review?view=list").data
     p2 = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data
     assert b'class="day-head">2026-06-10' in p1          # day A (newest) heads page 1
@@ -245,7 +245,7 @@ def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
     far = iso_z(now + timedelta(hours=9))
     with Ledger.transaction(cfg) as led:                        # a sibling with a still-future operator time
         led.add_post(Post(id="p_future", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far, public_url="dryrun://p_future"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far, public_url="https://www.instagram.com/p/p_future/"))
     r = actions.approve_posts(cfg, ["p_untimed", "p_future"], now=now)
     assert r.ok
     led = Ledger.load(cfg)
@@ -288,7 +288,7 @@ def test_approve_with_hook_multi_surface_spreads_times(tmp_path, monkeypatch):
         for pid, acct, aid in (("p_a0", "a", "1"), ("p_a1", "a", "1"), ("p_b0", "b", "2")):
             led.add_post(Post(id=pid, parent_id="clip_1", account=acct, account_id=aid,
                               platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
-                              scheduled_time=stale, public_url=f"dryrun://{pid}"))
+                              scheduled_time=stale, public_url=f"https://www.instagram.com/p/{pid}/"))
     r = actions.approve_with_hook(cfg, "clip_1", now=now)
     assert r.ok and r.detail["approved"] == 3
     led = Ledger.load(cfg)
@@ -320,7 +320,7 @@ def _seed_two_accounts(cfg):
 
 def _awaiting(led, pid, *, clip="clip_1", acct="a", aid="1", batch=None, when=_FUTURE):
     led.add_post(Post(id=pid, parent_id=clip, account=acct, account_id=aid, platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch, public_url="dryrun://sweep"))
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch, public_url="https://www.instagram.com/p/sweep/"))
 
 def _seed_review_lineage(cfg):     # two clips on one moment so the route tests render real cards
     with Ledger.transaction(cfg) as led:
@@ -479,7 +479,7 @@ def _seed_removed_hook_review(cfg):
                               reason="drop", state=MomentState.clipped, hook_removed="a stripped hook"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p1/"))
 
 def test_review_shows_hook_choice_when_hook_removed(tmp_path):
     # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever

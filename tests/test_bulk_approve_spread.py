@@ -67,7 +67,7 @@ def _born_posts(led: Ledger, clip: Clip, *, n_per_account: int = 3,
             pid = f"p_{handle.strip('@')}_{k}"
             p = Post(id=pid, parent_id=clip.id, account=handle, account_id=account_id,
                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
-                     scheduled_time=stale_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep")
+                     scheduled_time=stale_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/sweep/")
             led.add_post(p)
             ids.append(pid)
     return ids
@@ -182,7 +182,7 @@ def _bare_posts(handle: str, n: int, *, account_id: str = "ia") -> list[Post]:
     106-post capacity case needs no clip/source substrate."""
     return [Post(id=f"{handle}_{k:03d}", parent_id="clip_1", account=handle, account_id=account_id,
                  platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
-                 media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(n)]
+                 media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/sweep/") for k in range(n)]
 
 
 def _per_day(days) -> list[int]:
@@ -254,7 +254,7 @@ def test_second_batch_may_land_same_operator_local_day(tmp_path, monkeypatch):
                                        "scheduled_time": iso_z(FIXED_DT + timedelta(minutes=31 * (k + 1)))})
     incoming = [Post(id=f"a_new_{k}", parent_id="clip_1", account="a", account_id="ia",
                      platform=Platform.instagram, caption="c", state=PostState.awaiting_approval,
-                     media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://sweep") for k in range(4)]
+                     media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/sweep/") for k in range(4)]
     sched = suggest_times_for_batch(cfg, incoming, now=FIXED_DT)
     days = {parse_iso(t).date() for t in sched.values()}
     assert FIXED_DT.date() in days, (
@@ -371,7 +371,7 @@ def test_a_second_bulk_approve_still_respects_daily_cap(tmp_path, monkeypatch):
             led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
                               platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
                               scheduled_time=stale, media_urls=["file:///clip_1_9x16.mp4"],
-                              public_url="dryrun://sweep"))
+                              public_url="https://www.instagram.com/p/sweep/"))
             ids.append(pid)
         return ids
     first, second = _seed("one"), _seed("two")
@@ -419,7 +419,7 @@ def test_bulk_approve_spread_wins_over_identical_futures(tmp_path, monkeypatch):
         led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
                           platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
                           scheduled_time=future_iso, media_urls=["file:///clip_1_9x16.mp4"],
-                          public_url="dryrun://sweep"))
+                          public_url="https://www.instagram.com/p/sweep/"))
         ids.append(pid)
     led.save()
 
@@ -442,7 +442,7 @@ def test_bulk_approve_spread_wins_realistic_cadence(tmp_path, monkeypatch):
         led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
                           platform=Platform.instagram, caption="a", state=PostState.awaiting_approval,
                           scheduled_time=future_iso, media_urls=["file:///clip_1_9x16.mp4"],
-                          public_url="dryrun://sweep"))
+                          public_url="https://www.instagram.com/p/sweep/"))
         ids.append(pid)
     led.save()
 

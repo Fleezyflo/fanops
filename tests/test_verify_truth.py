@@ -21,11 +21,11 @@ from fanops.reconcile import reconcile_posts
 
 def _post(led, pid, state, *, platform=Platform.instagram, sub=None, url=None, media_id=None,
           post_type=None, account="a", published_at=None, error_reason=None):
-    # a terminal-with-URL state needs a public_url to satisfy the R1 model invariant; callers pass a real
-    # https url when the test is about the rest-gate, else a synthetic dryrun:// only to construct the row.
+    # a terminal-with-URL state needs a real https permalink; callers pass an explicit url when the
+    # test is about the rest-gate, else a synthetic https permalink only to construct the row.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
     if url is None and state in _POST_TERMINAL_REQUIRES_URL:
-        url = f"dryrun://{pid}"
+        url = f"https://www.instagram.com/p/{pid}/"
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
                       caption="x", state=state, submission_id=sub, public_url=url, media_id=media_id,
                       post_type=post_type, published_at=published_at, error_reason=error_reason))

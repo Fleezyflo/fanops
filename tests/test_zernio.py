@@ -35,7 +35,7 @@ def _post(pid="p1", acct_id="acc_abc"):
     # ledger has 0 posts without one, so a fixture lacking it was never a shape production could produce.
     return Post(id=pid, parent_id="c1", account="tk", account_id=acct_id, platform=Platform.tiktok,
                 caption="fire", state=PostState.submitting, created_at="2026-07-16T13:31:00Z",
-                media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://c1")
+                media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z", public_url="https://www.instagram.com/p/c1/")
 
 def _led(cfg, post):
     led = Ledger.load(cfg); led.add_post(post); return led

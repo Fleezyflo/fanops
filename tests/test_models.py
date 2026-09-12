@@ -172,7 +172,7 @@ def test_post_has_no_variant_fields():
     assert "variant_key" not in Post.model_fields
     assert "variant_hook" not in Post.model_fields
     p = Post(id="p2", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-             caption="x", state=PostState.queued, public_url="dryrun://p2")
+             caption="x", state=PostState.queued, public_url="https://www.instagram.com/p/p2/")
     assert p.clip_profile is None
 
 # ---- M1 (structural-hooks): asset origin (native vs third-party) ----

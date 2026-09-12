@@ -31,7 +31,7 @@ def test_schedule_row_carries_variant_hook(tmp_path):
     cfg = Config(root=tmp_path); led = _base(cfg, hook="watch his face")
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.queued, scheduled_time=FUTURE,
-                      render_id="render_x", public_url="dryrun://p1"))
+                      render_id="render_x", public_url="https://www.instagram.com/p/p1/"))
     led.save()
     rows = views.schedule_rows(Ledger.load(cfg), cfg, now=NOW)
     assert rows and rows[0].variant_hook == "watch his face"
@@ -78,7 +78,7 @@ def test_gc_sweeps_unreferenced_render_keeps_referenced(tmp_path):
                           path=str(kept), state=RenderState.rendered))
     # only render_kept is referenced by a live post; render_orphan is a reburn leftover
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="c", state=PostState.queued, render_id="render_kept", public_url="dryrun://p1"))
+                      caption="c", state=PostState.queued, render_id="render_kept", public_url="https://www.instagram.com/p/p1/"))
     led.save()
     cmd_gc(cfg, 30)
     assert not orphan.exists()                                   # unreferenced + old -> reclaimed
@@ -101,7 +101,7 @@ def test_schedule_panel_renders_hook_column(tmp_path):
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, scheduled_time="2099-06-06T12:00:00Z",
-                          public_url="dryrun://p1"))
+                          public_url="https://www.instagram.com/p/p1/"))
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/schedule?account=a").data
     assert b"sched-caption" in html and "watch his face".encode() in html and b"\xe2\x9c\xa6" in html

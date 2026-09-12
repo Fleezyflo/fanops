@@ -25,7 +25,7 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
-                          media_urls=["https://cdn/v.mp4"], public_url="dryrun://p1",
+                          media_urls=["https://cdn/v.mp4"], public_url="https://www.instagram.com/p/p1/",
                           submission_id=sub))
 
 

@@ -62,7 +62,7 @@ def _seed_clip_and_queued_post(cfg: Config, *, post_id: str, scheduled_iso: str)
     led.add_clip(clip)
     led.add_post(Post(id=post_id, parent_id=clip.id, account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
-                      scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://1"))
+                      scheduled_time=scheduled_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/1/"))
     led.save()
     return post_id
 
@@ -115,7 +115,7 @@ def test_go_live_ignores_unapproved_posts(tmp_path, monkeypatch):
     led.add_post(Post(id="p_unapproved", parent_id=clip.id, account="a", account_id="1",
                       platform=Platform.instagram, caption="c",
                       state=PostState.awaiting_approval, scheduled_time=yesterday_iso,
-                      media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://p_unapproved"))
+                      media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/p_unapproved/"))
     led.save()
 
     res = golive.go_live(cfg, confirmed=True, now=FIXED_DT)
@@ -156,7 +156,7 @@ def test_go_live_past_due_gate_counts_only_drainable_posts(tmp_path, monkeypatch
     led.add_post(Post(id="p_retired_lineage", parent_id=clip_ret.id, account="a", account_id="1",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
                       scheduled_time=yesterday_iso, media_urls=["file:///clip_ret_9x16.mp4"],
-                      public_url="dryrun://ret"))
+                      public_url="https://www.instagram.com/p/ret/"))
     led.add_moment(Moment(id="mom_plan", parent_id="src_1", content_token="0-7b", start=0, end=7,
                           reason="r", state=MomentState.clipped))
     clip_plan = Clip(id="clip_plan", parent_id="mom_plan", path="/clip_plan_9x16.mp4", aspect=Fmt.r9x16,
@@ -166,7 +166,7 @@ def test_go_live_past_due_gate_counts_only_drainable_posts(tmp_path, monkeypatch
     led.add_post(Post(id="p_planned_acct", parent_id=clip_plan.id, account="b", account_id="2",
                       platform=Platform.instagram, caption="c", state=PostState.queued,
                       scheduled_time=yesterday_iso, media_urls=["file:///clip_plan_9x16.mp4"],
-                      public_url="dryrun://plan"))
+                      public_url="https://www.instagram.com/p/plan/"))
     led.save()
     raw = json.loads(cfg.accounts_path.read_text())
     raw["accounts"].append({"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": "planned",

@@ -81,7 +81,7 @@ def _seed_due_postiz_post(cfg, *, pid="due_p1", when="2020-01-01T12:00:00Z", acc
             led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id=account_id,
                           platform=Platform.instagram, caption="fire", state=PostState.queued,
-                          scheduled_time=when, public_url="dryrun://clip_1"))
+                          scheduled_time=when, public_url="https://www.instagram.com/p/clip_1/"))
 
 
 # ------------------------------------------------------------------ D12: routing_source detail ----

@@ -422,7 +422,7 @@ def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch,
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1", platform=Platform.instagram,
                           caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
-                          state=PostState.queued, post_type="post", public_url="dryrun://p1"))
+                          state=PostState.queued, post_type="post", public_url="https://www.instagram.com/p/p1/"))
     _capture(mocker)
     final = _publish_one(cfg, "p1", "postiz")
     led = Ledger.load(cfg)

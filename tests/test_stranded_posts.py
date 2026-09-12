@@ -53,7 +53,7 @@ def test_cascade_suppresses_by_lineage_without_relabelling(tmp_path):
     _lineage(led, mom_id="mom_x", clip_id="clip_x")
     led.add_post(_post("p_await", "clip_x", PostState.awaiting_approval))
     led.add_post(_post("p_queued", "clip_x", PostState.queued))
-    led.add_post(_post("p_live", "clip_x", PostState.analyzed, public_url="dryrun://p_live"))
+    led.add_post(_post("p_live", "clip_x", PostState.analyzed, public_url="https://www.instagram.com/p/p_live/"))
 
     led._delete_moment_cascade("mom_x")
 
@@ -90,7 +90,7 @@ def test_cascade_still_deletes_a_moment_with_nothing_protected(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _lineage(led, mom_id="mom_d", clip_id="clip_d")
-    led.add_post(_post("p_failed", "clip_d", PostState.failed, public_url="dryrun://p_failed"))
+    led.add_post(_post("p_failed", "clip_d", PostState.failed, public_url="https://www.instagram.com/p/p_failed/"))
 
     led._delete_moment_cascade("mom_d")
 
@@ -217,7 +217,7 @@ def test_stranded_posts_finds_retired_lineage_only(tmp_path):
     _lineage(led, mom_id="mom_gone", clip_id="clip_gone", moment_state=MomentState.retired)
     led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))
     led.add_post(_post("p_bad", "clip_gone", PostState.awaiting_approval))
-    led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="dryrun://p_live"))
+    led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="https://www.instagram.com/p/p_live/"))
     led.add_post(_post("p_self", "clip_ok", PostState.retired))          # live lineage, but retired ITSELF
     led.add_post(_post("p_orphan", "clip_missing", PostState.awaiting_approval))   # no clip row -> fails CLOSED
 
@@ -248,7 +248,7 @@ def test_reconcile_retired_verb_writes_nothing(tmp_path, capsys):
     led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))
     led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
     led.add_post(_post("p_queued", "clip_gone", PostState.queued))
-    led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="dryrun://p_live"))
+    led.add_post(_post("p_live", "clip_gone", PostState.analyzed, public_url="https://www.instagram.com/p/p_live/"))
     led.save()
 
     again = Ledger.load(cfg)
@@ -317,7 +317,7 @@ def test_one_pass_writes_nothing_to_a_stranded_lineage(tmp_path, mocker):
         led.add_post(_post("p_ok", "clip_ok", PostState.awaiting_approval))     # healthy -> real work
         led.add_post(_post("p_await", "clip_gone", PostState.awaiting_approval))
         led.add_post(_post("p_queued", "clip_gone", PostState.queued))
-        led.add_post(_post("p_live", "clip_gone", PostState.needs_reconcile, public_url="dryrun://p_live"))
+        led.add_post(_post("p_live", "clip_gone", PostState.needs_reconcile, public_url="https://www.instagram.com/p/p_live/"))
         # a SECOND clip under the same dead moment, with nothing live on it — the sweep used to retire it
         led.add_clip(Clip(id="clip_bare", parent_id="mom_gone", path="/clip_bare.mp4", aspect=Fmt.r9x16,
                           state=ClipState.queued))
