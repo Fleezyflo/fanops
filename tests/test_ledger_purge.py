@@ -25,7 +25,7 @@ def _lineage(led, *, sid, mid, cid, pid, day, origin, state=PostState.awaiting_a
     led.add_clip(Clip(id=cid, parent_id=mid, path=clip_path or f"/{cid}.mp4", state=ClipState.rendered))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="ig1",
                       platform=Platform.instagram, caption="x", state=state,
-                      public_url=f"dryrun://{pid}", created_at=f"{day}T12:00:00Z",
+                      public_url=f"https://www.instagram.com/p/{pid}/", created_at=f"{day}T12:00:00Z",
                       batch_id=batch_id))
 
 

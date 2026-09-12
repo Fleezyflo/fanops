@@ -49,7 +49,7 @@ def _validate(cfg):
 def _dim_post(led, pid, *, dim, value, reach, state=PostState.analyzed):
     """An analyzed post with ONE stamped creative dim + a reach metric — the shape aggregate_by_dim reads."""
     led.add_post(Post(id=pid, parent_id="c_dim", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=state, metrics={"reach": reach}, public_url="dryrun://%s" % pid,
+                      caption="x", state=state, metrics={"reach": reach}, public_url="https://www.instagram.com/p/%s/" % pid,
                       **{dim: value}))
 
 

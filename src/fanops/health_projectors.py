@@ -134,21 +134,26 @@ def project_daemon_strip(
 ) -> dict:
     """Pure: Home daemon partial from snapshot FACTS + live heartbeat/activity.
 
-    `snap["verdict"]` is never an input. Loop heartbeat lands only after a pass
-    completes; live activity (`alive_mid` or a non-idle run_line) is the mid-pass
-    signal `daemon.status` already uses via `daemon_progress`."""
+    Owner exec-fail (`interpreter not executable` in snap["verdict"]) is kept —
+    never relabeled to no-heartbeat or alive from `alive_mid`. Other snapshot
+    verdicts are not inputs. Loop heartbeat lands only after a pass completes;
+    live activity (`alive_mid` or a non-idle run_line) is the mid-pass signal
+    `daemon.status` already uses via `daemon_progress`."""
     out = dict(snap)
+    owner = str(out.get("verdict") or "")
+    exec_fail = "interpreter not executable" in owner
     live_activity = bool(alive_mid) or bool(run_line and run_line != "run=idle")
-    loaded = bool(out.get("loaded")) or live_activity
+    loaded = bool(out.get("loaded")) or (live_activity and not exec_fail)
     out["loaded"] = loaded
     out["pending_gates"] = pending_gates
     out["heartbeat_age_s"] = age
-    if live_activity or (loaded and not stale):
-        out["verdict"] = "alive"
-    elif loaded and age is None:
-        out["verdict"] = "loaded but no heartbeat yet"
-    elif loaded and stale:
-        out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
+    if not exec_fail:
+        if live_activity or (loaded and not stale):
+            out["verdict"] = "alive"
+        elif loaded and age is None:
+            out["verdict"] = "loaded but no heartbeat yet"
+        elif loaded and stale:
+            out["verdict"] = f"loaded but stale (last heartbeat {int(age)}s ago)"
     if run_line and run_line != "run=idle":
         out["run_line"] = run_line
     return out

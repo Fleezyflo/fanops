@@ -71,8 +71,10 @@ def test_publish_post_non_queued_is_noop(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="c1")
     with Ledger.transaction(cfg) as led:
-        led.posts["p1"] = led.posts["p1"].model_copy(update={"state": PostState.published})                         # already published on disk
-        led.posts["p1"].public_url = "https://www.instagram.com/reel/AAA/"   # R1: a published row carries a permalink
+        led.posts["p1"] = led.posts["p1"].model_copy(update={
+            "state": PostState.published,
+            "public_url": "https://www.instagram.com/reel/AAA/",
+        })
     assert publish_post(cfg, "p1") is None                                  # claim sees non-queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 

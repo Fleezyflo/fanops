@@ -12,7 +12,7 @@ from tests.fixtures.variant_lineage import validate_learning as _validate, seed_
 
 def _dim_post(led, pid, ffk, reach, state=PostState.analyzed):
     led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=state, first_frame_kind=ffk, metrics={"reach": reach}, public_url="dryrun://c1"))
+                      caption="x", state=state, first_frame_kind=ffk, metrics={"reach": reach}, public_url="https://www.instagram.com/p/c1/"))
 
 def _gated_led(cfg, *, visual_reach=1000.0, transcript_reach=100.0):
     # 8 visual + 8 transcript analyzed posts (clears enough_attributed_signal >=8/>=2); visual leads reach.

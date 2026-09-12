@@ -38,7 +38,7 @@ def _led_with(cfg, *, render=None, clip_state=ClipState.queued, post_over=None, 
         # R1: if a test overrides state to a terminal state, also override public_url. Default safe.
         from fanops.models import _POST_TERMINAL_REQUIRES_URL
         if po.get("state") in _POST_TERMINAL_REQUIRES_URL and not po.get("public_url"):
-            po["public_url"] = f"dryrun://{po['id']}"
+            po["public_url"] = f"https://www.instagram.com/p/{po['id']}/"
         led.add_post(Post(**po))
     return Ledger.load(cfg)
 

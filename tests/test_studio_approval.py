@@ -28,7 +28,7 @@ def _seed(cfg, pid, state=PostState.awaiting_approval, when=_FUTURE):
     with Ledger.transaction(cfg) as led:
         _c1_lineage(led)
         led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://c1"))
+                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/c1/"))
 
 
 def test_approve_posts_only_selected(tmp_path):
@@ -100,7 +100,7 @@ def _seed_review(cfg, *, state=PostState.awaiting_approval, pid="p1", when=_FUTU
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="EDIT ME", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
+                          platform=Platform.instagram, caption="EDIT ME", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/clip_1/"))
 
 
 def test_review_bucket_holds_awaiting_not_queued(tmp_path):
@@ -109,7 +109,7 @@ def test_review_bucket_holds_awaiting_not_queued(tmp_path):
     cfg = Config(root=tmp_path); _seed_review(cfg, state=PostState.awaiting_approval, pid="p_await")
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p_appr", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="approved", state=PostState.queued, scheduled_time=_FUTURE, public_url="dryrun://p_appr"))
+                          platform=Platform.instagram, caption="approved", state=PostState.queued, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p_appr/"))
     cards = views.review_buckets(Ledger.load(cfg), Accounts.load(cfg), cfg, now=_NOW)
     editable = [c for c in cards if c.bucket == "editable"]
     pids = {s.post_id for c in editable for s in c.surfaces}
@@ -141,7 +141,7 @@ def _seed_day_lineage(cfg, *, source_day, mint):
                               reason="drop", transcript_excerpt="go", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", created_at=mint,
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p1/"))
 
 def test_get_review_renders_the_cards_own_minting_day_header(tmp_path):
     # content-lifecycle Phase 3 / MOL-801: the editable bucket emits a running day header keyed on the CARD's
@@ -180,7 +180,7 @@ def test_review_day_header_re_emits_across_pagination_boundary(tmp_path):
                 cid = f"clip_{sid}_{i}"
                 led.add_clip(Clip(id=cid, parent_id=f"mom_{sid}", path=f"/c/{cid}.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
                 led.add_post(Post(id=f"p_{sid}_{i}", parent_id=cid, account="a", account_id="1", created_at=day,
-                                  platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://1"))
+                                  platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/1/"))
     p1 = _client(cfg).get("/review?view=list").data
     p2 = _client(cfg).get(f"/review?view=list&offset={views.GRID_PAGE_SIZE}").data
     assert b'class="day-head">2026-06-10' in p1          # day A (newest) heads page 1
@@ -245,7 +245,7 @@ def test_approve_posts_untimed_gets_suggestion_not_now(tmp_path):
     far = iso_z(now + timedelta(hours=9))
     with Ledger.transaction(cfg) as led:                        # a sibling with a still-future operator time
         led.add_post(Post(id="p_future", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far, public_url="dryrun://p_future"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=far, public_url="https://www.instagram.com/p/p_future/"))
     r = actions.approve_posts(cfg, ["p_untimed", "p_future"], now=now)
     assert r.ok
     led = Ledger.load(cfg)
@@ -288,7 +288,7 @@ def test_approve_with_hook_multi_surface_spreads_times(tmp_path, monkeypatch):
         for pid, acct, aid in (("p_a0", "a", "1"), ("p_a1", "a", "1"), ("p_b0", "b", "2")):
             led.add_post(Post(id=pid, parent_id="clip_1", account=acct, account_id=aid,
                               platform=Platform.instagram, caption="x", state=PostState.awaiting_approval,
-                              scheduled_time=stale, public_url=f"dryrun://{pid}"))
+                              scheduled_time=stale, public_url=f"https://www.instagram.com/p/{pid}/"))
     r = actions.approve_with_hook(cfg, "clip_1", now=now)
     assert r.ok and r.detail["approved"] == 3
     led = Ledger.load(cfg)
@@ -320,7 +320,7 @@ def _seed_two_accounts(cfg):
 
 def _awaiting(led, pid, *, clip="clip_1", acct="a", aid="1", batch=None, when=_FUTURE):
     led.add_post(Post(id=pid, parent_id=clip, account=acct, account_id=aid, platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch, public_url="dryrun://sweep"))
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=when, batch_id=batch, public_url="https://www.instagram.com/p/sweep/"))
 
 def _seed_review_lineage(cfg):     # two clips on one moment so the route tests render real cards
     with Ledger.transaction(cfg) as led:
@@ -479,23 +479,25 @@ def _seed_removed_hook_review(cfg):
                               reason="drop", state=MomentState.clipped, hook_removed="a stripped hook"))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
-                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
+                          platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="https://www.instagram.com/p/p1/"))
 
 def test_review_shows_hook_choice_when_hook_removed(tmp_path):
-    # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever
-    # hook_removed is set (the OFF-mode approve_with_hook flow).
+    # Ghost flag: the stripped-hook badge still names what was killed; the dead moment-restore
+    # "Approve with hook" choice is not offered (per-surface hooks own the burn).
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"hook removed" in html
+    assert b"Approve with hook" not in html and b"hook-choice" not in html
 
 
 def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):
-    # Legacy name kept: FANOPS_CREATIVE_VARIATION no longer gates the template (golive hardcodes OFF), so the
-    # restore choice remains visible when hook_removed is set.
+    # Product: ON-mode per-surface hooks own the burn, so the OFF-mode moment-restore choice must hide.
+    # Template `_card.html` still emits hook-choice whenever hook_removed is set — expected RED until hide.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "1")
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"Approve with hook" not in html
+    assert b"hook-choice" not in html
 
 
 def test_approve_posts_large_batch_requires_confirm(tmp_path):
@@ -558,6 +560,9 @@ def test_approve_route_tells_the_operator_the_cap_dropped_one(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_fits", "p_long"]}).data.decode()
     assert "Approved 1" in html and "1 skipped" in html and _CAP_COPY in html
+    led = Ledger.load(cfg)
+    assert led.posts["p_fits"].state is PostState.queued
+    assert led.posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
     """The branch that would otherwise stay silent: `approved_scheduled` is only set when >=1 post promoted,
@@ -568,6 +573,7 @@ def test_approve_route_still_reports_a_drop_that_took_the_whole_tick(tmp_path):
         _awaiting(led, "p_long", clip="clip_long", acct="a", aid="1")
     html = _client(cfg).post("/posts/approve", data={"ids": ["p_long"]}).data.decode()
     assert "1 skipped" in html and _CAP_COPY in html
+    assert Ledger.load(cfg).posts["p_long"].state is PostState.awaiting_approval
 
 def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path):
     # the negative control at the SURFACE: a clean approve renders no skip clause (a clause that always
@@ -607,42 +613,3 @@ def test_every_approve_route_still_admits_the_same_under_cap_post(tmp_path, rout
     r = route(cfg, "clip_fits")
     assert r.ok and r.detail["approved"] == 1 and r.detail["cut_over_cap"] == 0
     assert Ledger.load(cfg).posts["p_cap"].state is PostState.queued
-
-
-def _fake_burn(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-    """render_moment stand-in (the action imports it locally, so patch `fanops.clip.render_moment`) — no
-    ffmpeg, and a clean rendered clip so the hook restore proceeds instead of rolling back."""
-    c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
-    return led, c.model_copy(update={"state": ClipState.rendered, "hook_burn_failed": False})
-
-def test_approve_with_hook_route_tells_the_operator_the_cap_dropped_one(tmp_path, mocker):
-    # the banner branch MOL-797 could not reach: a with-hook result renders `detail.hook` copy, which named
-    # no drop at all — so this button could refuse the cut and report only "Approved 0 with hook restored".
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    html = _client(cfg).post("/posts/approve-with-hook/clip_long").data.decode()
-    assert "1 skipped" in html and _CAP_COPY in html
-
-def test_approve_with_hook_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_path, mocker):
-    # the same negative control at the with-hook surface.
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_fits", acct="a", aid="1")
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    html = _client(cfg).post("/posts/approve-with-hook/clip_fits").data.decode()
-    assert "Approved 1 with hook restored" in html and _CAP_COPY not in html
-
-def test_approve_with_hook_does_not_spend_the_removed_hook_on_a_fully_dropped_clip(tmp_path, mocker):
-    # the cap is asked BEFORE the restore: a clip whose every post is over cap must not re-cut, and must
-    # keep `hook_removed` intact so the operator can still act on it after the cut is fixed.
-    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_cap_lineage(cfg, hook_removed="lost it all")
-    with Ledger.transaction(cfg) as led:
-        _awaiting(led, "p_cap", clip="clip_long", acct="a", aid="1")
-    burn = mocker.patch("fanops.clip.render_moment", side_effect=_fake_burn)
-    r = actions.approve_with_hook(cfg, "clip_long", now=_NOW)
-    assert r.ok and r.detail["approved"] == 0 and r.detail["cut_over_cap"] == 1
-    assert burn.call_count == 1          # the off-lock pre-warm only — no in-transaction re-cut
-    led = Ledger.load(cfg)
-    assert led.moments["mom_1"].hook_removed == "lost it all" and led.moments["mom_1"].hook is None

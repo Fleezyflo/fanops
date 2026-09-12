@@ -23,10 +23,10 @@ from fanops.reconcile import reconcile_due, reconcile_posts
 
 
 def _post(led, pid, state, sub=None):
-    # R1: stamp a synthetic dryrun:// permalink when state is terminal-with-URL so the invariant
+    # R1: stamp a synthetic https permalink when state is terminal-with-URL so the invariant
     # holds. Reconcile tests then exercise the reconciler's URL back-fill (real https) on top.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
-    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
+    url = f"https://www.instagram.com/p/{pid}/" if state in _POST_TERMINAL_REQUIRES_URL else None
     led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=state, submission_id=sub,
                       public_url=url))
@@ -672,7 +672,7 @@ def test_no_legacy_reason_latches_a_post_out_of_the_pass(tmp_path, legacy):
     url, rid = "https://www.instagram.com/reel/DZvZ8Itkaxz/", "17841456789012345"
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="postiz_real_1",
-                      error_reason=legacy, public_url="dryrun://pg"))
+                      error_reason=legacy, public_url="https://www.instagram.com/p/pg/"))
     calls = []
     def get_status(sid):
         calls.append(sid); return {"status": "published", "publicUrl": url, "releaseId": rid}

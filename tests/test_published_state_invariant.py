@@ -95,6 +95,42 @@ def test_post_published_with_dryrun_url_constructs_ok():
         _make_post(PostState.published, public_url="dryrun://p_t")
 
 
+def test_ledger_load_refuses_published_dryrun_url(tmp_path):
+    """A published+dryrun:// row must not load — it cannot rest."""
+    from fanops.errors import ControlFileError
+    from fanops.ledger import SCHEMA_VERSION
+    from fanops.ledger_sqlite import SqliteLedgerStore
+    cfg = Config(root=tmp_path)
+    store = SqliteLedgerStore(cfg)
+    raw = {
+        "schema_version": SCHEMA_VERSION,
+        "sources": {}, "moments": {}, "clips": {},
+        "posts": {"p_t": {
+            "id": "p_t", "parent_id": "c_t", "account": "a", "account_id": "ig_a",
+            "platform": "instagram", "caption": "c", "state": "published",
+            "public_url": "dryrun://p_t",
+        }},
+        "tag_log": {}, "variant_streaks": {}, "stitch_plans": {}, "batches": {},
+        "renders": {}, "imported_media": {},
+    }
+    with store.lock():
+        store.write_raw(raw)
+    with pytest.raises(ControlFileError):
+        Ledger.load(cfg, store=store)
+
+
+def test_ledger_save_refuses_published_mutated_dryrun_url(tmp_path):
+    """In-place public_url mutation must not persist a published+non-https row."""
+    from fanops.errors import ControlFileError
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    p = _make_post(PostState.published, public_url="https://www.instagram.com/p/abc123/")
+    led.add_post(p)
+    p.public_url = "dryrun://p_t"
+    with pytest.raises(ControlFileError):
+        led.save()
+
+
 def test_post_published_with_https_url_constructs_ok():
     """RED: a real https permalink is the canonical happy path."""
     p = _make_post(PostState.published, public_url="https://www.instagram.com/p/abc123/")

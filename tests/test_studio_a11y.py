@@ -463,9 +463,10 @@ def test_base_confirm_stays_quiet_warn_no_danger_fill():
 
 
 def _run_html_live(cfg, monkeypatch):
-    # Render /run with a non-dryrun backend so BOTH confirm forms are emitted (the live-arming state).
-    from fanops.studio import views
-    monkeypatch.setattr(views, "_publish_mode_label", lambda _cfg: "postiz")
+    # Render /run with a real live switch so BOTH confirm forms are emitted (the live-arming state).
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     return _html(cfg, "/run")
 
 

@@ -12,7 +12,7 @@ from tests.fixtures.variant_lineage import validate_learning as _validate, seed_
 
 def _post(led, pid, *, reach=0.0, state=PostState.analyzed, **kw):
     led.add_post(Post(id=pid, parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=state, metrics={"reach": reach}, public_url="dryrun://c1", **kw))
+                      caption="x", state=state, metrics={"reach": reach}, public_url="https://www.instagram.com/p/c1/", **kw))
 
 
 # ======================================================================================

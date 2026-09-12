@@ -37,10 +37,13 @@ def test_home_review_link_includes_account(tmp_path):
 def test_approve_on_feed_stays_in_review_not_schedule(tmp_path):
     # U6: per-account feed — approving one clip re-renders the feed with the next pending card, not Schedule.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    html = _client(cfg).post("/posts/approve?account=@a", data={"ids": "p0"}).data.decode()
+    r = _client(cfg).post("/posts/approve?account=@a", data={"ids": "p0"})
+    html = r.data.decode()
+    assert r.status_code == 200
     assert "review-feed" in html
     assert "p1" in html
     assert "Open schedule" not in html
+    assert Ledger.load(cfg).posts["p0"].state is PostState.queued
 
 def test_review_handoff_picks_busiest_account(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg, n=3)

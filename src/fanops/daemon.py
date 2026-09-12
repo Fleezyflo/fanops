@@ -422,13 +422,14 @@ def ensure(cfg: Config) -> dict:
 
 def status(cfg: Config, *, interval: int = 600) -> dict:
     """Read-only liveness + readiness — PID-primary, thin caller of the one liveness owner. A live
-    launchd PID + fresh activity is the PRIMARY truth: while loaded and daemon_progress reports
-    alive_mid (the newest run.log line of ANY kind is younger than the ceiling), the verdict is
-    `alive` REGARDLESS of the loop-heartbeat age (that heartbeat only lands after a whole pass
-    finishes, so it must NEVER flip a fast-logging pass to stale). `heartbeat_age_s` stays in the
-    dict for telemetry but no longer governs the verdict on its own. Not-loaded is an ALARM (should
-    be running); a stage held with the log SILENT past the ceiling is stage-stuck; genuinely dead
-    (no PID) is the ONLY 'not running' verdict. `interval` is the installed cadence. Also returns a
+    launchd PID + a loop-origin heartbeat (or mid-pass JSON activity that is NOT a MANUAL heartbeat
+    and NOT any-line TSV) is the PRIMARY truth: while loaded and daemon_progress reports alive_mid
+    (newest *owned* run.log activity younger than the ceiling), the verdict is `alive` REGARDLESS of
+    the loop-heartbeat age (that heartbeat only lands after a whole pass finishes, so it must NEVER
+    flip a fast-logging pass to stale). MANUAL-ONLY heartbeats (stage=heartbeat, no origin=loop) and
+    non-heartbeat TSV lines are not liveness. `heartbeat_age_s` stays in the dict for telemetry but no longer
+    governs the verdict on its own. Not-loaded is an ALARM (should be running); a stage held with the
+    log SILENT past the ceiling is stage-stuck. `interval` is the installed cadence. Also returns a
     SECOND, ORTHOGONAL verdict — `pass_verdict` / `last_success_age_s` (RC-6): is the pump COMPLETING
     passes? — which NEVER alters the liveness verdict above (a process can be `alive` on fresh activity
     yet be completing no passes)."""
@@ -557,9 +558,10 @@ def tail_logs(cfg: Config, n: int = 40) -> str:
 # ── internals ────────────────────────────────────────────────────────────────────────────────
 
 def _heartbeat_age_s(cfg: Config) -> float | None:
-    """Age in seconds of the last heartbeat line in run.log, or None if no log / no heartbeat / a
-    short or unparseable file. Reads JSON heartbeats (log.py) by stage+ts; legacy TAB lines still
-    parse via the leading ISO column."""
+    """Age in seconds of the last loop-origin heartbeat in run.log, or None if no log / no heartbeat
+    / a short or unparseable file. JSON counts only when stage=heartbeat AND origin=loop (MANUAL
+    heartbeats are not liveness). Legacy TAB heartbeat lines (the old loop format) still count
+    here — any other TSV line does not (activity lives in `_newest_activity_ts`)."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -642,14 +644,12 @@ def _tail(text: str, n: int = 6) -> str:
 
 
 def _newest_activity_ts(cfg: Config) -> datetime | None:
-    """Timestamp of the newest parseable run.log line of ANY kind (tz-aware UTC), or None. Every
-    structured record carries a top-level `ts` (log.py); legacy TAB lines expose the ISO in their
-    leading column. This is the liveness signal that proves life DURING a long pass — a working stage
-    emits a run.log line every ~60s (every stage/gate/llm call), so a fresh newest line means the pump
-    is still working, however long the current stage runs. Read-only (no writes/threads), fail-open to
-    None on no-log/unreadable/unparseable. Kept OFF _heartbeat_age_s (frozen byte-for-byte:
-    health_model/doctor + the Prometheus gauge depend on it) — this reader counts EVERY line, not just
-    the loop heartbeat, which is exactly why it can't share that byte-identical reader."""
+    """Timestamp of the newest *owned* run.log activity (tz-aware UTC), or None. Owned = JSON with a
+    top-level `ts` that is not a MANUAL heartbeat (stage=heartbeat without origin=loop). TSV lines
+    are not liveness. Loop-origin heartbeats still count (kickstart freshness + mid-pass). This is
+    the mid-pass signal — a working stage emits JSON every ~60s, so a fresh owned line means the pump
+    is still working. Read-only, fail-open to None. Kept OFF _heartbeat_age_s (that reader is
+    loop-heartbeat only; health_model/doctor + the Prometheus gauge depend on it)."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -660,13 +660,13 @@ def _newest_activity_ts(cfg: Config) -> datetime | None:
                 continue
             try:
                 rec = json.loads(line)
-                ts = rec.get("ts")
-                if ts:
-                    last_ts = ts
             except json.JSONDecodeError:
-                first = line.split("\t", 1)[0].strip()       # legacy TAB line: leading ISO column
-                if first:
-                    last_ts = first
+                continue                                      # any-line TSV is not liveness
+            if rec.get("stage") == "heartbeat" and rec.get("origin") != "loop":
+                continue                                      # MANUAL-ONLY heartbeat is not liveness
+            ts = rec.get("ts")
+            if ts:
+                last_ts = ts
     except OSError:
         return None
     if last_ts is None:
@@ -681,12 +681,12 @@ def _newest_activity_ts(cfg: Config) -> datetime | None:
 def _heartbeat_fresh_since(cfg: Config, since: datetime, *,
                            tries: int = _KICKSTART_HEARTBEAT_TRIES,
                            step: float = _KICKSTART_HEARTBEAT_STEP) -> bool:
-    """Poll run.log until ANY new line newer than `since` (the restart instant) appears. The
-    load-bearing freshness proof: a restarted daemon writes SOME run.log line within its first stage
-    (not only a loop heartbeat, which won't land until the first whole pass FINISHES — hours on a big
-    pass), so a line strictly newer than the kickstart means the fresh process is alive on current
-    code within seconds. Bounded — returns False if none arrives within tries*step (the daemon didn't
-    come back healthy)."""
+    """Poll run.log until owned activity newer than `since` (the restart instant) appears. The
+    load-bearing freshness proof: a restarted daemon writes SOME JSON run.log line within its first
+    stage (not only a loop heartbeat, which won't land until the first whole pass FINISHES — hours
+    on a big pass), so an owned line strictly newer than the kickstart means the fresh process is
+    alive on current code within seconds. MANUAL heartbeats and TSV do not count. Bounded — returns
+    False if none arrives within tries*step (the daemon didn't come back healthy)."""
     for _ in range(max(1, tries)):
         ts = _newest_activity_ts(cfg)
         if ts is not None and ts > since:

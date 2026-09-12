@@ -191,6 +191,8 @@ def _warm_hooked_render(cfg: Config, moment_id: str, aspect, hook: str) -> bool:
         return False
 
 def approve_with_hook(cfg: Config, clip_id: str, *, now: Optional[datetime] = None) -> ActionResult:
+    """Moment-restore approve. Review no longer offers this — the variation flag is a ghost
+    (per-surface hooks own the burn). POST route remains; do not re-gate on a removed env var."""
     from fanops.clip import render_moment
     now = _now(now); now_iso = iso_z(now)
     snap = Ledger.load(cfg)

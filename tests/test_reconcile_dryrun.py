@@ -33,7 +33,7 @@ def test_reconcile_due_routes_zernio_when_global_dryrun(tmp_path, monkeypatch, m
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
-                      public_url="dryrun://tt"))
+                      public_url="https://www.instagram.com/p/tt/"))
     led.save()
     # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username to rest. The live Zernio status
     # body carries that username on post.platforms[].accountId (_id == post.account_id "z1"); get_status surfaces
@@ -63,7 +63,7 @@ def test_reconcile_post_without_provider_parks_not_blotato(tmp_path, monkeypatch
     led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="orphan_sid",
-                      public_url="dryrun://p"))
+                      public_url="https://www.instagram.com/p/p/"))
     led.save()
     mocker.patch("fanops.postiz_lifecycle.ensure_up")
     reconcile_due(cfg)
@@ -85,7 +85,7 @@ def test_reconcile_inflight_live_dryrun_global_zernio(tmp_path, monkeypatch, moc
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.needs_reconcile, submission_id="zsid",
-                      public_url="dryrun://tt"))
+                      public_url="https://www.instagram.com/p/tt/"))
     led.save()
     # The TikTok url must oEmbed-verify to the ZERNIO-REPORTED tiktok username (carried on post.platforms[].
     # accountId, _id == post.account_id "z1"); get_status surfaces it and the oEmbed author ("tt") must equal it.

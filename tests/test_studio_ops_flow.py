@@ -27,7 +27,7 @@ def _seed(cfg, *, pid="p1", state=PostState.awaiting_approval, when=_FUTURE, han
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="m1", path=str(cdir / "clip_1.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id="clip_1", account=handle, account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=state, scheduled_time=when, public_url="dryrun://p"))
+                      caption="c", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/p/"))
     led.save()
 
 def _client(cfg):
@@ -135,7 +135,7 @@ def test_accept_suggested_spreads_multiple_posts(tmp_path):
         cid = f"c{i}"; (cdir / f"{cid}.mp4").write_bytes(b"V")
         led.add_clip(Clip(id=cid, parent_id="m1", path=str(cdir / f"{cid}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=f"p{i}", parent_id=cid, account="a", account_id="ig1", platform=Platform.instagram,
-                          caption="c", state=PostState.queued, scheduled_time=_PAST, public_url="dryrun://p"))
+                          caption="c", state=PostState.queued, scheduled_time=_PAST, public_url="https://www.instagram.com/p/p/"))
     led.save()
     res = actions.accept_suggested_account(cfg, "a", now=_NOW)
     assert res.ok and res.detail["rescheduled"] == 2
@@ -164,7 +164,7 @@ def test_account_work_counts_skips_timeless_queued(tmp_path):
     (cdir / "c0.mp4").write_bytes(b"V")
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=PostState.queued, scheduled_time=None, public_url="dryrun://p"))
+                      caption="c", state=PostState.queued, scheduled_time=None, public_url="https://www.instagram.com/p/p/"))
     led.save()
     assert views.account_work_counts(cfg).get("a", {}).get("scheduled", 0) == 0
 
@@ -178,7 +178,7 @@ def test_posted_failure_chip_uses_label(tmp_path):
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id="p0", parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                       caption="c", state=PostState.failed, error_reason="postiz 429",
-                      error_kind=ErrorKind.rate_limit, public_url="dryrun://p"))
+                      error_kind=ErrorKind.rate_limit, public_url="https://www.instagram.com/p/p/"))
     led.save()
     html = _client(cfg).get("/posted?delivery=failed").data.decode()
     assert "Rate limited" in html and "rate_limit" not in html.split("posted-head")[1][:200]

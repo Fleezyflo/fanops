@@ -258,7 +258,7 @@ def test_publish_no_schedule_parks_not_publishes(tmp_path, monkeypatch):
     _mom1(led)
     led.add_clip(Clip(id="c_ns", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pns", parent_id="c_ns", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="dryrun://pns"))  # no scheduled_time
+                      platform=Platform.instagram, caption="x", state=PostState.queued, public_url="https://www.instagram.com/p/pns/"))  # no scheduled_time
     led.save()
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert Ledger.load(cfg).posts["pns"].state is PostState.queued   # CULM-4: parked, never auto-published
@@ -297,7 +297,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     led.add_clip(Clip(id="c_sub", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="psub", parent_id="c_sub", account="a", account_id="1",
                       platform=Platform.instagram, caption="x",
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://psub"))
+                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="https://www.instagram.com/p/psub/"))
     led.save()
     log = _wire_vendor(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -427,7 +427,7 @@ def test_publish_due_malformed_scheduled_time_is_per_post_failure_not_escape(tmp
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="bad", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="2026-06-01 09:00", public_url="dryrun://bad"))   # naive but parseable -> due when past
+                      scheduled_time="2026-06-01 09:00", public_url="https://www.instagram.com/p/bad/"))   # naive but parseable -> due when past
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")            # must NOT raise
     led = Ledger.load(cfg)
@@ -445,7 +445,7 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
     led.add_clip(Clip(id="c2", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="garbage", parent_id="c2", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.queued,
-                      scheduled_time="not-a-timestamp", public_url="dryrun://garbage"))
+                      scheduled_time="not-a-timestamp", public_url="https://www.instagram.com/p/garbage/"))
     led.save()
     publish_due(cfg, now="2026-06-02T00:00:00Z")   # must NOT raise
     assert Ledger.load(cfg).posts["garbage"].state is PostState.failed
