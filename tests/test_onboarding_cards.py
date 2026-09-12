@@ -200,6 +200,6 @@ def test_rendered_pages_no_secret_echo(tmp_path, monkeypatch):
 def test_fresh_workspace_add_account_first(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)                          # zero accounts
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "do_golive_account_add" not in html or True          # (endpoint name is url-mapped; assert the form)
+    assert "/golive/account/add" in html
     assert 'name="handle"' in html and "Add account" in html    # the add-account form is present on an empty workspace
     assert views.onboarding_account_cards(cfg) == []             # and there are no account cards to hunt through

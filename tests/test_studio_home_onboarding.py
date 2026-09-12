@@ -118,13 +118,23 @@ def test_batches_disclosure_not_on_home(tmp_path):
 
 # ── per-account posted total on account tiles ──────────────────────────────────────────────────────
 def test_inline_per_account_post_count(tmp_path):
+    # published+dryrun:// cannot rest (R1); pin the constructible mix: https published may count,
+    # leftover dryrun:// on a non-terminal row must not, and the ghost constructor still refuses.
+    from pydantic import ValidationError
     cfg = Config(root=tmp_path); _accounts(cfg, [_active()])
     with Ledger.transaction(cfg) as led:
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                           caption="x", state=PostState.published, public_url="https://www.instagram.com/p/p1/"))
+        led.add_post(Post(id="p_dry", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+                          caption="dry", state=PostState.queued, public_url="dryrun://p_dry"))
     html = _client(cfg).get("/").data.decode()
-    assert "home-acct-tile" in html and "1 posted" in html
+    assert "home-acct-tile" in html
+    assert "2 posted" not in html          # dryrun:// must not count as shipped
+    assert "1 posted" in html              # https published may
+    with pytest.raises(ValidationError):
+        Post(id="p_ghost", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
+             caption="x", state=PostState.published, public_url="dryrun://p1")
 
 
 def test_orphan_handle_not_on_home(tmp_path):
