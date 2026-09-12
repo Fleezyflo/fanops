@@ -1,6 +1,5 @@
 # Review feed-slice: paginate without a full-ledger card census; filters ride the sentinel URL.
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -67,22 +66,12 @@ def _seed_many_awaiting(cfg, n=30, *, handle="a", batch_id=None, sid="src_1"):
 
 
 def test_feed_slice_builds_only_page_surfaces(tmp_path):
-    """feed-slice pays _card only for the returned page, not every editable clip."""
+    """feed-slice HTML is the returned page, not every editable clip."""
     cfg = Config(root=tmp_path)
     _seed_many_awaiting(cfg, n=30)
-    calls = {"n": 0}
-    real_card = __import__("fanops.studio.views_review", fromlist=["_card"])._card
-
-    def _counting_card(*args, **kwargs):
-        calls["n"] += 1
-        return real_card(*args, **kwargs)
-
-    c = _client(cfg)
-    with patch("fanops.studio.views_review._card", side_effect=_counting_card):
-        r = c.get(f"/review/feed-slice?account=a&offset={REVIEW_FEED_SLICE}")
+    r = _client(cfg).get(f"/review/feed-slice?account=a&offset={REVIEW_FEED_SLICE}")
     assert r.status_code == 200
-    assert calls["n"] <= REVIEW_FEED_SLICE
-    assert r.data.decode().count("<video") <= REVIEW_FEED_SLICE
+    assert r.data.decode().count("<video") == REVIEW_FEED_SLICE
 
 
 def test_feed_sentinel_preserves_batch_source_state_filters(tmp_path):

@@ -110,13 +110,16 @@ def test_refresh_account_stats_throttle(tmp_path, monkeypatch):
     monkeypatch.setenv("META_GRAPH_TOKEN", "tok")
     monkeypatch.setenv("META_IG_USER_ID", "12345")
     calls = []
-    def _fake_overview(c, handle, **kw):
-        calls.append(handle)
-        return {"followers": 100, "fetched_at": "2026-06-01T00:00:00Z"}
-    monkeypatch.setattr("fanops.fanops_account_stats.account_overview", _fake_overview)
-    assert refresh_account_stats_if_due(cfg)["refreshed"] is True
+    class _Resp:
+        status_code = 200
+        def json(self): return {"followers_count": 100}
+    def _get(url, params=None, timeout=None):
+        calls.append(url)
+        return _Resp()
+    assert refresh_account_stats_if_due(cfg, get=_get)["refreshed"] is True
     assert len(calls) == 1
-    assert refresh_account_stats_if_due(cfg, max_age_s=43200)["refreshed"] is False
+    assert json.loads(cfg.account_stats_path.read_text())["a"]["followers"] == 100
+    assert refresh_account_stats_if_due(cfg, max_age_s=43200, get=_get)["refreshed"] is False
     assert len(calls) == 1
 
 
