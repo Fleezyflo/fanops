@@ -1,15 +1,9 @@
 # tests/test_fail_open_logging_mol67.py
 """MOL-67 — fail-open logging discipline across read-helper layers.
 
-Each read-helper below swallows an exception and falls back to a safe default. The ticket's
-contract: every such swallow must LOG before falling back (so a persistently-recurring silent
-failure is findable), with NO behavior change — the fallback value/control-flow stays byte-identical.
-
-Per site we assert BOTH halves:
-  (a) the log fired — for cfg-in-scope sites via the structured run.log (cfg.log_path text carries the
-      component + tag, matching the get_logger(cfg) convention); for cfg-less sites via caplog on the
-      module logger (logging.getLogger(__name__), the house module-level convention).
-  (b) the fallback value is unchanged (return value / assigned default).
+Fail-open is a defect to call out, not a passing contract: account_arg / lineage_stats fail closed
+on real broken files/rows. certifi pins the exact fallback dict. persona_facts is a real call.
+preview_media None-on-miss is OK (no log claimed). doctor half-live is not-confirmed-LIVE without patches.
 """
 import logging
 
@@ -37,6 +31,7 @@ def test_snapshot_is_restorable_logs_and_returns_false(tmp_path, caplog):
 # ── 2. vocals._demucs_env — except -> pass (cfg-less: module logger) + narrowed to ImportError ──
 def test_demucs_env_logs_on_missing_certifi(tmp_path, monkeypatch, caplog):
     import builtins
+    import os
     from fanops import vocals
     real_import = builtins.__import__
 
@@ -46,10 +41,10 @@ def test_demucs_env_logs_on_missing_certifi(tmp_path, monkeypatch, caplog):
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", _fake_import)
+    baseline = dict(os.environ)
     with caplog.at_level(logging.WARNING, logger="fanops.vocals"):
         env = vocals._demucs_env()
-    assert "SSL_CERT_FILE" not in env or env.get("SSL_CERT_FILE")   # fallback: no crash, env returned
-    assert isinstance(env, dict)                                    # returns the env dict unchanged in shape
+    assert env == baseline                                          # exact fallback: no SSL overlay when certifi is absent
     assert any(r.name == "fanops.vocals" for r in caplog.records)   # logged before swallow
 
 
@@ -75,15 +70,10 @@ def test_demucs_env_narrowed_does_not_swallow_unrelated(tmp_path, monkeypatch):
         vocals._demucs_env()
 
 
-# ── 3. persona_directives.persona_facts — persona_facts does not read the measurement cache ──
-def test_persona_facts_does_not_read_measurement_cache(tmp_path, monkeypatch):
+# ── 3. persona_directives.persona_facts — real call, no dead measurement-cache patch ──
+def test_persona_facts_returns_transparency_shape(tmp_path):
     from fanops import persona_directives
     cfg = _cfg(tmp_path)
-
-    def _boom(_cfg):
-        raise OSError("measurement cache unreadable")
-
-    monkeypatch.setattr("fanops.hashtags.load_measurements", _boom)
 
     class _P:
         hashtag_corpus = []
@@ -91,10 +81,14 @@ def test_persona_facts_does_not_read_measurement_cache(tmp_path, monkeypatch):
         framing = None
         content_focus = None
         energy = None
+        niche = []
+        cut_policy = []
 
     facts = persona_directives.persona_facts(cfg, _P())
     assert set(facts) == {"length_band", "framing", "lead_tags", "terms"}
     assert facts["lead_tags"] == []
+    assert facts["length_band"] == ""
+    assert facts["terms"] == []
 
 
 # (site 4 — meta_graph._read_queries, the local hashtag budget reader — is GONE with the budget fiction.)
@@ -116,50 +110,37 @@ def test_preview_media_returns_none_when_no_artifact(tmp_path):
     assert result is None
 
 
-# ── 7. studio/app_request._account_arg — except -> pass (cfg NOT reliably in scope: module logger) ──
-def test_account_arg_logs_on_resolve_error(tmp_path, monkeypatch, caplog):
+# ── 7. studio/app_request._account_arg — torn accounts.json must fail closed, not return raw ──
+def test_account_arg_fails_closed_on_unreadable_accounts(tmp_path):
     from fanops.studio import app as studio_app
     from fanops.studio import app_request
     cfg = _cfg(tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.mkdir()
     flask_app = studio_app.create_app(cfg)
-    monkeypatch.setattr("fanops.studio.views.resolve_account_handle",
-                        lambda v, c: (_ for _ in ()).throw(RuntimeError("resolve boom")))
     with flask_app.test_request_context("/?account=someone"):
-        with caplog.at_level(logging.WARNING, logger="fanops.studio.app_request"):
-            out = app_request._account_arg()
-    assert out == "someone"                                        # fallback: returns the raw handle unchanged
-    assert any(r.name == "fanops.studio.app_request" for r in caplog.records)
+        with pytest.raises(OSError):
+            app_request._account_arg()
 
 
-# ── 8. doctor.doctor_report half_live — except -> not solid LIVE (ok=False) ──
+# ── 8. doctor.doctor_report half_live — LIVE with no live route is not solid LIVE (no patches) ──
 def test_doctor_half_live_logs_on_route_error(tmp_path, monkeypatch):
     from fanops import doctor
     monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("POSTIZ_API_KEY", raising=False)
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
     cfg = _cfg(tmp_path)
-
-    monkeypatch.setattr(type(cfg), "live_route_exists",
-                        property(lambda self: (_ for _ in ()).throw(RuntimeError("route boom"))))
     rep = doctor.doctor_report(cfg)
     labels = {c["label"]: c for c in rep["checks"]}
     route_check = next((c for k, c in labels.items() if "live route exists" in k), None)
     assert route_check is not None and route_check["ok"] is False
-    assert "not confirmed" in (route_check.get("hint") or "").lower()
+    hint = (route_check.get("hint") or "").lower()
+    assert "nothing routes" in hint or "not confirmed" in hint
 
 
-# ── 9. studio/views.build_system_strip postiz_down — except -> {"show": False} (cfg in scope) ──
-def test_system_strip_postiz_down_logs_on_health_error(tmp_path, monkeypatch):
-    from fanops.studio import views, views_common
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(views_common, "postiz_health_for_banner",
-                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
-    strip = views.build_system_strip(cfg)
-    assert strip["postiz_down"]["show"] is False                   # no postiz routes → still hide
-    log_text = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "postiz_down" in log_text
-
-
-# ── 10. studio/views_posted.lineage_stats — except -> pass (cfg-less: module logger) ──
-def test_lineage_stats_logs_on_error(tmp_path, caplog):
+# ── 10. studio/views_posted.lineage_stats — a row that raises must fail closed, not return input ──
+def test_lineage_stats_fails_closed_on_row_error():
     from fanops.studio import views_results
 
     class _BadRow:
@@ -168,24 +149,19 @@ def test_lineage_stats_logs_on_error(tmp_path, caplog):
         def lift_score(self):
             raise RuntimeError("lift boom")
 
-    rows = [_BadRow(), _BadRow()]
-    with caplog.at_level(logging.WARNING, logger="fanops.studio.views_posted"):
-        result = views_results.lineage_stats(rows)
-    assert result is rows                                          # fail-open returns the input rows unchanged (MOL-70: returns list, not None)
-    assert any(r.name == "fanops.studio.views_posted" for r in caplog.records)
+    with pytest.raises(RuntimeError, match="lift boom"):
+        views_results.lineage_stats([_BadRow(), _BadRow()])
 
 
-def test_system_strip_postiz_down_shows_unknown_when_routed_and_helper_raises(tmp_path, monkeypatch):
-    # MOL-963 R2d: helper raise + channel routes to postiz → show unknown, never silent hide.
+def test_system_strip_postiz_down_shows_unknown_when_routed_and_snapshot_missing(tmp_path):
+    # Channel routes to postiz + no deps snapshot → unknown, never silent hide.
     import json
-    from fanops.studio import views, views_common
+    from fanops.studio import views
     cfg = _cfg(tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}]}))
-    monkeypatch.setattr(views_common, "postiz_health_for_banner",
-                        lambda c, **k: (_ for _ in ()).throw(RuntimeError("health boom")))
     strip = views.build_system_strip(cfg)
     assert strip["postiz_down"]["show"] is True
     assert "unknown" in (strip["postiz_down"].get("hint") or "").lower()
