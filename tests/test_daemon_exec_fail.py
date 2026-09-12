@@ -96,24 +96,22 @@ def test_studio_daemon_health_surfaces_exec_fail(tmp_path, monkeypatch):
 
     cfg = Config(root=tmp_path)
     cfg.control.mkdir(parents=True, exist_ok=True)
-    target = "/missing/fanops"
+    target = tmp_path / "broken-venv" / "bin" / "fanops"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("#!/bin/sh\n")
+    target.chmod(0o644)  # production exec_fail: ProgramArguments[0] exists but is not executable
     monkeypatch.setenv("HOME", str(tmp_path))
     pp = daemon.plist_path()
     pp.parent.mkdir(parents=True, exist_ok=True)
     pp.write_bytes(plistlib.dumps({
         "Label": daemon.LABEL,
-        "ProgramArguments": [target, "run", "--loop", "--interval", "600"],
+        "ProgramArguments": [str(target), "run", "--loop", "--interval", "600"],
         "EnvironmentVariables": {"FANOPS_DAEMON_INTERVAL": "600"},
     }))
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = -1;\n')))
-    monkeypatch.setattr(daemon.os, "access", lambda _path, _mode: False)
     from fanops.health import refresh_daemon_strip_snapshot
     refresh_daemon_strip_snapshot(cfg)
     app = create_app(cfg)
     with app.test_client() as client:
         html = client.get("/home/daemon-health").data.decode()
-    assert "data-daemon-warn" in html
-    # Writer snapshot keeps the exec_fail verdict; the GET path reads the strip (heartbeat may re-label).
-    import json
-    snap = json.loads(cfg.daemon_strip_path.read_text())
-    assert "interpreter not executable" in (snap.get("verdict") or "")
+    assert "interpreter not executable" in html.lower()

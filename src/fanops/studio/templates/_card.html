@@ -30,9 +30,9 @@
     <div class="meta clip-lineage"><span class="ro">from</span> {{ card.source_name }} <span class="ro">·</span> {{ card.moment_window }}s{% if card.origin %} <span class="ro">·</span> <span class="chip ro clip-origin" data-testid="card-origin" title="who asked for this moment. `unlabelled` = minted before provenance was recorded.">origin: {{ card.origin }}</span>{% endif %}</div>
     {% if card.transcript_excerpt %}<details class="clip-transcript"><summary>Transcript</summary><p class="meta">{{ card.transcript_excerpt }}</p></details>{% endif %}
 
-    {# M3d: the shared-moment hook-removed badge + restore choice for clips whose hook was auto-stripped. #}
+    {# M3d: the shared-moment hook-removed badge for clips whose hook was auto-stripped. #}
     {% if card.hook_removed %}
-      <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN. Restore it from the surface below.">
+      <div class="meta hook-removed" title="the model wrote this hook but it was auto-removed (duplicate or shared-opening template); this clip is running CLEAN.">
         <span aria-hidden="true">✎</span> hook removed — <span class="hook-removed-text">{{ card.hook_removed }}</span>
       </div>
     {% endif %}
@@ -86,20 +86,10 @@
     </div>
     {% endif %}
 
-    {# M3d: the removed-hook restore choice when a shared-moment hook was auto-stripped. #}
-    {% set hook_choice = card.bucket == 'editable' and card.hook_removed and card.surfaces %}
-    {% if hook_choice %}
-      {# removed-hook choice (slice 2): one click to ship WITH the restored hook burned in, or clean as-is. #}
-      <div class="hook-choice meta">
-        <span class="muted">Hook was auto-removed. Approve with it burned in, or ship clean.</span>
-        <button type="button" class="primary" hx-post="{{ url_for('do_approve_with_hook', clip_id=card.clip_id, account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve with hook ✎</button>
-        <button type="button" hx-post="{{ url_for('do_approve_as_is', clip_id=card.clip_id, account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve as-is (no hook)</button>
-      </div>
-    {% endif %}
-
-    {% if card.bucket == 'editable' and card.surfaces and not hook_choice %}
-      {# M3b 'all accounts of this moment': approve every surface of this card in one click. Shown whenever the
-         OFF-mode removed-hook choice above is NOT (so under ON, where the choice is hidden, this is the approve). #}
+    {# Moment-restore "Approve with hook" is dead: the variation flag is a ghost (per-surface hooks
+       own the burn). Do not resurrect FANOPS_CREATIVE_VARIATION as a template gate. #}
+    {% if card.bucket == 'editable' and card.surfaces %}
+      {# M3b 'all accounts of this moment': approve every surface of this card in one click. #}
       <button type="button" class="primary card-approve-all" hx-post="{{ url_for('do_approve_clip', clip_id=card.clip_id, account=active, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=compact_param, offset=page.offset) }}" hx-target="#review-body" hx-swap="outerHTML">Approve all accounts</button>
     {% endif %}
 
