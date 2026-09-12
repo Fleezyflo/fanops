@@ -198,10 +198,11 @@ def test_C1_capture_failures_defaults_to_False():
 def test_C1_preflight_is_fatal_in_both_modes(cfg, monkeypatch):
     import cv2
     monkeypatch.setattr(cv2.FaceDetectorYN, "create", staticmethod(lambda *a, **k: None))
-    framing._reset_yunet_cache()
     for cap in (False, True):
+        framing._reset_yunet_cache()
         with pytest.raises(ToolchainMissingError):
             framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=cap)
+    framing._reset_yunet_cache()
     with pytest.raises(ToolchainMissingError):
         clipmod._resolve_framing(cfg, _Src(), 0.0, 10.0)
 

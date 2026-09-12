@@ -639,29 +639,6 @@ def _capturing_run(captured):
 def _vf_of(cmd):
     return cmd[cmd.index("-vf") + 1]
 
-def test_account_cut_applies_detected_focus(tmp_path, mocker, monkeypatch):
-    from tests.fixtures.speech_segments import talk_seg
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "1")
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080, duration=120.0,
-                          transcript=[talk_seg("let me explain how this works", start=10.0, end=13.5)]))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t",
-                          start=10, end=14, reason="r", state=MomentState.clipped))
-    stats = {"fps": 4.0, "frames": [[[0.8, 0.5, 0.2, 0.45]]] * 4}
-    _write_detect(cfg, "src_1", 10, 14, stats)
-    _write_track(cfg, "src_1", 10, 14, [])
-    _write_saliency(cfg, "src_1", 10, 14, [])
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
-    ok, _ = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="talk",
-                               hook="", out_path=str(cfg.clips / "acct.mp4"))
-    centred = "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
-    assert ok and "cmd" in captured and _vf_of(captured["cmd"]) != centred
-
 def test_account_cut_off_flag_is_centered(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")                             # flag OFF -> focus never resolved

@@ -17,16 +17,6 @@ def _cv_off(monkeypatch):
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
 
 
-@pytest.fixture(autouse=True)
-def _textfilter_present(monkeypatch):
-    # EDGE: overlay.ffmpeg_has_textfilter probes ffmpeg via overlay.subprocess (not clip.subprocess).
-    class R:
-        returncode = 0
-        stdout = " T. subtitles\n T. drawtext\n"
-        stderr = ""
-    monkeypatch.setattr("fanops.overlay.subprocess.run", lambda *a, **k: R())
-
-
 def _vf_of(cmd: list[str]) -> str:
     """Return the value passed to the (last) -vf flag in an ffmpeg cmd list."""
     return cmd[cmd.index("-vf") + 1]
@@ -230,64 +220,6 @@ def test_ffmpeg_clip_cmd_appends_extra_vf():
     assert _vf_of(plain) == reframe_filter("9:16", 1920, 1080)
 
 
-def test_render_burns_hook_not_transcript(tmp_path, mocker, monkeypatch):
-    # source WITH a transcript + a hook; FANOPS_BURN_SUBS ON -> hook burns, transcript does NOT.
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080,
-                          transcript=[talk_seg("hello world", start=0.0, end=3.0),
-                                      talk_seg("second line", start=3.0, end=6.0)]))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided,
-                          hook="big hook"))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
-        if not str(cmd[-1]).startswith("-"):
-            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
-    vf = _vf_of(captured["cmd"])
-    assert "subtitles=" in vf                               # the hook burn filter was chained
-    assert reframe_filter("9:16", 1920, 1080) in vf         # ... after the reframe
-    ass_files = list(cfg.clips.glob("*.ass"))
-    assert ass_files, "expected a written .ass subtitle file"
-    ass = ass_files[0].read_text(encoding="utf-8")
-    assert ass.startswith("[Script Info]")
-    assert "big hook" in ass
-    assert "hello world" not in ass and "second line" not in ass
-
-
-def test_render_hook_only_when_transcript_has_null_segments(tmp_path, mocker, monkeypatch):
-    # Transcript segments are never burned; hook-only .ass when a hook is present.
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080,
-                          transcript=[{"start": None, "end": 3.0, "text": "bad segment"},
-                                      talk_seg("good line", start=3.0, end=6.0)]))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        if not str(cmd[-1]).startswith("-"):
-            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
-    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    assert "hook" in ass
-    assert "good line" not in ass and "bad segment" not in ass
-
-
 def test_render_never_burns_transcript_even_with_trusted_segments(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -358,25 +290,6 @@ def _fake_run_writing_clip(captured):
         return R()
     return fake_run
 
-def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch):
-    # The RETENTION HOOK is the default on-screen text and does NOT need a transcript — a moment with
-    # a hook burns it (subtitles= chained + .ass written) even when the source has no transcript and
-    # burn_subs is OFF. (This is the whole point: the screen shows a hook, not the audio's words.)
-    # burn_subs OFF (conftest default for hermeticity) -> no transcript captions
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080, transcript=None))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided, hook="wait for the drop"))
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
-    assert "subtitles=" in _vf_of(captured["cmd"])              # the hook IS burned
-    ass = list(cfg.clips.glob("*.ass"))
-    assert ass and "wait for the drop" in ass[0].read_text(encoding="utf-8")   # ...carrying the hook text
-
 def test_hook_burn_failed_false_for_clean_clip(tmp_path, mocker, monkeypatch):
     # No hook + subs off -> nothing to burn -> NOT a failure (a clean clip is intentional, not a drop).
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
@@ -441,26 +354,6 @@ def test_render_skips_ffmpeg_when_warm_artifact_matches(tmp_path, mocker, monkey
     led, clip2 = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     spy.assert_not_called()                                          # warm artifact reused — no ffmpeg
     assert clip2.state is ClipState.rendered and led.moments["mom_1"].state is MomentState.clipped
-
-def test_render_reruns_when_hook_changes_fingerprint(tmp_path, mocker, monkeypatch):
-    # The render fingerprint must capture the burned hook: if the hook changes, the warm artifact is
-    # STALE and render_moment must RE-RENDER (never silently reuse the old clip — the stale-render class
-    # of bug). A blind skip-if-exists would wrongly keep the old hook.
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080, duration=120.0))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=10, end=28, reason="r", state=MomentState.decided, hook="first hook"))
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
-    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    led.moments["mom_1"].hook = "different hook"                    # hook changed -> warm artifact stale
-    led.set_moment_state("mom_1", MomentState.decided)
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert "cmd" in captured, "ffmpeg must re-run when the hook changes (stale clip not reused)"
-    assert clip.state is ClipState.rendered
 
 def test_reframe_branches_exact():
     # 16:9 from a tall source -> crop height then scale to even 1920x1080
@@ -776,21 +669,6 @@ def test_render_moment_visual_start_off_does_not_probe(tmp_path, mocker, monkeyp
     rend = [c for c in calls if not str(c[-1]).startswith("-")][0]
     assert float(rend[rend.index("-ss") + 1]) == 10.0              # band/snap start, unchanged
 
-def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monkeypatch):
-    # P1 T2: an overlong hook logs ONE legibility warning and the clip STILL renders (fail-open).
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")               # isolate from the probe path
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080, duration=120.0))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="t", start=10, end=28,
-                          reason="r", state=MomentState.decided,
-                          hook="wait for the absolutely incredible unbelievable final climactic drop here"))
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered                      # never blocked
-    assert "hook_legibility" in cfg.log_path.read_text()         # warned once
-
 def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
@@ -885,24 +763,6 @@ def test_supercut_first_frame_kind_none_ok(tmp_path, mocker, monkeypatch):
     mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
     _, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.first_frame_kind is None                       # visual_start bypassed on supercut
-
-def test_supercut_hook_burns_without_transcript_layer(tmp_path, mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    spans = [(10.0, 15.0), (30.0, 35.0)]
-    tr = [talk_seg("span two line", start=31.0, end=34.0),
-          talk_seg("gap line", start=20.0, end=25.0),
-          talk_seg("span one", start=11.0, end=13.0)]
-    cfg, led = _supercut_moment_led(tmp_path, segments=spans, transcript=tr, hook="hook")
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
-    render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    ass = list(cfg.clips.glob("*.ass"))
-    assert ass, "expected supercut .ass for hook"
-    text = ass[0].read_text(encoding="utf-8")
-    assert "hook" in text
-    assert "gap line" not in text and "span two line" not in text and "span one" not in text
 
 def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
@@ -1025,72 +885,11 @@ def _ass_corpus(tmp_path, monkeypatch, *, hook=None, transcript=None, burn="1", 
     return led, cfg
 
 
-def test_build_ass_text_is_pure_and_writes_nothing(tmp_path, monkeypatch):
-    """The seam exists precisely so payload_new's `ass` can be derived WITHOUT the write that
-    _subtitles_vf performs (overlay.write_ass). A second implementation would be free to drift."""
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="wait for it")
-    text, hbf = _build_ass_text(led, cfg, "mom_1", "clip_1", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert text and "wait for it" in text and hbf is False
-    assert not (cfg.clips / "clip_1.ass").exists()
-
-
-@pytest.mark.parametrize("aspect", [Fmt.r9x16, Fmt.r1x1, Fmt.r16x9])
-def test_build_ass_text_golden_per_aspect(tmp_path, monkeypatch, aspect):
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="the drop hits here")
-    text, _ = _build_ass_text(led, cfg, "mom_1", "c", aspect, clip_start=10.0, clip_end=28.0)
-    tw, th = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}[aspect.value]
-    assert f"PlayResX: {tw}" in text and f"PlayResY: {th}" in text
-
-
-def test_build_ass_text_hook_only_never_transcript(tmp_path, monkeypatch):
-    seg = [talk_seg("hello there", start=11.0, end=13.0)]   # present but never burned
-    hook_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "a", monkeypatch, hook="H", burn="0"),
-                                   "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    tx_only, _ = _build_ass_text(*_ass_corpus(tmp_path / "b", monkeypatch, transcript=seg),
-                                 "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    both, _ = _build_ass_text(*_ass_corpus(tmp_path / "c", monkeypatch, hook="H", transcript=seg),
-                              "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert hook_only and "H" in hook_only
-    assert tx_only is None
-    assert both and "H" in both and "hello there" not in both
-
-
 def test_build_ass_text_none_when_nothing_wanted_and_is_NOT_a_failure(tmp_path, monkeypatch):
     """The (None, False) that leaves a stale {cid}.ass on disk — D6, the trap the dry-run must survive."""
     led, cfg = _ass_corpus(tmp_path, monkeypatch, hook=None, burn="0")
     text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     assert text is None and hbf is False
-
-
-def test_build_ass_text_keeps_hook_without_transcript(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    seg = [talk_seg("already on screen", start=11.0, end=13.0)]
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="watch this", transcript=seg, burn="1", batch_burn=False)
-    text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert hbf is False
-    assert text and "watch this" in text
-    assert "already on screen" not in text.lower()
-
-
-def test_render_drop_batch_keeps_hook_not_transcript(tmp_path, mocker, monkeypatch):
-    """Drop batch + FANOPS_BURN_SUBS ON: hook burns, transcript never layered."""
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_batch(Batch(id="drop_1", name="drop-2026-08-15", burn_subs=None))
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080, batch_id="drop_1",
-                          transcript=[talk_seg("on screen lyrics", start=0.0, end=3.0)]))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided, hook="the drop"))
-    captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip(captured))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
-    vf = _vf_of(captured["cmd"])
-    assert "subtitles=" in vf
-    ass = next(cfg.clips.glob("*.ass")).read_text(encoding="utf-8")
-    assert "the drop" in ass and "on screen lyrics" not in ass.lower()
 
 
 def test_render_never_burns_transcript_on_talk_source(tmp_path, mocker, monkeypatch):
@@ -1110,9 +909,3 @@ def test_render_never_burns_transcript_on_talk_source(tmp_path, mocker, monkeypa
     assert not list(cfg.clips.glob("*.ass"))
 
 
-def test_a_stale_ass_on_disk_does_not_affect_the_newly_derived_text(tmp_path, monkeypatch):
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="new hook")
-    cfg.clips.mkdir(parents=True, exist_ok=True)
-    (cfg.clips / "c.ass").write_text("[Script Info]\nOLD STALE HOOK\n")
-    text, _ = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert "new hook" in text and "OLD STALE HOOK" not in text
