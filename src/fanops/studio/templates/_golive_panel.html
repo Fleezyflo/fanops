@@ -232,19 +232,34 @@
 
   <section class="golive-step" id="hands-off">
     <h3>Hands-off processing</h3>
-    <p class="muted">Gates (hooks, captions, moments) are answered automatically by <code>{{ status.llm_cli_binary }}</code> — the
-      pipeline writes its own. The <strong>Pipeline driver</strong> decides whether that runs unattended on a schedule.
+    <p class="muted">{% if status.llm_transport == 'grok' %}Grok (captions only; moments/hooks stay on Claude).
+      {% else %}Gates (hooks, captions, moments) are answered automatically by <code>{{ status.llm_cli_binary }}</code> — the
+      pipeline writes its own.{% endif %} The <strong>Pipeline driver</strong> decides whether that runs unattended on a schedule.
       Publishing still requires an explicit <strong>Review</strong> — nothing goes live without your approval.</p>
     <div class="account-hooks" id="llm-transport">
-      <p class="muted"><strong>LLM transport</strong> (single switch for every gate — captions, moments, hooks) —
-        {% if status.llm_transport == 'cursor' %}<code>cursor-agent</code> (Cursor CLI headless; vision gates unsupported){% else %}<code>claude</code> (Claude Code subscription login){% endif %}.</p>
+      <p class="muted"><strong>LLM transport</strong>
+        {% if status.llm_transport == 'cursor' %}
+          (single switch for every gate — captions, moments, hooks) —
+          <code>cursor-agent</code> (Cursor CLI headless; vision gates unsupported)
+        {% elif status.llm_transport == 'grok' %}
+          — <code>grok</code> Grok (captions only; moments/hooks stay on Claude)
+        {% else %}
+          (single switch for every gate — captions, moments, hooks) —
+          <code>claude</code> (Claude Code subscription login)
+        {% endif %}.</p>
       <form hx-post="{{ url_for('do_golive_llm_transport') }}" hx-target="#golive-panel" hx-swap="outerHTML">
         {% if status.llm_transport == 'cursor' %}
           <span class="ok">● Cursor</span>
           <button type="submit" name="transport" value="claude">Switch to Claude</button>
+          <button type="submit" name="transport" value="grok">Switch to Grok (captions only; moments/hooks stay on Claude)</button>
+        {% elif status.llm_transport == 'grok' %}
+          <span class="ok">● Grok (captions only; moments/hooks stay on Claude)</span>
+          <button type="submit" name="transport" value="claude">Switch to Claude</button>
+          <button type="submit" name="transport" value="cursor">Switch to Cursor</button>
         {% else %}
           <span class="muted">○ Claude (default)</span>
           <button type="submit" name="transport" value="cursor">Switch to Cursor</button>
+          <button type="submit" name="transport" value="grok">Switch to Grok (captions only; moments/hooks stay on Claude)</button>
         {% endif %}
       </form>
     </div>

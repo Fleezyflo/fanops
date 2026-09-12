@@ -43,7 +43,7 @@ def register_golive_routes(app, cfg):
 
     @app.post("/golive/llm-transport")
     def do_golive_llm_transport():
-        # FANOPS_LLM_TRANSPORT=claude|cursor — which headless CLI shells when the AI responder is ON.
+        # FANOPS_LLM_TRANSPORT=claude|cursor|grok — which headless CLI shells when the AI responder is ON.
         return _golive_panel(golive.set_llm_transport(cfg, request.form.get("transport", "")))
 
     @app.post("/golive/daemon-install")
