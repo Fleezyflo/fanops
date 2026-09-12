@@ -66,10 +66,14 @@ def test_discover_route_lists_connected_channels(tmp_path, monkeypatch):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007/api")
     monkeypatch.setenv("ZERNIO_API_KEY", "zk")
-    monkeypatch.setattr(golive.postiz.requests, "get",
-                        lambda *_a, **_k: _R([{"id": "ig_1", "name": "Mark", "identifier": "instagram"}]))
-    monkeypatch.setattr(golive.zernio.requests, "get",
-                        lambda *_a, **_k: _R({"accounts": [{"_id": "z_1", "name": "llllllll", "platform": "tiktok"}]}))
+    def _get(url, **_k):
+        u = str(url)
+        if "integrations" in u:
+            return _R([{"id": "ig_1", "name": "Mark", "identifier": "instagram"}])
+        if "accounts" in u:
+            return _R({"accounts": [{"_id": "z_1", "name": "llllllll", "platform": "tiktok"}]})
+        raise AssertionError(f"unexpected GET {url}")
+    monkeypatch.setattr(golive.postiz.requests, "get", _get)
     r = _client(cfg).post("/golive/discover")
     assert r.status_code == 200
     body = r.data.decode()
