@@ -268,12 +268,14 @@ def test_default_list_posts_routes_ig_to_postiz(tmp_path, monkeypatch, mocker):
     igp = Post(id="ig1", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                caption="x", state=PostState.published, submission_id="s_ig",
                public_url="https://www.instagram.com/reel/AAA/")
-    graph_spy = mocker.patch("fanops.meta_graph.media_insights")
-    mocker.patch("fanops.post.metrics.requests.get",
-                 return_value=type("R", (), {"status_code": 200, "json": lambda s: [{"reach": 1000}]})())
+    spy = mocker.patch("fanops.post.metrics.requests.get",
+                       return_value=_R(200, [{"label": "Reach", "data": [{"total": "1000", "date": "d"}]}]))
     rows = list(_default_list_posts(cfg, posts=[igp])("30d"))
     assert len(rows) == 1 and rows[0]["postSubmissionId"] == "s_ig"
-    graph_spy.assert_not_called()
+    assert rows[0]["metrics"]["reach"] == 1000.0
+    url = spy.call_args[0][0]
+    assert "analytics/post/s_ig" in url
+    assert "graph.facebook" not in url
 
 def test_default_list_posts_tiktok_still_routes_to_zernio(tmp_path, monkeypatch, mocker):
     # Non-IG is UNCHANGED: a TikTok post still routes to its zernio metrics reader, never to Graph.
@@ -282,12 +284,15 @@ def test_default_list_posts_tiktok_still_routes_to_zernio(tmp_path, monkeypatch,
     cfg = Config(root=tmp_path)
     tk = Post(id="tk1", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
               caption="x", state=PostState.published, submission_id="s_tk", public_url="dryrun://c")
-    graph_spy = mocker.patch("fanops.meta_graph.media_insights")
-    mocker.patch("fanops.post.metrics.ZernioMetricsClient.list_posts",
-                 return_value=[{"postSubmissionId": "s_tk", "metrics": {"reach": 5}}])
+    spy = mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"reach": 5}))
     rows = list(_default_list_posts(cfg, posts=[tk])("30d"))
-    assert rows == [{"postSubmissionId": "s_tk", "metrics": {"reach": 5}}]
-    graph_spy.assert_not_called()                              # TikTok never hits Graph
+    assert len(rows) == 1 and rows[0]["postSubmissionId"] == "s_tk"
+    assert rows[0]["metrics"]["reach"] == 5
+    url = spy.call_args[0][0]
+    assert url.rstrip("/").endswith("/analytics")
+    assert spy.call_args.kwargs.get("params", {}).get("postId") == "s_tk"
+    assert "analytics/post/" not in url
+    assert "graph.facebook" not in url
 
 def test_metrics_client_unknown_backend_fails_closed(tmp_path):
     # Blotato removed: the else-branch that returned BlotatoMetricsClient now RAISES (fail-closed + legible,
