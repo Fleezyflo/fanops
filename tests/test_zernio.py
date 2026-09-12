@@ -196,7 +196,6 @@ def test_publish_network_error_parks_needs_reconcile(tmp_path, monkeypatch, mock
 
 def test_publish_429_then_success(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.zernio.time.sleep")
     mocker.patch("fanops.post.zernio.requests.post", side_effect=[_R(429, {}, text="rate"), _R(201, {"_id": "z_2"})])
     led = ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "z_2"

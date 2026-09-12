@@ -98,9 +98,12 @@ def test_transient_pre_send_exhausted_lands_failed_requeueable(tmp_path, monkeyp
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
-    mocker.patch("fanops.post.run._ensure_media",
-                 side_effect=_rq.exceptions.ConnectionError("NameResolutionError zernio.com"))
-    mocker.patch("fanops.post.run.time.sleep", return_value=None)
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].media_urls = []
+        led.posts["p1"].created_at = "2026-07-16T13:31:00Z"
+    def _post(url, **kw):
+        raise _rq.exceptions.ConnectionError("NameResolutionError zernio.com")
+    mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed
@@ -114,11 +117,13 @@ def test_permanent_4xx_still_fails_immediately(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _queued(cfg)
     calls = {"n": 0}
-    def boom(*a, **kw):
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].media_urls = []
+        led.posts["p1"].created_at = "2026-07-16T13:31:00Z"
+    def boom(url, **kw):
         calls["n"] += 1
-        raise RuntimeError("Zernio upload failed (422) — body withheld")
-    mocker.patch("fanops.post.run._ensure_media", side_effect=boom)
-    mocker.patch("fanops.post.run.time.sleep", return_value=None)
+        return _R(422, {}, text="bad")
+    mocker.patch("requests.post", side_effect=boom)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed

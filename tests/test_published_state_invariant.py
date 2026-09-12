@@ -209,48 +209,48 @@ def test_dryrun_poster_writes_preview_and_no_artifacts(tmp_path):
 # this also catches a future Postiz poster that returns 'submitted' but with no permalink yet)
 # ───────────────────────────────────────────────────────────────────────────
 
-def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeypatch):
+def test_publish_one_parks_post_without_url_in_needs_reconcile(tmp_path, monkeypatch, mocker):
     """RED: a poster that returns state=submitted WITHOUT setting post.public_url MUST NOT result
     in state=published. _publish_one must park the post in needs_reconcile (audit trail: explicit
     publish_missing_url breadcrumb) so reconcile.py can heal it on the next pass.
 
-    Today _publish_one:172-174 unconditionally promotes submitted→published — that's the gate
-    that LETS D1 through. After R1 it's gated on public_url being non-empty."""
+    Drive the real Postiz poster: a 201 with id and no releaseURL is the async-permalink case."""
     from fanops.post.run import _publish_one
 
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(
         '{"accounts": [{"handle": "@a", "account_id": "ig_a", "platforms": ["instagram"], "status": "active"}]}'
     )
     clip = _seed_minimal_ledger(cfg)          # seed FIRST: it persists the lineage...
+    f = cfg.clips / "clip_1.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"V")
     led = Ledger.load(cfg)                   # ...so load AFTER it, or this save drops the clip again
+    led.clips[clip.id].path = str(f)
     led.add_post(Post(
         id="post_g", parent_id=clip.id, account="a", account_id="ig_a",
-        platform=Platform.instagram, caption="c", state=PostState.queued,
-        media_urls=["file:///clip_1_9x16.mp4"],
+        platform=Platform.instagram, caption="c", state=PostState.queued, post_type="post",
+        media_urls=["https://uploads.postiz.com/x.mp4"],
     ))
     led.save()
 
-    # Install a fake poster that advances submitting→submitted but leaves public_url empty —
-    # exactly what today's DryRunPoster does, and what a future Postiz async-permalink path
-    # might do.
-    class _GhostPoster:
-        def publish(self, led, post_id):
-            # NOTE: deliberately NOT setting public_url — park at needs_reconcile.
-            led.posts[post_id] = led.posts[post_id].model_copy(update={
-                "state": PostState.submitted, "submission_id": "dryrun_" + post_id})
-            return led
+    class _R:
+        def __init__(self, code, body=None, text=""):
+            self.status_code = code; self._b = {} if body is None else body; self.text = text
+        def json(self):
+            return self._b
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "ig_a", "name": "a", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", return_value=_R(201, {"id": "postiz_1"}))  # id, no permalink
 
-    from fanops import post as _post_pkg
-    monkeypatch.setattr(_post_pkg, "get_poster", lambda cfg, backend: _GhostPoster(), raising=False)
-    # The poster lookup in run.py is `from fanops.post import get_poster` — patch both surfaces
-    from fanops.post import run as _run_mod
-    monkeypatch.setattr(_run_mod, "get_poster", lambda cfg, backend: _GhostPoster(), raising=False)
-    # _ensure_media's media-upload path also needs to be a no-op for the test
-    monkeypatch.setattr(_run_mod, "_ensure_media", lambda *a, **kw: None, raising=False)
-
-    _publish_one(cfg, "post_g", backend="dryrun")
+    _publish_one(cfg, "post_g", backend="postiz")
     # The post MUST NOT end in published — it has no permalink
     led_after = Ledger.load(cfg)
     p = led_after.posts["post_g"]

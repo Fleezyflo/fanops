@@ -40,28 +40,38 @@ def _post(pid="p1", acct_id="intg_1"):
 def _led(cfg, post):
     led = Ledger.load(cfg); led.add_post(post); return led
 
-def _capture(mocker):
+_INTGS = [
+    {"id": "intg_1", "name": "ig", "identifier": "instagram-standalone"},
+    {"id": "ig1", "name": "ig", "identifier": "instagram-standalone"},
+    {"id": "yt_intg", "name": "yt", "identifier": "youtube"},
+]
+
+
+def _capture(mocker, *, posts_get=None):
     cap = {}
     def _p(url, **kw):
         cap["json"] = kw.get("json"); return _R(201, {"id": "postiz_1"})
-    cap["mock"] = mocker.patch("fanops.post.postiz.requests.post", side_effect=_p)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=[
-        PostizIntegration(id="intg_1", name="ig", platform="instagram-standalone"),
-        PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
-        PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
-    ])
-    mocker.patch("fanops.post.metrics.postiz_read.requests.get", return_value=_R(200, {"posts": []}))
+    def _g(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, _INTGS)
+        if posts_get is not None:
+            return posts_get(url, **kw)
+        return _R(200, {"posts": []})
+    cap["mock"] = mocker.patch("requests.post", side_effect=_p)
+    mocker.patch("requests.get", side_effect=_g)
     return cap
 
 def _matching_postiz_row(*, intg_id="intg_1", content="fire", sid="postiz_existing"):
     return {"id": sid, "state": "QUEUE", "integration": {"id": intg_id}, "content": content}
 
-def _integrations_patch(mocker):
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=[
-        PostizIntegration(id="intg_1", name="ig", platform="instagram-standalone"),
-        PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
-        PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
-    ])
+def _integrations_get(mocker, *, posts_get=None):
+    def _g(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, _INTGS)
+        if posts_get is not None:
+            return posts_get(url, **kw)
+        return _R(200, {"posts": []})
+    mocker.patch("requests.get", side_effect=_g)
 
 def _settings(cap):
     return cap["json"]["posts"][0]["settings"]
@@ -264,9 +274,7 @@ def test_publish_network_error_parks_needs_reconcile_no_repost(tmp_path, monkeyp
 def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     post_mock = mocker.patch("fanops.post.postiz.requests.post")
-    _integrations_patch(mocker)
-    mocker.patch("fanops.post.metrics.postiz_read.requests.get",
-                 return_value=_R(200, {"posts": [_matching_postiz_row()]}))
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [_matching_postiz_row()]}))
     led = PostizPoster(cfg).publish(led, "p1")
     post_mock.assert_not_called()
     assert led.posts["p1"].state is PostState.submitted
@@ -276,16 +284,17 @@ def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocke
 def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch, mocker):
     import requests as _rq
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    _integrations_patch(mocker)
     mocker.patch("fanops.post.postiz.requests.post",
                  side_effect=_rq.exceptions.ConnectTimeout("timed out"))
     calls = {"n": 0}
-    def get_side(*a, **kw):
+    def get_side(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, _INTGS)
         calls["n"] += 1
         if calls["n"] == 1:
             return _R(200, {"posts": []})
         return _R(200, {"posts": [_matching_postiz_row()]})
-    mocker.patch("fanops.post.metrics.postiz_read.requests.get", side_effect=get_side)
+    mocker.patch("requests.get", side_effect=get_side)
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted
     assert led.posts["p1"].submission_id == "postiz_existing"
@@ -295,7 +304,6 @@ def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
     # A 429 is rejected pre-processing (not posted), so retrying is safe; exhausting retries -> failed
     # (re-queueable), never needs_reconcile. Mock sleep so the jittered backoff doesn't stall the test.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.postiz.time.sleep")
     _capture(mocker)
     mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
     led = PostizPoster(cfg).publish(led, "p1")
@@ -305,7 +313,6 @@ def test_publish_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
     # audit gap: only 429-EXHAUSTION was covered. A 429 is rejected pre-processing (not posted), so the
     # retry is safe — a transient 429 followed by a 2xx must land SUBMITTED, not failed. Mock sleep.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.postiz.time.sleep")
     _capture(mocker)
     mocker.patch("fanops.post.postiz.requests.post",
                  side_effect=[_R(429, {}, text="rate"), _R(201, {"id": "postiz_9"})])
@@ -403,7 +410,6 @@ def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, m
                           post_type="post",
                           created_at="2026-07-16T13:31:00Z", scheduled_time="2020-01-01T00:00:00Z",
                           media_urls=["m1|https://cdn/a.mp4", "m2|https://cdn/b.mp4"]))
-    mocker.patch("fanops.post.run._ensure_media", return_value=None)   # media already resolved on the row
     _capture(mocker)
     sent = mocker.patch("fanops.post.postiz.requests.post")
     _publish_one(cfg, "p1", "postiz")
@@ -631,16 +637,16 @@ def test_postiz_permalink_none_for_real_id_until_route_verified(tmp_path, monkey
 
 # ---- P2 Task 2: capture public_url on the SUBMITTED branch only, via the helper chokepoint ----
 def test_publish_2xx_captures_public_url_via_permalink_helper(tmp_path, monkeypatch, mocker):
-    # The submitted branch routes public_url through _postiz_permalink. Today the helper returns None
-    # (no URL in the API), so to prove the WIRING (not a coincidental None==None) we stub the helper to
-    # a sentinel and assert it lands on the post. When the route is later verified this lights up free.
+    # The submitted branch routes public_url through _postiz_permalink. A 201 body that carries
+    # releaseURL must land on the post; a guessed dashboard URL is never invented.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
-    mocker.patch("fanops.post.postiz._postiz_permalink", return_value="https://dash.example/p/postiz_1")
+    mocker.patch("fanops.post.postiz.requests.post",
+                 return_value=_R(201, {"id": "postiz_1", "releaseURL": "https://www.instagram.com/p/abc/"}))
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted
     assert led.posts["p1"].submission_id == "postiz_1"
-    assert led.posts["p1"].public_url == "https://dash.example/p/postiz_1"
+    assert led.posts["p1"].public_url == "https://www.instagram.com/p/abc/"
 
 # ---- R2 public media mirror + upload-from-url (v4 self-healing publish path) ----
 def test_rewrite_media_base_rewrites_loopback_upload_path(tmp_path, monkeypatch):
@@ -759,7 +765,13 @@ def test_ensure_clip_media_does_not_persist_zernio_temp(tmp_path, monkeypatch, m
     f = cfg.clips / "clip_1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="clip_1", parent_id="m", path=str(f), state=ClipState.queued))
     temp = "https://storage.zernio.com/temp/1752_abc_v.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-    mocker.patch("fanops.post.get_media_uploader", return_value=lambda c, p, **_kw: temp)
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    def _zpost(url, **kw):
+        if "/media/presign" in str(url):
+            return _R(200, {"uploadUrl": "https://signed.example/u", "publicUrl": temp})
+        raise AssertionError(url)
+    mocker.patch("requests.post", side_effect=_zpost)
+    mocker.patch("requests.put", return_value=_R(200, {}))
     u = ensure_clip_media(led, cfg, "clip_1", backend="zernio")
     assert u == temp
     assert led.clips["clip_1"].media_url is None
@@ -778,13 +790,12 @@ def test_publish_posts_image_path_is_the_minted_public_url(tmp_path, monkeypatch
 
 
 def test_publish_unconfirmed_branches_never_capture_public_url(tmp_path, monkeypatch, mocker):
-    # 2xx-no-id / 5xx / network ⇒ needs_reconcile and public_url stays None EVEN IF the helper would
-    # return a link — no confirmed id ⇒ no URL. Stub the helper to a sentinel to prove the branch
-    # genuinely never assigns it (not that the helper happened to return None).
+    # 2xx-no-id ⇒ needs_reconcile and public_url stays None — no confirmed id ⇒ no URL, even if the
+    # body carries a lookalike permalink field.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
-    mocker.patch("fanops.post.postiz._postiz_permalink", return_value="https://dash.example/should-not-appear")
     _capture(mocker)
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(200, {"ok": True}))   # 2xx, no id
+    mocker.patch("fanops.post.postiz.requests.post",
+                 return_value=_R(200, {"ok": True, "releaseURL": "https://dash.example/should-not-appear"}))
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
     assert led.posts["p1"].public_url is None

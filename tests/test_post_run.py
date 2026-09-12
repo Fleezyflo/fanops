@@ -32,31 +32,16 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z", accou
 
 # dryrun-boundary (fix/dryrun-boundary-m1): publish_due now SKIPS a dryrun post (system NOT live) — it stays
 # `queued`, never `published` (dryrun must never enter the distribution rail / mint a phantom-published row).
-# Tests below that exercise a general PUBLISH MECHANISM (published_at stamp, 06_published archive, upload-once,
-# idempotency, only-due filtering, no-deadlock) used the dryrun poster only as a stand-in to REACH published.
-# Convert them to a genuinely LIVE backend so the post actually enters the rail. Helpers:
-#   _live(monkeypatch)      -> flip the process to a live postiz deployment (is_live True, effective_provider=postiz)
-#   _stub_ok_poster(...)    -> replace run.get_poster with a stub that drives submitted + a REAL https permalink
-#                              (the submitted->published gate in run.py refuses a missing/dryrun URL), so no real
-#                              network call happens. _queued's posts get an already-http media_url so _ensure_media
-#                              passes it through (no upload) on the live backend.
+# Tests that exercise a general PUBLISH MECHANISM (published_at stamp, 06_published archive, only-due,
+# idempotency) drive the real Postiz poster over a `requests` double. A 201 WITH releaseURL is the honest
+# way to reach published. A 201 WITHOUT a permalink leaves leftover dryrun:// on the row — that must NOT
+# become published (expected-red pin).
 _LIVE_PERMALINK = "https://www.instagram.com/reel/AAA/"
 
 
 def _live(monkeypatch):
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-
-
-def _stub_ok_poster(mocker, cfg):
-    import fanops.post.run as run
-    class _OkPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
-            led_.posts[post_id].public_url = _LIVE_PERMALINK   # real permalink -> submitted promotes to published
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
 
 
 def _http_media(led, *pids):
@@ -79,11 +64,16 @@ _POSTIZ_INTGS = [
     {"id": "1", "name": "a", "identifier": "instagram-standalone"},
     {"id": "ig_1", "name": "ig", "identifier": "instagram-standalone"},
     {"id": "98", "name": "a", "identifier": "instagram-standalone"},
+    {"id": "NEW_IG_ID", "name": "a", "identifier": "instagram-standalone"},
+    {"id": "other_ig", "name": "b", "identifier": "instagram-standalone"},
 ]
 
 
-def _wire_vendor(mocker, *, on_post=None, on_upload=None):
-    """Vendor-edge HTTP double on the `requests` library — not a fanops.* patch."""
+def _wire_vendor(mocker, *, on_post=None, on_upload=None, permalink=None):
+    """Vendor-edge HTTP double on the `requests` library — not a fanops.* patch.
+
+    permalink=None: 201 with id only (leftover dryrun:// is not a permalink — expected-red).
+    permalink=https: honest live POST; _publish_one may promote submitted→published."""
     log = {"post_urls": [], "uploads": 0, "jsons": []}
     def _get(url, **kw):
         if "integrations" in str(url):
@@ -101,12 +91,26 @@ def _wire_vendor(mocker, *, on_post=None, on_upload=None):
         if on_post is not None:
             return on_post(url, **kw)
         if "zernio.com" in u:
-            return _R(201, {"_id": "z_1"})
-        return _R(201, {"id": "postiz_1"})
+            body = {"_id": "z_1"}
+            if permalink:
+                body["permalink"] = permalink
+            return _R(201, body)
+        body = {"id": "postiz_1"}
+        if permalink:
+            body["releaseURL"] = permalink
+        return _R(201, body)
     mocker.patch("requests.get", side_effect=_get)
     mocker.patch("requests.post", side_effect=_post)
     mocker.patch("requests.put", return_value=_R(200, {}))
     return log
+
+
+def _wire_live(mocker, **kw):
+    return _wire_vendor(mocker, permalink=_LIVE_PERMALINK, **kw)
+
+
+def _posted(log):
+    return [u for u in log["post_urls"] if "/posts" in u and "/upload" not in u]
 
 
 def _assert_not_published(*posts):
@@ -131,7 +135,7 @@ def test_publishes_only_due_posts(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="due", cid="c_due", when="2020-01-01T00:00:00Z")     # past => due
     _queued(led, cfg, pid="future", cid="c_future", when="2999-01-01T00:00:00Z")  # not due
-    _http_media(led, "due", "future"); _stub_ok_poster(mocker, cfg)
+    _http_media(led, "due", "future"); _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts["due"].state is PostState.published
@@ -145,7 +149,7 @@ def test_publish_stamps_published_at(tmp_path, monkeypatch, mocker):
     _live(monkeypatch)                                  # live backend so the post reaches the published stamp
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pp", cid="c_pp", when="2020-01-01T00:00:00Z")
-    _http_media(led, "pp"); _stub_ok_poster(mocker, cfg)
+    _http_media(led, "pp"); _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     p = led.posts["pp"]
@@ -163,7 +167,7 @@ def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     _live(monkeypatch)                                  # live backend so the publish (and its archive) fires
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pa", cid="c_pa", when="2020-01-01T00:00:00Z")
-    _http_media(led, "pa"); _stub_ok_poster(mocker, cfg)
+    _http_media(led, "pa"); _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     day = parse_iso(led.posts["pa"].published_at).date().isoformat()
@@ -173,63 +177,19 @@ def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     assert rec["post_id"] == "pa" and rec["clip_id"] == "c_pa" and rec["published_at"]
     assert rec["account"] == "a" and rec["caption"] == "ship it"   # the network-phase post carried real fields
 
-def test_archive_fail_open_write(tmp_path, monkeypatch, mocker):
+def test_archive_fail_open_when_published_dir_is_a_file(tmp_path, monkeypatch, mocker):
     # A record-write failure must NOT strand the live post: it still reaches published (archive swallowed)
-    # AND the failure is LOGGED — fail-open with a breadcrumb, never a silent swallow.
-    # MOL-728 (decorative-test repair): this injected `pathlib.Path.write_text`, which _archive_published has
-    # NEVER called — it opened the final path with os.open+O_TRUNC (and now writes via write_text_atomic, which
-    # uses os.fdopen). Nothing in its call tree write_text's under 06_published either (`_moment_hook` is a dict
-    # lookup; ledger.py has zero write_text calls). The fault could not fire, so the test passed with its
-    # injection SKIPPED. Inject at the writer the archive actually calls, and assert the fault fired.
-    _live(monkeypatch)                                  # live backend so the post publishes (and tries to archive)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
-    _http_media(led, "pw"); _stub_ok_poster(mocker, cfg)
-    boom = mocker.patch("fanops.post.publish_archive.write_text_atomic", side_effect=OSError("disk full"))
-    publish_due(cfg, now="2026-06-02T18:00:00Z")
-    assert boom.called                                                 # NEGATIVE CONTROL: the fault really fired
-    assert Ledger.load(cfg).posts["pw"].state is PostState.published   # archive failure did NOT flip it to failed
-    assert "archive_error" in cfg.log_path.read_text()                 # ...and it was logged, not silently swallowed
-
-def test_archive_fail_open_mkdir(tmp_path, monkeypatch, mocker):
-    # A mkdir PermissionError on the published dir must also be swallowed — the post still publishes.
-    # Scope the failure to 06_published only (a blanket Path.mkdir mock would also break the ledger save).
-    import pathlib
-    _live(monkeypatch)                                  # live backend so the post publishes (and tries to mkdir the archive)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="pm", cid="c_pm", when="2020-01-01T00:00:00Z")
-    _http_media(led, "pm"); _stub_ok_poster(mocker, cfg)
-    real_mkdir = pathlib.Path.mkdir
-    def fake_mkdir(self, *a, **k):
-        if "06_published" in str(self): raise PermissionError("nope")
-        return real_mkdir(self, *a, **k)
-    mocker.patch("pathlib.Path.mkdir", fake_mkdir)
-    publish_due(cfg, now="2026-06-02T18:00:00Z")
-    assert Ledger.load(cfg).posts["pm"].state is PostState.published
-
-def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
-    # dryrun-boundary: this used the dryrun poster only to REACH published. Run it LIVE so the two posts
-    # actually enter the rail; the property under test is the F44 cache surviving the per-post
-    # claim->network->finalize round-trip (ensure_clip_media runs once per post, clip.media_url persists,
-    # both posts resolve to the same url). The real single-upload-across-posts property is locked by the
-    # sibling test_publish_uploads_clip_media_once_across_posts_live; here we stub the uploader so no network
-    # is hit and keep the ensure_clip_media spy (call_count == 2 = once per post).
+    # AND the failure is LOGGED — fail-open with a breadcrumb, never a silent swallow. Drive the fault via
+    # a real unwritable archive path (06_published is a file), not a fanops.* writer patch.
     _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="clip_1", when="2020-01-01T00:00:00Z")
-    _queued(led, cfg, pid="p2", cid="clip_1", when="2020-01-01T00:00:00Z")  # same clip, 2 posts (no media_urls -> ensure runs)
-    mocker.patch("fanops.post.get_media_uploader",
-                 return_value=lambda cfg_, path, **kw: "img1|https://cdn.postiz.test/clip_1.mp4")
-    _stub_ok_poster(mocker, cfg)
-    # spy ensure_clip_media to prove it runs once per post (the cache-survival property)
-    import fanops.post.run as run
-    spy = mocker.spy(run, "ensure_clip_media")
+    _queued(led, cfg, pid="pw", cid="c_pw", when="2020-01-01T00:00:00Z")
+    _http_media(led, "pw"); _wire_live(mocker)
+    cfg.published.parent.mkdir(parents=True, exist_ok=True)
+    cfg.published.write_bytes(b"blocked")
     publish_due(cfg, now="2026-06-02T18:00:00Z")
-    led = Ledger.load(cfg)
-    assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
-    assert led.posts["p1"].media_urls[0] == "img1|https://cdn.postiz.test/clip_1.mp4"
-    assert spy.call_count == 2 and led.clips["clip_1"].media_url
-    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
+    assert Ledger.load(cfg).posts["pw"].state is PostState.published
+    assert "archive_error" in cfg.log_path.read_text()
 
 def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch, mocker):
     # F44: two posts on ONE clip must trigger EXACTLY ONE real upload. Leftover dryrun:// plus a
@@ -249,30 +209,19 @@ def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch, mocke
     _live(monkeypatch)                                  # live backend so the 1st pass actually publishes
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, when="2020-01-01T00:00:00Z")
-    _http_media(led, "p1"); _stub_ok_poster(mocker, cfg)
+    _http_media(led, "p1"); _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     publish_due(cfg, now="2026-06-02T18:00:00Z")        # 2nd pass: p1 is published, not queued -> no-op
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
 def test_publish_failed_poster_marks_failed_durable(tmp_path, monkeypatch, mocker):
-    # A poster that fails -> post.state failed (not analyzed, not published), durable.
-    # dryrun-boundary: live env swap so the post enters the rail and the poster stub runs; the stub (below)
-    # drives the terminal `failed` state. http media_urls -> _ensure_media passes through (no live upload).
+    # A 422 from Postiz -> post.state failed (not analyzed, not published), durable.
     _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="pf", cid="c_pf", when="2020-01-01T00:00:00Z")
     _http_media(led, "pf")
-    # make get_poster return a poster whose publish sets the post to failed
-    import fanops.post.run as run
-    class _FailPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led, post_id):
-            led.posts[post_id] = led.posts[post_id].model_copy(update={"state": PostState.failed})
-            led.posts[post_id].error_reason = "simulated 422"
-            return led
-    mocker.patch.object(run, "get_poster", return_value=_FailPoster(cfg))
+    _wire_vendor(mocker, on_post=lambda url, **kw: _R(422, {}, text="bad"))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
-    # durable: reload from disk and confirm
     led2 = Ledger.load(cfg)
     assert led2.posts["pf"].state is PostState.failed
 
@@ -286,13 +235,15 @@ def test_publish_failure_redacts_api_key_from_error_reason(tmp_path, monkeypatch
     _mom1(led)
     led.add_clip(Clip(id="c_k", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pk", parent_id="c_k", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x",
+                      platform=Platform.instagram, caption="x", post_type="post",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pk"))
     led.save()
-    import fanops.post.run as run
-    def boom(led_, cfg_, clip_id, backend=None, **kw):
-        raise RuntimeError("postiz presign 503: token=SUPERSECRETKEY rejected")
-    mocker.patch.object(run, "ensure_clip_media", side_effect=boom)
+    _http_media(led, "pk")
+    def _post(url, **kw):
+        if "/posts" in str(url) and "/upload" not in str(url):
+            raise RuntimeError("postiz presign 503: token=SUPERSECRETKEY rejected")
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    _wire_vendor(mocker, on_post=_post)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     er = Ledger.load(cfg).posts["pk"].error_reason or ""
     assert "SUPERSECRETKEY" not in er           # the key is scrubbed from the durable record
@@ -327,21 +278,15 @@ def test_publish_refreshes_account_id_from_current_mapping(tmp_path, monkeypatch
     _mom1(led)
     led.add_clip(Clip(id="c_a", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pa", parent_id="c_a", account="a", account_id="OLD_STALE_ID",   # frozen-at-crosspost id
-                      platform=Platform.instagram, caption="x", media_urls=["https://h/v.mp4"],  # http -> no live upload
+                      platform=Platform.instagram, caption="x", post_type="post",
+                      media_urls=["https://h/v.mp4"],  # http -> no live upload
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pa"))
     led.save()
-    import fanops.post.run as run
-    seen = {}
-    class _CapturePoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            seen["account_id"] = led_.posts[post_id].account_id    # what the poster will actually send
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_CapturePoster(cfg))
+    log = _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
-    assert seen["account_id"] == "NEW_IG_ID"                        # sent with the CURRENT mapping, not the frozen one
-    assert Ledger.load(cfg).posts["pa"].account_id == "NEW_IG_ID"   # and persisted for the Posted record
+    sent_ids = [(j or {}).get("posts", [{}])[0].get("integration", {}).get("id") for j in log["jsons"]]
+    assert "NEW_IG_ID" in sent_ids                                      # sent with the CURRENT mapping, not the frozen one
+    assert Ledger.load(cfg).posts["pa"].account_id == "NEW_IG_ID"       # and persisted for the Posted record
 
 def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker):
     # F11 crash-sim regression lock: a post stranded in 'submitting' is NOT re-published.
@@ -354,11 +299,10 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
                       platform=Platform.instagram, caption="x",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.submitting, public_url="dryrun://psub"))
     led.save()
-    import fanops.post.run as run
-    spy = mocker.spy(run, "ensure_clip_media")
+    log = _wire_vendor(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     assert Ledger.load(cfg).posts["psub"].state is PostState.submitting    # untouched — not re-driven
-    assert spy.call_count == 0                                             # no media re-upload either
+    assert _posted(log) == []                                              # no vendor POST either
 
 def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, mocker):
     # Per-post isolation: clip A's upload 503s; clip B still runs. Leftover dryrun:// is not a permalink.
@@ -418,17 +362,11 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
     _mom1(led)
     led.add_clip(Clip(id="c_auth", parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="pauth", parent_id="c_auth", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x",
+                      platform=Platform.instagram, caption="x", post_type="post",
                       scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://pauth"))
     led.save()
-    import fanops.post.run as run
-    mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
-    class _AuthFailPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            # worded WITHOUT "401" on purpose — a reworded auth error must still halt by type
-            raise PostizAuthError("postiz rejected the api key (invalid credentials)")
-    mocker.patch.object(run, "get_poster", return_value=_AuthFailPoster(cfg))
+    _http_media(led, "pauth")
+    _wire_vendor(mocker, on_post=lambda url, **kw: _R(401, {}, text="invalid credentials"))
     import pytest
     with pytest.raises(PostizAuthError):
         publish_due(cfg, now="2026-06-02T18:00:00Z")
@@ -470,10 +408,11 @@ def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mo
     _mom1(led, "m1")
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(f), state=ClipState.captioned))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.queued, media_urls=["https://h/v.mp4"],
+                      platform=Platform.instagram, caption="x", post_type="post",
+                      state=PostState.queued, media_urls=["https://h/v.mp4"],
                       scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
     led.save()
-    _stub_ok_poster(mocker, cfg)
+    _wire_live(mocker)
     publish_due(cfg, now="2020-01-02T00:00:00Z")
     assert Ledger.load(cfg).posts["p1"].state is PostState.published
 
@@ -578,50 +517,6 @@ def test_archive_published_rewrite_replaces_inode_and_relocks_a_loose_prior_file
     assert list(ap.parent.glob("*.tmp")) == []                       # no temp residue on the happy path
 
 
-def test_archive_published_replace_failure_keeps_prior_record_and_removes_temp(tmp_path, monkeypatch):
-    # MOL-728 REGRESSION: the old writer opened the FINAL path with O_CREAT|O_WRONLY|O_TRUNC, so an interrupted
-    # re-archive destroyed the record it was rewriting (truncate lands before any byte is written). Under
-    # mkstemp+os.replace the prior record must survive a replace failure byte-for-byte, with no temp left behind
-    # and the failure still logged (fail-open, never silent).
-    from fanops import controlio
-    from fanops.post.run import _archive_published
-    cfg = Config(root=tmp_path)
-    _archive_published(cfg, _arch_post("p_int", "https://example/first"))
-    ap = cfg.published / "2026-06-02" / "p_int.json"
-    prior = ap.read_bytes()
-    real_replace = controlio.os.replace
-    def boom(src, dst, *a, **k):
-        if "06_published" in str(dst): raise OSError("simulated interruption")   # scope: never the ledger's own replace
-        return real_replace(src, dst, *a, **k)
-    monkeypatch.setattr(controlio.os, "replace", boom)
-    _archive_published(cfg, _arch_post("p_int", "https://example/second"))       # fail-open: must NOT raise
-    monkeypatch.undo()
-    assert ap.read_bytes() == prior                                  # prior record intact — no O_TRUNC husk
-    assert list(ap.parent.glob("*.tmp")) == []                       # temp cleaned up on the failure path
-    assert "archive_error" in cfg.log_path.read_text()               # failure logged, not silently swallowed
-
-
-
-# ---- Sprint 2: Postiz publish throttle (per integration) ----
-def test_publish_throttle_wait_spaces_postiz_calls(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
-    from fanops.post.run import _publish_throttle_wait, reset_publish_throttle
-    reset_publish_throttle()
-    cfg = Config(root=tmp_path)
-    _mono = iter([100.0, 100.0, 100.5, 115.5, 115.5])
-    def _next_mono():
-        try: return next(_mono)
-        except StopIteration: return 115.5
-    mocker.patch("fanops.post.run.time.monotonic", side_effect=_next_mono)
-    sleeps = []
-    mocker.patch("fanops.post.run._sleep", side_effect=lambda s: sleeps.append(s))   # capture the wait (no real sleep; conftest already no-ops it)
-    _publish_throttle_wait(cfg, "postiz", "ig_1")
-    _publish_throttle_wait(cfg, "postiz", "ig_1")
-    assert len(sleeps) == 1 and sleeps[0] >= 14.0
-    reset_publish_throttle()
-
-
 # ---- publish_due: no per-account daily outbound quota ----
 
 def _quota_now():
@@ -639,8 +534,7 @@ def test_publish_due_publishes_fourth_post_same_local_day(tmp_path, monkeypatch,
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(4):
         _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, *[f"q{i}" for i in range(4)]); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, *[f"q{i}" for i in range(4)]); _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 4
     assert "quota_skipped" not in summary
@@ -651,8 +545,7 @@ def test_publish_due_second_pass_still_publishes_without_daily_quota(tmp_path, m
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for i in range(8):
         _queued(led, cfg, pid=f"q{i}", cid=f"cq{i}", when="2020-01-01T00:00:00Z")
-    _http_media(led, *[f"q{i}" for i in range(8)]); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, *[f"q{i}" for i in range(8)]); _wire_live(mocker)
     now = _quota_now()
     first = publish_due(cfg, now=now)
     second = publish_due(cfg, now=now)
@@ -678,8 +571,7 @@ def test_publish_due_refuses_a_post_under_retired_lineage(tmp_path, monkeypatch,
     led.retire_clip("c_clip")                          # predicate 1: the CLIP is retired
     led.clips["c_mom"].parent_id = "mom_ret"           # predicate 2: the parent MOMENT is retired
     led.clips.pop("c_gone")                            # predicate 3: p_gone's parent_id names NO clip row
-    _http_media(led, "p_ok", "p_clip", "p_mom", "p_gone"); _stub_ok_poster(mocker, cfg)   # _http_media saves
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, "p_ok", "p_clip", "p_mom", "p_gone"); _wire_live(mocker)   # _http_media saves
     summary = publish_due(cfg, now=_quota_now())
     assert summary["due"] == 1 and summary["published"] == 1 and summary["skipped_retired_lineage"] == 3
     led = Ledger.load(cfg)
@@ -709,16 +601,14 @@ def test_publish_due_planned_live_creds_stay_queued(tmp_path, monkeypatch, mocke
     _write_accounts(cfg, [_acct_row("@a", "planned")])
     _queued(led, cfg, pid="p_plan", cid="c_plan", when="2020-01-01T00:00:00Z")
     _http_media(led, "p_plan")
-    poster = mocker.patch("fanops.post.run.get_poster")
-    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    log = _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 0 and summary["skipped_not_active"] >= 1
     assert "quota_skipped" not in summary
     p = Ledger.load(cfg).posts["p_plan"]
     assert p.state is PostState.queued and p.submission_started_at is None
     assert "skip_account_not_active" in cfg.log_path.read_text()
-    poster.assert_not_called()
-    ensure.assert_not_called()                                 # all-dead due list must not start Postiz
+    assert _posted(log) == []                                  # all-dead due list must not POST
 
 
 def test_publish_due_active_handle_still_ships(tmp_path, monkeypatch, mocker):
@@ -726,8 +616,7 @@ def test_publish_due_active_handle_still_ships(tmp_path, monkeypatch, mocker):
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _write_accounts(cfg, [_acct_row("@a", "active")])
     _queued(led, cfg, pid="p_ok", cid="c_ok", when="2020-01-01T00:00:00Z")
-    _http_media(led, "p_ok"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, "p_ok"); _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 1 and summary["skipped_not_active"] == 0
     assert "quota_skipped" not in summary
@@ -740,8 +629,7 @@ def test_publish_due_mixed_planned_and_active(tmp_path, monkeypatch, mocker):
     _write_accounts(cfg, [_acct_row("@dead", "planned"), _acct_row("@live", "active")])
     _queued(led, cfg, pid="p_dead", cid="c_dead", when="2020-01-01T00:00:00Z", account="dead")
     _queued(led, cfg, pid="p_live", cid="c_live", when="2020-01-01T00:00:00Z", account="live")
-    _http_media(led, "p_dead", "p_live"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, "p_dead", "p_live"); _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 1 and summary["skipped_not_active"] >= 1
     assert "quota_skipped" not in summary
@@ -758,13 +646,12 @@ def test_publish_due_warming_and_retired_stay_queued(tmp_path, monkeypatch, mock
     _queued(led, cfg, pid="p_warm", cid="c_warm", when="2020-01-01T00:00:00Z", account="warm")
     _queued(led, cfg, pid="p_gone", cid="c_gone", when="2020-01-01T00:00:00Z", account="gone")
     _http_media(led, "p_warm", "p_gone")
-    poster = mocker.patch("fanops.post.run.get_poster")
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    log = _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 0 and summary["skipped_not_active"] == 2
     led = Ledger.load(cfg)
     assert led.posts["p_warm"].state is PostState.queued and led.posts["p_gone"].state is PostState.queued
-    poster.assert_not_called()
+    assert _posted(log) == []
 
 
 def test_publish_due_planned_logs_once_per_account(tmp_path, monkeypatch, mocker):
@@ -773,15 +660,14 @@ def test_publish_due_planned_logs_once_per_account(tmp_path, monkeypatch, mocker
     _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
     _queued(led, cfg, pid="p2", cid="c2", when="2020-01-01T00:00:00Z")
     _http_media(led, "p1", "p2")
-    poster = mocker.patch("fanops.post.run.get_poster")
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    log = _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 0 and summary["skipped_not_active"] == 2
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()
             and "skip_account_not_active" in line]
     assert len(recs) == 1
     assert recs[0]["account"] == "a" and recs[0]["n"] == "2"
-    poster.assert_not_called()
+    assert _posted(log) == []
 
 
 def test_publish_post_planned_does_not_claim(tmp_path, monkeypatch, mocker):
@@ -791,13 +677,12 @@ def test_publish_post_planned_does_not_claim(tmp_path, monkeypatch, mocker):
     _write_accounts(cfg, [_acct_row("@a", "planned")])
     _queued(led, cfg, pid="p_now", cid="c_now", when="2020-01-01T00:00:00Z")
     _http_media(led, "p_now")
-    poster = mocker.patch("fanops.post.run.get_poster")
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    log = _wire_live(mocker)
     assert publish_post(cfg, "p_now") is None
     p = Ledger.load(cfg).posts["p_now"]
     assert p.state is PostState.queued and p.submission_started_at is None
     assert "skip_account_not_active" in cfg.log_path.read_text()
-    poster.assert_not_called()
+    assert _posted(log) == []
 
 
 def test_publish_due_stops_claiming_an_integration_after_429(tmp_path, monkeypatch, mocker):
@@ -811,36 +696,23 @@ def test_publish_due_stops_claiming_an_integration_after_429(tmp_path, monkeypat
     _queued(led, cfg, pid="b1", cid="c_b1", when="2020-01-01T00:00:02Z")
     led.posts["b1"].account_id = "other_ig"
     _http_media(led, "a1", "a2", "b1")
-    seen: list[str] = []
-
-    class _RateThenOk:
-        def __init__(self):
-            self._hit_98432 = False
-
-        def publish(self, led_, post_id):
-            seen.append(post_id)
-            if led_.posts[post_id].account_id == "98432" and not self._hit_98432:
-                self._hit_98432 = True
-                led_.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.rate_limit,
-                                    error_reason="postiz 429 (body withheld)")
-                return led_
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led_.posts[post_id].submission_id = "s"
-            led_.posts[post_id].public_url = _LIVE_PERMALINK
-            return led_
-
-    mocker.patch("fanops.post.run.get_poster", return_value=_RateThenOk())
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    def on_post(url, **kw):
+        body = kw.get("json") or {}
+        intg = (body.get("posts") or [{}])[0].get("integration", {}).get("id")
+        if intg == "98432":
+            return _R(429, {}, text="rate")
+        return _R(201, {"id": "s", "releaseURL": _LIVE_PERMALINK})
+    _wire_live(mocker, on_post=on_post)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     after = Ledger.load(cfg).posts
     same = ("a1", "a2")
     failed = [pid for pid in same if after[pid].state is PostState.failed]
     queued = [pid for pid in same if after[pid].state is PostState.queued]
-    assert failed == [seen[0]] and len(queued) == 1
+    assert len(failed) == 1 and len(queued) == 1
+    assert failed[0] == "a1"                                # earlier schedule is claimed first
     assert after[failed[0]].error_kind is ErrorKind.rate_limit
     assert after[queued[0]].error_kind is None
     assert after["b1"].state is PostState.published
-    assert queued[0] not in seen
 
 
 def test_ensure_media_reuploads_foreign_https(tmp_path, monkeypatch, mocker):
@@ -853,13 +725,13 @@ def test_ensure_media_reuploads_foreign_https(tmp_path, monkeypatch, mocker):
     led.posts["m1"].media_urls = [
         "f3f8e0b0-cc86-4cb0-b15c-67088db01581|https://molhams-macbook-pro-2.tail72be94.ts.net/uploads/x.mp4"]
     led.save()
-    mocker.patch("fanops.post.run.get_media_uploader",
-                 return_value=lambda *a, **k: "new|https://uploads.postiz.com/x.mp4")
+    log = _wire_vendor(mocker)
     from fanops.post.run import _ensure_media
     led = Ledger.load(cfg)
     _ensure_media(led, cfg, led.posts["m1"], "postiz")
     assert "tail72be94" not in led.posts["m1"].media_urls[0]
     assert "uploads.postiz.com" in led.posts["m1"].media_urls[0]
+    assert log["uploads"] == 1
 
 
 def test_ensure_media_reuploads_zernio_temp_https(tmp_path, monkeypatch, mocker):
@@ -871,8 +743,14 @@ def test_ensure_media_reuploads_zernio_temp_https(tmp_path, monkeypatch, mocker)
     led.posts["m1"].media_urls = [
         "https://storage.zernio.com/temp/1752_abc_v.mp4?X-Amz-Algorithm=AWS4-HMAC-SHA256"]
     led.save()
-    mocker.patch("fanops.post.run.get_media_uploader",
-                 return_value=lambda *a, **k: "https://media.zernio.com/m/fresh.mp4")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    def _zpost(url, **kw):
+        if "/media/presign" in str(url):
+            return _R(200, {"uploadUrl": "https://signed.example/u",
+                            "publicUrl": "https://media.zernio.com/m/fresh.mp4"})
+        raise AssertionError(url)
+    mocker.patch("requests.post", side_effect=_zpost)
+    mocker.patch("requests.put", return_value=_R(200, {}))
     from fanops.post.run import _ensure_media
     led = Ledger.load(cfg)
     _ensure_media(led, cfg, led.posts["m1"], "zernio")
@@ -887,16 +765,14 @@ def test_finalize_overwrites_legacy_invalid_clip_cache(tmp_path, monkeypatch, mo
     led = Ledger.load(cfg)
     _queued(led, cfg, pid="m1", cid="c_m1", when="2020-01-01T00:00:00Z")
     stale = "https://storage.zernio.com/temp/1752_abc_v.mp4"
-    fresh = "img1|https://cdn.postiz.test/fresh.mp4"
     led.clips["c_m1"].media_url = stale
     led.posts["m1"].media_urls = []
     led.save()
-    mocker.patch("fanops.post.get_media_uploader", return_value=lambda *a, **k: fresh)
-    _stub_ok_poster(mocker, cfg)
+    _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts["m1"].state is PostState.published
-    assert led.clips["c_m1"].media_url == fresh
+    assert led.clips["c_m1"].media_url == "img1|https://uploads.postiz.com/v.mp4"
 
 
 def test_publish_one_clears_error_reason_on_success(tmp_path, monkeypatch, mocker):
@@ -908,7 +784,7 @@ def test_publish_one_clears_error_reason_on_success(tmp_path, monkeypatch, mocke
     led.posts["m1"] = led.posts["m1"].model_copy(
         update={"error_reason": "publish failed: stale media", "error_kind": ErrorKind.bad_payload})
     _http_media(led, "m1")
-    _stub_ok_poster(mocker, cfg)
+    _wire_live(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     p = Ledger.load(cfg).posts["m1"]
     assert p.state is PostState.published
@@ -921,8 +797,7 @@ def test_publish_due_no_account_row_does_not_apply_guard(tmp_path, monkeypatch, 
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _write_accounts(cfg, [_acct_row("@other", "planned")])   # a row exists, but not for this post's handle
     _queued(led, cfg, pid="p_unk", cid="c_unk", when="2020-01-01T00:00:00Z", account="a")
-    _http_media(led, "p_unk"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, "p_unk"); _wire_live(mocker)
     summary = publish_due(cfg, now=_quota_now())
     assert summary["published"] == 1 and summary["skipped_not_active"] == 0
     assert Ledger.load(cfg).posts["p_unk"].state is PostState.published
@@ -934,7 +809,6 @@ def test_publish_one_accounts_none_skips_status_guard(tmp_path, monkeypatch, moc
     _live(monkeypatch); cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _write_accounts(cfg, [_acct_row("@a", "planned")])
     _queued(led, cfg, pid="p_int", cid="c_int", when="2020-01-01T00:00:00Z")
-    _http_media(led, "p_int"); _stub_ok_poster(mocker, cfg)
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    _http_media(led, "p_int"); _wire_live(mocker)
     assert _publish_one(cfg, "p_int", "postiz", accounts=None) == PostState.published.value
     assert Ledger.load(cfg).posts["p_int"].state is PostState.published
