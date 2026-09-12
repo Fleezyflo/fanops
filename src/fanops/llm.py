@@ -470,6 +470,15 @@ def _grok_env() -> dict:
     })
     return e
 
+def grok_models_ok() -> bool:
+    """True iff `grok --no-auto-update models` exits 0 (logged-in session). Never raises."""
+    try:
+        r = subprocess.run(["grok", "--no-auto-update", "models"], timeout=15,
+                            env=_grok_env(), capture_output=True)
+        return r.returncode == 0
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return False
+
 def _grok_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
     rl = _rate_limit_status(returncode, stdout)
     if rl is not None:

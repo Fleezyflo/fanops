@@ -91,6 +91,34 @@ def test_daemon_path_without_stable_claude_is_unchanged(tmp_path, monkeypatch):
     assert str(tmp_path / ".local" / "bin") not in daemon._daemon_path().split(":")
 
 
+def test_daemon_path_includes_grok_which_parent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    grok_dir = tmp_path / "custom" / "bin"; grok_dir.mkdir(parents=True)
+    (grok_dir / "grok").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(daemon.shutil, "which", lambda b: str(grok_dir / "grok") if b == "grok" else None)
+    assert str(grok_dir) in daemon._daemon_path().split(":")
+
+
+def test_daemon_path_includes_stable_local_bin_when_grok_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stable = tmp_path / ".local" / "bin"; stable.mkdir(parents=True)
+    (stable / "grok").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(daemon.shutil, "which", lambda b: None)
+    assert str(stable) in daemon._daemon_path().split(":")
+
+
+def test_daemon_path_prefers_stable_local_bin_for_grok(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    stable = tmp_path / ".local" / "bin"; stable.mkdir(parents=True)
+    (stable / "grok").write_text("#!/bin/sh\n")
+    stale = tmp_path / "nvm" / "v18" / "bin"; stale.mkdir(parents=True)
+    (stale / "grok").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(daemon.shutil, "which", lambda b: str(stale / b) if b == "grok" else None)
+    parts = daemon._daemon_path().split(":")
+    assert str(stable) in parts and str(stale) in parts
+    assert parts.index(str(stable)) < parts.index(str(stale))
+
+
 def test_daemon_path_prefers_ffmpeg_full_over_lite_homebrew(monkeypatch):
     monkeypatch.setattr(daemon, "_ffmpeg_full_dir", lambda: "/opt/homebrew/opt/ffmpeg-full/bin")
     parts = daemon._daemon_path().split(":")

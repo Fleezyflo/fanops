@@ -967,7 +967,7 @@ def _check_preflight(cfg: Config) -> int:
       - FANOPS_RESPONDER set to anything but 'llm' (or unset): HARD REFUSE — there is no manual mode to
         fall back to, so a bad value must fail loudly rather than silently stop answering gates."""
     import shutil
-    from fanops.llm import _CURSOR_SUPPORTS_VISION
+    from fanops.llm import _CURSOR_SUPPORTS_VISION, grok_models_ok
     problems = []
     try:
         cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; else raises)
@@ -981,11 +981,20 @@ def _check_preflight(cfg: Config) -> int:
                 "`cursor-agent` is not on PATH — the autonomous responder shells `cursor-agent -p` to "
                 "answer every gate. Install Cursor CLI on this host, or set LLM transport to claude in "
                 "Studio Go-Live (the single switch).")
+        elif cli_bin == "grok":
+            problems.append(
+                "`grok` is not on PATH — the autonomous responder shells `grok --no-auto-update` to "
+                "answer caption gates. Install Grok CLI and run `grok login` on this host (session file, "
+                "no API key), or set LLM transport to claude in Studio Go-Live (the single switch).")
         else:
             problems.append(
                 "`claude` is not on PATH — the autonomous responder shells `claude -p` using your existing "
                 "Claude subscription to answer every gate. Install Claude Code and run `claude login` on "
                 "this host (no API key needed).")
+    elif cli_bin == "grok" and not grok_models_ok():
+        problems.append(
+            "`grok models` failed — grok is on PATH but not logged in. Run `grok login` "
+            "(session file, no API key).")
     if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
         problems.append(
             "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "

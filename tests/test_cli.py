@@ -405,6 +405,38 @@ def test_preflight_cursor_blocks_even_if_claude_present(tmp_path, monkeypatch, m
     err = capsys.readouterr().err.lower()
     assert "go-live" in err and "fallback" in err
 
+
+def test_preflight_blocks_grok_when_grok_absent(tmp_path, monkeypatch, mocker, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    err = capsys.readouterr().err
+    assert "grok" in err and "Traceback" not in err
+
+
+def test_preflight_grok_does_not_blanket_fail_vision(tmp_path, monkeypatch, mocker):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/grok" if b == "grok" else None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 0
+
+
+def test_preflight_grok_models_fail_is_exit_2(tmp_path, monkeypatch, mocker, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/grok" if b == "grok" else None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
+    from fanops.config import Config
+    from fanops.cli import _check_preflight
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    assert "grok login" in capsys.readouterr().err
+
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
     # (model call error, a malformed response failing validation), the run loop must DEGRADE
