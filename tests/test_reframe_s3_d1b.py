@@ -21,16 +21,20 @@
 #
 # Fixtures are stats matched to the permanent-evidence distributions, driven directly (no detection, so the
 # headless-YuNet fixture trap does not apply). Each face tuple is the detect_window shape (cx,cy,fh,ey,score,fw).
+# Resolver tests seed detect/track/saliency sidecars (write-path) so _resolve runs without fanops.* setattr.
+import json
 import pytest
 from fanops.config import Config
 from fanops import framing, clip
-from fanops.framing_outcomes import (FramingOutcome as _FO, FramingStrategy as _FS,
-                                     FramingEventType as _FE)
+from fanops.framing_outcomes import FramingOutcome as _FO, FramingStrategy as _FS
+from tests.fixtures.speech_segments import talk_seg
 
 
 class _Src:
     id = "src_t"; source_path = "/none/x.mp4"; width = 1920; height = 1080
-    duration = 60.0; transcript = []; language = "en"; meta = {}; sha256 = "d"; signal_peaks = []
+    duration = 60.0
+    transcript = [talk_seg("so tell me about your new record", start=0.0, end=8.0)]
+    language = "en"; meta = {}; sha256 = "d"; signal_peaks = []
 
 
 @pytest.fixture
@@ -39,19 +43,17 @@ def cfg(tmp_path, monkeypatch):
     return Config(root=tmp_path)
 
 
-def _stub(monkeypatch, **spec):
-    """Stub the framing seams (mirrors test_framing_outcomes._stub). A (events, value) pair lets a strategy
-    RECORD then RETURN NORMALLY — which is how the real fail-open strategies conclude a negative."""
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", lambda c: object())
-    def mk(s):
-        def fn(*a, _trace=None, **kw):
-            events, value = s if (isinstance(s, tuple) and len(s) == 2 and isinstance(s[0], list)) else ([], s)
-            for e in events:
-                if _trace is not None: _trace.record(e)
-            return value
-        return fn
-    for name, s in spec.items():
-        monkeypatch.setattr(framing, name, mk(s))
+def _seed(cfg, stats, *, start=0.0, end=10.0, track=None):
+    """Warm detect/track/saliency sidecars so _resolve never probes ffmpeg or patches framing.*."""
+    key = f"{round(start, 2)}-{round(end, 2)}"
+    root = cfg.agent_io / "framing"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "src_t.detect.json").write_text(json.dumps(
+        {"v": framing._DETECT_V, "windows": {key: stats}}))
+    (root / "src_t.track.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: [] if track is None else track}}))
+    (root / "src_t.saliency.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: []}}))
 
 
 def _face(cx, *, cy=0.45, fh=0.276, fw=0.166, score=0.93):
@@ -59,9 +61,8 @@ def _face(cx, *, cy=0.45, fh=0.276, fw=0.166, score=0.93):
 
 def _stats(frames): return {"fps": 4.0, "frames": frames}
 
-def _resolve(monkeypatch, cfg, stats):
-    _stub(monkeypatch, detect_window=stats, classify_window=framing.CT_MULTI,
-          speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
+def _resolve(cfg, stats):
+    _seed(cfg, stats)
     return framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
 
 
@@ -88,14 +89,14 @@ def _crop_box(vf):
 
 # ---- the invariant ---------------------------------------------------------------------------------
 
-def test_d1b_dominant_host_resolves_to_a_subject_lock(monkeypatch, cfg):
-    r = _resolve(monkeypatch, cfg, _D1B)
+def test_d1b_dominant_host_resolves_to_a_subject_lock(cfg):
+    r = _resolve(cfg, _D1B)
     assert r.final_outcome is _FO.SUBJECT_LOCKED
     assert r.final_strategy is _FS.SUBJECT_LOCK
     assert r.content_type == framing.RENDER_SUBJECT_LOCK
 
-def test_d1b_focus_anchors_on_the_dominant_host_not_the_centre(monkeypatch, cfg):
-    r = _resolve(monkeypatch, cfg, _D1B)
+def test_d1b_focus_anchors_on_the_dominant_host_not_the_centre(cfg):
+    r = _resolve(cfg, _D1B)
     assert r.focus is not None and len(r.focus) == 5
     assert all(isinstance(v, float) for v in r.focus)
     assert abs(r.focus[0] - _HOST_CX) < 0.02          # ON the host, NOT 0.5
@@ -108,19 +109,19 @@ def test_the_blind_centre_crop_cuts_the_hosts_face_this_is_the_defect():
     assert before.startswith("crop=ih*1080/1920:ih,")        # the symbolic blind centre
     assert _CENTRE_X0 > _FACE_L                              # the crop's left edge is INSIDE the face box
 
-def test_subject_lock_contains_the_full_face_box_with_the_host_materially_framed(monkeypatch, cfg):
+def test_subject_lock_contains_the_full_face_box_with_the_host_materially_framed(cfg):
     """AC-B1: the dominant host's full face is inside the crop and not edge-pinned."""
-    r = _resolve(monkeypatch, cfg, _D1B)
+    r = _resolve(cfg, _D1B)
     cw, ch, x, y = _crop_box(clip.reframe_filter("9:16", _SW, _SH, focus=r.focus, track=None,
                                                  content_type=r.content_type))
     assert x <= _FACE_L and (x + cw) >= _FACE_R              # the whole face box is inside
     assert abs((x + cw / 2) - _HOST_CX * _SW) < 0.12 * _SW   # and materially centred, not pinned to an edge
 
-def test_subject_lock_zoom_is_gentle_never_a_punch_in(monkeypatch, cfg):
+def test_subject_lock_zoom_is_gentle_never_a_punch_in(cfg):
     """AC-B2 / spec F6 / ADR-0103 minimal zoom: the D1-B defect is POSITIONAL, so the crop MOVES onto the host
     rather than magnifying him. The uncapped _ZOOM_MAX path would reach 1.52x here (face at _FACE_FRAC_TALK);
     the lock is capped at _GENTLE_ZOOM_MAX, which is strictly wider."""
-    r = _resolve(monkeypatch, cfg, _D1B)
+    r = _resolve(cfg, _D1B)
     _, ch, _, _ = _crop_box(clip.reframe_filter("9:16", _SW, _SH, focus=r.focus, track=None,
                                                 content_type=r.content_type))
     assert _SH / ch <= clip._GENTLE_ZOOM_MAX + 0.01
@@ -128,10 +129,10 @@ def test_subject_lock_zoom_is_gentle_never_a_punch_in(monkeypatch, cfg):
                            zoom_max=clip._adaptive_zoom_max(r.focus[2], clip._ZOOM_MAX))
     assert ch > ungated                                      # strictly WIDER than the emphasis zoom: shows more
 
-def test_subject_lock_is_a_fixed_anchor_never_a_track(monkeypatch, cfg):
+def test_subject_lock_is_a_fixed_anchor_never_a_track(cfg):
     """Active-speaker FOLLOWING is Track B. One anchor for the window means an intermittent second face — the
     22 two-face frames in this fixture — cannot induce a pan."""
-    r = _resolve(monkeypatch, cfg, _D1B)
+    r = _resolve(cfg, _D1B)
     assert r.track is None
     vf = clip.reframe_filter("9:16", _SW, _SH, focus=r.focus, track=None, content_type=r.content_type)
     assert "if(" not in vf and "lt(" not in vf     # _step_expr's hard-cut t-expression is absent -> a constant crop
@@ -140,19 +141,19 @@ def test_subject_lock_is_a_fixed_anchor_never_a_track(monkeypatch, cfg):
 
 # ---- the guard: the other two defect classes must NOT be captured ----------------------------------
 
-def test_d2_pip_grid_is_not_captured_by_the_subject_lock(monkeypatch, cfg):
+def test_d2_pip_grid_is_not_captured_by_the_subject_lock(cfg):
     """The enduring S3 invariant: D2 must never take D1-B's subject-lock. Framing its presenter presenter-only
     would pre-empt P1 (tile materiality, Track B). When S3 shipped, D2 also yielded FB_DOMINANT and the
     _LOCK_MAX_FACES gate was the only thing keeping it out; S4 then routed it to CENTERED_PIP_LAYOUT. Stated as
     the durable negative — never subject-locked, render untouched — so it holds under either owner."""
-    r = _resolve(monkeypatch, cfg, _D2)
+    r = _resolve(cfg, _D2)
     assert r.final_outcome is not _FO.SUBJECT_LOCKED           # never S3's outcome...
     assert r.final_strategy is not _FS.SUBJECT_LOCK            # ...and never S3's route
     # NB: S5 composes the D2 presenter with the SAME RENDER_SUBJECT_LOCK hint — deliberately. That token is a
     # RENDER instruction ("mild re-anchor on one subject, gentle zoom"), not a route label; both slices want
     # exactly that composition. The route is carried by outcome/strategy, which is what this test pins.
 
-def test_d2_is_kept_out_of_the_subject_lock_by_the_face_count_gate(monkeypatch, cfg):
+def test_d2_is_kept_out_of_the_subject_lock_by_the_face_count_gate():
     """Pins WHY the guard exists. When S3 shipped, the primitive classified D2 as FB_DOMINANT too, so a naive
     `kind == FB_DOMINANT` wiring would have captured all 36 D2 clips — the _LOCK_MAX_FACES gate was the only
     thing keeping them out. S4 then gave the PIP layout its own FB_PIP kind, so D2 is now excluded TWICE over.
@@ -161,9 +162,9 @@ def test_d2_is_kept_out_of_the_subject_lock_by_the_face_count_gate(monkeypatch, 
     assert framing._face_count(_D1B) <= framing._LOCK_MAX_FACES
     assert framing.subject_aware_fallback(_D2).kind != framing.FB_DOMINANT   # S4: its own layout kind
 
-def test_d1a_wide_two_shot_still_stacks(monkeypatch, cfg):
+def test_d1a_wide_two_shot_still_stacks(cfg):
     """S2 regression: D1-A resolves BEFORE the FB_DOMINANT branch and is unaffected."""
-    r = _resolve(monkeypatch, cfg, _D1A)
+    r = _resolve(cfg, _D1A)
     assert r.final_outcome is _FO.STACKED_PAIR
     assert r.content_type == framing.RENDER_STACK_PAIR
 
@@ -196,10 +197,10 @@ def _fp(**kw):
     base = dict(src_path="x.mp4", cs=0.0, ce=10.0, aspect_value="9:16", src_w=1920, src_h=1080, ass_text="")
     return clip._render_fingerprint(**{**base, **kw})
 
-def test_only_the_locked_clips_re_render(monkeypatch, cfg):
+def test_only_the_locked_clips_re_render(cfg):
     """Exactly the D1-B population goes stale: its payload gains a `focus` (was None) + `ct`. A clip that stays
     centred keeps its fingerprint, so no other clip re-renders."""
-    r = _resolve(monkeypatch, cfg, _D1B)
+    r = _resolve(cfg, _D1B)
     centre = _fp(focus=None, track=None, content_type=None)
     assert _fp(focus=r.focus, track=None, content_type=r.content_type) != centre
     assert _fp(focus=None, track=None, content_type=None) == centre

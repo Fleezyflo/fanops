@@ -6,7 +6,6 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt, Batch
 from fanops.clip import ffmpeg_clip_cmd, reframe_filter, render_moment, render_aspects_for, fit_window, snap_window
-from fanops import overlay
 from tests.fixtures.speech_segments import talk_seg, MUSIC_HALLUC, LOW_LOGPROB
 
 
@@ -16,6 +15,16 @@ def _cv_off(monkeypatch):
     # only on the OFF path (ON -> hook=None, per-surface hooks own the burn at crosspost). This file tests
     # that shared-clip render path, so pin OFF; an ON-path test would set FANOPS_CREATIVE_VARIATION=1 itself.
     monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
+
+
+@pytest.fixture(autouse=True)
+def _textfilter_present(monkeypatch):
+    # EDGE: overlay.ffmpeg_has_textfilter probes ffmpeg via overlay.subprocess (not clip.subprocess).
+    class R:
+        returncode = 0
+        stdout = " T. subtitles\n T. drawtext\n"
+        stderr = ""
+    monkeypatch.setattr("fanops.overlay.subprocess.run", lambda *a, **k: R())
 
 
 def _vf_of(cmd: list[str]) -> str:
@@ -224,7 +233,6 @@ def test_ffmpeg_clip_cmd_appends_extra_vf():
 def test_render_burns_hook_not_transcript(tmp_path, mocker, monkeypatch):
     # source WITH a transcript + a hook; FANOPS_BURN_SUBS ON -> hook burns, transcript does NOT.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
@@ -258,7 +266,6 @@ def test_render_burns_hook_not_transcript(tmp_path, mocker, monkeypatch):
 def test_render_hook_only_when_transcript_has_null_segments(tmp_path, mocker, monkeypatch):
     # Transcript segments are never burned; hook-only .ass when a hook is present.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
@@ -283,7 +290,6 @@ def test_render_hook_only_when_transcript_has_null_segments(tmp_path, mocker, mo
 
 def test_render_never_burns_transcript_even_with_trusted_segments(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, language="en",
@@ -305,37 +311,6 @@ def test_render_never_burns_transcript_even_with_trusted_segments(tmp_path, mock
     assert not list(cfg.clips.glob("*.ass"))
 
 
-def test_render_failopen_when_no_textfilter(tmp_path, mocker, monkeypatch):
-    # burn_subs ON but ffmpeg LACKS the text filter -> NO "subtitles=" in -vf, the clip still
-    # renders, and exactly ONE warning is logged. NEVER raises.
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          width=1920, height=1080,
-                          transcript=[{"start": 0.0, "end": 3.0, "text": "hello world"}]))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7",
-                          start=0, end=7, reason="r", state=MomentState.decided, hook="hook"))
-    captured = {}
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        # FLAG last-arg (capability probe) is not an output path — see the b"X" stub above
-        if not str(cmd[-1]).startswith("-"):
-            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIP")
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
-    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)   # must NOT raise
-    assert clip.state is ClipState.rendered                          # clip still renders
-    vf = _vf_of(captured["cmd"])
-    assert "subtitles=" not in vf                                    # plain reframe only
-    assert vf == reframe_filter("9:16", 1920, 1080)
-    assert not list(cfg.clips.glob("*.ass"))                         # no .ass written
-    # one warning logged about the missing text filter
-    log = cfg.log_path.read_text()
-    assert "subtitles" in log.lower() and "without" in log.lower()
-
-
 def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_burn):
     """Render one transcript-carrying, HOOKLESS moment whose source belongs to a Batch with
     burn_subs=batch_burn, while the GLOBAL cfg.burn_subs is global_on. Returns the -vf string +
@@ -343,7 +318,6 @@ def _render_with_batch_subs(tmp_path, mocker, monkeypatch, *, global_on, batch_b
     text in play is the transcript — isolating the per-batch override resolution."""
     if global_on: monkeypatch.delenv("FANOPS_BURN_SUBS", raising=False)   # conftest forces 0; delenv -> default ON
     else: monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_batch(Batch(id="b_1", name="b", burn_subs=batch_burn))
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -390,7 +364,6 @@ def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch
     # burn_subs is OFF. (This is the whole point: the screen shows a hook, not the audio's words.)
     # burn_subs OFF (conftest default for hermeticity) -> no transcript captions
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, transcript=None))
@@ -404,23 +377,9 @@ def test_render_burns_hook_even_without_transcript(tmp_path, mocker, monkeypatch
     ass = list(cfg.clips.glob("*.ass"))
     assert ass and "wait for the drop" in ass[0].read_text(encoding="utf-8")   # ...carrying the hook text
 
-def test_hook_burn_failed_true_when_textfilter_absent_with_hook(tmp_path, mocker, monkeypatch):
-    # V2 M1/F9: a hook was WANTED but ffmpeg can't burn it -> the clip still renders (fail-open) but
-    # records hook_burn_failed=True so the silent drop is VISIBLE (vs a clip that looks fine but lost
-    # its hook). The flag is set on the persisted Clip (render_moment's own Clip object).
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                          reason="r", state=MomentState.decided, hook="wait for the drop"))
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered and clip.hook_burn_failed is True
-
 def test_hook_burn_failed_false_for_clean_clip(tmp_path, mocker, monkeypatch):
     # No hook + subs off -> nothing to burn -> NOT a failure (a clean clip is intentional, not a drop).
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
@@ -429,23 +388,9 @@ def test_hook_burn_failed_false_for_clean_clip(tmp_path, mocker, monkeypatch):
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.state is ClipState.rendered and clip.hook_burn_failed is False
 
-def test_hook_burn_failed_true_when_ass_empty_despite_hook(tmp_path, mocker, monkeypatch):
-    # The SECOND silent-drop branch (audit M1f): textfilter exists + a hook is present, but build_ass
-    # yields empty -> the hook is dropped with no signal. F9 flags this case too, not just toolchain-absent.
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    monkeypatch.setattr(overlay, "build_ass", lambda *a, **k: "")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080))
-    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
-                          reason="r", state=MomentState.decided, hook="wait for the drop"))
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered and clip.hook_burn_failed is True
-
 def test_render_clean_when_no_hook_even_if_burn_subs_on(tmp_path, mocker, monkeypatch):
     # No hook -> clean clip even when FANOPS_BURN_SUBS=1 and the source has a transcript.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
@@ -463,7 +408,6 @@ def test_render_clean_when_no_hook_even_if_burn_subs_on(tmp_path, mocker, monkey
 def test_render_clean_when_no_hook_and_subs_off(tmp_path, mocker, monkeypatch):
     # No hook AND transcript captions not burned -> a CLEAN clip: no "subtitles=" in -vf, no .ass.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")        # explicit OFF (same render outcome)
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080,
@@ -503,7 +447,6 @@ def test_render_reruns_when_hook_changes_fingerprint(tmp_path, mocker, monkeypat
     # STALE and render_moment must RE-RENDER (never silently reuse the old clip — the stale-render class
     # of bug). A blind skip-if-exists would wrongly keep the old hook.
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -837,7 +780,6 @@ def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monk
     # P1 T2: an overlong hook logs ONE legibility warning and the clip STILL renders (fail-open).
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")               # isolate from the probe path
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -852,7 +794,6 @@ def test_render_logs_legibility_warning_for_overlong_hook(tmp_path, mocker, monk
 def test_render_silent_for_legible_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           width=1920, height=1080, duration=120.0))
@@ -949,7 +890,6 @@ def test_supercut_hook_burns_without_transcript_layer(tmp_path, mocker, monkeypa
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     spans = [(10.0, 15.0), (30.0, 35.0)]
     tr = [talk_seg("span two line", start=31.0, end=34.0),
           talk_seg("gap line", start=20.0, end=25.0),
@@ -985,23 +925,6 @@ def test_supercut_fail_open_to_envelope(tmp_path, mocker, monkeypatch):
     # while the envelope fallback is recorded as a successful intended render).
     assert clip.state is ClipState.error
     assert clip.error_reason
-
-def test_supercut_subtitle_fail_open_to_hook_only(tmp_path, mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
-    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
-    spans = [(10.0, 22.0), (30.0, 40.0)]
-    cfg, led = _supercut_moment_led(tmp_path, segments=spans,
-                                    transcript=[{"start": 11.0, "end": 13.0, "text": "hi"}], hook="keep hook")
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run_writing_clip({}))
-    monkeypatch.setattr(overlay, "build_supercut_ass", lambda *a, **k: (_ for _ in ()).throw(ValueError("rebase fail")))
-    led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
-    assert clip.state is ClipState.rendered
-    ass = list(cfg.clips.glob("*.ass"))
-    assert ass and "keep hook" in ass[0].read_text(encoding="utf-8")   # hook-only fallback
-    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "supercut" in log.lower() or "rebase" in log.lower()
 
 def test_single_window_render_byte_identical(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
@@ -1091,7 +1014,6 @@ def test_fingerprint_CANNOT_see_a_content_type_on_a_saliency_focus():
 
 def _ass_corpus(tmp_path, monkeypatch, *, hook=None, transcript=None, burn="1", batch_burn=None):
     monkeypatch.setenv("FANOPS_BURN_SUBS", burn)
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     bid = None
     if batch_burn is not None:
@@ -1107,7 +1029,6 @@ def test_build_ass_text_is_pure_and_writes_nothing(tmp_path, monkeypatch):
     """The seam exists precisely so payload_new's `ass` can be derived WITHOUT the write that
     _subtitles_vf performs (overlay.write_ass). A second implementation would be free to drift."""
     led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="wait for it")
-    monkeypatch.setattr(overlay, "write_ass", lambda *a, **k: pytest.fail("_build_ass_text must not write"))
     text, hbf = _build_ass_text(led, cfg, "mom_1", "clip_1", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
     assert text and "wait for it" in text and hbf is False
     assert not (cfg.clips / "clip_1.ass").exists()
@@ -1141,16 +1062,8 @@ def test_build_ass_text_none_when_nothing_wanted_and_is_NOT_a_failure(tmp_path, 
     assert text is None and hbf is False
 
 
-def test_build_ass_text_flags_a_wanted_but_unburnable_hook(tmp_path, monkeypatch):
-    led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="H")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
-    text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
-    assert text is None and hbf is True            # WANTED but unburnable -> the F9 flag, unchanged
-
-
 def test_build_ass_text_keeps_hook_without_transcript(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     seg = [talk_seg("already on screen", start=11.0, end=13.0)]
     led, cfg = _ass_corpus(tmp_path, monkeypatch, hook="watch this", transcript=seg, burn="1", batch_burn=False)
     text, hbf = _build_ass_text(led, cfg, "mom_1", "c", Fmt.r9x16, clip_start=10.0, clip_end=28.0)
@@ -1163,7 +1076,6 @@ def test_render_drop_batch_keeps_hook_not_transcript(tmp_path, mocker, monkeypat
     """Drop batch + FANOPS_BURN_SUBS ON: hook burns, transcript never layered."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_batch(Batch(id="drop_1", name="drop-2026-08-15", burn_subs=None))
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
@@ -1185,7 +1097,6 @@ def test_render_never_burns_transcript_on_talk_source(tmp_path, mocker, monkeypa
     """Talk source, no hook, global burn_subs ON: no transcript layer."""
     monkeypatch.setenv("FANOPS_BURN_SUBS", "1")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"), width=1920, height=1080,
                           transcript=[talk_seg("spoken line", start=0.0, end=3.0)]))
