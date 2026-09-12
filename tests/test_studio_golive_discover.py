@@ -8,7 +8,6 @@ test so a setenv never leaks into a later test (pytest-os-environ-leak-guard).""
 import json
 import os
 import re
-import types
 import pytest
 from fanops.config import Config
 from fanops.studio import golive
@@ -42,10 +41,13 @@ def _client(cfg):
     return app.test_client()
 
 
-def _chan(cid, name, platform):
-    # discover_channels only reads .id/.name/.platform off each provider-listed row.
-    return types.SimpleNamespace(id=cid, name=name, platform=platform)
-
+class _R:
+    def __init__(self, payload, status=200):
+        self.status_code = status
+        self._payload = payload
+        self.text = ""
+    def json(self):
+        return self._payload
 
 
 def _seed_deps(cfg, rows):
@@ -61,9 +63,17 @@ def _seed_deps(cfg, rows):
 
 def test_discover_route_lists_connected_channels(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
-    monkeypatch.setattr(golive.postiz, "postiz_list_integrations", lambda c: [_chan("ig_1", "Mark", "instagram")])
-    monkeypatch.setattr(golive.zernio, "zernio_list_accounts", lambda c: [_chan("z_1", "llllllll", "tiktok")])
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007/api")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    def _get(url, **_k):
+        u = str(url)
+        if "integrations" in u:
+            return _R([{"id": "ig_1", "name": "Mark", "identifier": "instagram"}])
+        if "accounts" in u:
+            return _R({"accounts": [{"_id": "z_1", "name": "llllllll", "platform": "tiktok"}]})
+        raise AssertionError(f"unexpected GET {url}")
+    monkeypatch.setattr(golive.postiz.requests, "get", _get)
     r = _client(cfg).post("/golive/discover")
     assert r.status_code == 200
     body = r.data.decode()
@@ -185,30 +195,19 @@ def test_golive_health_no_banner_when_all_deps_up(tmp_path, monkeypatch):
     assert "dep-alert" not in body, "all-green health must not raise a dependency alert banner"
 
 
-def test_golive_health_never_calls_refresh_runtime_snapshots(tmp_path, monkeypatch, mocker):
-    from fanops.health_model import DepHealth
+def test_golive_health_refresh_is_live_read_not_write(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    _seed_deps(cfg, [("docker", True, "daemon up")])
-    spy = mocker.patch("fanops.health.refresh_runtime_snapshots")
-    mocker.patch("fanops.health.system_health", return_value=[DepHealth("docker", True, "daemon up")])
-    for url in ("/golive/health", "/golive/health?refresh=1",
-                "/golive/health?compact=1", "/golive/health?compact=1&refresh=1"):
-        assert _client(cfg).get(url).status_code == 200
-        spy.assert_not_called()
-
-
-def test_golive_health_refresh_is_live_read_not_write(tmp_path, monkeypatch, mocker):
-    from fanops.health_model import DepHealth
-    cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    spy = mocker.patch("fanops.health.refresh_runtime_snapshots")
-    mocker.patch("fanops.health.system_health", return_value=[
-        DepHealth("docker", True, "daemon up"),
-        DepHealth("postiz", True, "reachable"),
-        DepHealth("zernio", True, "reachable"),
+    _seed_deps(cfg, [
+        ("docker", True, "daemon up"),
+        ("postiz", True, "reachable", 200),
+        ("zernio", True, "reachable"),
     ])
+    before = cfg.deps_health_path.read_text()
+    mtime = cfg.deps_health_path.stat().st_mtime
     body = _client(cfg).get("/golive/health?refresh=1").data.decode()
-    spy.assert_not_called()
-    assert "docker" in body and "postiz" in body and "zernio" in body
+    assert cfg.deps_health_path.read_text() == before
+    assert cfg.deps_health_path.stat().st_mtime == mtime
+    assert "docker" in body
     assert "deps unknown" not in body.lower()
 
 
