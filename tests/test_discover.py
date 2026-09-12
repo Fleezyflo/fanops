@@ -14,12 +14,12 @@ class _Proc:
 
 
 def _ffprobe_ok(width=1080, height=1920, duration=12.5):
-    def run(cmd, **kw):
+    def handle(cmd, **kw):
         joined = " ".join(str(c) for c in cmd)
         if "codec_type" in joined:
             return _Proc(stdout="video\n")
         return _Proc(stdout=f"{width}\n{height}\n{duration}\n")
-    return run
+    return handle
 
 
 def _ffmpeg_thumb(cmd, **kw):
@@ -27,9 +27,23 @@ def _ffmpeg_thumb(cmd, **kw):
     return _Proc()
 
 
+def _patch_os(mocker, *, ffprobe=None, ffmpeg=None):
+    """One subprocess.run stub — media_probe and discover share the stdlib module object."""
+    def run(cmd, **kw):
+        bin = Path(cmd[0]).name
+        if bin == "ffprobe":
+            return (ffprobe or _ffprobe_ok())(cmd, **kw)
+        if bin == "ffmpeg":
+            if ffmpeg is None:
+                raise AssertionError(f"ffmpeg not stubbed: {cmd}")
+            return ffmpeg(cmd, **kw)
+        raise AssertionError(f"unexpected binary {cmd[0]}")
+    return mocker.patch("subprocess.run", side_effect=run)
+
+
 def test_candidate_meta_uses_cheap_probe_only(tmp_path, mocker):
     f = tmp_path / "a.mp4"; _put(f, b"VIDEO")
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_ok(1080, 1920, 12.5))
+    _patch_os(mocker, ffprobe=_ffprobe_ok(1080, 1920, 12.5))
     m = discover.candidate_meta(f)
     assert m["bytes"] == 5 and m["width"] == 1080 and m["height"] == 1920 and m["duration"] == 12.5
     assert "mtime" in m
@@ -39,7 +53,7 @@ def test_candidate_meta_fail_soft_when_probe_fails(tmp_path, mocker):
     # Empty/garbled ffprobe stdout is zeros inside probe_dimensions, then None on the candidate —
     # the file is still listed. Do not patch probe_dimensions to raise; that path is not the OS edge.
     f = tmp_path / "a.mp4"; _put(f)
-    mocker.patch("fanops.media_probe.subprocess.run", return_value=_Proc(stdout=""))
+    mocker.patch("subprocess.run", return_value=_Proc(stdout=""))
     m = discover.candidate_meta(f)
     assert m["bytes"] > 0 and m["duration"] is None and m["width"] is None
 
@@ -49,7 +63,7 @@ def test_candidate_meta_logs_when_ffprobe_absent(tmp_path, mocker, caplog):
     f = tmp_path / "a.mp4"; _put(f)
     def absent(cmd, **kw):
         raise FileNotFoundError(2, "No such file or directory", "ffprobe")
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=absent)
+    mocker.patch("subprocess.run", side_effect=absent)
     with caplog.at_level(logging.WARNING, logger="fanops.discover"):
         m = discover.candidate_meta(f)
     assert m["width"] is None and m["bytes"] > 0
@@ -63,7 +77,7 @@ def test_make_thumbnail_builds_ffmpeg_cmd(tmp_path, mocker):
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd; Path(cmd[-1]).write_bytes(b"JPG")
         return _Proc()
-    mocker.patch("fanops.discover.subprocess.run", side_effect=fake_run)
+    mocker.patch("subprocess.run", side_effect=fake_run)
     ok = discover.make_thumbnail(src, out)
     assert ok is True and out.exists()
     assert captured["cmd"][0] == "ffmpeg" and "-frames:v" in captured["cmd"] and captured["cmd"][-1] == str(out)
@@ -72,7 +86,7 @@ def test_make_thumbnail_builds_ffmpeg_cmd(tmp_path, mocker):
 def test_make_thumbnail_fail_open_when_ffmpeg_fails(tmp_path, mocker):
     src = tmp_path / "a.mp4"; _put(src); out = tmp_path / "a.jpg"
     def boom(cmd, **kw): raise FileNotFoundError(2, "no ffmpeg", "ffmpeg")
-    mocker.patch("fanops.discover.subprocess.run", side_effect=boom)
+    mocker.patch("subprocess.run", side_effect=boom)
     assert discover.make_thumbnail(src, out) is False
     assert not out.exists()
 
@@ -83,7 +97,7 @@ def test_make_thumbnail_fail_open_on_timeout(tmp_path, mocker):
     def hung(cmd, **kw):
         seen.update(kw)
         raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
-    mocker.patch("fanops.discover.subprocess.run", side_effect=hung)
+    mocker.patch("subprocess.run", side_effect=hung)
     assert discover.make_thumbnail(src, out) is False
     assert not out.exists()
     assert seen.get("timeout") == 60.0
@@ -96,8 +110,7 @@ def test_discover_writes_thumbnails_and_manifest(tmp_path, mocker):
     _put(src_dir / "passport scan.jpg")
     _put(src_dir / "notes.txt")
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_ok(1080, 1920, 8.0))
-    mocker.patch("fanops.discover.subprocess.run", side_effect=_ffmpeg_thumb)
+    _patch_os(mocker, ffprobe=_ffprobe_ok(1080, 1920, 8.0), ffmpeg=_ffmpeg_thumb)
     summary = discover.discover(cfg, [src_dir])
     assert summary["found"] == 2 and summary["new"] == 2
     manifest = json.loads((cfg.review / "manifest.json").read_text())
@@ -131,8 +144,7 @@ def test_intake_copies_only_approved_originals_to_inbox(tmp_path, mocker):
     keep = src_dir / "keep.mp4"; _put(keep, b"KEEP")
     drop = src_dir / "drop.mp4"; _put(drop, b"DROP")
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_ok(0, 0, 0.0))
-    mocker.patch("fanops.discover.subprocess.run", side_effect=_ffmpeg_thumb)
+    _patch_os(mocker, ffprobe=_ffprobe_ok(0, 0, 0.0), ffmpeg=_ffmpeg_thumb)
     discover.discover(cfg, [src_dir])
     keep_eid = sha256_of(keep)[:16]
     (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
@@ -150,8 +162,7 @@ def test_intake_is_idempotent_and_reports_missing(tmp_path, mocker):
     src_dir = tmp_path / "bank"; src_dir.mkdir()
     f = src_dir / "x.mp4"; _put(f, b"X")
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_ok(0, 0, 0.0))
-    mocker.patch("fanops.discover.subprocess.run", side_effect=_ffmpeg_thumb)
+    _patch_os(mocker, ffprobe=_ffprobe_ok(0, 0, 0.0), ffmpeg=_ffmpeg_thumb)
     discover.discover(cfg, [src_dir])
     eid = sha256_of(f)[:16]
     (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
@@ -193,8 +204,7 @@ def test_intake_copy_stages_via_part_then_atomic_replace(tmp_path, mocker):
     src_dir = tmp_path / "bank"; src_dir.mkdir()
     f = src_dir / "keep.mp4"; _put(f, b"KEEP")
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_ok(0, 0, 0.0))
-    mocker.patch("fanops.discover.subprocess.run", side_effect=_ffmpeg_thumb)
+    _patch_os(mocker, ffprobe=_ffprobe_ok(0, 0, 0.0), ffmpeg=_ffmpeg_thumb)
     discover.discover(cfg, [src_dir])
     eid = sha256_of(f)[:16]
     (cfg.review / "approved").mkdir(parents=True, exist_ok=True)
