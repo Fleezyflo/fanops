@@ -60,7 +60,7 @@ def test_reconcile_moments_upserts_and_deletes_cascade(tmp_path):
     # a REJECTED post (a deletable state — NOT a protected awaiting/queued/retired worklist) so the
     # cascade still deletes A's lineage; protected-state survival is covered in test_ledger_cascade_protect.
     led.add_post(Post(id="p_a", parent_id="c_a", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="dryrun://p_a"))
+                      platform=Platform.instagram, caption="x", state=PostState.rejected, public_url="https://www.instagram.com/p/p_a/"))
     # new decision keeps B, drops A, adds C
     keep = {"m_b": Moment(id="m_b", parent_id="s", content_token="B", start=3, end=5, reason="b2"),
             "m_c": Moment(id="m_c", parent_id="s", content_token="C", start=6, end=8, reason="c")}
@@ -124,7 +124,7 @@ def test_cascade_preserves_needs_reconcile_post(tmp_path):
     led.add_moment(Moment(id="m_r", parent_id="s", content_token="R", start=0, end=2, reason="r"))
     led.add_clip(Clip(id="c_r", parent_id="m_r", path="/c", state=ClipState.queued))
     led.add_post(Post(id="p_r", parent_id="c_r", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile, public_url="dryrun://p_r"))
+                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile, public_url="https://www.instagram.com/p/p_r/"))
     led._delete_moment_cascade("m_r")
     assert "p_r" in led.posts, "a possibly-live needs_reconcile post must survive the cascade"
     assert led.moments["m_r"].state is MomentState.retired   # moment suppressed, not erased
@@ -209,11 +209,21 @@ def test_retire_source_preserves_live_descendants(tmp_path):
     led.add_moment(Moment(id="m", parent_id="src_y", content_token="A", start=0, end=2, reason="a"))
     led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.published))
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p"))
+                      platform=Platform.instagram, caption="x", state=PostState.published,
+                      public_url="https://www.instagram.com/p/LIVEPERM/"))
     led.retire_source("src_y")
     assert led.is_retired_source("src_y")
     assert led.moments["m"].state is MomentState.retired           # kept but suppressed (live descendant)
     assert "c" in led.clips and "p" in led.posts                   # the performance record survives
+    assert led.posts["p"].public_url.startswith("https://")        # genuinely live: https permalink, not leftover dryrun://
+
+def test_retire_source_dryrun_url_is_not_live():
+    # leftover dryrun:// must NOT count as published/live — unconstructible at Post(), so it
+    # cannot be a live descendant of retire_source. Owner: Post._enforce_published_url_invariant.
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Post(id="p", parent_id="c", account="a", account_id="1",
+             platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://p")
 
 def test_retire_source_leaves_file_on_disk(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -275,7 +285,7 @@ def test_rebuild_discovered_has_created_at(tmp_path):
 def _awaiting(led, pid="p", sched=None):
     from fanops.models import Post, PostState, Platform
     led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.awaiting_approval, scheduled_time=sched, public_url="dryrun://c"))
+                      caption="x", state=PostState.awaiting_approval, scheduled_time=sched, public_url="https://www.instagram.com/p/c/"))
     return pid
 
 def test_approve_post_none_time_uses_suggestion_not_now(tmp_path):

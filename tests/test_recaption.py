@@ -85,7 +85,7 @@ def test_dry_run_lists_targets_and_writes_nothing(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.add_post(Post(id="p_pub", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published,
-                      public_url="dryrun://p_pub",   # R1: a published Post requires a public_url at construction
+                      public_url="https://www.instagram.com/p/p_pub/",   # R1: a published Post requires a public_url at construction
                       created_at="2026-07-01T12:00:00+00:00"))
     led.save()
     s = run_recaption(cfg, apply=False, now=NOW)

@@ -130,7 +130,7 @@ def test_review_posts_ignores_every_non_awaiting_state(tmp_path):
     _lineage(led, mom_id="mom_1", clip_id="clip_1")
     led.add_post(_post("p_await", "clip_1"))
     led.add_post(_post("p_queued", "clip_1", state=PostState.queued))
-    led.add_post(_post("p_published", "clip_1", state=PostState.published, public_url="dryrun://p_published"))
+    led.add_post(_post("p_published", "clip_1", state=PostState.published, public_url="https://www.instagram.com/p/p_published/"))
 
     assert [p.id for p in led.review_posts()] == ["p_await"]
     assert led.attention_counts() == {"posts": 1, "moments": 1}

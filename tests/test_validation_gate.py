@@ -117,7 +117,7 @@ def test_tiktok_row_not_marked_retention_degraded(tmp_path):
     # emit. saves/reach present -> the row is a full primary set FOR TIKTOK -> no degraded marker at all.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="tk1", parent_id="c", account="t", account_id="1", platform=Platform.tiktok,
-                      caption="x", state=PostState.published, public_url="dryrun://tk1"))
+                      caption="x", state=PostState.published, public_url="https://www.instagram.com/p/tk1/"))
     record_metrics(led, "tk1", {"reach": 5000, "saves": 40, "shares": 12})
     m = led.posts["tk1"].metrics
     assert "lift_degraded" not in m and "lift_missing_keys" not in m   # retention is not a TikTok gap
@@ -127,7 +127,7 @@ def test_tiktok_missing_key_list_excludes_retention_but_keeps_saves(tmp_path):
     # retention NEVER appears in lift_missing_keys for TikTok even though _W weights it primary.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="tk2", parent_id="c", account="t", account_id="1", platform=Platform.tiktok,
-                      caption="x", state=PostState.published, public_url="dryrun://tk2"))
+                      caption="x", state=PostState.published, public_url="https://www.instagram.com/p/tk2/"))
     record_metrics(led, "tk2", {"reach": 5000, "shares": 12, "likes": 3})   # no saves
     m = led.posts["tk2"].metrics
     assert m["lift_missing_keys"] == ["saves"]                 # saves listed, retention NOT (platform can't emit it)

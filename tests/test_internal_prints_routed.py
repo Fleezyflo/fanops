@@ -60,7 +60,7 @@ def test_learn_doctor_emits_structured_report(tmp_path, monkeypatch):
     led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published,
-                      submission_id="s_A", public_url="dryrun://p1"))
+                      submission_id="s_A", public_url="https://www.instagram.com/p/p1/"))
     led.save()
     rows = [{"postSubmissionId": "s_A", "metrics": {"reach": 42}, "_raw_labels": ["Reach"]}]
     assert cmd_learn_doctor(cfg, list_posts=lambda w: rows) == 0
@@ -89,7 +89,7 @@ def test_ledger_cascade_unlink_failure_logs(tmp_path, monkeypatch):
     led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.rendered))
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.rejected,
-                      public_url="dryrun://p"))
+                      public_url="https://www.instagram.com/p/p/"))
     monkeypatch.setattr("os.remove", lambda p: (_ for _ in ()).throw(OSError("perm denied")))
     led.reconcile_moments("s", {})
     led.save()                                                  # M22: unlink + logging happen at post-commit drain

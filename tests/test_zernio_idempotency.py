@@ -79,7 +79,7 @@ def _post(pid="post_x", acct_id="acc_abc", platform=Platform.tiktok, created_at=
     return Post(id=pid, parent_id="c1", account="tk", account_id=acct_id, platform=platform,
                 caption="fire", state=PostState.submitting, created_at=created_at,
                 media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z",
-                public_url="dryrun://c1")
+                public_url="https://www.instagram.com/p/c1/")
 
 
 def _led(cfg, post):

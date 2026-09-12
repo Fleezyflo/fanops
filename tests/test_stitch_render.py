@@ -128,7 +128,7 @@ def _seed_approved(cfg, *, base_fp="basefp", cur_fp="basefp"):
 
 def _base_post(state):
     return Post(id="post_base", parent_id="clip_base", account="a", account_id="1",
-                platform=Platform.instagram, caption="c", state=state, public_url="dryrun://post_base")
+                platform=Platform.instagram, caption="c", state=state, public_url="https://www.instagram.com/p/post_base/")
 
 def _ff(mocker, *, dur=11.6):
     import fanops.overlay as overlay

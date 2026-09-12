@@ -20,7 +20,7 @@ def _validate(cfg):
 def _win(pid, hook, lift, *, moment_id="m1", clip_id="c1"):
     """P9: hook on owner moment; WIN/LOSE lineages share one moment+clip per hook family."""
     return Post(id=pid, parent_id=clip_id, account="a", account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1")
+                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/c1/")
 
 
 def _ensure_lineage(led, moment_id, clip_id, hook):

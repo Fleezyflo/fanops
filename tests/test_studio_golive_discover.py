@@ -171,7 +171,7 @@ def test_golive_health_emits_banner_alert_when_a_dependency_is_down(tmp_path, mo
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="due_p1", parent_id="clip_1", account="ig", account_id="1", platform=Platform.instagram,
                           caption="fire", state=PostState.queued, scheduled_time="2020-01-01T12:00:00Z",
-                          public_url="dryrun://clip_1"))
+                          public_url="https://www.instagram.com/p/clip_1/"))
     _seed_deps(cfg, [
         ("docker", True, "daemon up"),
         ("postiz", False, "unreachable", 502),

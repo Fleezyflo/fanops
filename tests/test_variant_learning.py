@@ -14,7 +14,7 @@ def _lineage(pid, acct, hook, lift, *, src_id="s1"):
     moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook)
     clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
     post = Post(id=pid, parent_id=clip_id, account=acct, account_id="1", platform=Platform.instagram,
-                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c1")
+                caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/c1/")
     return moment, clip, post
 
 

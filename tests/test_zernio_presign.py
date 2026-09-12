@@ -108,7 +108,7 @@ def _accounts(tmp_path):
                                            "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}}]}))
 
 
-def _queued(cfg, pid="p1", cid="c1", *, public_url="dryrun://p1"):
+def _queued(cfg, pid="p1", cid="c1", *, public_url="https://www.instagram.com/p/p1/"):
     """A queued TikTok post with NO media_urls -> _ensure_media resolves it via ensure_clip_media, which
     dispatches to the REAL zernio_upload_media (the code under test). The 5-byte clip is under the cap, so
     maybe_shrink_for_cap returns it untouched and no ffmpeg runs."""

@@ -38,7 +38,7 @@ def _zenv(monkeypatch):
 
 def _published(pid, sub, account="tt", platform=Platform.tiktok):
     return Post(id=pid, parent_id="c", account=account, account_id="z1", platform=platform,
-                caption="x", state=PostState.published, submission_id=sub, published_at=iso_z(_PUB), public_url="dryrun://c")
+                caption="x", state=PostState.published, submission_id=sub, published_at=iso_z(_PUB), public_url="https://www.instagram.com/p/c/")
 
 
 # ---------------------------------------------------------------- analytics shape mapping ----
@@ -283,10 +283,10 @@ def test_default_get_status_mixed_routes_each_sid(tmp_path, monkeypatch, mocker)
     add_account(cfg, "@tt", [Platform.tiktok], status="active"); set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="z1", platform=Platform.tiktok,
-                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url="dryrun://tt"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="zsid", public_url="https://www.instagram.com/p/tt/"))
     led.add_post(Post(id="ig", parent_id="c", account="ig", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="psid",
-                      scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://ig"))
+                      scheduled_time="2099-01-01T00:00:00Z", public_url="https://www.instagram.com/p/ig/"))
     tt_url = "https://www.tiktok.com/@tt/video/7"
     ig_url = "https://www.instagram.com/reel/X/"
     def by_url(url, **kw):
