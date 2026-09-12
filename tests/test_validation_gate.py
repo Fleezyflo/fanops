@@ -29,26 +29,30 @@ def test_unvalidated_on_corrupt_cutover(tmp_path):
     assert learning_validated(cfg) is False
 
 
-def test_postiz_shaped_live_metrics_auto_validate_learning(tmp_path, monkeypatch):
-    # Postiz delivers shares/reach/likes but NEVER retention — rows stay lift_degraded yet the live
-    # shape is proven once reach + a primary engagement key reconcile (learn_doctor gates on reach).
+def test_degraded_postiz_live_metrics_do_not_auto_validate_learning(tmp_path, monkeypatch):
+    # Missing saves + lift_degraded is an unproven shape. Live pull_metrics of that row must NOT
+    # stamp metrics_confirmed (learning stays frozen until a full primary set lands).
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.published, submission_id="sub1", public_url="https://x"))
     assert learning_validated(cfg) is False
-    postiz = {"shares": 30, "reach": 50000, "likes": 200}   # no saves/retention — Postiz-shaped
+    postiz = {"shares": 30, "reach": 50000, "likes": 200}   # no saves — degraded Postiz row
     pull_metrics(led, cfg, list_posts=lambda w: [{"postSubmissionId": "sub1", "metrics": postiz}])
-    assert led.posts["p1"].metrics.get("lift_degraded") is True   # honest partial objective
-    assert learning_validated(cfg) is True                        # shape proven -> auto-stamp
+    m = led.posts["p1"].metrics
+    assert m.get("lift_degraded") is True
+    assert _shape_proves_learning(m, platform=Platform.instagram) is False
+    assert learning_validated(cfg) is False
 
-def test_shape_proves_learning_postiz_row_not_full_primary_set():
-    # MOL-18c re-scope: this is now a PLATFORM-LESS row (no platform arg). It proves as today, AND stays
-    # proving even with the IG-retention flag ON — the tightening is fail-open for a platform-less row.
+def test_shape_proves_learning_degraded_postiz_row_does_not_prove():
+    # Degraded Postiz row (missing saves, lift_degraded) does not prove — not with the default
+    # gate, not with require_ig_retention, not as a platform-less row.
     m = {"lift_score": 1.0, "lift_degraded": True, "lift_missing_keys": ["retention", "saves"],
          "shares": 30, "reach": 50000, "likes": 200}
-    assert _shape_proves_learning(m) is True
-    assert _shape_proves_learning(m, require_ig_retention=True) is True   # platform-less -> flag can't tighten it
+    assert _shape_proves_learning(m) is False
+    assert _shape_proves_learning(m, require_ig_retention=True) is False
+    assert _shape_proves_learning(m, platform=Platform.instagram) is False
+    assert _shape_proves_learning(m, platform=Platform.instagram, require_ig_retention=True) is False
 
 def test_shape_proves_learning_rejects_reach_only_noise():
     assert _shape_proves_learning({"lift_score": 1.0, "likes": 3, "reach": 1000}) is False
@@ -57,15 +61,17 @@ def test_shape_proves_learning_rejects_present_but_null_primary():
     assert _shape_proves_learning({"lift_score": 1.0, "saves": None, "shares": 12, "retention": 0.7,
                                    "reach": 1000}) is False
 
-def test_learning_validated_after_postiz_cutover(tmp_path, monkeypatch):
-    # M3: the SINGLE freeze flag flips on the Postiz path too — _postiz_metrics writes metrics_confirmed,
-    # which learning_validated already reads. No parallel "postiz_validated" flag (one flag, two writers).
+def test_likes_only_postiz_cutover_does_not_unfreeze(tmp_path, monkeypatch):
+    # Likes-only is noise, not a proven shape. cutover_metrics of that row must not stamp
+    # metrics_confirmed (one freeze flag, still frozen).
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     cfg = Config(root=tmp_path)
-    rows = [{"postSubmissionId": "pz1", "metrics": {"likes": 5}, "_raw_labels": ["Likes"]}]
+    likes_only = {"likes": 5}
+    assert _shape_proves_learning({**likes_only, "lift_score": 1.0}) is False
+    rows = [{"postSubmissionId": "pz1", "metrics": likes_only, "_raw_labels": ["Likes"]}]
     cutover.cutover_metrics(cfg, "pz1", list_posts=lambda w: rows)
-    assert learning_validated(cfg) is True
+    assert learning_validated(cfg) is False
 
 
 # ---- Platform-aware learning proof (MOL-16/17/18, capability model) ----
@@ -139,11 +145,10 @@ def test_ig_retention_flag_off_ig_proves_without_retention():
     assert _P(m, platform=Platform.instagram) is True                     # default: flag off -> proves
     assert _P(m, platform=Platform.instagram, require_ig_retention=False) is True
 
-def test_ig_retention_flag_on_ig_without_retention_still_proves():
-    # MOL-18c ON but IG metrics are Postiz-shaped (retention not in capability set) — the flag is inert;
-    # reach + saves still proves.
+def test_ig_retention_flag_on_ig_without_retention_does_not_prove():
+    # require_ig_retention=True without retention must not prove, even when reach+saves are present.
     m = {"lift_score": 1.0, "reach": 50000, "saves": 40, "shares": 12}          # no retention
-    assert _P(m, platform=Platform.instagram, require_ig_retention=True) is True
+    assert _P(m, platform=Platform.instagram, require_ig_retention=True) is False
 
 def test_ig_retention_flag_on_ig_with_retention_proves():
     # MOL-18c ON, satisfied: an IG row WITH retention proves even under the flag.

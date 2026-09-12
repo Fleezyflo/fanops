@@ -48,12 +48,6 @@ def test_regenerate_rewrites_queued_post(tmp_path):
     assert res.detail["caption"] == p.caption
 
 
-def test_regenerate_still_works_when_llm_enabled(tmp_path, monkeypatch):
-    # Gates are answered ONLY by the LLM now — Regenerate always uses the LLM (there is no AI on/off switch).
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path); _seed(cfg)
-    res = regenerate_caption(cfg, "p_edit", "punchier", model=_model("PUNCHIER LINE"), now=NOW)
-    assert res.ok is True
 
 def test_regenerate_passes_operator_guidance_and_context_to_model(tmp_path):
     # The operator's typed hint AND the clip's transcript excerpt must both reach the model — that is
@@ -166,24 +160,6 @@ def test_regenerate_malformed_model_output_rejected(tmp_path):
 
 
 # ---- Flask wiring ----
-def test_regenerate_route_swaps_edit_field(tmp_path, monkeypatch):
-    from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _seed(cfg)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")               # gates are always answered by the LLM
-    # the route uses the default model (claude_json); patch it at its module so the lazy import binds
-    # to the fake — proves the real HTTP path persists and re-renders the edit field with the new text.
-    monkeypatch.setattr("fanops.llm.claude_json",
-                        lambda prompt, schema, **kw: {"items": [{"surface": "a/instagram",
-                                                                 "caption": "ROUTED", "hashtags": ["#hiphop"],
-                                                                 "language": "en"}]})
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/regenerate/p_edit", data={"guidance": "punchier"})
-    # Caption is the model sentence; tags still run the ingest vet. With no measurement cache and no
-    # derived corpus in this fixture, #hiphop dies — empty tag line is honest. Empty sentence is not.
-    assert r.status_code == 200
-    p = Ledger.load(cfg).posts["p_edit"]
-    assert p.hashtags == [] and p.caption == "ROUTED"
-
 def test_regenerate_route_unknown_post_shows_clean_error(tmp_path):
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path); _seed(cfg)

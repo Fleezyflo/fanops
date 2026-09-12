@@ -63,8 +63,12 @@ def test_default_view_has_no_lane_markup(tmp_path):
 def test_lanes_view_renders_a_lane_per_account(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?view=lanes&source=src1").data.decode()
-    assert "account-lanes" in html                              # the lanes container rendered
-    assert "a" in html and "b" in html                        # both active accounts get a lane (incl. zero-post @b)
+    assert "account-lanes" in html
+    assert 'class="lane"' in html
+    assert 'class="lane-handle">a</span>' in html
+    assert 'class="lane-handle">b</span>' in html
+    assert 'aria-label="a cast lane"' in html
+    assert 'aria-label="b cast lane"' in html
 
 def test_lanes_view_shows_cast_and_uncast_controls(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)

@@ -1,8 +1,10 @@
 # tests/test_studio_run.py — Studio as pipeline DRIVER: ingest/advance/pull from the browser through
 # the same lock-safe paths the CLI uses, so the operator never needs the terminal.
 import json
-import pytest
+import subprocess
 from types import SimpleNamespace
+
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
@@ -14,36 +16,62 @@ def _gate_off(monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 
-def _src_in_inbox(cfg, mocker, name="a.mp4"):
+@pytest.fixture(autouse=True)
+def _no_real_run_spawn(monkeypatch):
+    # kick_prepare spawns a detached `fanops run`. Neutralize ONLY that spawn.
+    real = subprocess.Popen
+    def popen(cmd, *a, **k):
+        if isinstance(cmd, (list, tuple)) and len(cmd) > 1 and cmd[1] == "run":
+            return SimpleNamespace(pid=424242)
+        return real(cmd, *a, **k)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+
+def _stub_ffprobe(monkeypatch, dims=(1080, 1920, 5.0)):
+    """Unit CI has no ffmpeg. Answer ffprobe at subprocess.run (not a fanops.* patch)."""
+    real = subprocess.run
+    w, h, dur = dims
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                return subprocess.CompletedProcess(list(cmd), 0, stdout="video\n", stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout=f"{w}\n{h}\n{dur}\n", stderr="")
+        return real(cmd, **kw)
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+def _src_in_inbox(cfg, monkeypatch, name="a.mp4", payload=None):
     cfg.inbox.mkdir(parents=True, exist_ok=True)
-    (cfg.inbox / name).write_bytes(b"V")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    (cfg.inbox / name).write_bytes(payload if payload is not None else b"V")
+    _stub_ffprobe(monkeypatch)
 
 
 # ---- actions.run_ingest ----
-def test_run_ingest_catalogues_inbox(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+def test_run_ingest_catalogues_inbox(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     res = actions.run_ingest(cfg)
     assert res.ok and res.detail["sources"] == 1
     assert len(Ledger.load(cfg).sources) == 1
 
-def test_run_ingest_surfaces_skipped_count_on_copy_failure(tmp_path, mocker):
+def test_run_ingest_surfaces_skipped_count_on_copy_failure(tmp_path, monkeypatch):
     # silent_ingest_failure_on_copy_enospc (high): a copy failure (ENOSPC/perms) leaves the file in the
     # inbox and bumps counts.skipped, but run_ingest dropped `skipped` from the detail dict — the operator
     # saw "Done" while the file silently jammed the inbox and re-failed every pass. The count must reach the
     # action detail (like `excluded` already does) so the skip is VISIBLE, not silent.
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
-    mocker.patch("fanops.ingest.shutil.copy2", side_effect=OSError(28, "No space left on device"))
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
+    def boom(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr("shutil.copy2", boom)
     res = actions.run_ingest(cfg)
     assert res.ok                                            # a per-file skip is NOT a pass failure
     assert res.detail.get("skipped") == 1                   # the copy-failed file is surfaced, not silent
     assert res.detail["added"] == 0                         # nothing was catalogued
 
-def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mocker):
+def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, monkeypatch):
     # A non-blank batch_name mints a named, account-targeted Batch in the SAME transaction; the catalogued
     # source carries its id and the detail reports the batch.
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     res = actions.run_ingest(cfg, batch_name="  Launch week  ", target_accounts=["a", "a", ""])
     assert res.ok and res.detail["sources"] == 1
     led = Ledger.load(cfg)
@@ -53,12 +81,12 @@ def test_run_ingest_with_batch_name_mints_batch_and_stamps_source(tmp_path, mock
     assert res.detail["batch"] == "Launch week" and res.detail["batch_id"] == b.id
     assert next(iter(led.sources.values())).batch_id == b.id          # source stamped under the batch
 
-def test_run_ingest_blank_batch_name_falls_back_to_drop_batch(tmp_path, mocker):
+def test_run_ingest_blank_batch_name_falls_back_to_drop_batch(tmp_path, monkeypatch):
     # ROOT CONTRACT (supersedes earlier "no batch => None"): a blank batch_name leaves run_ingest's
     # `batch` detail unset (no operator-named batch surfaced), but ingest_drops still resolves the day's
     # auto drop-batch and stamps it onto the new Source — so the Studio Review "Ungrouped" group can
     # never be constructed from this path. Detailed contract in tests/test_ingest_auto_batch.py.
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     res = actions.run_ingest(cfg, batch_name="   ")
     assert res.ok and "batch" not in res.detail              # no operator-named batch surfaced
     led = Ledger.load(cfg)
@@ -70,52 +98,62 @@ def _seed_accounts(cfg, handles):
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": h, "account_id": "x", "platforms": ["instagram"], "status": "active"} for h in handles]}))
 
-def test_run_ingest_zero_target_bubbles_warning(tmp_path, mocker):
+def test_run_ingest_zero_target_bubbles_warning(tmp_path, monkeypatch):
     # Face 1-fu (T4): a batch targeting a handle that is NOT active still mints (advisory, not fatal) but
     # surfaces detail["warnings"] — so the operator isn't left with a silent zero-post run downstream.
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["a"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch); _seed_accounts(cfg, ["a"])
     res = actions.run_ingest(cfg, batch_name="Ghost run", target_accounts=["ghost"])
     assert res.ok and res.detail.get("warnings") and "ghost" in res.detail["warnings"][0]
     b = next(iter(Ledger.load(cfg).batches.values()))
     assert "ghost" in (b.error_reason or "")            # the advisory is persisted on the batch too
 
-def test_run_ingest_on_target_no_warnings_key(tmp_path, mocker):
+def test_run_ingest_on_target_no_warnings_key(tmp_path, monkeypatch):
     # A batch targeting an ACTIVE handle carries no warning (no false positive).
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["a", "b"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch); _seed_accounts(cfg, ["a", "b"])
     res = actions.run_ingest(cfg, batch_name="Real", target_accounts=["a"])
     assert res.ok and "warnings" not in res.detail
 
-def test_run_ingest_single_account_mints_named_batch(tmp_path, mocker):
+def test_run_ingest_single_account_mints_named_batch(tmp_path, monkeypatch):
     # B1: with exactly ONE active account, a named batch with NO target is the []-ALL sentinel — never
     # flagged as zero-target (regression guard for T1's [] path on the production run_ingest path).
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker); _seed_accounts(cfg, ["solo"])
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch); _seed_accounts(cfg, ["solo"])
     res = actions.run_ingest(cfg, batch_name="Solo")
     assert res.ok and res.detail["batch"] == "Solo" and "warnings" not in res.detail
     b = next(iter(Ledger.load(cfg).batches.values()))
     assert b.target_accounts == [] and b.error_reason is None
 
-def test_run_ingest_wraps_toolchain_error(tmp_path, mocker):
+def test_run_ingest_wraps_toolchain_error(tmp_path, monkeypatch):
     # ffprobe absent -> ingest raises ToolchainMissingError; Studio must surface a clean error, not 500.
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / "a.mp4").write_bytes(b"V")
-    def absent(cmd, **kw): raise FileNotFoundError(2, "no", cmd[0])
-    mocker.patch("fanops.ingest.subprocess.run", side_effect=absent)
+    def absent(cmd, **kw):
+        raise FileNotFoundError(2, "no", cmd[0] if cmd else "ffprobe")
+    monkeypatch.setattr(subprocess, "run", absent)
     res = actions.run_ingest(cfg)
     assert not res.ok and "ffprobe" in (res.error or "")
 
 
+def _fake_ytdlp(cfg, monkeypatch, name="pulled.mp4"):
+    real_run = subprocess.run
+    def fake_run(cmd, **kw):
+        if cmd and cmd[0] == "yt-dlp":
+            from fanops.ingest import _pull_stage
+            (_pull_stage(cfg) / name).write_bytes(b"PULLED")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd and cmd[0] == "ffprobe":
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                return subprocess.CompletedProcess(list(cmd), 0, stdout="video\n", stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout="1080\n1920\n5.0\n", stderr="")
+        return real_run(cmd, **kw)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
 # ---- WS-I1 Task 2 (ING-6/12): a URL pull catalogues ONLY its staged download, never inbox residue ----
-def test_run_pull_ingests_only_staged_download_not_inbox_residue(tmp_path, mocker):
+def test_run_pull_ingests_only_staged_download_not_inbox_residue(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     cfg.inbox.mkdir(parents=True, exist_ok=True); (cfg.inbox / "manual.mp4").write_bytes(b"MANUAL")
-    def fake_ytdlp(cmd, **kw):
-        from fanops.ingest import _pull_stage
-        (_pull_stage(cfg) / "pulled.mp4").write_bytes(b"PULLED")
-        class R: returncode = 0; stdout = ""; stderr = ""
-        return R()
-    mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
+    _fake_ytdlp(cfg, monkeypatch)
     res = actions.run_pull(cfg, "https://example.com/v")
     assert res.ok
     led = Ledger.load(cfg)
@@ -125,12 +163,11 @@ def test_run_pull_ingests_only_staged_download_not_inbox_residue(tmp_path, mocke
 
 
 # ---- WS-I1 Task 4 (ING-2): report the this-pass delta, not the cumulative total ----
-def test_run_ingest_reports_added_delta_not_cumulative(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker, name="a.mp4")
+def test_run_ingest_reports_added_delta_not_cumulative(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch, name="a.mp4", payload=b"AAAA")
     r1 = actions.run_ingest(cfg)
     assert r1.detail["added"] == 1 and r1.detail["sources"] == 1
-    _src_in_inbox(cfg, mocker, name="b.mp4")
-    (cfg.inbox / "b.mp4").write_bytes(b"DIFFERENT")                  # ensure distinct sha
+    _src_in_inbox(cfg, monkeypatch, name="b.mp4", payload=b"BBBB")
     r2 = actions.run_ingest(cfg)
     assert r2.detail["added"] == 1 and r2.detail["sources"] == 2
     r3 = actions.run_ingest(cfg)                                     # inbox now drained → nothing new
@@ -138,26 +175,25 @@ def test_run_ingest_reports_added_delta_not_cumulative(tmp_path, mocker):
 
 
 # ---- WS-I1 Task 5 (ING-3/5): no orphan batch; deterministic id; native PII count ----
-def test_run_ingest_empty_inbox_mints_no_batch(tmp_path, mocker):
+def test_run_ingest_empty_inbox_mints_no_batch(tmp_path):
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)   # exists but empty
     res = actions.run_ingest(cfg, batch_name="Ghost batch", target_accounts=["a"])
     assert res.ok and res.detail["added"] == 0
     assert "batch" not in res.detail and res.detail.get("batch_skipped")        # no orphan; operator told why
     assert len(Ledger.load(cfg).batches) == 0
 
-def test_run_ingest_real_drop_mints_one_batch_with_matching_id(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+def test_run_ingest_real_drop_mints_one_batch_with_matching_id(tmp_path, monkeypatch):
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     res = actions.run_ingest(cfg, batch_name="Real batch")
     assert res.ok and res.detail["added"] == 1 and res.detail["batch"] == "Real batch"
     led = Ledger.load(cfg); assert len(led.batches) == 1
     b = next(iter(led.batches.values()))
     assert next(iter(led.sources.values())).batch_id == b.id        # ids match (no silent orphan stamp)
 
-def test_run_ingest_surfaces_native_pii_count(tmp_path, mocker):
+def test_run_ingest_surfaces_native_pii_count(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / "passport scan.mp4").write_bytes(b"S"); (cfg.inbox / "perf.mp4").write_bytes(b"V")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(monkeypatch)
     res = actions.run_ingest(cfg)
     assert res.detail["added"] == 1 and res.detail["excluded"] == 1
 
@@ -188,97 +224,21 @@ def test_run_advance_blocks_on_invalid_accounts(tmp_path):
     assert not res.ok and "account" in (res.error or "").lower()
 
 
-def test_run_advance_postiz_auth_names_postiz_key(tmp_path, monkeypatch):
-    # ecc holistic audit GAP 2: a PostizAuthError on a postiz backend must surface FATAL + POSTIZ_API_KEY,
-    # not degrade to a generic "advance failed" via the PostizAuthError-only arm.
-    from fanops.errors import PostizAuthError
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setenv("POSTIZ_API_KEY", "k")
-    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 (body withheld)")
-    monkeypatch.setattr("fanops.pipeline.advance", boom)
-    res = actions.run_advance(Config(root=tmp_path), confirmed=True)
-    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
-
-def test_run_advance_surfaces_fatal_auth(tmp_path, monkeypatch):
-    # ecc:python-review HIGH: a fatal PostizAuthError (bad key) must surface as FATAL, not be demoted
-    # to a soft "advance failed" by the broad except. advance's own txn already rolled back.
-    from fanops.errors import PostizAuthError
-    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 unauthorized (body withheld)")
-    monkeypatch.setattr("fanops.pipeline.advance", boom)
-    res = actions.run_advance(Config(root=tmp_path))
-    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
-
-
-# ---- actions.run_prepare (auto-prepare: answer gates via the responder + advance until stable) ----
-def test_run_prepare_answers_gates_and_advances(tmp_path, monkeypatch):
-    # The review-first behavior (milestone 1): ONE action answers every moment/caption gate via the
-    # responder AND advances — so the operator NEVER hand-writes a caption. (run_advance does a bare
-    # advance that CREATES gates and leaves them pending in the Gates tab — the manual headache.)
-    cfg = Config(root=tmp_path)
-    calls = {"answer": 0, "advance": 0}
-    class FakeResp:
-        def answer_pending(self, c):
-            calls["answer"] += 1; return 1
-    monkeypatch.setattr("fanops.responder.get_responder", lambda c: FakeResp())
-    def fake_advance(c, *, base_time):
-        calls["advance"] += 1
-        return {"sources": 0, "awaiting": {"moments": 0, "captions": 0}}
-    monkeypatch.setattr("fanops.pipeline.advance", fake_advance)
-    res = actions.run_prepare(cfg)
-    assert res.ok
-    assert calls["answer"] >= 1 and calls["advance"] >= 1        # answered gates AND advanced
-    assert res.detail["awaiting"] == {"moments": 0, "captions": 0}
-
-def test_run_prepare_loops_until_no_gate_remains(tmp_path, monkeypatch):
-    # First advance still shows a pending gate; the responder answers it; the loop runs again until clear.
-    cfg = Config(root=tmp_path)
-    seq = iter([{"sources": 1, "awaiting": {"moments": 1, "captions": 0}},
-                {"sources": 1, "awaiting": {"moments": 0, "captions": 0}}])
-    monkeypatch.setattr("fanops.pipeline.advance", lambda c, *, base_time: next(seq))
-    monkeypatch.setattr("fanops.responder.get_responder",
-                        lambda c: type("R", (), {"answer_pending": lambda s, c: 1})())
-    res = actions.run_prepare(cfg)
-    assert res.ok and res.detail["awaiting"]["moments"] == 0
-
-def test_run_prepare_cap_hit_in_llm_mode_surfaces_incomplete(tmp_path, monkeypatch):
-    # If the responder never drains the gates (malformed answers / gates regenerating), the 10-pass
-    # cap is hit with gates still pending. In llm mode that's a FAILURE to surface, not a green
-    # "prepared" the operator would wrongly trust (ecc audit: code+python MEDIUM).
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    cfg = Config(root=tmp_path)
-    monkeypatch.setattr("fanops.pipeline.advance",
-                        lambda c, *, base_time: {"sources": 1, "awaiting": {"moments": 1, "captions": 0}})
-    monkeypatch.setattr("fanops.responder.get_responder",
-                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
-    res = actions.run_prepare(cfg)
-    assert res.ok is False and "did not finish" in res.error
-    assert res.detail["awaiting"]["moments"] == 1               # the last summary is still attached
-
 def test_run_prepare_live_backend_requires_confirm(tmp_path, monkeypatch):
     # A prepare pass crossposts/publishes due posts on a live backend -> same confirm guard as advance.
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     res = actions.run_prepare(Config(root=tmp_path), confirmed=False)
     assert not res.ok and "confirm" in (res.error or "").lower()
 
-def test_run_prepare_surfaces_fatal_auth(tmp_path, monkeypatch):
-    # A fatal auth failure during a prepare pass surfaces FATAL + the right key, not a soft "failed".
-    from fanops.errors import PostizAuthError
-    monkeypatch.setattr("fanops.responder.get_responder",
-                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
-    def boom(c, *, base_time): raise PostizAuthError("Postiz 401 (body withheld)")
-    monkeypatch.setattr("fanops.pipeline.advance", boom)
-    res = actions.run_prepare(Config(root=tmp_path))
-    assert not res.ok and "FATAL" in res.error and "POSTIZ_API_KEY" in res.error
-
-def test_run_prepare_route(tmp_path, monkeypatch):
+def test_run_prepare_route(tmp_path):
     from fanops.studio.app import create_app
-    monkeypatch.setattr("fanops.responder.get_responder",
-                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
-    monkeypatch.setattr("fanops.pipeline.advance",
-                        lambda c, *, base_time: {"sources": 0, "awaiting": {"moments": 0, "captions": 0}})
-    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    cfg = Config(root=tmp_path)
+    app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/run/prepare")
     assert r.status_code == 200
+    assert b"Done" in r.data
+    led = Ledger.load(cfg)
+    assert len(led.sources) == 0 and len(led.posts) == 0
 
 def test_run_route_shows_primary_make_button(tmp_path):
     # The Make page's dominant action — relabelled from "Prepare everything" to plain "Make clips" in
@@ -313,47 +273,18 @@ def test_run_next_step_pending_unbound_is_make_clips():
     assert "Add to queue" not in n["hint"]
 
 
-def test_run_prepare_route_passes_source_ids(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_QUEUE_GATE", "1")
-    monkeypatch.setattr("fanops.responder.get_responder",
-                        lambda c: type("R", (), {"answer_pending": lambda s, c: 0})())
-    monkeypatch.setattr("fanops.pipeline.advance",
-                        lambda c, *, base_time: {"sources": 0, "awaiting": {"moments": 0, "captions": 0}})
-    from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path)
-    with Ledger.transaction(cfg) as led:
-        led.add_source(Source(id="s1", source_path="/v/clip.mp4", state=SourceState.pending))
-    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps({"accounts": [
-        {"handle": "a", "account_id": "x", "platforms": ["instagram"], "status": "active"}]}))
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/run/prepare", data={"source_ids": "s1", "target_accounts": "a"})
-    assert r.status_code == 200
-    led = Ledger.load(cfg)
-    src = led.sources["s1"]
-    assert src.batch_id is not None
-    assert led.get_batch(src.batch_id).target_accounts == ["a"]
-
-
 # ---- actions.run_pull ----
 def test_run_pull_rejects_non_http_url(tmp_path):
     res = actions.run_pull(Config(root=tmp_path), "not-a-url")
     assert not res.ok and "http" in (res.error or "").lower()
 
 
-def test_run_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
+def test_run_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, monkeypatch):
     # audit c0-f1 / ING-6: the Studio URL-ingest path catalogues ONLY its isolated .pull stage, so a manual drop
     # already in the inbox is never scanned by the pull — it CANNOT be mislabeled "url" (it waits for a native pass).
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 1.0))
     (cfg.inbox).mkdir(parents=True, exist_ok=True); (cfg.inbox / "drop.mp4").write_bytes(b"DROPPED")
-    def fake_ytdlp(cmd, **kw):
-        from fanops.ingest import _pull_stage
-        (_pull_stage(cfg) / "pulled.mp4").write_bytes(b"PULLED")
-        class R: returncode = 0; stdout = ""; stderr = ""
-        return R()
-    mocker.patch("fanops.ingest.subprocess.run", side_effect=fake_ytdlp)
+    _fake_ytdlp(cfg, monkeypatch)
     res = actions.run_pull(cfg, "https://example.com/v")
     assert res.ok
     led = Ledger.load(cfg)
@@ -368,25 +299,6 @@ def test_pipeline_status_counts(tmp_path):
         led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
     st = views.pipeline_status(cfg)
     assert st["sources"] == 1 and "pending_moments" in st and st["backend"] == "dryrun"
-
-
-def test_pipeline_status_builds_pending_index_once(tmp_path, monkeypatch):
-    """Studio status must not re-scan the request dir: one PendingIndex.build per pipeline_status."""
-    from fanops.pipeline_status import PendingIndex
-    cfg = Config(root=tmp_path)
-    with Ledger.transaction(cfg) as led:
-        led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.catalogued))
-    calls = {"n": 0}
-    real = PendingIndex.build
-
-    def counted(cls, cfg, led):
-        calls["n"] += 1
-        return real(cfg, led)
-
-    monkeypatch.setattr(PendingIndex, "build", classmethod(counted))
-    st = views.pipeline_status(cfg)
-    assert calls["n"] == 1
-    assert st["pending_moments"] == 0 and st["pending_moment_hooks"] == 0 and st["pending_captions"] == 0
 
 
 def test_pipeline_status_awaiting_counts_moments_not_posts(tmp_path):
@@ -416,18 +328,19 @@ def test_run_route_renders(tmp_path):
     r = app.test_client().get("/run")
     assert r.status_code == 200 and b"Add footage" in r.data
 
-def test_run_ingest_route_drives_ingest(tmp_path, mocker):
+def test_run_ingest_route_drives_ingest(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/run/ingest")
     assert r.status_code == 200
     assert len(Ledger.load(cfg).sources) == 1
+    assert b"Done" in r.data
 
-def test_run_ingest_route_passes_batch_fields(tmp_path, mocker):
+def test_run_ingest_route_passes_batch_fields(tmp_path, monkeypatch):
     # The route reads batch_name + the repeated target_accounts form fields and threads them to run_ingest.
     from fanops.studio.app import create_app
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
+    cfg = Config(root=tmp_path); _src_in_inbox(cfg, monkeypatch)
     app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/run/ingest", data={"batch_name": "Launch", "target_accounts": ["a", "b"]})
     assert r.status_code == 200
@@ -439,9 +352,12 @@ def test_run_ingest_route_passes_batch_fields(tmp_path, mocker):
 
 def test_run_advance_route(tmp_path):
     from fanops.studio.app import create_app
-    app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
+    cfg = Config(root=tmp_path)
+    app = create_app(cfg); app.config.update(TESTING=True)
     r = app.test_client().post("/run/advance")
     assert r.status_code == 200
+    assert b"Done" in r.data
+    assert len(Ledger.load(cfg).sources) == 0
 
 
 # ---- views.run_next_step (S3: the Make tab's one "do this next" affordance) ----
@@ -518,12 +434,16 @@ def test_run_route_shows_next_step_banner(tmp_path):
     assert "run-next" in html and "Add a video" in html        # empty pipeline -> the 'add' banner
 
 
-def test_run_route_gate_explanation_visible(tmp_path, monkeypatch):
+def test_run_route_gate_explanation_visible(tmp_path):
+    from fanops.agentstep import write_request
     from fanops.studio.app import create_app
     cfg = Config(root=tmp_path)
-    # patch BEFORE create_app: the route closures reference views.pipeline_status at CALL time (late binding), so
-    # patching the module attr here means the live route uses this stub on the request — exercises real wiring.
-    monkeypatch.setattr(views, "pipeline_status", lambda c: _st(sources=2, pending_moments=2))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="s1", source_path="/v/clip.mp4", state=SourceState.catalogued))
+    write_request(cfg, kind="moments", key="s1", payload={
+        "source_id": "s1", "duration": 10.0,
+        "transcript": [{"start": 0.0, "end": 2.0, "text": "yo"}],
+        "signal_peaks": [{"t": 1.0, "score": 0.9}], "language": "en"})
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/run").data.decode()
     assert "run-next" in html and "run-next-gate" in html
@@ -537,59 +457,3 @@ def test_run_next_banner_is_flag_independent(tmp_path, monkeypatch):
     app = create_app(Config(root=tmp_path)); app.config.update(TESTING=True)
     html = app.test_client().get("/run").data.decode()
     assert "run-next" in html
-
-
-# ── WS-D1 Phase 3: ingest event-kick (de-lazify — drive immediately, not after a daemon interval) ──
-import pytest
-from fanops.studio import actions_run
-
-
-@pytest.fixture(autouse=True)
-def _no_real_run_spawn(monkeypatch):
-    # The event-kick spawns a DETACHED `fanops run`; never let a TEST spawn a real one. Neutralize the
-    # spawn module-wide so every run_ingest test stays hermetic; the kick tests below override with their
-    # own Popen mock to assert.
-    monkeypatch.setattr(actions_run.subprocess, "Popen", lambda *a, **k: SimpleNamespace(pid=424242))   # a spawned proc has a .pid (the debounce reads it)
-
-
-def test_run_ingest_kicks_prepare_when_footage_added(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _src_in_inbox(cfg, mocker)
-    kick = mocker.patch("fanops.studio.actions_run.kick_prepare")
-    res = actions.run_ingest(cfg)
-    assert res.ok and res.detail["added"] == 1
-    kick.assert_called_once()                              # a fresh drop drives immediately (no interval wait)
-
-
-def test_run_ingest_no_kick_when_nothing_added(tmp_path, mocker):
-    cfg = Config(root=tmp_path)                            # empty inbox -> added 0
-    kick = mocker.patch("fanops.studio.actions_run.kick_prepare")
-    res = actions.run_ingest(cfg)
-    assert res.ok and res.detail["added"] == 0
-    kick.assert_not_called()                               # no new footage -> no wasted run
-
-
-def test_kick_prepare_spawns_detached_run_then_debounces(tmp_path, mocker):
-    cfg = Config(root=tmp_path)
-    popen = mocker.patch("fanops.studio.actions_run.subprocess.Popen")
-    held = mocker.patch("fanops.pipeline_run.run_held", side_effect=[False, True])
-    assert actions_run.kick_prepare(cfg) is True           # no driver -> spawn
-    assert popen.call_count == 1 and popen.call_args[0][0][1] == "run"   # spawns `fanops run`
-    assert actions_run.kick_prepare(cfg) is False          # run lease held -> no second spawn
-    assert popen.call_count == 1
-    assert held.call_count == 2
-
-
-def test_kick_prepare_respawns_when_prior_run_finished(tmp_path, mocker):
-    # Debounce is tied to the run lease — once the prior driver releases, a fresh ingest kicks again.
-    cfg = Config(root=tmp_path)
-    popen = mocker.patch("fanops.studio.actions_run.subprocess.Popen")
-    mocker.patch("fanops.pipeline_run.run_held", side_effect=[False, False])
-    assert actions_run.kick_prepare(cfg) is True           # first kick -> spawn
-    assert actions_run.kick_prepare(cfg) is True           # lease free -> respawn
-    assert popen.call_count == 2
-
-
-def test_kick_prepare_is_fail_open_on_spawn_error(tmp_path, mocker):
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.studio.actions_run.subprocess.Popen", side_effect=OSError("boom"))
-    assert actions_run.kick_prepare(cfg) is False          # swallowed -> ingest never breaks

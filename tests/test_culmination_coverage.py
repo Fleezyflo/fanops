@@ -52,14 +52,14 @@ def test_old_posts_without_dims_are_skipped(tmp_path):
     assert aggregate_by_dim(led, "publish_hour") == {}
 
 
-def test_crosspost_stamps_per_account_top_bias_seam(tmp_path, monkeypatch):
-    # The mint (_mint_surface_post) stamps the PER-ACCOUNT top_bias = cfg.resolve_top_bias(handle),
-    # NOT the global cfg.aware_reframe — framing is a per-account choice, so the global would mis-attribute.
-    # Assert the exact seam the mint reads (resolve_top_bias per handle), decoupled from a full-mint fixture.
+def test_crosspost_stamps_per_account_top_bias_seam(tmp_path):
+    # The mint stamps per-account framing via resolve_top_bias (Account.framing), not the global
+    # aware_reframe. Duck-typed: an object with framing="top"/"center" is the real seam.
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(Config, "resolve_top_bias", lambda self, acct: acct == "a", raising=True)
-    assert cfg.resolve_top_bias("a") is True             # the per-account value the mint stamps
-    assert cfg.resolve_top_bias("b") is False            # a different account resolves differently
+    top = type("_Acct", (), {"framing": "top"})()
+    center = type("_Acct", (), {"framing": "center"})()
+    assert cfg.resolve_top_bias(top) is True
+    assert cfg.resolve_top_bias(center) is False
 
 
 # ======================================================================================
@@ -149,12 +149,16 @@ def test_timing_apply_is_noop_when_kill_switch_off(tmp_path):
     assert _frozen(led) == before
 
 
-def test_timing_window_clamp_skips_out_of_window_hour(tmp_path, monkeypatch):
+def test_timing_window_clamp_skips_out_of_window_hour(tmp_path):
     # The winning hour must land in the account's posting window; else the bias is skipped (crux Task 3
     # window-clamp) so timing never proposes a slot the cadence layer later rejects.
     from fanops.timing_bias import timing_bias_hour_for
-    cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_hour=3); _validate(cfg)   # winner = 03:00
-    monkeypatch.setattr(Config, "account_window", lambda self, h: (9, 23), raising=True)  # window 09–23
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({
+        "accounts": [{"handle": "@a", "account_id": "1", "platforms": ["instagram"],
+                      "status": "active", "daily_window": [9, 23]}]}))
+    led = _timing_led(cfg, hot_hour=3, cold_hour=18); _validate(cfg)   # winner = 03:00, window 09–23
     assert timing_bias_hour_for(led, cfg, "a") is None    # 03:00 outside 09–23 -> no bias
 
 
@@ -181,46 +185,48 @@ def test_surface_time_leans_the_hinted_hour(tmp_path):
     assert surface_time(base, "a", "instagram", "2026-06-02", 0, clip_id="c1", hour_hint=None) == plain
 
 
-def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch, mocker):
-    # apply_timing_bias must fire in the AUTONOMOUS run loop when its flag is on + live backend — symmetric
-    # with apply_p4_dim_bias. Network-free (spied); self-guards on the flag + validation-frozen (fail-SAFE).
-    monkeypatch.chdir(tmp_path)  # cmd_run builds its OWN Config() from cwd — chdir into an empty tree so
-    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")  # advance() self-ingest is a no-op (toolchain-free CI safe)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
-    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
-    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
-    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
-    spy = mocker.patch.object(cli, "apply_timing_bias", side_effect=lambda led, cfg: led)
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+def _persist_timing_run_workspace(tmp_path, monkeypatch, *, flag_on: bool) -> Config:
+    # Real `fanops run` entry: chdir so Config() roots at tmp_path. Posts only (no transcribed
+    # source) so advance() stays idle. No submission_id so learn_pass fetches nothing.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    if flag_on:
+        monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")
+    else:
+        monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test")
+    monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
-    from fanops.cli import main
-    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
-    assert spy.call_count == 1
+    led = Ledger.load(cfg)
+    for i in range(8):
+        _post(led, f"h{i}", reach=1000.0, publish_hour=18, publish_dow=2)
+    for i in range(8):
+        _post(led, f"c{i}", reach=100.0, publish_hour=3, publish_dow=6)
+    led.save()
+    _validate(cfg)
+    return cfg
 
 
-def test_run_skips_timing_bias_when_flag_off(tmp_path, monkeypatch, mocker):
-    monkeypatch.chdir(tmp_path)  # cmd_run builds its OWN Config() from cwd — chdir into an empty tree so
-    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)  # advance() self-ingest is a no-op (CI toolchain-free safe)
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk-test"); monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    import fanops.cli as cli
-    mocker.patch.object(cli, "_default_list_posts", return_value=lambda w: [])
-    mocker.patch.object(cli, "pull_metrics", side_effect=lambda led, cfg, **kw: led)
-    mocker.patch.object(cli, "classify_outcomes", return_value={"winners": [], "losers": []})
-    mocker.patch.object(cli, "amplify", side_effect=lambda led, cfg, winners, **kw: led)
-    mocker.patch.object(cli, "retire", side_effect=lambda led, losers, **kw: led)
-    spy = mocker.patch.object(cli, "apply_timing_bias", side_effect=lambda led, cfg: led)
-    cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.accounts_path.write_text(json.dumps(
-        {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+def test_run_fires_timing_bias_when_flag_on_and_live(tmp_path, monkeypatch):
+    # apply_timing_bias must fire in the AUTONOMOUS run loop when its flag is on + live backend —
+    # write-path: the reach-winning hour is persisted to timing_bias.json.
+    cfg = _persist_timing_run_workspace(tmp_path, monkeypatch, flag_on=True)
     from fanops.cli import main
     assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
-    assert spy.call_count == 0
+    prior = json.loads(cfg.timing_bias_path.read_text())
+    assert prior["publish_hour"] == 18
+
+
+def test_run_skips_timing_bias_when_flag_off(tmp_path, monkeypatch):
+    cfg = _persist_timing_run_workspace(tmp_path, monkeypatch, flag_on=False)
+    from fanops.cli import main
+    assert main(["run", "--base-time", "2026-06-02T18:00:00Z"]) == 0
+    assert not cfg.timing_bias_path.exists()
 
 
 # ======================================================================================

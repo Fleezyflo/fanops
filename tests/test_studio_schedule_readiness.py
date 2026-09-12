@@ -73,7 +73,7 @@ def test_not_ready_when_render_not_finished(tmp_path):
                path=str(cfg.clips / "b.mp4"), state=RenderState.retired)
     led = _led_with(cfg, render=r, post_over={"render_id": "r1"}, moment_hook="H")
     ready, reason = views.publish_readiness(led, led.posts["p"])
-    assert ready is False
+    assert ready is False and reason == "render not finished"
 
 
 def test_not_ready_on_hook_drift(tmp_path):
@@ -89,7 +89,7 @@ def test_not_ready_when_clip_not_shippable(tmp_path):
     cfg = Config(root=tmp_path)
     led = _led_with(cfg, clip_state=ClipState.held)               # held clip is not reusable
     ready, reason = views.publish_readiness(led, led.posts["p"])
-    assert ready is False
+    assert ready is False and "held" in reason and "not shippable" in reason
 
 
 def test_ready_when_render_is_queued_state(tmp_path):
@@ -126,7 +126,7 @@ def test_publish_readiness_fail_open(tmp_path):
     class Weird: pass
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     ready, reason = views.publish_readiness(led, Weird())          # missing every attr -> never raises
-    assert ready is False and isinstance(reason, str)
+    assert ready is False and reason == "unverified"
 
 
 # ── explain_suggested_time: one plain why-sentence ─────────────────────────────────────────────────
@@ -166,7 +166,8 @@ def test_schedule_route_shows_ready_and_why(tmp_path):
     route_future = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
     _led_with(cfg, clip_state=ClipState.queued, post_over={"scheduled_time": route_future})
     html = _client(cfg).get("/schedule?account=a").data.decode()
-    assert "schedule-ready" in html                              # the readiness chip rendered in bucket
+    assert ">ready<" in html                                     # visible ready text, not the class shared with "fix clip"
+    assert "fix clip" not in html
 
 
 def test_cv_off_row_is_ready_not_warn(tmp_path, monkeypatch):

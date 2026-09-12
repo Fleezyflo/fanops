@@ -1,10 +1,12 @@
 {# src/fanops/studio/templates/golive.html — the Go-Live tab: turn FanOps from dryrun into real
    publishing via Postiz, entirely in the browser (no env vars / CLI / accounts.json editing). #}
 {% extends "base.html" %}
+{% from "_term.html" import term %}
 {% block title %}Go Live{% endblock %}
 {% block body %}
   <h2>Go Live &amp; connect</h2>
-  <p class="muted">Connect Postiz and switch from dryrun to live publishing. Dryrun is the safe
+  <p class="muted">Connect Postiz and switch from dryrun to live publishing. Each handle+platform
+    publishes through an integration{{ term('integration') }}. Dryrun is the safe
     default — you can always switch back.</p>
   {% include "_golive_panel.html" %}
 {% endblock %}
