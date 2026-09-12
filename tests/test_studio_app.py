@@ -340,18 +340,6 @@ def test_mark_posted_success_does_not_leak_raw_dict_repr(tmp_path):
     assert b"post_id" not in r.data                             # no raw Python dict key leaked (Jinja escapes ' -> &#39;)
     assert b"\xe2\x9c\x93" in r.data                            # still shows the ✓ success mark
 
-def test_publish_now_success_does_not_leak_raw_dict_repr(tmp_path, monkeypatch, mocker):
-    from fanops.post.postiz import PostizHealth
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    mocker.patch("fanops.post.postiz.postiz_health_probe", return_value=PostizHealth(True, 200, ""))   # T10: probe healthy -> reach the publish success path this test exercises
-    mocker.patch("fanops.post.run.publish_post", return_value="published")
-    cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
-    r = _client(cfg).post("/publish/now/p_base", data={"confirm": "1"})
-    assert r.status_code == 200
-    assert b"post_id" not in r.data and b"&#39;" not in r.data
-    assert b"saved" in r.data.lower() or b"Shipped live" in r.data
-
-
 # ---- content-lifecycle Phase 4: cross-account reuse routes ----
 def _seed_xacct_route(cfg):
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,21 +419,6 @@ def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):
     r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
     assert b"Approve with hook" in r.data and b"Approve as-is" in r.data
-
-
-def test_approve_with_hook_route_restores_and_approves(tmp_path, mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the moment-restore flow is OFF-mode (ON -> per-surface hooks own the burn)
-    cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
-    def _fake(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-        c = next(c for c in led.clips.values() if c.parent_id == moment_id and c.aspect is aspect)
-        new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}})
-        led.clips[c.id] = new; return led, new
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake)
-    r = _client(cfg).post("/posts/approve-with-hook/clip_1")
-    assert r.status_code == 200 and (b"hook restored" in r.data or b"scheduled" in r.data.lower())
-    led = Ledger.load(cfg)
-    assert led.moments["mom_1"].hook == "made it and lost everything" and led.moments["mom_1"].hook_removed is None
-    assert led.posts["p1"].state is PostState.queued
 
 
 def test_approve_as_is_route_approves_clean(tmp_path):

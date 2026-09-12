@@ -8,7 +8,6 @@ test so a setenv never leaks into a later test (pytest-os-environ-leak-guard).""
 import json
 import os
 import re
-import types
 import pytest
 from fanops.config import Config
 from fanops.studio import golive
@@ -42,10 +41,13 @@ def _client(cfg):
     return app.test_client()
 
 
-def _chan(cid, name, platform):
-    # discover_channels only reads .id/.name/.platform off each provider-listed row.
-    return types.SimpleNamespace(id=cid, name=name, platform=platform)
-
+class _R:
+    def __init__(self, payload, status=200):
+        self.status_code = status
+        self._payload = payload
+        self.text = ""
+    def json(self):
+        return self._payload
 
 
 def _seed_deps(cfg, rows):
@@ -61,9 +63,13 @@ def _seed_deps(cfg, rows):
 
 def test_discover_route_lists_connected_channels(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); _seed(cfg, [])
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
-    monkeypatch.setattr(golive.postiz, "postiz_list_integrations", lambda c: [_chan("ig_1", "Mark", "instagram")])
-    monkeypatch.setattr(golive.zernio, "zernio_list_accounts", lambda c: [_chan("z_1", "llllllll", "tiktok")])
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007/api")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    monkeypatch.setattr(golive.postiz.requests, "get",
+                        lambda *_a, **_k: _R([{"id": "ig_1", "name": "Mark", "identifier": "instagram"}]))
+    monkeypatch.setattr(golive.zernio.requests, "get",
+                        lambda *_a, **_k: _R({"accounts": [{"_id": "z_1", "name": "llllllll", "platform": "tiktok"}]}))
     r = _client(cfg).post("/golive/discover")
     assert r.status_code == 200
     body = r.data.decode()
