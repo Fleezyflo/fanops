@@ -1120,7 +1120,6 @@
     },
     "fanops.llm": {
       "compile": [
-        "fanops.config",
         "fanops.errors",
         "fanops.llm_errors",
         "fanops.llm_json"
@@ -2983,7 +2982,7 @@
     "fanops.clip": 7,
     "fanops.clip_ffmpeg": 1,
     "fanops.compose": 1,
-    "fanops.config": 123,
+    "fanops.config": 122,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
     "fanops.controlio": 14,
@@ -3229,7 +3228,7 @@
     "fanops.ledger_sqlite": 2,
     "fanops.ledger_wipe": 3,
     "fanops.lever_docs": 5,
-    "fanops.llm": 4,
+    "fanops.llm": 3,
     "fanops.llm_errors": 0,
     "fanops.llm_json": 0,
     "fanops.log": 1,
@@ -5178,7 +5177,7 @@
     "G2_largest_scc_size": 35,
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 825,
+    "compile_edges_G1": 824,
     "lazy_edges": 460,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 113,

@@ -24,7 +24,6 @@ therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `
 Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
 from __future__ import annotations
 import json, logging, os, random, subprocess, tempfile, time
-from fanops.config import _GROK_MODEL_ALIASES
 from fanops.errors import ToolchainMissingError
 from fanops.llm_errors import (
     LlmContextLimitError,
@@ -441,6 +440,7 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     raise LlmSchemaError(f"cursor-agent -p envelope had no structured_output or JSON result: {env}")
 
 def _resolve_grok_model(model: str | None) -> str:
+    from fanops.config import _GROK_MODEL_ALIASES
     if not model:
         return "grok-4.6"
     return _GROK_MODEL_ALIASES.get(model, model)
