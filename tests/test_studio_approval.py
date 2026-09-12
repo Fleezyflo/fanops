@@ -482,11 +482,12 @@ def _seed_removed_hook_review(cfg):
                           platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, scheduled_time=_FUTURE, public_url="dryrun://p1"))
 
 def test_review_shows_hook_choice_when_hook_removed(tmp_path):
-    # P9: creative_variation is no longer a runtime flag — the moment-hook RESTORE choice shows whenever
-    # hook_removed is set (the OFF-mode approve_with_hook flow).
+    # Ghost flag: the stripped-hook badge still names what was killed; the dead moment-restore
+    # "Approve with hook" choice is not offered (per-surface hooks own the burn).
     cfg = Config(root=tmp_path); _seed_removed_hook_review(cfg)
     html = _client(cfg).get("/review?view=list").data
-    assert b"Approve with hook" in html and b"hook removed" in html
+    assert b"hook removed" in html
+    assert b"Approve with hook" not in html and b"hook-choice" not in html
 
 
 def test_review_hides_hook_choice_when_creative_variation_on(tmp_path, monkeypatch):

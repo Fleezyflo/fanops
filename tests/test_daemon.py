@@ -555,6 +555,17 @@ def test_status_ignores_manual_heartbeat_without_loop_origin(tmp_path, monkeypat
     assert rep["verdict"] != "alive"
 
 
+def test_status_ignores_tsv_activity_without_loop_heartbeat(tmp_path, monkeypatch):
+    # Any-line TSV is not liveness — a fresh TAB stage line without origin=loop JSON is not alive.
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(f"{now}\tllm\tok\n")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
+    rep = daemon.status(cfg, interval=600)
+    assert rep["verdict"] != "alive"
+
+
 def test_stop_boots_out_label(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")

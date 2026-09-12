@@ -413,12 +413,14 @@ def _seed_removed_hook(cfg):
 
 
 def test_review_renders_both_hook_choice_buttons(tmp_path, monkeypatch):
-    # slice 2: the removed-hook card offers BOTH one-click choices.
-    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")   # M3d: the restore choice is OFF-mode only (hidden when ON)
+    # Ghost flag: setting FANOPS_CREATIVE_VARIATION=0 does nothing — restore UI stays hidden.
+    monkeypatch.setenv("FANOPS_CREATIVE_VARIATION", "0")
     cfg = Config(root=tmp_path); _seed_removed_hook(cfg)
     r = _client(cfg).get("/review?view=list")
     assert r.status_code == 200
-    assert b"Approve with hook" in r.data and b"Approve as-is" in r.data
+    assert b"hook removed" in r.data
+    assert b"Approve with hook" not in r.data and b"hook-choice" not in r.data
+    assert b"Approve all accounts" in r.data
 
 
 def test_approve_as_is_route_approves_clean(tmp_path):

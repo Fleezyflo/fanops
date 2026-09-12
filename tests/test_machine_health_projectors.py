@@ -107,6 +107,19 @@ def test_project_daemon_strip_stale_without_activity():
     assert "stale" in dead["verdict"]
 
 
+def test_project_daemon_strip_keeps_exec_fail_verdict():
+    snap = {"loaded": True, "installed": True, "interval": 600,
+            "verdict": "loaded but interpreter not executable: /missing/fanops"}
+    none = project_daemon_strip(snap, age=None, stale=True, run_line=None, alive_mid=False)
+    assert "interpreter not executable" in none["verdict"]
+    mid = project_daemon_strip(
+        snap, age=None, stale=True, run_line="run=1 stage=x", alive_mid=True,
+    )
+    assert "interpreter not executable" in mid["verdict"]
+    assert mid["verdict"] != "alive"
+    assert "no heartbeat" not in mid["verdict"]
+
+
 def test_project_daemon_slice_from_report():
     rep = HealthReport(
         checks=[_check("publish daemon alive + queue draining (heartbeat + past-due backlog)", True)],
