@@ -41,7 +41,7 @@ def test_posted_row_carries_variant_hook(tmp_path):
     cfg = Config(root=tmp_path); led = _base(cfg, hook="the smile gives it away")
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                       caption="c", state=PostState.published, scheduled_time="2026-06-01T00:00:00Z",
-                      public_url="http://x"))
+                      public_url="https://www.instagram.com/p/x/"))
     led.save()
     rows = views.posted_library(Ledger.load(cfg), cfg)
     assert rows and rows[0].variant_hook == "the smile gives it away"
@@ -55,7 +55,7 @@ def test_archive_records_render_identity(tmp_path):
     p = Post(id="p_pub", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
              caption="c", state=PostState.published, published_at="2026-06-05T10:00:00Z",
              render_id="render_x",
-             media_urls=["file:///clips/batch/src/render_x.9x16.mp4"], public_url="http://ig/x")
+             media_urls=["file:///clips/batch/src/render_x.9x16.mp4"], public_url="https://www.instagram.com/p/x/")
     _archive_published(cfg, p)
     rec = json.loads((cfg.published / "2026-06-05" / "p_pub.json").read_text())
     assert rec["render_id"] == "render_x"
