@@ -19,8 +19,13 @@ def _ffprobe_dims(_cmd, **_kw):
 
 
 def _patch_signal_bins(mocker, ffmpeg_side_effect):
-    mocker.patch("fanops.signals.subprocess.run", side_effect=ffmpeg_side_effect)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
+    """One subprocess.run mock: ffprobe dimensions + ffmpeg stderr. Same stdlib module."""
+    def combined(cmd, **kw):
+        joined = " ".join(str(c) for c in cmd)
+        if "ffprobe" in joined:
+            return _ffprobe_dims(cmd, **kw)
+        return ffmpeg_side_effect(cmd, **kw)
+    return mocker.patch("fanops.signals.subprocess.run", side_effect=combined)
 
 
 def _ffmpeg_on_path(tmp_path, monkeypatch):
@@ -176,8 +181,7 @@ def test_detect_signals_v1_sidecar_not_adopted_recomputes(tmp_path, mocker):
     sc = cfg.agent_io / "signals"; sc.mkdir(parents=True, exist_ok=True)
     (sc / "src_1.json").write_text(json.dumps(                # legacy v1-shaped sidecar (no version)
         {"peaks": [{"t": 4.0, "kind": "speech_resume", "score": 0.5}], "duration": 12.0}))
-    spy = mocker.patch("fanops.signals.subprocess.run", side_effect=_energy_fake_run)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
+    spy = _patch_signal_bins(mocker, _energy_fake_run)
     detect_signals(led, cfg, "src_1")
     spy.assert_called()                                       # stale sidecar rejected -> ffmpeg ran
     d = json.loads((sc / "src_1.json").read_text())
@@ -334,8 +338,7 @@ def test_detect_signals_producer_path_still_runs_ffmpeg(tmp_path, mocker):
             returncode = 0; stdout = ""
             stderr = SILENCE_STDERR if "silencedetect" in joined else SCENE_STDERR
         return R()
-    spy = mocker.patch("fanops.signals.subprocess.run", side_effect=fake_run)
-    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe_dims)
+    spy = _patch_signal_bins(mocker, fake_run)
     led = detect_signals(led, cfg, "src_1")                          # default: producer path
     spy.assert_called()                                             # ffmpeg ran (warms the sidecar)
     assert led.sources["src_1"].state is SourceState.signalled
