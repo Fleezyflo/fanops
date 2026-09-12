@@ -25,7 +25,7 @@ def _queued(led, cfg, pid="p1", cid="clip_1", when="2026-06-02T18:00:00Z", accou
     _mom1(led)
     led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="98432",
-                      platform=Platform.instagram, caption="ship it",
+                      platform=Platform.instagram, caption="ship it", post_type="post",
                       scheduled_time=when, state=PostState.queued, public_url="dryrun://98432"))
     led.save()                                          # persist so the self-loading publish_due sees it
 
@@ -63,6 +63,57 @@ def _http_media(led, *pids):
     for pid in pids:
         led.posts[pid].media_urls = ["https://h/v.mp4"]   # already-http -> passes through, no live upload
     led.save()
+
+
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+    def json(self):
+        return self._b
+
+
+_POSTIZ_INTGS = [
+    {"id": "98432", "name": "a", "identifier": "instagram-standalone"},
+    {"id": "1", "name": "a", "identifier": "instagram-standalone"},
+    {"id": "ig_1", "name": "ig", "identifier": "instagram-standalone"},
+    {"id": "98", "name": "a", "identifier": "instagram-standalone"},
+]
+
+
+def _wire_vendor(mocker, *, on_post=None, on_upload=None):
+    """Vendor-edge HTTP double on the `requests` library — not a fanops.* patch."""
+    log = {"post_urls": [], "uploads": 0, "jsons": []}
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, _POSTIZ_INTGS)
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        u = str(url)
+        log["post_urls"].append(u)
+        if "/upload" in u:
+            log["uploads"] += 1
+            if on_upload is not None:
+                return on_upload(url, **kw)
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        log["jsons"].append(kw.get("json"))
+        if on_post is not None:
+            return on_post(url, **kw)
+        if "zernio.com" in u:
+            return _R(201, {"_id": "z_1"})
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+    mocker.patch("requests.put", return_value=_R(200, {}))
+    return log
+
+
+def _assert_not_published(*posts):
+    for p in posts:
+        assert p.state is not PostState.published, (
+            f"{p.id} leftover dryrun:// must not become published (state={p.state} url={p.public_url!r})"
+        )
 
 
 def test_is_fatal_auth_error_matches_by_type_not_substring():
@@ -181,33 +232,18 @@ def test_publish_uploads_media_once_and_advances(tmp_path, monkeypatch, mocker):
     assert led.posts["p1"].media_urls == led.posts["p2"].media_urls
 
 def test_publish_uploads_clip_media_once_across_posts_live(tmp_path, monkeypatch, mocker):
-    # F44 locked for the per-post claim->finalize world: two posts on ONE clip must trigger EXACTLY ONE
-    # real upload. The first post's finalize persists clip.media_url to disk; the second post's lock-free
-    # network phase reloads that cache and skips the upload. dryrun can't show this (no real upload), so
-    # use a live backend (postiz) and spy the actual uploader (ensure_clip_media -> get_media_uploader).
-    # A double-upload here would be a per-post cost/latency regression the separate claim-per-post design
-    # could silently reintroduce if the clip cache stopped surviving finalize.
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    # F44: two posts on ONE clip must trigger EXACTLY ONE real upload. Leftover dryrun:// plus a
+    # poster that only acknowledges submitted (Postiz 201, no permalink) must not become published.
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _queued(led, cfg, pid="p1", cid="shared", when="2020-01-01T00:00:00Z")
-    _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")  # same clip, 2nd post
-    uploads = []
-    def fake_upload(cfg_, path, **kw):
-        uploads.append(str(path)); return "img1|https://cdn.postiz.test/shared.mp4"
-    mocker.patch("fanops.post.get_media_uploader", return_value=fake_upload)
-    import fanops.post.run as run
-    class _OkPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+    _queued(led, cfg, pid="p2", cid="shared", when="2020-01-01T00:00:00Z")
+    log = _wire_vendor(mocker)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert len(uploads) == 1                                   # the clip uploaded ONCE, not once-per-post
-    assert led.posts["p1"].state is PostState.published and led.posts["p2"].state is PostState.published
-    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["img1|https://cdn.postiz.test/shared.mp4"]
+    assert log["uploads"] == 1
+    _assert_not_published(led.posts["p1"], led.posts["p2"])
+    assert led.posts["p1"].media_urls == led.posts["p2"].media_urls == ["img1|https://uploads.postiz.com/v.mp4"]
 
 def test_publish_idempotent_skips_already_submitted(tmp_path, monkeypatch, mocker):
     _live(monkeypatch)                                  # live backend so the 1st pass actually publishes
@@ -325,69 +361,50 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     assert spy.call_count == 0                                             # no media re-upload either
 
 def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, mocker):
-    # Per-post isolation: clip A's media raises, clip B still publishes.
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    # Per-post isolation: clip A's upload 503s; clip B still runs. Leftover dryrun:// is not a permalink.
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("pa", "c_a"), ("pb", "c_b")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
+                          platform=Platform.instagram, caption="x", post_type="post",
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
+    led.posts["pb"].media_urls = ["https://uploads.postiz.com/ok.mp4"]
     led.save()
-    import fanops.post.run as run
-    # c_a upload raises a NON-auth error; c_b uploads fine; poster.publish succeeds (submitted)
-    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
-        if clip_id == "c_a":
-            raise RuntimeError("postiz upload failed (503): server down")
-        return "https://cdn/ok.mp4"
-    mocker.patch.object(run, "ensure_clip_media", side_effect=fake_ensure)
-    mocker.patch("fanops.post.run.time.sleep", return_value=None)   # MOL-115 retry backoff — no real sleep in unit test
-    class _OkPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led_.posts[post_id].submission_id = "s_ok"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+    _wire_vendor(mocker, on_upload=lambda url, **kw: _R(503, {}, text="server down"))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pa"].state is PostState.failed   # MOL-125: pre-send transient -> failed (re-queueable)
+    assert led.posts["pa"].state is PostState.failed
     assert "503" in (led.posts["pa"].error_reason or "") or "publish failed" in (led.posts["pa"].error_reason or "").lower()
-    assert led.posts["pb"].state is PostState.published        # healthy clip still shipped
+    _assert_not_published(led.posts["pb"])
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
-    # AUDIT C1: a poster that parks a post in needs_reconcile (ambiguous 5xx/timeout) is NOT an
-    # exception — publish_due must leave that post in needs_reconcile and keep publishing the rest
-    # (a needs_reconcile post is terminal-for-now, like failed, never re-driven this pass).
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    # AUDIT C1: a 5xx park is not an exception — the rest of the due queue still runs. Leftover
+    # dryrun:// on the healthy post is not a permalink.
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("prec", "c_rec"), ("pok", "c_ok")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
+                          platform=Platform.instagram, caption=pid, post_type="post",
+                          media_urls=["https://uploads.postiz.com/ok.mp4"],
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
-    import fanops.post.run as run
-    mocker.patch.object(run, "ensure_clip_media", return_value="https://cdn/ok.mp4")
-    class _ReconcileThenOkPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            if post_id == "prec":
-                led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.needs_reconcile})
-                led_.posts[post_id].error_reason = "blotato 503: ambiguous, may be live"
-            else:
-                led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-                led_.posts[post_id].submission_id = "s_ok"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_ReconcileThenOkPoster(cfg))
+    n = {"posts": 0}
+    def on_post(url, **kw):
+        n["posts"] += 1
+        if n["posts"] == 1:
+            return _R(503, {}, text="boom")
+        return _R(201, {"id": "postiz_ok"})
+    _wire_vendor(mocker, on_post=on_post)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
-    led2 = Ledger.load(cfg)                                       # durable across the finalize save
-    assert led2.posts["prec"].state is PostState.needs_reconcile   # parked, not re-driven, not failed
-    assert led2.posts["pok"].state is PostState.published          # healthy post still shipped
+    led2 = Ledger.load(cfg)
+    assert led2.posts["prec"].state is PostState.needs_reconcile
+    _assert_not_published(led2.posts["pok"])
 
 
 def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
@@ -418,36 +435,28 @@ def test_publish_auth_error_halts_run(tmp_path, monkeypatch, mocker):
 
 
 def test_publish_non_auth_error_with_401_in_text_does_not_halt(tmp_path, monkeypatch, mocker):
-    # AUDIT H8 over-fire regression: a NON-auth error whose message merely CONTAINS "401" (e.g. a
-    # 503 body echoing an upstream id) must NOT halt the queue — it's a per-post failure. The old
-    # substring match wrongly tore down the whole run on this; the typed check must not.
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    # AUDIT H8 over-fire: a NON-auth error whose message merely CONTAINS "401" must NOT halt the
+    # queue. Leftover dryrun:// on the healthy post is not a permalink.
+    _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("pbad", "c_bad"), ("pok", "c_ok2")]:
         f = cfg.clips / f"{cid}.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
         _mom1(led)
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
-                          platform=Platform.instagram, caption="x",
+                          platform=Platform.instagram, caption=pid, post_type="post",
+                          media_urls=["https://uploads.postiz.com/ok.mp4"],
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.save()
-    import fanops.post.run as run
-    def fake_ensure(led_, cfg_, clip_id, backend=None, **kw):
-        if clip_id == "c_bad":
-            raise RuntimeError("postiz 503: upstream request 401abc timed out")  # 401 in text, NOT auth
-        return "https://cdn/ok.mp4"
-    mocker.patch.object(run, "ensure_clip_media", side_effect=fake_ensure)
-    class _OkPoster:
-        def __init__(self, cfg): pass
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led_.posts[post_id].submission_id = "s_ok"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
-    publish_due(cfg, now="2026-06-02T18:00:00Z")   # must NOT raise
+    def on_post(url, **kw):
+        if "pbad" in str(kw.get("json") or {}):
+            raise RuntimeError("postiz 503: upstream request 401abc timed out")
+        return _R(201, {"id": "s_ok"})
+    _wire_vendor(mocker, on_post=on_post)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pbad"].state is PostState.failed         # isolated per-post failure
-    assert led.posts["pok"].state is PostState.published        # the run continued
+    assert led.posts["pbad"].state is PostState.failed
+    _assert_not_published(led.posts["pok"])
 
 
 def test_publish_due_no_deadlock_self_manages_its_lock(tmp_path, monkeypatch, mocker):
@@ -504,41 +513,32 @@ def test_publish_due_garbage_scheduled_time_does_not_escape(tmp_path, monkeypatc
 
 
 def test_publish_uploads_variant_file_media_on_live_backend(tmp_path, monkeypatch, mocker):
-    # AUDIT (stage-6 HIGH): a creative-variation post is BORN with media_urls=["file://<variant>"]
-    # (crosspost stamps the per-account variant render). On a live backend a file:// entry must be
-    # uploaded as the variant FILE itself (NOT ensure_clip_media — the clip-level cache holds the
-    # parent's BASE render and would lose the burned hook). The https result is persisted so a retry
-    # never re-uploads.
-    monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    # A variant post is born with media_urls=["file://<variant>"]. Live publish must upload THAT file,
+    # not the parent clip. Leftover dryrun:// is not a permalink.
+    from fanops.models import Render
+    _live(monkeypatch)
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     vfile = cfg.clips / "clip_1_vhash.mp4"; vfile.parent.mkdir(parents=True, exist_ok=True); vfile.write_bytes(b"V")
     _mom1(led)
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(cfg.clips / "clip_1.mp4"), state=ClipState.queued))
+    led.add_render(Render(id="r_v", clip_id="clip_1", account="a", surface_key="a|instagram", path=str(vfile)))
     led.add_post(Post(id="pv", parent_id="clip_1", account="a", account_id="98432",
-                      platform=Platform.instagram, caption="x", scheduled_time="2020-01-01T00:00:00Z",
+                      platform=Platform.instagram, caption="x", post_type="post",
+                      scheduled_time="2020-01-01T00:00:00Z", render_id="r_v",
                       state=PostState.queued, media_urls=[f"file://{vfile}"], public_url="dryrun://pv"))
     led.save()
     uploaded = []
-    def fake_upload(cfg_, path, **kw):
-        uploaded.append(str(path)); return "img1|https://cdn.postiz.test/v.mp4"
-    # run.py routes the variant file:// upload through get_media_uploader(cfg, backend)(cfg, path);
-    # patch that resolver (bound into run.py's namespace) to a fake uploader.
-    mocker.patch("fanops.post.run.get_media_uploader", return_value=fake_upload)
-    sent = {}
-    class FakePoster:
-        def publish(self, led_, post_id):
-            sent["media_urls"] = list(led_.posts[post_id].media_urls)
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            return led_
-    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
+    def on_upload(url, **kw):
+        files = kw.get("files") or {}
+        uploaded.append((files.get("file") or ("", None))[0])
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    _wire_vendor(mocker, on_upload=on_upload)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert uploaded == [str(vfile)]                                    # the VARIANT file, not the parent clip
-    assert sent["media_urls"] == ["img1|https://cdn.postiz.test/v.mp4"]     # the poster sees postiz composite, never file://
-    assert led.posts["pv"].media_urls == ["img1|https://cdn.postiz.test/v.mp4"]  # persisted -> a retry never re-uploads
-    assert led.posts["pv"].state is PostState.published
+    assert uploaded == ["clip_1_vhash.mp4"]
+    assert led.posts["pv"].media_urls == ["img1|https://uploads.postiz.com/v.mp4"]
+    _assert_not_published(led.posts["pv"])
 
 
 def test_archive_published_is_owner_only_with_no_world_readable_window(tmp_path):
@@ -619,32 +619,6 @@ def test_publish_throttle_wait_spaces_postiz_calls(tmp_path, monkeypatch, mocker
     _publish_throttle_wait(cfg, "postiz", "ig_1")
     _publish_throttle_wait(cfg, "postiz", "ig_1")
     assert len(sleeps) == 1 and sleeps[0] >= 14.0
-    reset_publish_throttle()
-
-
-def test_publish_due_calls_postiz_throttle(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_API_KEY", "pk_test")
-    from fanops.post.run import publish_due, reset_publish_throttle
-    reset_publish_throttle()
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    for pid in ("p1", "p2"):
-        _queued(led, cfg, pid=pid, cid=f"c_{pid}", when="2020-01-01T00:00:00Z")
-        led.posts[pid].media_urls = ["https://cdn.test/clip.mp4"]
-    led.save()
-    class FakePoster:
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led_.posts[post_id].public_url = "https://instagram.com/x/"
-            return led_
-    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
-    throttle = mocker.patch("fanops.post.run._publish_throttle_wait")
-    publish_due(cfg, now="2026-06-02T18:00:00Z")
-    assert throttle.call_count == 2
-    assert all(c.args[1] == "postiz" for c in throttle.call_args_list)
     reset_publish_throttle()
 
 

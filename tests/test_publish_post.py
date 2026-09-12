@@ -214,36 +214,45 @@ def test_timeless_queued_post_does_not_auto_publish(tmp_path, monkeypatch):
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued              # parked, never published
 
 
-def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch):
-    # CULM-2: a per-account render's file must be uploaded at most ONCE (cached on Render.media_url),
-    # not re-uploaded every approve->publish cycle (approval re-points media_urls to file://<render>).
+def test_variant_render_uploaded_once_across_two_publishes(tmp_path, monkeypatch, mocker):
+    # CULM-2: a per-account render's file must be uploaded at most ONCE (cached on Render.media_url).
+    # Leftover dryrun:// is not a permalink.
     from fanops.models import Render
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     rid = "render_x"; vf = cfg.clips / "v.mp4"; vf.parent.mkdir(parents=True, exist_ok=True); vf.write_bytes(b"V")
     led.add_render(Render(id=rid, clip_id="c1", account="a", surface_key="a|instagram", path=str(vf)))
     _mom1(led)
     led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(vf), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="98", platform=Platform.instagram,
-                      caption="x", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
+                      caption="x", post_type="post", state=PostState.queued, scheduled_time="2000-01-01T00:00:00Z",
                       render_id=rid, media_urls=[f"file://{vf}"], public_url="dryrun://p1"))
     led.save()
-    calls = {"n": 0}
-    def up(cfg, backend=None):
-        def _u(c, pth, **kw): calls["n"] += 1; return "img1|https://cdn/v.mp4"
-        return _u
-    monkeypatch.setattr("fanops.post.get_media_uploader", up)        # ensure_render_media (media.py) path
-    monkeypatch.setattr("fanops.post.run.get_media_uploader", up)    # the legacy run.py direct-upload path
-    class FakePoster:
-        def publish(self, led, pid): led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
-    monkeypatch.setattr("fanops.post.run.get_poster", lambda cfg, backend=None: FakePoster())
-    assert publish_post(cfg, "p1") == "published"
-    assert Ledger.load(cfg).renders[rid].media_url == "img1|https://cdn/v.mp4"   # cached on the Render
+    class _R:
+        def __init__(self, code, body=None, text=""):
+            self.status_code = code; self._b = {} if body is None else body; self.text = text
+        def json(self): return self._b
+    uploads = {"n": 0}
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "98", "name": "a", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        if "/upload" in str(url):
+            uploads["n"] += 1
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+    out = publish_post(cfg, "p1")
+    assert out != "published"
+    assert Ledger.load(cfg).posts["p1"].state is not PostState.published
+    assert Ledger.load(cfg).renders[rid].media_url == "img1|https://uploads.postiz.com/v.mp4"
     with Ledger.transaction(cfg) as lg:
-        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.queued}); lg.posts["p1"].media_urls = [f"file://{vf}"]   # simulate a re-approval re-stamp
+        lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.queued, "submission_id": None})
+        lg.posts["p1"].media_urls = [f"file://{vf}"]
     publish_post(cfg, "p1")
-    assert calls["n"] == 1                                            # uploaded ONCE total, not per cycle
+    assert uploads["n"] == 1
 
 
 def test_real_id_post_is_refused_at_the_claim_never_stranded(tmp_path, monkeypatch):

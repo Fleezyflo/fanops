@@ -74,15 +74,21 @@ def test_permanent_4xx_fails_no_retry(tmp_path, monkeypatch, mocker):
 
 
 def test_idempotency_skips_resubmit_when_submission_id_exists(tmp_path, monkeypatch, mocker):
-    # A post that already has a real submission_id must NOT be re-POSTed on retry/recovery.
+    # A post that already has a real submission_id must NOT be re-POSTed; it stays queued, not stranded submitting.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg, sub="z_existing_1")
-    import fanops.post.run as run
-    mocker.patch("fanops.post.run._ensure_media", return_value=None)
-    gp = mocker.patch.object(run, "get_poster")
+    sent = {"n": 0}
+    def boom(url, **kw):
+        sent["n"] += 1
+        raise AssertionError(f"must not POST when submission_id exists: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     _publish_one(cfg, "p1", "zernio")
-    gp.assert_not_called()   # poster.publish never invoked — no double-submit
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "z_existing_1"
+    assert sent["n"] == 0
 
 
 def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkeypatch, mocker):

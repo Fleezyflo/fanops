@@ -414,20 +414,25 @@ def test_validation_valueerror_lands_the_post_failed_via_publish_one(tmp_path, m
     sent.assert_not_called()
 
 def test_publish_leg_drives_real_postiz_poster_not_dryrun(tmp_path, monkeypatch, mocker):
-    # audit gap: the E2E publish leg runs through DryRunPoster (stamps submitted unconditionally). This drives
-    # the REAL publish leg (_publish_one: claim -> network -> finalize) through PostizPoster with a MOCKED
-    # network — proving a 201 maps queued -> PUBLISHED + submission_id end-to-end, no real post.
+    # Real _publish_one through PostizPoster. A 201 with id but no permalink is not published.
     from fanops.post.run import _publish_one
     cfg = _cfg(tmp_path, monkeypatch)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1", platform=Platform.instagram,
-                          caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],   # already uploaded -> no media network
-                          state=PostState.queued, post_type="post", public_url="dryrun://p1"))
-    _capture(mocker)
+                          caption="fire", media_urls=["https://uploads.postiz.com/x.mp4"],
+                          state=PostState.queued, post_type="post"))
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "intg_1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", return_value=_R(201, {"id": "postiz_1"}))
     final = _publish_one(cfg, "p1", "postiz")
     led = Ledger.load(cfg)
-    assert final == "published" and led.posts["p1"].state is PostState.published   # the REAL poster ran, not DryRun
+    assert led.posts["p1"].state is not PostState.published
+    assert led.posts["p1"].state in (PostState.needs_reconcile, PostState.submitted)
     assert led.posts["p1"].submission_id == "postiz_1"
+    assert final in ("needs_reconcile", "submitted")
 
 
 # ---- _extract_postiz_id (audit gap: key-precedence + nested posts[0].id + list body untested) ----

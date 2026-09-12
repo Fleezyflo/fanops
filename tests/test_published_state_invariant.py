@@ -90,11 +90,9 @@ def test_post_published_with_whitespace_url_raises():
 
 
 def test_post_published_with_dryrun_url_constructs_ok():
-    """RED: a dryrun:// public_url is a valid permalink (per M5 _classify_channel — dryrun rows
-    label as 'dryrun'). The invariant is structural (URL non-empty), not 'must be https'."""
-    p = _make_post(PostState.published, public_url="dryrun://p_t")
-    assert p.state is PostState.published
-    assert p.public_url == "dryrun://p_t"
+    """dryrun:// is not a permalink — Post(state=published, public_url='dryrun://…') is unconstructible."""
+    with pytest.raises(ValidationError):
+        _make_post(PostState.published, public_url="dryrun://p_t")
 
 
 def test_post_published_with_https_url_constructs_ok():
