@@ -106,7 +106,7 @@ def _validate_llm_transport(v: object) -> str:
     s = str(v).strip().lower()
     if not s: return ""
     if s not in _VALID_LLM_TRANSPORTS:
-        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: claude, cursor")
+        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: {', '.join(sorted(_VALID_LLM_TRANSPORTS))}")
     return s
 
 
@@ -133,7 +133,7 @@ def _strict_validate_llm_transport(v: object) -> str:
     s = str(v).strip().lower()
     if not s: return ""
     if s not in _VALID_LLM_TRANSPORTS:
-        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: claude, cursor")
+        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: {', '.join(sorted(_VALID_LLM_TRANSPORTS))}")
     return s
 
 
