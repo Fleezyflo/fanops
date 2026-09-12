@@ -18,9 +18,9 @@ def field_shape_report(led: Ledger, cfg: Config, *, window: str = "30d", list_po
 
 
 def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
-    """`fanops learn doctor` — print the field-shape verdict. Read-only; exits 0 on every branch
-    (a diagnostic never aborts a pipeline). On a non-postiz backend or missing key it prints guidance
-    and returns without touching the network."""
+    """`fanops learn doctor` — print the field-shape verdict. Read-only. Missing Postiz creds
+    print guidance and exit 0 (no network). Transport/auth fetch failures log fetch_failed and
+    exit nonzero. A genuine code bug is not caught."""
     if not cfg.backend_has_creds("postiz"):
         get_logger(cfg)("learn_doctor", "-", "missing_backend", level="warning",
                         hint="connect Postiz in Studio Go-Live (POSTIZ_API_KEY) and route a channel to postiz")
@@ -30,13 +30,13 @@ def cmd_learn_doctor(cfg: Config, *, list_posts=None) -> int:
     led = Ledger.load(cfg)                                # lock-free read; the doctor never mutates it
     try:
         report = field_shape_report(led, cfg, list_posts=list_posts)
-    # Swallow ONLY documented transport failures (the Postiz client raises PostizAuthError on 401 and
-    # RuntimeError on a 5xx/non-JSON body; requests/OSError on transport) — these are transient/diagnostic.
-    # A genuine code bug (TypeError/KeyError/ImportError) is NOT caught here and surfaces as a traceback.
+    # Catch ONLY documented transport/auth failures (PostizAuthError on 401, RuntimeError on 5xx/non-JSON,
+    # requests/OSError on transport). These are not a healthy verdict — exit 1. A genuine code bug
+    # (TypeError/KeyError/ImportError) is NOT caught here and surfaces as a traceback.
     except (PostizAuthError, RuntimeError, requests.RequestException, OSError) as e:  # key never echoed (class name only)
         get_logger(cfg)("learn_doctor", "-", "fetch_failed", level="warning", err=type(e).__name__,
                         detail="retry when Postiz analytics are reachable")
-        return 0
+        return 1
     log = get_logger(cfg)
     log("learn_doctor", "-", "report", posts_sampled=report["posts_sampled"],
         labels_seen=report["labels_seen"] or "(none)", weight_keys=report["weight_keys"],

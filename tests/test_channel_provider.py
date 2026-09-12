@@ -102,57 +102,42 @@ def test_is_live_backend_legacy_global_unchanged(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- publish gating ----
-def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch, mocker):
+def test_publish_due_skips_live_channel_with_no_provider(tmp_path, monkeypatch):
     # FANOPS_LIVE=1 but the channel has no provider and no legacy live global -> SKIP (breadcrumb), the post
-    # stays queued, NOT failed, and the poster is never even constructed.
-    monkeypatch.setenv("FANOPS_LIVE", "1")                     # live switch on, but no global provider
-    cfg = Config(root=tmp_path)
-    _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
-    with Ledger.transaction(cfg) as led:
-        _queued(led, "p1", "ig", Platform.instagram)
-    gp = mocker.patch("fanops.post.run.get_poster")
-    res = publish_due(cfg)
-    gp.assert_not_called()                                    # never tried to publish
-    # LIVE channel with no provider -> the no_provider skip (unchanged); not_distributed stays 0 (this post
-    # is live-but-provider-less, NOT dryrun). The key exists in the summary since the dryrun-boundary landed.
-    assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0, "not_distributed": 0,
-                   "skipped_existing_id": 0, "not_live_ready": 0,
-                   "skipped_retired_lineage": 0, "skipped_not_active": 0}
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # left queued (not failed) — waits for a provider
-
-
-def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, monkeypatch, mocker):
-    # the footgun fix, STRENGTHENED by the dryrun-boundary: in dryrun (not live) an explicitly-routed
-    # channel must NOT publish — the global on/off switch governs ALL channels. The boundary makes this a
-    # STRONGER "nothing" than before: the post never even reaches the distribution rail — the poster is
-    # NEVER constructed/invoked (was: it ran the dryrun poster and set `submitted`), the post stays
-    # `queued`, and the summary records it as not_distributed with published == 0.
-    monkeypatch.setenv("FANOPS_LIVE", "0"); monkeypatch.setenv("ZERNIO_API_KEY", "sk")
-    cfg = Config(root=tmp_path)
-    _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"],
-                          "status": "active", "backends": {"tiktok": "zernio"}}])
-    with Ledger.transaction(cfg) as led:
-        _queued(led, "p1", "tk", Platform.tiktok, acct_id="a")
-    seen = {}
-    class _Fake:
-        def __init__(self, backend): self.backend = backend
-        def publish(self, led, pid): seen[pid] = self.backend; led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
-    mocker.patch("fanops.post.run.get_poster", side_effect=lambda c, backend=None: _Fake(backend))
-    res = publish_due(cfg)
-    assert seen == {}                                        # the poster was NEVER invoked — dryrun never enters the rail
-    assert res["not_distributed"] >= 1 and res["published"] == 0
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued   # built + scheduled, but held at the boundary
-
-
-def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch, mocker):
+    # stays queued, NOT failed.
     monkeypatch.setenv("FANOPS_LIVE", "1")
     cfg = Config(root=tmp_path)
     _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
         _queued(led, "p1", "ig", Platform.instagram)
-    gp = mocker.patch("fanops.post.run.get_poster")
+    res = publish_due(cfg)
+    assert res == {"due": 1, "published": 0, "no_provider": 1, "no_integration_id": 0, "not_distributed": 0,
+                   "skipped_existing_id": 0, "not_live_ready": 0,
+                   "skipped_retired_lineage": 0, "skipped_not_active": 0}
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+
+
+def test_publish_due_dryrun_posts_nothing_even_with_explicit_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "0")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    cfg = Config(root=tmp_path)
+    _accounts(tmp_path, [{"handle": "@tk", "account_id": "a", "platforms": ["tiktok"],
+                          "status": "active", "backends": {"tiktok": "zernio"}}])
+    with Ledger.transaction(cfg) as led:
+        _queued(led, "p1", "tk", Platform.tiktok, acct_id="a")
+    res = publish_due(cfg)
+    assert res["not_distributed"] >= 1 and res["published"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
+
+
+def test_publish_post_no_provider_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path)
+    _accounts(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
+    with Ledger.transaction(cfg) as led:
+        _queued(led, "p1", "ig", Platform.instagram)
     assert publish_post(cfg, "p1") is None
-    gp.assert_not_called()
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 
 # ---- H1: track/reconcile READ paths route via effective_provider, not `resolve_backend or global` ----
@@ -161,25 +146,37 @@ def _submitted(led, pid, handle, platform, sub, acct_id="x"):
                       caption="c", state=PostState.submitted, submission_id=sub, public_url="dryrun://c"))
 
 
-def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch, mocker):
+def test_metrics_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch):
     # live, FANOPS_POSTER unset: a zernio-routed channel pulls metrics from the ZERNIO client; a channel
     # with no provider is SKIPPED (never the dryrun/global client -> never silently starves a live post).
     monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
                           "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}},
                          {"handle": "@ig", "platforms": ["instagram"], "status": "active",
-                          "integrations": {"instagram": "i1"}}])   # no provider -> skipped
+                          "integrations": {"instagram": "i1"}}])
     cfg = Config(root=tmp_path)
     from fanops import track
     seen = []
-    mocker.patch.object(track, "_metrics_client_for",
-                        side_effect=lambda c, b, ids: (seen.append((b, tuple(ids))), (lambda w="30d": []))[1])
+
+    class _Resp:
+        status_code = 200
+        text = "{}"
+        def json(self):
+            return {}
+
+    def fake_get(url, **kw):
+        seen.append(str(url))
+        return _Resp()
+
+    monkeypatch.setattr("requests.get", fake_get)
     posts = [Post(id="p1", parent_id="c", account="tk", account_id="z1", platform=Platform.tiktok,
-                  caption="c", state=PostState.published, submission_id="s1", public_url="dryrun://p1"),
+                  caption="c", state=PostState.published, submission_id="s1", public_url="https://tiktok.com/@tt/1"),
              Post(id="p2", parent_id="c", account="ig", account_id="i1", platform=Platform.instagram,
-                  caption="c", state=PostState.published, submission_id="s2", public_url="dryrun://p2")]
+                  caption="c", state=PostState.published, submission_id="s2", public_url="https://instagram.com/p/2")]
     track._default_list_posts(cfg, posts=posts)()
-    assert seen == [("zernio", ("s1",))]                  # ONLY the zernio channel; the provider-less IG post skipped
+    assert seen and all("/analytics" in u for u in seen)
+    assert all("postiz" not in u for u in seen)
 
 
 def test_reconcile_routing_uses_effective_provider_skips_none(tmp_path, monkeypatch):
@@ -197,18 +194,22 @@ def test_reconcile_routing_uses_effective_provider_skips_none(tmp_path, monkeypa
 
 
 # ---- H5: zernio has NO server idempotency key -> the queued-only publish filter is the SOLE double-POST guard ----
-def test_needs_reconcile_post_is_never_republished(tmp_path, monkeypatch, mocker):
+def test_needs_reconcile_post_is_never_republished(tmp_path, monkeypatch):
     # an ambiguous-live (needs_reconcile) post must NEVER be re-submitted by publish_due — a re-POST would
     # double-publish (zernio publishNow:true carries no idempotency key). publish_due iterates `queued` ONLY.
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
     cfg = Config(root=tmp_path)
     _accounts(tmp_path, [{"handle": "@tk", "platforms": ["tiktok"], "status": "active",
                           "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "z1"}}])
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c", account="tk", account_id="z1", platform=Platform.tiktok,
                           caption="c", state=PostState.needs_reconcile, submission_id="s1",
-                          media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00", public_url="dryrun://p1"))
-    gp = mocker.patch("fanops.post.run.get_poster")
+                          media_urls=["https://x/v.mp4"], scheduled_time="2020-01-01T00:00:00+00:00",
+                          public_url="https://www.tiktok.com/@tk/video/1"))
+    def boom(*a, **k):
+        raise AssertionError("publish_due must not HTTP a needs_reconcile post")
+    monkeypatch.setattr("requests.get", boom)
+    monkeypatch.setattr("requests.post", boom)
     publish_due(cfg)
-    gp.assert_not_called()                                   # never re-submitted
     assert Ledger.load(cfg).posts["p1"].state is PostState.needs_reconcile

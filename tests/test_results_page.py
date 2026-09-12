@@ -5,7 +5,6 @@
 # actuators read BEFORE the p4_min_reach_gap winner selection). learning_validated + p4_unlocked gate the
 # panel per dim (frozen / collecting / ranked); the tag-exposure <details> stays and NO hashtag is
 # performance-ranked anywhere.
-import inspect
 import pytest
 pytest.importorskip("flask")
 from fanops.config import Config
@@ -128,12 +127,20 @@ def test_no_hashtag_performance_on_page(tmp_path):
     assert "hashtag performance" not in low and "top hashtags" not in low
 
 
-# ── single aggregation path: whats_working_panel has NO local reach re-aggregation ──────────────────
-def test_no_duplicate_reach_aggregation():
-    src = inspect.getsource(views.whats_working_panel)
-    body = src.split('"""')[2] if src.count('"""') >= 2 else src   # drop the docstring (prose mentions reach)
-    assert "aggregate_by_dim" in body                     # rankings flow through the ONE aggregator...
-    # ...and the panel never RE-DERIVES reach: no assignment to a reach_mean local, no raw reach metric read
-    # (a second aggregation loop would compute the sort key itself instead of reading aggregate_by_dim's row).
-    assert "reach_mean =" not in body and "reach_mean=" not in body
-    assert '.get("reach"' not in body and ".metrics" not in body
+# ── single aggregation path: ranked values are aggregate_by_dim's reach order (no local re-rank) ──
+def test_no_duplicate_reach_aggregation(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _validate(cfg)
+    for i in range(8):
+        _dim_post(led, f"sh{i}", dim="clip_profile", value="short", reach=1000.0)
+    for i in range(8):
+        _dim_post(led, f"lo{i}", dim="clip_profile", value="long", reach=100.0)
+    panel = views.whats_working_panel(led, cfg)
+    length = next(r for r in panel if r.dim == "clip_profile")
+    expected = sorted(aggregate_by_dim(led, "clip_profile").items(), key=lambda kv: -kv[1]["reach_mean"])
+    assert length.state == "ranked"
+    assert [v for v, _row in length.values] == [v for v, _row in expected]
+    assert [row["reach_mean"] for _v, row in length.values] == [row["reach_mean"] for _v, row in expected]
+    assert length.values[0][0] == "short"
+    assert length.values[0][1]["reach_mean"] == 1000.0
+    assert length.values[1][0] == "long"
+    assert length.values[1][1]["reach_mean"] == 100.0

@@ -34,8 +34,9 @@ def test_pending_stitches_surfaces_intro_tease(tmp_path):
     assert len(rows) == 1 and rows[0]["strategy_key"] == "intro_tease"
     assert rows[0]["rationale"] == "stage entrance pairs" and rows[0]["asset_ids"] == ["intro1"]
 
-def test_pending_stitches_fail_open_on_absent_ledger(tmp_path):
-    assert views.pending_stitches(Config(root=tmp_path)) == []   # never 500
+def test_pending_stitches_empty_ledger_is_empty(tmp_path):
+    # Honest empty path: a workspace with no ledger rows yields []. Do not patch Ledger.load to raise.
+    assert views.pending_stitches(Config(root=tmp_path)) == []
 
 def test_pending_stitches_excludes_non_suggested(tmp_path):
     cfg = Config(root=tmp_path); _seed_suggested(cfg, "sp1")
