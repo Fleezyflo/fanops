@@ -47,7 +47,7 @@ def _queued(cfg, platform=Platform.instagram):
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="h", account_id="h1", platform=platform,
                           caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
-                          scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c"))
+                          scheduled_time="2000-01-01T00:00:00Z", public_url="https://www.instagram.com/p/c/"))
 
 
 def _park_poster(monkeypatch):
@@ -153,7 +153,7 @@ def test_existing_submitting_post_not_rewritten_by_the_gate(tmp_path, monkeypatc
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c", account="h", account_id="h1", platform=Platform.instagram,
                           caption="c", state=PostState.submitting, submission_id="fanops_x",
-                          scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c"))
+                          scheduled_time="2000-01-01T00:00:00Z", public_url="https://www.instagram.com/p/c/"))
     publish_due(cfg)                                                          # iterates queued only
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.submitting and p.submission_id == "fanops_x"  # untouched

@@ -82,7 +82,7 @@ def _seed_queued(cfg, pid="p1", state=PostState.queued):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=state, scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p1"))
+                      caption="c", state=state, scheduled_time="2099-01-01T00:00:00Z", public_url="https://www.instagram.com/p/p1/"))
     led.save()
 
 def test_resolve_post_rejects_non_terminal_states(tmp_path):

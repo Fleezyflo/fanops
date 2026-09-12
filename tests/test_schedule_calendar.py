@@ -32,7 +32,7 @@ def _seed(cfg, *, pid="p1", state=PostState.queued, account="a", when=None, sour
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account=account, account_id="ig_integ_1",
                           platform=Platform.instagram, caption="fire", state=state, scheduled_time=when,
-                          public_url="dryrun://clip_1"))
+                          public_url="https://www.instagram.com/p/clip_1/"))
 
 
 # ---- 1: account_color_hue deterministic SHA1 → 0-359 ----
@@ -55,7 +55,7 @@ def test_schedule_calendar_month_chips_and_account_filter(tmp_path):
         led.add_post(Post(id="p2", parent_id="clip_2", account="b", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="other", state=PostState.queued,
                           scheduled_time=_z(datetime(2099, 6, 21, 10, 0, tzinfo=timezone.utc)),
-                          public_url="dryrun://clip_2"))
+                          public_url="https://www.instagram.com/p/clip_2/"))
     led = Ledger.load(cfg)
     rows = views.schedule_rows(led, cfg, now=_NOW)
     cal_all = views.schedule_calendar_month(rows, cfg, year=2099, month=6, now=_NOW)
@@ -79,7 +79,7 @@ def test_schedule_calendar_month_reports_offscreen_chips(tmp_path):
         led.add_post(Post(id="p_aug", parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="later", state=PostState.queued,
                           scheduled_time=_z(datetime(2099, 8, 2, 9, 0, tzinfo=timezone.utc)),
-                          public_url="dryrun://clip_1"))
+                          public_url="https://www.instagram.com/p/clip_1/"))
     rows = views.schedule_rows(Ledger.load(cfg), cfg, now=_NOW)
     empty = views.schedule_calendar_month(rows, cfg, year=2099, month=6, now=_NOW)
     assert not [c for w in empty.weeks for d in w for c in d.chips]     # June really does place nothing
@@ -112,14 +112,14 @@ def test_schedule_bucket_split_by_source(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="untimed", parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="no time", state=PostState.queued,
-                          scheduled_time=None, public_url="dryrun://clip_1"))
+                          scheduled_time=None, public_url="https://www.instagram.com/p/clip_1/"))
         led.add_source(Source(id="src_2", source_path="/v/b.mp4", language="en"))
         led.add_moment(Moment(id="mom_2", parent_id="src_2", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_2", parent_id="mom_2", path="/c/clip_2.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="other_src", parent_id="clip_2", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="src2", state=PostState.queued,
-                          scheduled_time=None, public_url="dryrun://clip_2"))
+                          scheduled_time=None, public_url="https://www.instagram.com/p/clip_2/"))
     led = Ledger.load(cfg)
     rows = views.schedule_rows(led, cfg, now=_NOW, account="a")
     bucket = views.schedule_bucket_split(led, rows)
@@ -153,14 +153,14 @@ def test_randomize_account_schedule_seeded_window_gap_source(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p2", parent_id="clip_1", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="two", state=PostState.queued,
-                          scheduled_time=_z(_NOW + timedelta(days=30)), public_url="dryrun://clip_1"))
+                          scheduled_time=_z(_NOW + timedelta(days=30)), public_url="https://www.instagram.com/p/clip_1/"))
         led.add_source(Source(id="src_2", source_path="/v/b.mp4", language="en"))
         led.add_moment(Moment(id="mom_2", parent_id="src_2", content_token="0-7", start=0, end=7,
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_2", parent_id="mom_2", path="/c/clip_2.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p3", parent_id="clip_2", account="a", account_id="ig_integ_1",
                           platform=Platform.instagram, caption="src2", state=PostState.queued,
-                          scheduled_time=_z(_NOW + timedelta(days=30)), public_url="dryrun://clip_2"))
+                          scheduled_time=_z(_NOW + timedelta(days=30)), public_url="https://www.instagram.com/p/clip_2/"))
     r1 = actions.randomize_account_schedule(cfg, "a", seed=42, now=_NOW)
     assert r1.ok and r1.detail["rescheduled"] == 3
     led1 = Ledger.load(cfg)

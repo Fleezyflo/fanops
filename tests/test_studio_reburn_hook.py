@@ -17,7 +17,7 @@ def _seed(cfg, *, platform=Platform.instagram, state=PostState.awaiting_approval
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16,
                       state=ClipState.captioned, meta_captions=(meta or {})))
     led.add_post(Post(id="p_edit", parent_id="clip_1", account="a", account_id="1", platform=platform,
-                      caption="c", state=state, scheduled_time=FUTURE, public_url="dryrun://p_edit"))
+                      caption="c", state=state, scheduled_time=FUTURE, public_url="https://www.instagram.com/p/p_edit/"))
     led.save(); return led
 
 

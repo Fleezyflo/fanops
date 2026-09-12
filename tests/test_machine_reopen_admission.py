@@ -33,7 +33,7 @@ def _analyzed_lineage(led, sid="src_1"):
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      metrics={"lift_score": 400.0}, public_url="dryrun://1"))
+                      metrics={"lift_score": 400.0}, public_url="https://www.instagram.com/p/1/"))
     return sid
 
 

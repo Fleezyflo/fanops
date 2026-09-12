@@ -24,7 +24,7 @@ def variant_lineage(pid, acct, hook, lift, state=PostState.analyzed, *, src_id="
     # P9: hook lives on the owner moment; each analyzed post needs its own moment/clip lineage.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
     clip_id, moment_id = f"c_{pid}", f"m_{pid}"
-    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
+    url = f"https://www.instagram.com/p/{pid}/" if state in _POST_TERMINAL_REQUIRES_URL else None
     moment = Moment(id=moment_id, parent_id=src_id, start=0.0, end=4.0, reason="r", hook=hook,
                     transcript_excerpt="ex")
     clip = Clip(id=clip_id, parent_id=moment_id, path=f"{clip_id}.mp4")
