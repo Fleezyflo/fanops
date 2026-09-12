@@ -576,7 +576,9 @@
       ],
       "lazy": [
         "fanops.cutover",
-        "fanops.post.metrics"
+        "fanops.models",
+        "fanops.post.metrics",
+        "fanops.track"
       ],
       "optional": [],
       "typing": []
@@ -3347,7 +3349,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 284,
+  "lazy_downward_count": 286,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -5171,7 +5173,7 @@
     "G2_module_sccs_total": 114,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 822,
-    "lazy_edges": 456,
+    "lazy_edges": 458,
     "lazy_edges_lateral": 58,
     "lazy_edges_strictly_upward": 114,
     "lazy_edges_to_equal_or_higher_level": 172,
