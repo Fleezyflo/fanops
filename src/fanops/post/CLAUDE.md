@@ -53,9 +53,9 @@ here in three phases:
   `queued→submitting` and persist **before** any network I/O (F11 crash-safety: a crash mid-network leaves the
   post `submitting`, healed by reconcile/`fanops resolve`).
 - **NETWORK (lock-free, `run.py:248-321`):** on a throwaway loaded ledger, `_ensure_media` then
-  `poster.publish`. On `submitted`, gate the `submitted→published` promotion on `public_url` (`run.py:284-285`):
-  a real URL → `published`; **no URL** (the normal Postiz async-permalink case) → `needs_reconcile`
-  (`run.py:292`), **never** `failed`. A FATAL `AuthError` **re-raises** (`run.py:299-300`) to halt the run —
+  `poster.publish`. On `submitted`, gate the `submitted→published` promotion on `safe_public_url(public_url)`:
+  https permalink → `published`; leftover `dryrun://` / empty / non-https (the normal Postiz async-permalink
+  case) → `needs_reconcile`, **never** `failed`. A FATAL `AuthError` **re-raises** to halt the run —
   never burn the queue. Empty integration id on a live backend un-claims `submitting→queued` (`run.py:256-265`).
 - **FINALIZE (tight txn, `run.py:322+`):** merge only the network-determined post fields (+ clip/render media
   cache) into a **freshly loaded** ledger — never persist the stale in-memory snapshot (B4 lost-update).

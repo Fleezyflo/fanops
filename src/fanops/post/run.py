@@ -21,6 +21,7 @@ from fanops.post.publish_errors import _is_fatal_auth_error, _is_transient_publi
 from fanops.post.publish_requeue import _requeue_failed_posts
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
 from fanops.log import get_logger
+from fanops.text import safe_public_url
 
 # Re-exports: keep test/studio/reconcile import sites stable (from fanops.post.run import …).
 from fanops.post.publish_requeue import (  # noqa: F401
@@ -313,14 +314,12 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
             led = poster.publish(led, post.id)
             post = led.posts[post_id]
             if post.state is PostState.submitted:
-                # R1/D2: gate the submitted -> published promotion on public_url. A backend that returns
-                # 'submitted' without a permalink (a Postiz async-permalink case, a misbehaving stub, or
-                # the pre-R1 DryRunPoster) MUST park in needs_reconcile — reconcile.py back-fills the URL
-                # on the next pass. Without this gate, the post promotes to 'published' with public_url=''
-                # and the Pydantic R1 invariant would refuse the ledger save below; fail-closed BEFORE
-                # construction so the operator sees a clean needs_reconcile row, not a ValidationError 500.
-                if (post.public_url or "").strip():
-                    assert post.public_url, "GB-4: published post must have public_url"
+                # R1/D2: submitted → published only on a real https permalink (`safe_public_url`).
+                # Leftover dryrun:// (or any non-https value) is not a permalink — a Postiz/Zernio 201
+                # without one MUST park needs_reconcile. Do not rest the leftover as public_url.
+                permalink = safe_public_url(post.public_url)
+                if permalink:
+                    post.public_url = permalink
                     post.published_at = iso_z(datetime.now(timezone.utc))   # TRUE publish time (Posted-archive day-anchor)
                     # Leg 3 (timing): bucket the true publish time into operator-local (hour, weekday) so
                     # timing_bias can rank reach-by-hour without every reader re-doing tz math. Single tz
@@ -329,6 +328,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                     led.set_post_state(post_id, PostState.published)
                     post = led.posts[post_id]
                 else:
+                    if post.public_url:
+                        post.public_url = None
                     led.set_post_state(post_id, PostState.needs_reconcile, error_reason=(
                         "submitted_awaiting_permalink: backend accepted without a public URL — "
                         "reconcile will back-fill on next pass (R1/D2 gate)"))
