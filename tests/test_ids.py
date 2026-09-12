@@ -32,21 +32,22 @@ def test_content_id_stable_across_processes():
 
 def test_sha1_digests_unchanged_after_usedforsecurity_flag():
     # PKT-2 (MOL-108): four non-security sha1 seeds gained `usedforsecurity=False` for S324 clarity.
-    # The flag documents intent and MUST NOT shift the digest — content-addressed ids and the
-    # schedule/tag/jitter seeds all derive from these bytes, so a drift would duplicate posts or
-    # reshuffle schedules. These literals are the pre-flag digests captured on a fixed input; they
-    # pin all four sites (R-021 crosspost, R-022 ids, R-023 views_common, R-024 tagging) at once.
+    # Call the production seed functions; hash their documented inputs independently so a formula
+    # drift (not a copied digest literal) is what this pin catches.
     import hashlib
+    from fanops.crosspost import _seed
     from fanops.ids import _hash
-    # R-022 ids._hash — the content-address primitive, called through the real (patched) function.
-    assert _hash("render", "x") == "aa57e8962bf8"
-    # R-021 crosspost._seed digest (account|platform|date|clip).
-    assert hashlib.sha1("acc|ig|2026-07-04|clip_1".encode(), usedforsecurity=False).hexdigest() \
-        == "5e6382900211691d71309cbaf7732c8c1554869b"
-    # R-024 tagging.should_tag digest (clip|account), first 8 hex.
-    assert hashlib.sha1("clip_1|acc".encode(), usedforsecurity=False).hexdigest()[:8] == "6cf198e8"
-    # R-023 views_common per-account anchor seed (handle|date), first 8 hex.
-    assert hashlib.sha1("handle|2026-07-04".encode(), usedforsecurity=False).hexdigest()[:8] == "7075bcca"
+    from fanops.studio.views_common import account_color_hue
+    from fanops.tagging import should_tag
+    assert _hash("render", "x") == hashlib.sha1(b"render\x00x", usedforsecurity=False).hexdigest()[:12]
+    assert _seed("acc", "ig", "2026-07-04", "clip_1") == int(
+        hashlib.sha1(b"acc|ig|2026-07-04|clip_1", usedforsecurity=False).hexdigest()[:8], 16)
+    tag_h = int(hashlib.sha1(b"clip_1|acc", usedforsecurity=False).hexdigest()[:8], 16)
+    assert should_tag("clip_1", "acc", rate=0.0) is False
+    assert should_tag("clip_1", "acc", rate=1.0) is True
+    assert should_tag("clip_1", "acc", rate=(tag_h % 1000) / 1000.0 + 1e-9) is True
+    assert account_color_hue("handle") == int(
+        hashlib.sha1(b"handle", usedforsecurity=False).hexdigest()[:8], 16) % 360
 
 def test_no_builtin_hash_in_source():
     # Guard: the builtin hash() must never be CALLED in ids.py (it is salted per process

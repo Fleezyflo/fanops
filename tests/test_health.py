@@ -1,10 +1,26 @@
 """Issue 1 — live dependency health, so a down dependency is VISIBLE immediately
 (not discovered later via a buried downstream error).
 subprocess/HTTP are mocked; these prove the health verdicts, never a real Docker/Postiz."""
+import os
 import types
 from pathlib import Path
 from fanops.config import Config
 from fanops import health
+
+
+def _docker_on_path(tmp_path, monkeypatch, *, rc=0):
+    d = tmp_path / "bin"
+    d.mkdir(exist_ok=True)
+    p = d / "docker"
+    p.write_text(f"#!/bin/sh\nexit {rc}\n")
+    p.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{d}:{os.environ.get('PATH', '')}")
+
+
+def _docker_off_path(tmp_path, monkeypatch):
+    empty = tmp_path / "emptybin"
+    empty.mkdir(exist_ok=True)
+    monkeypatch.setenv("PATH", str(empty))
 
 
 def _cfg(tmp_path, monkeypatch, **env):
@@ -36,7 +52,7 @@ class _Run:
 # ---------------------------------------------------------------- per-dependency verdicts ----
 def test_docker_health_up(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/docker")
+    _docker_on_path(tmp_path, monkeypatch, rc=0)
     monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 0}))
     h = health._docker_health()
     assert h.name == "docker" and h.ok is True
@@ -44,14 +60,14 @@ def test_docker_health_up(tmp_path, monkeypatch):
 
 def test_docker_health_down(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/docker")
+    _docker_on_path(tmp_path, monkeypatch, rc=1)
     monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 1}))
     assert health._docker_health().ok is False
 
 
 def test_docker_health_missing_cli(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
-    monkeypatch.setattr(health.shutil, "which", lambda n: None)
+    _docker_off_path(tmp_path, monkeypatch)
     assert health._docker_health().ok is False
 
 
@@ -106,7 +122,7 @@ def test_postiz_health_not_configured(tmp_path, monkeypatch):
 
 def test_system_health_lists_docker_postiz_zernio(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
-    monkeypatch.setattr(health.shutil, "which", lambda n: "/usr/bin/docker")
+    _docker_on_path(tmp_path, monkeypatch, rc=0)
     monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 0}))
     _mock_probe(monkeypatch, status=200)                 # MOL-61: postiz row now rides the deeper probe
     assert [d.name for d in health.system_health(cfg)] == ["docker", "postiz", "zernio"]
@@ -151,15 +167,9 @@ def test_read_snapshots_missing_are_missing(tmp_path, monkeypatch):
 
 
 def test_refresh_runtime_snapshots_writes_three_json_files(tmp_path, monkeypatch):
-    from fanops.post.postiz import PostizHealth
     cfg = _cfg(tmp_path, monkeypatch)
-    monkeypatch.setattr("fanops.post.postiz.postiz_health_probe",
-                        lambda c: PostizHealth(True, 200, ""))
-    monkeypatch.setattr("fanops.daemon.installed_interval", lambda c: 600)
-    monkeypatch.setattr("fanops.daemon.status", lambda c, interval=600: {
-        "installed": False, "loaded": False, "pid": None, "last_exit": None,
-        "heartbeat_age_s": None, "verdict": "not installed"})
-    monkeypatch.setattr("fanops.daemon.sibling_agents_status", lambda: [])
+    monkeypatch.setattr("fanops.daemon.subprocess.run",
+                        lambda *a, **k: types.SimpleNamespace(returncode=1, stdout="", stderr=""))
     health.refresh_runtime_snapshots(cfg)
     assert cfg.deps_health_path.exists()
     assert cfg.daemon_strip_path.exists()
@@ -185,16 +195,6 @@ def test_ancient_checked_at_is_stale_not_fresh(tmp_path, monkeypatch):
     sr = health.read_strip_metrics(cfg)
     assert sr.freshness is health.SnapshotFreshness.STALE
     assert isinstance(sr.data, dict)
-
-
-def test_refresh_runtime_snapshots_is_named_strip_writer():
-    """CPDP-WP4: strip writer role is health.refresh_runtime_snapshots (FunctionDef exists).
-    Sole Call site: cli --loop (observe/GET paths must not Call it)."""
-    import ast
-    from pathlib import Path
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "src" / "fanops" / "health.py").read_text())
-    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    assert "refresh_runtime_snapshots" in names
 
 
 def test_only_cli_calls_refresh_runtime_snapshots():
