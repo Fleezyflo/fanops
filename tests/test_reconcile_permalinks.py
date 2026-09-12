@@ -35,41 +35,40 @@ def _seed_queued(cfg, pid="p1", cid="c1"):
                           media_urls=["https://cdn/v.mp4"]))
 
 
-def test_advance_runs_publish_before_reconcile(tmp_path, monkeypatch, mocker):
-    """Same-tick contract: publish must run before reconcile so this tick's ships are reconcilable."""
-    monkeypatch.setenv("FANOPS_POSTER", "zernio")
-    monkeypatch.setenv("ZERNIO_API_KEY", "k")
-    cfg = Config(root=tmp_path)
-    order: list[str] = []
-    mocker.patch("fanops.pipeline.publish_due", side_effect=lambda *a, **k: order.append("publish"))
-    mocker.patch("fanops.pipeline.reconcile_due", side_effect=lambda *a, **k: order.append("reconcile"))
-    advance(cfg, base_time="2026-06-02T18:00:00Z")
-    assert order == ["publish", "reconcile"]
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+        self.headers = {}
+    def json(self):
+        return self._b
 
 
 def test_advance_same_tick_publish_then_reconcile_url(tmp_path, monkeypatch, mocker):
-    """A post parked needs_reconcile by publish_due in this pass is reconciled in the SAME advance()."""
+    """A post parked needs_reconcile/submitted by publish_due in this pass is reconciled in the SAME advance()."""
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _accounts(cfg)
     _seed_queued(cfg)
     url = "https://www.instagram.com/reel/ABC123/"
+    sid = "zernio_sid_1"
 
-    class _R:
-        status_code = 201
-        def json(self):
-            return {"id": "zernio_sid_1"}
-
-    mocker.patch("fanops.post.zernio.requests.post", return_value=_R())
-    mocker.patch("fanops.post.run._ensure_media", return_value=None)
-    mocker.patch("fanops.reconcile._default_get_status", return_value=lambda sid: {
-        "status": "published", "publicUrl": url, "releaseId": "17841456789012345",
-    })
+    def _post(u, **kw):
+        return _R(201, {"_id": sid})
+    def _get(u, **kw):
+        s = str(u)
+        if f"posts/{sid}" in s or s.rstrip("/").endswith(sid):
+            return _R(200, {"status": "published", "publicUrl": url, "releaseId": "17841456789012345"})
+        return _R(200, {"posts": []})
+    mocker.patch("fanops.post.zernio.requests.post", side_effect=_post)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     p = led.posts["p1"]
     assert p.state is PostState.published
     assert p.public_url == url
+    assert not (p.public_url or "").startswith("dryrun://")
 
 
 def test_reconcile_promotes_credentialed_ig_on_postiz_confirmation(tmp_path, monkeypatch):
@@ -107,17 +106,17 @@ def test_postiz_publish_persists_releaseurl_from_body_not_invented(tmp_path, mon
     assert _postiz_permalink_from_body({"id": "postiz_1"}) is None
     assert _postiz_permalink_from_body({"id": "postiz_1", "releaseURL": real_url}) == real_url
     assert _postiz_permalink_from_body({"id": "postiz_1", "url": "https://postiz.example.com/p/1"}) is None
-    class _R:
-        status_code = 201
-        def json(self):
-            return {"id": "postiz_1", "releaseURL": real_url}
-    from fanops.post.postiz import PostizIntegration
-    mocker.patch("fanops.post.postiz.postiz_list_integrations",
-                 return_value=[PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R())
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post",
+                 return_value=_R(201, {"id": "postiz_1", "releaseURL": real_url}))
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].public_url == real_url
     assert "postiz.example" not in (led.posts["p1"].public_url or "")
+    assert not (led.posts["p1"].public_url or "").startswith("dryrun://")
 
 
 def test_postiz_publish_ignores_dashboard_url_field(tmp_path, monkeypatch, mocker):
@@ -132,15 +131,12 @@ def test_postiz_publish_ignores_dashboard_url_field(tmp_path, monkeypatch, mocke
                       caption="x", state=PostState.submitting, post_type="post",
                       media_urls=["https://cdn/v.mp4"], scheduled_time="2026-01-01T00:00:00Z"))
     dashboard_url = "https://postiz.example.com/p/1"
-
-    class _R:
-        status_code = 201
-        def json(self):
-            return {"id": "postiz_1", "url": dashboard_url}
-
-    from fanops.post.postiz import PostizIntegration
-    mocker.patch("fanops.post.postiz.postiz_list_integrations",
-                 return_value=[PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R())
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post",
+                 return_value=_R(201, {"id": "postiz_1", "url": dashboard_url}))
     led = PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].public_url is None

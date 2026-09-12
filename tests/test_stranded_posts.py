@@ -308,8 +308,9 @@ def test_one_pass_writes_nothing_to_a_stranded_lineage(tmp_path, mocker):
     not five hand-named rows — so any future write to dead lineage, on any row, reddens this. The healthy
     lineage is the negative control: it must still be live work the pass may advance, or an `advance` that
     did nothing at all would pass."""
+    from types import SimpleNamespace
     from fanops.pipeline import advance
-    mocker.patch("fanops.produce.run_all")                    # keep the pass cheap: no subprocesses
+    mocker.patch("subprocess.run", return_value=SimpleNamespace(returncode=1, stdout=b"", stderr=b"missing"))
     cfg = Config(root=tmp_path); _seed_accounts(cfg)
     with Ledger.transaction(cfg) as led:
         _lineage(led, mom_id="mom_ok", clip_id="clip_ok")
