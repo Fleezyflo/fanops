@@ -669,9 +669,11 @@ def test_env_bool_unrecognized_words_must_not_silently_equal_default():
     for default in (True, False):
         assert env_bool("1", default=default) is True
         assert env_bool("off", default=default) is False
+        for blank in (None, "", "   "):
+            assert env_bool(blank, default=default) is default
         for junk in ("garbage", "maybe", "2", "-1", "1.5"):
-            got = env_bool(junk, default=default)
-            assert got is not default, (junk, default, got)
+            with pytest.raises(ValueError):
+                env_bool(junk, default=default)
 
 
 def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path):
@@ -806,7 +808,8 @@ def test_auto_adopt_is_registered_boolenv(monkeypatch, tmp_path):
     with pytest.raises(ValidationError) as ei:
         _validate_settings()
     assert "FANOPS_AUTO_ADOPT" in str(ei.value)
-    assert Config(root=tmp_path).auto_adopt is True            # runtime fail-open ON
+    with pytest.raises(ValueError):
+        Config(root=tmp_path).auto_adopt
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "false")
     Settings()  # must not raise
     assert Config(root=tmp_path).auto_adopt is False
