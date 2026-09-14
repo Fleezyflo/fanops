@@ -669,17 +669,20 @@ def test_compose_posted_caption_idempotent():
     assert compose_posted_caption(once + " #extra", ["#keep"]) == "hello there\n#keep"
 
 
-# --- HV1-WALK B: caption gate stays closed until the source lock row is completed ----------------
+# --- HV1-WALK B: caption gate always opens; menu only from a completed lock ----------------
 
-def test_request_captions_no_sidecar_does_not_open(tmp_path):
+def test_request_captions_no_sidecar_opens_empty_menu(tmp_path):
+    """D2: missing lock must still open the captions gate (empty menu)."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me"))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", "clip_1").exists()
-    assert led.clips["clip_1"].state is ClipState.rendered
+    assert request_path(cfg, "captions", "clip_1").exists()
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload["surfaces"][0]
 
 
 def test_request_captions_empty_completed_lock_opens(tmp_path):
