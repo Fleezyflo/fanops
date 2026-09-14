@@ -955,14 +955,16 @@ def _check_preflight(cfg: Config) -> int:
     do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
     returns 0 clean, else prints an actionable line to stderr and returns 2.
 
-      - The LLM CLI is not on PATH: gates are answered ONLY by the LLM (the manual responder was
-        retired), so the responder shells `claude -p`; without the binary every gate raises
-        ToolchainMissingError and stays pending -> zero content. Hard exit 2 with an install +
-        `claude login` pointer — ALWAYS (empty/unset FANOPS_RESPONDER resolves to llm too). (AUTH NOTE
-        2026-06-04: the responder uses the operator's EXISTING `claude` subscription/login — plain
-        `claude -p`, NOT `--bare`, so it rides the OAuth/keychain session, NOT an API key. We require
-        `claude` PRESENT + logged in, NOT `ANTHROPIC_API_KEY`. A true login check needs a network call,
-        so we hard-block only on the binary's ABSENCE and otherwise point the operator at `claude login`.)
+      - The resolved LLM CLI (`cfg.llm_cli_binary`) is not on PATH: gates are answered ONLY by the
+        LLM (the manual responder was retired). Transport is absolute — claude shells `claude -p`,
+        cursor shells `cursor-agent`, grok shells `grok --prompt-file` for caption gates only.
+        Without the binary, reachable gates raise ToolchainMissingError and stay pending -> zero
+        content. Hard exit 2 with an install + login pointer (empty/unset FANOPS_RESPONDER resolves
+        to llm too). (AUTH NOTE 2026-06-04: the default claude transport uses the operator's EXISTING
+        `claude` subscription/login — plain `claude -p`, NOT `--bare`, so it rides the OAuth/keychain
+        session, NOT an API key. Grok captions-only uses `grok login` session file, not `XAI_API_KEY`.
+        A true login check needs a network call for claude/cursor, so those hard-block only on the
+        binary's ABSENCE; grok also probes `grok models`.)
 
       - FANOPS_RESPONDER set to anything but 'llm' (or unset): HARD REFUSE — there is no manual mode to
         fall back to, so a bad value must fail loudly rather than silently stop answering gates."""

@@ -242,7 +242,7 @@
           (single switch for every gate — captions, moments, hooks) —
           <code>cursor-agent</code> (Cursor CLI headless; vision gates unsupported)
         {% elif status.llm_transport == 'grok' %}
-          — <code>grok</code> Grok (captions only; moments/hooks stay on Claude)
+          — Grok (captions only; moments/hooks stay on Claude)
         {% else %}
           (single switch for every gate — captions, moments, hooks) —
           <code>claude</code> (Claude Code subscription login)
@@ -271,7 +271,7 @@
           {% if status.daemon.verdict == 'alive' %}running · last tick {{ status.daemon.heartbeat_age_s|int }}s ago.
           {% elif not status.daemon.loaded %}off (optional). Turn it on to auto-ingest, advance &amp; reconcile every {{ ((status.daemon.interval or 600) // 60) }} min.
           {% else %}installed but not running ({{ status.daemon.verdict }}).{% endif %}
-          {% if status.daemon.loaded %} Each tick invokes <code>{{ status.llm_cli_binary }}</code> to answer pending gates.{% endif %}</p>
+          {% if status.daemon.loaded %}{% if status.llm_transport == 'grok' %} Each tick invokes <code>{{ status.llm_cli_binary }}</code> to answer caption gates only; moments/hooks stay on Claude.{% else %} Each tick invokes <code>{{ status.llm_cli_binary }}</code> to answer pending gates.{% endif %}{% endif %}</p>
         <form hx-post="{{ url_for('do_golive_daemon_install') if not status.daemon.loaded else url_for('do_golive_daemon_uninstall') }}"
               hx-target="#golive-panel" hx-swap="outerHTML">
           {% if not status.daemon.loaded %}

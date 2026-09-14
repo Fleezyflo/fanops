@@ -431,16 +431,18 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         hint = "install Grok CLI + run `grok login` (session file, no API key)"
     else:
         hint = "install Claude Code + run `claude login` (uses your subscription, no API key)"
-    # PATH presence is NOT proof of login; no cheap non-mutating auth probe (except grok models).
-    # When present, emit Severity.WARN (non-blocking) so we never claim a silent authenticated PASS.
-    # Grok: `grok models` is the login probe — fail closed if it does not return rc=0.
+    # Claude/cursor: PATH is not proof of login (no cheap probe) — WARN, never a silent authenticated PASS.
+    # Grok: `grok models` is the login probe — PASS when rc=0; FAIL closed otherwise (no "NOT proof" WARN).
     if shutil.which(cli_bin) is not None:
-        if cli_bin == "grok" and not grok_models_ok():
-            checks.append(_check(f"{cli_bin} on PATH", False,
-                                 "grok is on PATH but `grok models` failed — run `grok login` "
-                                 "(session file, no API key)"))
+        if cli_bin == "grok":
+            if grok_models_ok():
+                checks.append(_check(f"{cli_bin} on PATH", True, ""))
+            else:
+                checks.append(_check(f"{cli_bin} on PATH", False,
+                                     "grok is on PATH but `grok models` failed — run `grok login` "
+                                     "(session file, no API key)"))
         else:
-            login_cmd = {"cursor-agent": "cursor-agent login", "grok": "grok login"}.get(cli_bin, "claude login")
+            login_cmd = {"cursor-agent": "cursor-agent login"}.get(cli_bin, "claude login")
             checks.append(_check(
                 f"{cli_bin} on PATH",
                 severity="warn",
@@ -456,8 +458,12 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     elif cfg.llm_transport == "grok":
         # F1 captions-only: WARN, never a cursor-style blanket FAIL (that would make captions unreachable).
         from fanops.agentstep import pending
-        n = len(pending(cfg, kind="moments"))
-        m = len(pending(cfg, kind="moment_hooks"))
+        try:
+            n = len(pending(cfg, kind="moments"))
+            m = len(pending(cfg, kind="moment_hooks"))
+        except OSError as e:
+            logging.getLogger("fanops.doctor").debug("grok pending vision counts failed: %s", e)
+            n = m = 0
         cap = "Grok (captions only; moments/hooks stay on Claude)"
         if n or m:
             cap = f"{cap} awaiting_moments={n} awaiting_moment_hooks={m}"

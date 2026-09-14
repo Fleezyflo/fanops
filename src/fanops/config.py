@@ -134,8 +134,8 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
     return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
 def resolve_llm_transport(raw: str | None = None) -> str:
-    """LLM CLI transport: claude (default) or cursor-agent headless. Unknown values warn + fall back.
-    Runtime-lenient; Settings field validators / strict_validate refuse the same set loudly."""
+    """LLM CLI transport: claude (default/rollback), cursor-agent headless, or grok captions-only.
+    Unknown values warn + fall back. Runtime-lenient; Settings field validators / strict_validate refuse the same set loudly."""
     v = (raw if raw is not None else os.getenv("FANOPS_LLM_TRANSPORT") or "").strip().lower()
     if not v:
         return "claude"
