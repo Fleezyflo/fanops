@@ -913,6 +913,22 @@ def test_golive_llm_transport_grok_copy_is_captions_only(tmp_path, monkeypatch):
     grok_html = r.get_data(as_text=True)
     assert "Grok (captions only; moments/hooks stay on Claude)" in grok_html
     assert "● Grok (captions only; moments/hooks stay on Claude)" in grok_html
+    assert "grok Grok" not in grok_html
+    assert "<code>grok</code> Grok" not in grok_html
+
+
+def test_golive_grok_loaded_daemon_does_not_claim_pending_gates(tmp_path, monkeypatch):
+    from fanops.studio import views
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    # Stub the snapshot — neighboring golive daemon tests mock launchctl; do not talk to live launchd.
+    monkeypatch.setattr(views, "daemon_health", lambda _cfg: {
+        "loaded": True, "verdict": "alive", "heartbeat_age_s": 5, "interval": 600,
+    })
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "Grok (captions only; moments/hooks stay on Claude)" in html
+    assert "pending gates" not in html
+    assert "<code>grok</code> to answer caption gates only" in html
 
 
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):

@@ -123,6 +123,9 @@ def test_doctor_grok_transport_checks_grok(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.llm.grok_models_ok", return_value=True)
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("grok" in c["label"].lower() for c in rep["checks"])
+    path = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
+    assert path["ok"] is True
+    assert not any("NOT proof" in (c.get("hint") or "") for c in rep["checks"])
     vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
     assert vision["ok"] is True and vision.get("severity") == "warn"
     assert _GROK_CAPTIONS_ONLY in (vision.get("hint") or "")
@@ -156,6 +159,19 @@ def test_doctor_grok_models_fail_is_fail_check(tmp_path, monkeypatch, mocker):
     assert grok_checks and any(c["ok"] is False for c in grok_checks)
     fail = next(c for c in grok_checks if c["ok"] is False)
     assert "grok login" in (fail.get("hint") or "")
+
+
+def test_doctor_grok_pending_oserror_does_not_crash(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
+    mocker.patch("fanops.agentstep.pending", side_effect=OSError("agent_io unreadable"))
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
+    hint = vision.get("hint") or ""
+    assert vision.get("severity") == "warn"
+    assert _GROK_CAPTIONS_ONLY in hint
+    assert "awaiting_moments=" not in hint
 
 
 def test_doctor_grok_missing_hint_names_login(tmp_path, monkeypatch):

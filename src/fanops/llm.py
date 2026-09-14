@@ -156,12 +156,13 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
     """Dispatch to exactly ONE CLI per FANOPS_LLM_TRANSPORT (Studio Go-Live — the single switch).
 
-    No silent cross-transport fallback: cursor means cursor-agent for every gate; claude means
-    claude -p for every gate. If transport=cursor and a vision gate needs frames but cursor-agent
-    cannot do vision, raise ToolchainMissingError telling the operator to flip the ONE switch to
-    claude — never shell `claude` behind their back (that was the captions-vs-moments split).
-    Cursor uses its OWN auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the
-    per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
+    No silent cross-transport fallback: cursor means cursor-agent for every gate; grok means grok
+    for caption gates only (vision fail-closed, no silent claude fallback); claude means claude -p
+    for every gate. If transport is cursor or grok and a vision gate needs frames the CLI cannot
+    do, raise ToolchainMissingError telling the operator to flip the ONE switch to claude — never
+    shell `claude` behind their back (that was the captions-vs-moments split). Cursor uses its OWN
+    auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the per-gate claude tiers
+    (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
     from fanops.config import Config, resolve_llm_transport
     if isinstance(schema, dict):
         schema = _claude_strict_schema(schema)           # root: strip draft-2020-12 keywords CLI strict rejects

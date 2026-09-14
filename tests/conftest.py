@@ -12,9 +12,12 @@
 # in the repo .env.
 import os
 import pytest
+import fanops.llm as _fanops_llm
 from fanops.errors import LockBusyError
 from fanops.ledger import Ledger
 from fanops.settings import BOOL_ENV_FIELDS
+
+_REAL_GROK_MODELS_OK = _fanops_llm.grok_models_ok          # original helper; autouse stubs the module attr
 
 
 def ledger_lock_is_free(cfg) -> bool:
@@ -177,7 +180,10 @@ def _hermetic_llm(monkeypatch):
     Tests that inject their own model bypass (2); tests that exercise the default model re-patch
     fanops.responder.claude_json_meta themselves (their patch wins, applied after this autouse fixture);
     tests that need the CLI genuinely ABSENT (preflight/doctor failure paths) monkeypatch shutil.which
-    back to return None for the binary."""
+    back to return None for the binary. `_which` pretends `grok` is on PATH, so grok_models_ok is also
+    stubbed True — otherwise a doctor/preflight test that sets FANOPS_LLM_TRANSPORT=grok and forgets
+    to mock the probe would shell the live CLI. Tests that must inspect the real helper import
+    `_REAL_GROK_MODELS_OK` and mock `fanops.llm.subprocess.run`."""
     import shutil
     _real_which = shutil.which
     def _which(name, *a, **k):
@@ -185,6 +191,7 @@ def _hermetic_llm(monkeypatch):
             return f"/usr/bin/{name}"                     # pretend the LLM CLI is installed — never actually run
         return _real_which(name, *a, **k)
     monkeypatch.setattr("shutil.which", _which)
+    monkeypatch.setattr(_fanops_llm, "grok_models_ok", lambda: True)
     def _no_llm(*_a, **_k):
         raise RuntimeError("hermetic unit suite: no live LLM (inject a model, or patch claude_json_meta)")
     monkeypatch.setattr("fanops.responder.claude_json_meta", _no_llm)

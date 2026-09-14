@@ -1,5 +1,6 @@
 # tests/test_llm.py
 import json
+import os
 import subprocess
 import pytest
 from fanops.errors import ToolchainMissingError
@@ -847,6 +848,78 @@ def test_dispatch_claude_unchanged_when_not_grok(mocker, monkeypatch):
     claude_json("q", _SCHEMA)
     assert run.call_args[0][0][0] == "claude"
 
+def test_grok_isolation_env_zeros(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    env = run.call_args.kwargs["env"]
+    for k in ("GROK_CLAUDE_HOOKS_ENABLED", "GROK_CLAUDE_MCPS_ENABLED",
+              "GROK_CLAUDE_SKILLS_ENABLED", "GROK_CLAUDE_AGENTS_ENABLED",
+              "GROK_CURSOR_HOOKS_ENABLED", "GROK_CURSOR_MCPS_ENABLED"):
+        assert env[k] == "0"
+    assert env["GROK_DISABLE_AUTOUPDATER"] == "1"
+
+def test_grok_cwd_is_fanops_tempdir(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    cwd = run.call_args.kwargs["cwd"]
+    assert os.path.basename(cwd).startswith("fanops-grok-")
+    cmd = run.call_args[0][0]
+    assert "--cwd" in cmd and cmd[cmd.index("--cwd") + 1] == cwd
+
+def test_grok_output_format_json(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    cmd = run.call_args[0][0]
+    assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "json"
+
+def test_grok_prompt_file_mode_is_0600(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    modes = []
+    def _run(cmd, **kw):
+        pf = cmd[cmd.index("--prompt-file") + 1]
+        modes.append(os.stat(pf).st_mode & 0o777)
+        return R()
+    mocker.patch("fanops.llm.subprocess.run", side_effect=_run)
+    claude_json("q", _SCHEMA)
+    assert modes == [0o600]
+
+def test_grok_timeout_raises_llm_timeout_error(mocker, monkeypatch):
+    from fanops.llm import LlmTimeoutError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.subprocess.run", side_effect=subprocess.TimeoutExpired("grok", 1))
+    with pytest.raises(LlmTimeoutError, match="grok") as ei:
+        claude_json("q", _SCHEMA)
+    assert type(ei.value) is LlmTimeoutError
+
+def test_grok_models_ok_argv(mocker, monkeypatch):
+    from tests.conftest import _REAL_GROK_MODELS_OK
+    monkeypatch.setenv("XAI_API_KEY", "xai-should-not-leak")
+    monkeypatch.setenv("GROK_CODE_XAI_API_KEY", "also-no")
+    class R: returncode = 0; stdout = ""; stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert _REAL_GROK_MODELS_OK() is True
+    assert run.call_args[0][0] == ["grok", "--no-auto-update", "models"]
+    env = run.call_args.kwargs["env"]
+    assert "XAI_API_KEY" not in env
+    assert "GROK_CODE_XAI_API_KEY" not in env
+    for k in ("GROK_CLAUDE_HOOKS_ENABLED", "GROK_CLAUDE_MCPS_ENABLED",
+              "GROK_CLAUDE_SKILLS_ENABLED", "GROK_CLAUDE_AGENTS_ENABLED",
+              "GROK_CURSOR_HOOKS_ENABLED", "GROK_CURSOR_MCPS_ENABLED"):
+        assert env[k] == "0"
+    assert env["GROK_DISABLE_AUTOUPDATER"] == "1"
+    assert run.call_args.kwargs["timeout"] == 15
+    run.side_effect = subprocess.TimeoutExpired("grok", 15)
+    assert _REAL_GROK_MODELS_OK() is False
+    run.side_effect = FileNotFoundError(2, "No such file", "grok")
+    assert _REAL_GROK_MODELS_OK() is False
+
 
 # --- 2026-07-12 incident: a claude CLI predating --json-schema (2.0.30, pinned by a stale daemon
 # plist PATH) rejected EVERY gate call with rc=1 "error: unknown option '--json-schema'" — hook=null
@@ -873,6 +946,28 @@ def test_json_schema_flag_rejected_falls_back_to_prompt_side_schema(mocker):
     assert json.dumps(_SCHEMA) in retry_prompt                 # the schema rides the prompt instead
     assert "ONLY a single JSON object" in retry_prompt
     assert "pick a number" in retry_prompt                     # original prompt preserved
+
+def test_grok_json_schema_retry_writes_schema_into_prompt_file(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    ok = type("R", (), {"returncode": 0, "stdout": json.dumps(_grok_ok_env({"x": 3})), "stderr": ""})()
+    prompt_bodies = []
+    def _run(cmd, **kw):
+        pf = cmd[cmd.index("--prompt-file") + 1]
+        with open(pf) as f:
+            prompt_bodies.append(f.read())
+        return _json_schema_reject() if len(prompt_bodies) == 1 else ok
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=_run)
+    assert claude_json("q", _SCHEMA) == {"x": 3}
+    assert run.call_count == 2
+    first_cmd, retry_cmd = run.call_args_list[0][0][0], run.call_args_list[1][0][0]
+    assert "--json-schema" in first_cmd
+    assert "--json-schema" not in retry_cmd
+    for cmd, call in zip((first_cmd, retry_cmd), run.call_args_list):
+        assert "--prompt-file" in cmd
+        assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "json"
+        assert call.kwargs.get("input") in (None, "")
+    assert json.dumps(_SCHEMA) in prompt_bodies[1]
+    assert "ONLY a single JSON object" in prompt_bodies[1]
 
 def test_json_schema_fallback_logs_warning_breadcrumb(mocker, caplog):
     import logging
