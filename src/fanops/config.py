@@ -70,7 +70,8 @@ _STAGE = {
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
+_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor", "grok"})
+_GROK_MODEL_ALIASES = {"opus": "grok-4.6", "sonnet": "grok-4.5"}
 _VALID_RESPONDERS = frozenset({"llm"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
@@ -651,7 +652,7 @@ class Config:
 
     @property
     def llm_cli_binary(self) -> str:
-        return "cursor-agent" if self.llm_transport == "cursor" else "claude"
+        return {"cursor": "cursor-agent", "grok": "grok"}.get(self.llm_transport, "claude")
 
     @property
     def llm_model(self) -> str | None:
@@ -669,9 +670,10 @@ class Config:
         # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
         # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
         g = self.llm_model
-        if g:
-            return g
-        return _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
+        name = g if g else _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
+        if self.llm_transport == "grok":
+            return _GROK_MODEL_ALIASES.get(name, name)
+        return name
 
     @property
     def artist_name(self) -> str:

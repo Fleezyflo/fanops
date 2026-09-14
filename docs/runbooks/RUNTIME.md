@@ -43,6 +43,7 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `POSTIZ_API_KEY` | string | Postiz public API key (`x-api-key`). Required when any channel routes to `postiz`. |
 | `ZERNIO_API_KEY` | string | Zernio API key. Required when any channel routes to `zernio` (TikTok). |
 | `FANOPS_RESPONDER` | `llm` (only) | Gates are answered ONLY by the LLM responder via plain `claude -p` (the operator's existing Claude subscription/login — NO API key). Leave unset (resolves to `llm`) or set `llm`; **any other value is a hard refuse** (`doctor`/`advance`/`run` exit non-zero). `advance`/`run` also **hard-fail (exit 2) unless `claude` is on PATH** — the cutover-safety preflight (see below); the operator must `claude login` once on the host. |
+| `FANOPS_LLM_TRANSPORT` | `claude` (default) \| `cursor` \| `grok` | LLM CLI transport. Default/`claude` = full pipeline via `claude -p` (also the rollback). `cursor` = `cursor-agent`. `grok` = **captions only** (moments/hooks stay on Claude): vision gates fail closed (`ToolchainMissingError`); flip transport back to `claude` for those gates. Grok shells `grok --prompt-file` (never argv/STDIN). **Do not set `XAI_API_KEY`** in FanOps `.env`/cron/launchd — the child env **pops** `XAI_API_KEY` and `GROK_CODE_XAI_API_KEY` (`grok login` session file). Preflight is transport-aware: missing `grok` or failed `grok models` → exit 2; grok does **not** get cursor's blanket vision refuse at preflight. |
 | `claude` (CLI, logged in) | — | ALWAYS required — gates are answered only by the LLM. The responder shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | **Legacy** transcript-caption toggle — **ignored at render since PR 994** (hook-only overlay). Render always burns the retention hook (`Moment.hook`) when present; transcript captions are never layered. Kept for settings/doctor registration parity only. See `docs/CONFIG.md`. |
@@ -89,12 +90,17 @@ doing any work, right after `_check_accounts`. It **refuses to run (exit 2, one-
 stderr, no traceback)** for the two env mismatches that would otherwise make the pipeline do
 credentialless *nothing* — the #1 cutover trap:
 
-- **`claude` is not on PATH (or not logged in)** — the responder
+- **`claude` is not on PATH (or not logged in)** — default transport. The responder
   shells plain `claude -p` (your existing subscription/login; no API key). With no `claude`
   binary it would fail every gate, clear nothing, and publish nothing **without crashing**
   (the preflight hard-blocks the binary-absent case; a logged-out `claude` surfaces via the
   `run halted`/heartbeat path). This is the guaranteed-silent failure the heartbeat/dead-man's
   switch is designed to *detect after the fact*; the preflight catches it **up front** instead.
+  Preflight is **transport-aware**: with `FANOPS_LLM_TRANSPORT=grok`, missing `grok` or a failed
+  `grok models` probe → exit 2 (`grok login`, session file; **no `XAI_API_KEY`** in FanOps
+  `.env`/cron/launchd). Grok is captions-only — no cursor-style vision blanket refuse at
+  preflight; vision gates fail closed at call time (`ToolchainMissingError`). Rollback:
+  `FANOPS_LLM_TRANSPORT=claude`.
 - **`FANOPS_POSTER=postiz` but `POSTIZ_URL` / `POSTIZ_API_KEY` unset** — publishing would fail auth.
 - **Any channel routed to `zernio` but `ZERNIO_API_KEY` unset** — TikTok publish would fail auth.
 

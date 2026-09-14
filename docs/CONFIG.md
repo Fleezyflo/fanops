@@ -43,7 +43,7 @@ Hand-editing `.env` while a long-lived process runs requires restart; Studio go-
 | Var | Default | Effect | Set |
 |---|---|---|---|
 | `FANOPS_RESPONDER` | `llm` | Vestigial validate-or-refuse — leave unset or set `llm`; any other value is a hard refuse (`doctor`/preflight). Not Studio-settable. | deprecated |
-| `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor`) | S |
+| `FANOPS_LLM_TRANSPORT` | `claude` | LLM CLI transport (`claude` / `cursor` / `grok`). Grok = captions only; moments/hooks stay on Claude. Default remains `claude`. | S |
 | `FANOPS_LLM_MODEL` | per-gate | Force ONE model across all gates | .env |
 | `ANTHROPIC_API_KEY` | None | Vestigial — responder uses the `claude` subscription; do not set | deprecated |
 

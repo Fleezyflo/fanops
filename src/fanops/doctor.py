@@ -416,7 +416,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # 2. gates are answered ONLY by the LLM, so the LLM CLI is ALWAYS required on PATH (mirrors preflight —
     # no longer gated on FANOPS_RESPONDER=llm, since there is no other responder). A bad FANOPS_RESPONDER
     # value is surfaced as its own failing check rather than a traceback.
-    from fanops.llm import _CURSOR_SUPPORTS_VISION
+    from fanops.llm import _CURSOR_SUPPORTS_VISION, grok_models_ok
     try:
         cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; anything else raises)
         responder_err = None
@@ -425,18 +425,27 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     checks.append(_check("FANOPS_RESPONDER valid (llm-only)", responder_err is None,
                          responder_err or "leave FANOPS_RESPONDER unset, or set it to 'llm' — it has no other valid value"))
     cli_bin = cfg.llm_cli_binary
-    hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
-            if cli_bin == "cursor-agent"
-            else "install Claude Code + run `claude login` (uses your subscription, no API key)")
-    # PATH presence is NOT proof of login; no cheap non-mutating auth probe. When present, emit
-    # Severity.WARN (non-blocking) so we never claim a silent authenticated PASS.
+    if cli_bin == "cursor-agent":
+        hint = "install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
+    elif cli_bin == "grok":
+        hint = "install Grok CLI + run `grok login` (session file, no API key)"
+    else:
+        hint = "install Claude Code + run `claude login` (uses your subscription, no API key)"
+    # PATH presence is NOT proof of login; no cheap non-mutating auth probe (except grok models).
+    # When present, emit Severity.WARN (non-blocking) so we never claim a silent authenticated PASS.
+    # Grok: `grok models` is the login probe — fail closed if it does not return rc=0.
     if shutil.which(cli_bin) is not None:
-        login_cmd = "cursor-agent login" if cli_bin == "cursor-agent" else "claude login"
-        checks.append(_check(
-            f"{cli_bin} on PATH",
-            severity="warn",
-            hint=(f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
-                  f"start failing with auth errors, run `{login_cmd}`")))
+        if cli_bin == "grok" and not grok_models_ok():
+            checks.append(_check(f"{cli_bin} on PATH", False,
+                                 "grok is on PATH but `grok models` failed — run `grok login` "
+                                 "(session file, no API key)"))
+        else:
+            login_cmd = {"cursor-agent": "cursor-agent login", "grok": "grok login"}.get(cli_bin, "claude login")
+            checks.append(_check(
+                f"{cli_bin} on PATH",
+                severity="warn",
+                hint=(f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
+                      f"start failing with auth errors, run `{login_cmd}`")))
     else:
         checks.append(_check(f"{cli_bin} on PATH", False, hint))
     if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
@@ -444,6 +453,15 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
         checks.append(_check("LLM transport can run vision gates", False,
                              "set LLM transport to claude in Studio Go-Live "
                              "(single switch; no silent claude fallback when transport=cursor)"))
+    elif cfg.llm_transport == "grok":
+        # F1 captions-only: WARN, never a cursor-style blanket FAIL (that would make captions unreachable).
+        from fanops.agentstep import pending
+        n = len(pending(cfg, kind="moments"))
+        m = len(pending(cfg, kind="moment_hooks"))
+        cap = "Grok (captions only; moments/hooks stay on Claude)"
+        if n or m:
+            cap = f"{cap} awaiting_moments={n} awaiting_moment_hooks={m}"
+        checks.append(_check("LLM transport can run vision gates", severity="warn", hint=cap))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
     # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
     # but a preflight is the visible gate). Read directly + safely so the report never crashes.

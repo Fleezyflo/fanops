@@ -113,6 +113,63 @@ def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
     vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
     assert vision["ok"] is False and "claude" in (vision.get("hint") or "").lower()
 
+
+_GROK_CAPTIONS_ONLY = "Grok (captions only; moments/hooks stay on Claude)"
+
+
+def test_doctor_grok_transport_checks_grok(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
+    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
+    assert vision["ok"] is True and vision.get("severity") == "warn"
+    assert _GROK_CAPTIONS_ONLY in (vision.get("hint") or "")
+    assert "awaiting_moments=" not in (vision.get("hint") or "")
+
+
+def test_doctor_grok_warn_names_pending_vision_counts(tmp_path, monkeypatch, mocker):
+    from fanops.agentstep import write_request
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
+    cfg = Config(root=tmp_path)
+    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
+    write_request(cfg, kind="moments", key="src_2", payload={"source_id": "src_2"})
+    write_request(cfg, kind="moment_hooks", key="h1", payload={"source_id": "src_1"})
+    rep = doctor.doctor_report(cfg)
+    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
+    hint = vision.get("hint") or ""
+    assert vision.get("severity") == "warn"
+    assert _GROK_CAPTIONS_ONLY in hint
+    assert "awaiting_moments=2" in hint
+    assert "awaiting_moment_hooks=1" in hint
+
+
+def test_doctor_grok_models_fail_is_fail_check(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    grok_checks = [c for c in rep["checks"] if "grok" in c["label"].lower()]
+    assert grok_checks and any(c["ok"] is False for c in grok_checks)
+    fail = next(c for c in grok_checks if c["ok"] is False)
+    assert "grok login" in (fail.get("hint") or "")
+
+
+def test_doctor_grok_missing_hint_names_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    import shutil
+    _real = shutil.which
+    monkeypatch.setattr("shutil.which", lambda b, *a, **k: None if b == "grok" else _real(b, *a, **k))
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    grok = next(c for c in rep["checks"] if "grok" in c["label"].lower())
+    assert grok["ok"] is False
+    hint = grok.get("hint") or ""
+    assert "grok login" in hint and "API key" in hint
+
 def test_doctor_notes_learning_unvalidated(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
     assert any("cutover" in n.lower() for n in rep["notes"])    # points at the go-live harness

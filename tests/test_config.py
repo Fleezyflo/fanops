@@ -155,6 +155,32 @@ def test_llm_transport_cursor(monkeypatch, tmp_path):
     cfg = Config(root=tmp_path)
     assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
 
+def test_llm_transport_grok(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    cfg = Config(root=tmp_path)
+    assert cfg.llm_transport == "grok" and cfg.llm_cli_binary == "grok"
+
+def test_llm_model_for_maps_aliases_when_transport_grok(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    c = Config(root=tmp_path)
+    assert c.llm_model_for("moments") == "grok-4.6"
+    assert c.llm_model_for("moment_hooks") == "grok-4.6"
+    assert c.llm_model_for("captions") == "grok-4.5"
+
+def test_llm_model_for_grok_pin_passthrough(monkeypatch, tmp_path):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    monkeypatch.setenv("FANOPS_LLM_MODEL", "grok-4.6")
+    c = Config(root=tmp_path)
+    assert c.llm_model_for("captions") == "grok-4.6"
+
+def test_llm_model_for_claude_unchanged(monkeypatch, tmp_path):
+    monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    c = Config(root=tmp_path)
+    assert c.llm_model_for("moments") == "opus"
+    assert c.llm_model_for("captions") == "sonnet"
+
 def test_llm_transport_unknown_warns_and_falls_back(monkeypatch, tmp_path, caplog):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "openai")
     with caplog.at_level(logging.WARNING):

@@ -883,10 +883,16 @@ def test_set_llm_transport_toggles_dual_write(tmp_path, monkeypatch):
     assert res.ok and res.detail["llm_transport"] == "claude"
     assert "FANOPS_LLM_TRANSPORT=claude" in (tmp_path / ".env").read_text()
 
+def test_set_llm_transport_accepts_grok(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    res = golive.set_llm_transport(cfg, "grok")
+    assert res.ok and res.detail["llm_transport"] == "grok" and res.detail["llm_cli_binary"] == "grok"
+    assert "FANOPS_LLM_TRANSPORT=grok" in (tmp_path / ".env").read_text()
+
 def test_set_llm_transport_rejects_unknown(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
     res = golive.set_llm_transport(cfg, "openai")
-    assert not res.ok and "claude or cursor" in res.error
+    assert not res.ok and "grok" in res.error
 
 def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
     from fanops.studio.app import create_app
@@ -896,6 +902,17 @@ def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert cfg.llm_transport == "cursor"
     assert "Switch to Claude" in r.get_data(as_text=True)
+
+def test_golive_llm_transport_grok_copy_is_captions_only(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "Grok (captions only; moments/hooks stay on Claude)" in html
+    assert 'name="transport" value="grok"' in html
+    r = _client(cfg).post("/golive/llm-transport", data={"transport": "grok"})
+    assert r.status_code == 200 and cfg.llm_transport == "grok"
+    grok_html = r.get_data(as_text=True)
+    assert "Grok (captions only; moments/hooks stay on Claude)" in grok_html
+    assert "● Grok (captions only; moments/hooks stay on Claude)" in grok_html
 
 
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):

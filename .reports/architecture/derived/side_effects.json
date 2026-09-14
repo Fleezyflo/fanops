@@ -61,23 +61,19 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1131
+        "line": 1140
       },
       {
         "call": "Ledger.transaction",
-        "line": 1146
+        "line": 1155
       },
       {
         "call": "Ledger.transaction",
-        "line": 1182
+        "line": 1191
       },
       {
         "call": "Ledger.transaction",
-        "line": 1192
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1219
+        "line": 1201
       },
       {
         "call": "Ledger.transaction",
@@ -85,7 +81,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1239
+        "line": 1237
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1248
       }
     ],
     "fanops.cli_run": [
@@ -511,7 +511,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1411
+        "line": 1420
       }
     ],
     "fanops.post.compress": [
@@ -606,7 +606,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1443
+        "line": 1452
       }
     ],
     "fanops.post.compress": [
@@ -663,35 +663,35 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 211
+        "line": 212
       },
       {
         "call": "subprocess.run",
-        "line": 307
+        "line": 308
       },
       {
         "call": "subprocess.run",
-        "line": 312
+        "line": 313
       },
       {
         "call": "subprocess.run",
-        "line": 712
+        "line": 713
       },
       {
         "call": "subprocess.run",
-        "line": 738
+        "line": 739
       },
       {
         "call": "subprocess.run",
-        "line": 743
+        "line": 744
       },
       {
         "call": "subprocess.run",
-        "line": 771
+        "line": 772
       },
       {
         "call": "subprocess.run",
-        "line": 844
+        "line": 845
       }
     ],
     "fanops.discover": [
@@ -751,11 +751,19 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 218
+        "line": 228
       },
       {
         "call": "subprocess.run",
-        "line": 356
+        "line": 366
+      },
+      {
+        "call": "subprocess.run",
+        "line": 476
+      },
+      {
+        "call": "subprocess.run",
+        "line": 519
       }
     ],
     "fanops.media_probe": [
@@ -848,6 +856,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 42
   }
 }

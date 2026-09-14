@@ -673,6 +673,181 @@ def test_dispatch_claude_vision_uses_claude(mocker, monkeypatch):
     assert run.call_args[0][0][0] == "claude"
 
 
+# --- grok transport (FANOPS_LLM_TRANSPORT=grok) ---
+
+def _grok_ok_env(obj, *, num_turns=1, model_key="grok-4.6-build"):
+    return {
+        "text": json.dumps(obj),
+        "stopReason": "end_turn",
+        "sessionId": "s",
+        "requestId": "r",
+        "num_turns": num_turns,
+        "structuredOutput": obj,
+        "modelUsage": {model_key: {"modelCalls": 1}},
+    }
+
+def test_dispatch_routes_grok(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("q", _SCHEMA) == {"x": 1}
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "grok"
+    assert "--no-auto-update" in cmd
+    assert "-p" not in cmd
+    assert "--prompt-file" in cmd
+    assert "--json-schema" in cmd
+    assert "--tools" in cmd and cmd[cmd.index("--tools") + 1] == ""
+    assert "--disable-web-search" in cmd and "--no-subagents" in cmd
+    assert "--strict-mcp-config" not in cmd
+    assert "--allowedTools" not in cmd
+    assert "--bare" not in cmd
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "grok-4.6"   # pin unset → default
+    assert "q" not in cmd
+    assert run.call_args.kwargs.get("input") in (None, "")
+
+def test_grok_pops_xai_api_key_from_child_env(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    monkeypatch.setenv("XAI_API_KEY", "xai-should-not-leak")
+    monkeypatch.setenv("GROK_CODE_XAI_API_KEY", "also-no")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    child = run.call_args.kwargs["env"]
+    assert "XAI_API_KEY" not in child
+    assert "GROK_CODE_XAI_API_KEY" not in child
+
+def test_grok_prompt_file_not_argv(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 3})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("SECRET_TRANSCRIPT_TOKEN", _SCHEMA)
+    cmd = run.call_args[0][0]
+    assert "SECRET_TRANSCRIPT_TOKEN" not in cmd
+    pf = cmd[cmd.index("--prompt-file") + 1]
+    assert pf.startswith("/")
+
+def test_grok_structuredOutput_preferred(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 7}); env["text"] = "prose that is not the object"
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("q", _SCHEMA) == {"x": 7}
+
+def test_grok_text_json_when_no_structuredOutput(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 4}); del env["structuredOutput"]
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("q", _SCHEMA) == {"x": 4}
+
+def test_grok_answered_model_prefers_modelUsage_key(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 1}, model_key="grok-4.6-build")
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json_meta
+    _, model, _ = claude_json_meta("q", _SCHEMA, model="grok-4.5")
+    assert model == "grok-4.6-build"
+
+def test_grok_answered_model_falls_back_to_pin_without_modelUsage(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 1}); del env["modelUsage"]
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    from fanops.llm import claude_json_meta
+    _, model, _ = claude_json_meta("q", _SCHEMA, model="grok-4.5")
+    assert model == "grok-4.5"
+
+def test_grok_never_passes_opus_sonnet(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA, model="opus")
+    cmd = run.call_args[0][0]
+    assert cmd[cmd.index("-m") + 1] == "grok-4.6"
+    assert "opus" not in cmd and "sonnet" not in cmd
+
+def test_grok_missing_binary(mocker, monkeypatch):
+    from fanops.errors import ToolchainMissingError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    def absent(cmd, **kw): raise FileNotFoundError(2, "No such file", cmd[0])
+    mocker.patch("fanops.llm.subprocess.run", side_effect=absent)
+    with pytest.raises(ToolchainMissingError, match="grok"):
+        claude_json("q", _SCHEMA)
+
+def test_dispatch_grok_vision_refuses_silent_claude_fallback(mocker, monkeypatch):
+    from fanops.errors import ToolchainMissingError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    run = mocker.patch("fanops.llm.subprocess.run")
+    with pytest.raises(ToolchainMissingError, match="Go-Live|single switch|vision"):
+        claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
+    assert run.call_count == 0
+
+def test_grok_unknown_model_is_toolchain_error(mocker, monkeypatch):
+    from fanops.llm import LlmToolchainError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class R:
+        returncode = 1
+        stdout = json.dumps({"type": "error", "message": "Couldn't set model 'x': Invalid params: \"unknown model id\""})
+        stderr = ""
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    with pytest.raises(LlmToolchainError, match="grok"):
+        claude_json("q", _SCHEMA)
+
+def test_grok_rate_limit_raises_typed_after_retries(mocker, monkeypatch):
+    from fanops.llm import LlmRateLimitError
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class RL:
+        returncode = 1
+        stdout = json.dumps({"type": "error", "message": "rate limit 429"})
+        stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=RL())
+    mocker.patch("fanops.llm._sleep")
+    with pytest.raises(LlmRateLimitError):
+        claude_json("q", _SCHEMA)
+    assert run.call_count == 5   # _MAX_RL_RETRIES 4 → 5 attempts
+
+def test_grok_rate_limit_backoff_then_success(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    class RL:
+        returncode = 1
+        stdout = json.dumps({"type": "error", "message": "rate limit 429"})
+        stderr = ""
+    class OK:
+        returncode = 0
+        stdout = json.dumps(_grok_ok_env({"x": 3}))
+        stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[RL(), RL(), OK()])
+    sleep = mocker.patch("fanops.llm._sleep")
+    assert claude_json("q", _SCHEMA) == {"x": 3}
+    assert run.call_count == 3 and sleep.call_count == 2
+
+def test_grok_success_envelope_digits_are_not_rate_limit(mocker, monkeypatch):
+    # F0 success JSON is numeric-heavy (usage, cost, ids). Marker digits 429/503/529 must
+    # not fire on rc=0 — that would retry a good captions call into LlmRateLimitError.
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    env = _grok_ok_env({"x": 1})
+    env["usage"] = {"input_tokens": 1429, "output_tokens": 503}
+    env["total_cost_usd"] = 0.0429
+    env["requestId"] = "req-429-503-529"
+    env["sessionId"] = "s529"
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    sleep = mocker.patch("fanops.llm._sleep")
+    assert claude_json("q", _SCHEMA) == {"x": 1}
+    assert run.call_count == 1 and sleep.call_count == 0
+
+def test_dispatch_claude_unchanged_when_not_grok(mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
+    envelope = {"structured_output": {"x": 1}}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA)
+    assert run.call_args[0][0][0] == "claude"
+
+
 # --- 2026-07-12 incident: a claude CLI predating --json-schema (2.0.30, pinned by a stale daemon
 # plist PATH) rejected EVERY gate call with rc=1 "error: unknown option '--json-schema'" — hook=null
 # clips + fallback hashtag-only captions for days. The transport now retries ONCE without the flag,
