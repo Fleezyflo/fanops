@@ -61,31 +61,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1142
+        "line": 1121
       },
       {
         "call": "Ledger.transaction",
-        "line": 1157
+        "line": 1136
       },
       {
         "call": "Ledger.transaction",
-        "line": 1193
+        "line": 1172
       },
       {
         "call": "Ledger.transaction",
-        "line": 1203
+        "line": 1182
       },
       {
         "call": "Ledger.transaction",
-        "line": 1230
+        "line": 1209
       },
       {
         "call": "Ledger.transaction",
-        "line": 1239
+        "line": 1218
       },
       {
         "call": "Ledger.transaction",
-        "line": 1250
+        "line": 1229
       }
     ],
     "fanops.cli_run": [
@@ -511,7 +511,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1422
+        "line": 1401
       }
     ],
     "fanops.post.compress": [
@@ -606,7 +606,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1454
+        "line": 1433
       }
     ],
     "fanops.post.compress": [
@@ -751,19 +751,11 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
+        "line": 181
+      },
+      {
+        "call": "subprocess.run",
         "line": 229
-      },
-      {
-        "call": "subprocess.run",
-        "line": 367
-      },
-      {
-        "call": "subprocess.run",
-        "line": 477
-      },
-      {
-        "call": "subprocess.run",
-        "line": 520
       }
     ],
     "fanops.media_probe": [
@@ -856,6 +848,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 42
+    "subprocess_sites": 40
   }
 }

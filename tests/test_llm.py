@@ -9,6 +9,23 @@ from fanops.llm import claude_json, _claude_strict_schema
 _SCHEMA = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
 
 
+def _grok_ok_env(obj, *, num_turns=1, model_key="grok-4.6-build"):
+    return {
+        "text": json.dumps(obj),
+        "stopReason": "end_turn",
+        "sessionId": "s",
+        "requestId": "r",
+        "num_turns": num_turns,
+        "structuredOutput": obj,
+        "modelUsage": {model_key: {"modelCalls": 1}},
+    }
+
+
+def _json_schema_reject():
+    return type("R", (), {"returncode": 1, "stdout": "",
+                          "stderr": "error: unknown option '--json-schema'"})()
+
+
 def test_claude_strict_schema_rewrites_prefix_items():
     # Claude Code ≥2.1 strict --json-schema rejects draft-2020-12 prefixItems (Pydantic tuple fields).
     raw = {
@@ -34,8 +51,7 @@ def test_claude_strict_schema_clears_moment_decision_prefix_items():
 
 def test_claude_json_sends_strict_schema_without_prefix_items(mocker):
     from fanops.models import MomentDecision
-    envelope = {"structured_output": {"picks": []}, "result": "{}", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"picks": []})); stderr = ""
     run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
     claude_json("pick", MomentDecision.model_json_schema())
     cmd = run.call_args[0][0]
@@ -43,85 +59,10 @@ def test_claude_json_sends_strict_schema_without_prefix_items(mocker):
     assert "prefixItems" not in cmd[i + 1]
 
 
-def test_claude_json_extracts_structured_output(mocker):
-    # claude -p returns the envelope on stdout; we want structured_output.
-    envelope = {"structured_output": {"x": 7}, "result": "{\"x\": 7}", "session_id": "s", "total_cost_usd": 0.001}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out = claude_json("pick a number", _SCHEMA)
-    assert out == {"x": 7}
-    # built the headless, no-tools, schema-enforced invocation
-    cmd = run.call_args[0][0]
-    assert cmd[0] == "claude" and "-p" in cmd
-    # AUTH (operator decision 2026-06-04): use the EXISTING `claude` subscription/login (OAuth),
-    # NOT an API key. `--bare` is therefore REMOVED — under --bare, claude reads auth strictly from
-    # ANTHROPIC_API_KEY and IGNORES the OAuth/keychain login, so a logged-in `claude` would still
-    # fail "Not logged in". Plain `claude -p` uses the existing session. We keep it a clean
-    # generator with --strict-mcp-config (no MCP servers bleed into the decision) + --allowedTools "".
-    assert "--bare" not in cmd
-    assert "--strict-mcp-config" in cmd
-    assert "--output-format" in cmd and "json" in cmd
-    assert "--json-schema" in cmd
-    i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""   # pure generator
-
-def test_claude_json_with_images_allows_read_and_references_paths(mocker):
-    # The vision-grounded hook editor must SEE frames: with images, the call grants the Read tool and
-    # names the frame paths in the prompt so the model reads them (proven viable in the Task 0a spike).
-    envelope = {"structured_output": {"x": 5}, "result": "", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out = claude_json("judge these", _SCHEMA, images=["/tmp/a.jpg", "/tmp/b.jpg"])
-    assert out == {"x": 5}
-    cmd = run.call_args[0][0]
-    i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read"          # vision needs the Read tool
-    # ECC fix #11: the prompt now rides STDIN (input=), not argv — assert against the kwarg
-    prompt = run.call_args.kwargs["input"]
-    assert "/tmp/a.jpg" in prompt and "/tmp/b.jpg" in prompt              # told which frames to read
-    assert "hook" not in prompt.lower()                                   # MOL-251: gate-neutral wrapper
-    assert "ONLY the JSON" in prompt and "no prose" in prompt.lower()
-
-def test_claude_json_with_read_root_scopes_allowed_tools(mocker):
-    envelope = {"structured_output": {"x": 5}, "result": "", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("judge these", _SCHEMA, images=["/tmp/a.jpg"], read_root="/tmp")
-    cmd = run.call_args[0][0]
-    i = cmd.index("--allowedTools"); assert cmd[i + 1] == "Read(///tmp/**)"
-
-def test_claude_json_vision_reask_wrapper_gate_neutral(mocker):
-    # MOL-251: the re-ask string is also gate-neutral — no hook-specific wording.
-    from fanops.llm import claude_json_meta
-    seq = iter([json.dumps({"structured_output": {"x": 1}, "num_turns": 1}),
-                json.dumps({"structured_output": {"x": 2}, "num_turns": 3})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    claude_json_meta("pick", _SCHEMA, images=["/f/1.jpg"])
-    reask = run.call_args_list[1].kwargs["input"]
-    assert "hook" not in reask.lower()
-    assert "You did NOT open the frames" in reask
-    assert "ONLY the JSON" in reask and "no prose" in reask.lower()
-
-def test_claude_json_without_images_stays_pure_generator(mocker):
-    # Regression: the default (text-only) path is byte-identical — no Read tool, no file access.
-    envelope = {"structured_output": {"x": 1}}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA)
-    cmd = run.call_args[0][0]
-    i = cmd.index("--allowedTools"); assert cmd[i + 1] == ""
-
-def test_claude_json_falls_back_to_parsing_result_when_no_structured(mocker):
-    # If structured_output is absent/null, parse the JSON in `result`.
-    envelope = {"structured_output": None, "result": "{\"x\": 9}", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    assert claude_json("q", _SCHEMA) == {"x": 9}
-
 def test_claude_json_raises_on_nonzero_exit(mocker):
     class R: returncode = 1; stdout = ""; stderr = "auth failed"
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(RuntimeError, match="claude -p failed"):
+    with pytest.raises(RuntimeError, match="grok failed"):
         claude_json("q", _SCHEMA)
 
 # --- toolchain error: unknown option / unrecognized option / usage: in body -> LlmToolchainError ---
@@ -170,12 +111,6 @@ def test_api_error_still_raises_generic_runtime_not_toolchain(mocker):
         claude_json("q", _SCHEMA)
     assert not isinstance(exc_info.value, LlmToolchainError)
 
-def test_claude_json_raises_toolchain_missing_when_claude_absent(mocker):
-    def absent(cmd, **kw): raise FileNotFoundError(2, "No such file or directory", cmd[0])
-    mocker.patch("fanops.llm.subprocess.run", side_effect=absent)
-    with pytest.raises(ToolchainMissingError, match="claude"):
-        claude_json("q", _SCHEMA)
-
 def test_claude_json_raises_on_unparseable_output(mocker):
     from fanops.llm import LlmSchemaError
     class R: returncode = 0; stdout = "not json at all"; stderr = ""
@@ -198,121 +133,9 @@ def test_claude_json_hard_failure_not_retried(mocker):
     # a non-rate-limit nonzero exit (e.g. auth) must FAIL FAST — no backoff, no retry.
     class R: returncode = 1; stdout = ""; stderr = "auth failed"
     run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(RuntimeError, match="claude -p failed"):
+    with pytest.raises(RuntimeError, match="grok failed"):
         claude_json("q", _SCHEMA)
     assert run.call_count == 1
-
-# --- V2 M1/F1 cycle 2: pin the model + per-call provenance (claude_json_meta) ---
-
-def test_claude_json_passes_model_and_keeps_bare_dict_contract(mocker):
-    # F1: pass the pinned model through to `claude -p --model`. claude_json's RETURN stays a bare dict
-    # (audit C2: studio/actions.py binds `model = claude_json` and calls it expecting a dict — a
-    # tuple-return there would TypeError; so the model-aware path is the sibling claude_json_meta).
-    envelope = {"structured_output": {"x": 3}, "model": "claude-opus-4-x", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out = claude_json("pick", _SCHEMA, model="opus")
-    assert out == {"x": 3}                                     # unchanged contract: bare dict
-    cmd = run.call_args[0][0]
-    i = cmd.index("--model"); assert cmd[i + 1] == "opus"      # pinned model reaches the CLI
-    j = cmd.index("--allowedTools"); assert cmd[j + 1] == ""   # the allowedTools pair stays intact (audit H)
-
-def test_claude_json_no_model_omits_flag(mocker):
-    # Default path (no model) is byte-compatible: no --model flag, existing callers unaffected.
-    envelope = {"structured_output": {"x": 1}}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA)
-    assert "--model" not in run.call_args[0][0]
-
-def test_claude_json_meta_returns_resolved_model(mocker):
-    # The provenance path: claude_json_meta returns (dict, resolved_model). When the envelope reports
-    # the model that actually answered, surface THAT (the true audit trail).
-    from fanops.llm import claude_json_meta
-    envelope = {"structured_output": {"x": 9}, "model": "claude-opus-4-x", "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out, model, _ = claude_json_meta("pick", _SCHEMA, model="opus")
-    assert out == {"x": 9} and model == "claude-opus-4-x"
-
-def test_claude_json_meta_falls_back_to_configured_model_when_envelope_lacks_it(mocker):
-    # Audit C2/H: the `claude -p` envelope may NOT expose a `model` key (the test envelopes never did).
-    # Defensive fallback: report the configured/pinned value so the provenance line is never empty/crash.
-    from fanops.llm import claude_json_meta
-    envelope = {"structured_output": {"x": 1}, "session_id": "s"}   # no "model" key
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out, model, _ = claude_json_meta("pick", _SCHEMA, model="opus")
-    assert out == {"x": 1} and model == "opus"
-
-
-# --- HOOK-TRANSPORT: verify the vision author OPENED the frames (num_turns), re-ask once on a miss ---
-def test_claude_json_meta_reasks_when_frames_unread(mocker):
-    # images given but the model answered text-only (num_turns=1 -> Read never fired) -> re-ask ONCE; the
-    # second, frame-reading answer (num_turns>=2) is the one returned.
-    from fanops.llm import claude_json_meta
-    seq = iter([json.dumps({"structured_output": {"x": 1}, "num_turns": 1}),
-                json.dumps({"structured_output": {"x": 2}, "num_turns": 3})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    out, _, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
-    assert out == {"x": 2} and run.call_count == 2          # re-asked; the frame-reading answer won
-
-
-def test_claude_json_meta_no_reask_when_frames_read(mocker):
-    from fanops.llm import claude_json_meta
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
-        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 9}, "num_turns": 2}), "stderr": ""})())
-    out, _, _ = claude_json_meta("hook", _SCHEMA, images=["/f/1.jpg"])
-    assert out == {"x": 9} and run.call_count == 1          # frames read first try -> no re-ask
-
-
-def test_claude_json_meta_no_reask_without_images(mocker):
-    # the no-image path never re-asks (num_turns ignored) -> byte-identical single call.
-    from fanops.llm import claude_json_meta
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
-        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 5}, "num_turns": 1}), "stderr": ""})())
-    out, _, _ = claude_json_meta("pick", _SCHEMA)
-    assert out == {"x": 5} and run.call_count == 1
-
-
-# ---- AGENT-9: claude_json_meta surfaces the frames-unread signal; claude_json bare-dict unaffected ----
-def test_claude_json_meta_reports_frames_unread_after_reask(mocker):
-    env = {"structured_output": {"hook": "x"}, "num_turns": 1, "model": "opus"}   # num_turns<=1 every try
-    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    from fanops.llm import claude_json_meta, LlmFramesUnreadError
-    with pytest.raises(LlmFramesUnreadError, match="unread"):
-        claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
-    assert run.call_count == 3                             # first + re-asks; never a reason-only hook
-
-
-def test_claude_json_meta_keeps_reasking_until_frames_read(mocker):
-    seq = iter([json.dumps({"structured_output": {"hook": "a"}, "num_turns": 1}),
-                json.dumps({"structured_output": {"hook": "b"}, "num_turns": 1}),
-                json.dumps({"structured_output": {"hook": "c"}, "num_turns": 3})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    from fanops.llm import claude_json_meta
-    out, _, unread = claude_json_meta("author a hook", {"type": "object"}, images=["/tmp/a.jpg"])
-    assert out == {"hook": "c"} and unread is False and run.call_count == 3
-
-def test_claude_json_meta_frames_read_not_unread(mocker):
-    env = {"structured_output": {"hook": "x"}, "num_turns": 2, "model": "opus"}   # a Read turn fired -> read
-    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    from fanops.llm import claude_json_meta
-    _out, _model, unread = claude_json_meta("p", {"type": "object"}, images=["/tmp/a.jpg"])
-    assert unread is False
-
-def test_claude_json_bare_dict_unaffected(mocker):
-    env = {"structured_output": {"x": 1}, "num_turns": 2}
-    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    from fanops.llm import claude_json
-    assert claude_json("p", {"type": "object"}, images=["/tmp/a.jpg"]) == {"x": 1}   # still a plain dict
 
 
 # --- MOL-237: _json_candidates + _extract_json_object pure helpers ---
@@ -416,8 +239,8 @@ def test_claude_json_salvages_prose_wrapped_result(mocker):
     from fanops.llm import LlmSchemaError
     picks = {"picks": [{"id": "m1", "score": 0.9}]}   # missing schema required field "x"
     prose = f'Here are my picks: {json.dumps(picks)}'
-    envelope = {"structured_output": None, "result": prose, "session_id": "s"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    env = _grok_ok_env({"x": 1}); del env["structuredOutput"]; env["text"] = prose
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with pytest.raises(LlmSchemaError):
         claude_json("pick moments", _SCHEMA)
@@ -426,8 +249,8 @@ def test_claude_json_salvage_logs_warning_breadcrumb(mocker, caplog):
     import logging
     picks = {"x": 7}
     prose = f'prose {json.dumps(picks)}'
-    envelope = {"structured_output": None, "result": prose}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    env = _grok_ok_env({"x": 1}); del env["structuredOutput"]; env["text"] = prose
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with caplog.at_level(logging.WARNING, logger="fanops.llm"):
         claude_json("q", _SCHEMA)
@@ -436,8 +259,7 @@ def test_claude_json_salvage_logs_warning_breadcrumb(mocker, caplog):
 
 def test_claude_json_happy_path_no_salvage_warning(mocker, caplog):
     import logging
-    envelope = {"structured_output": {"x": 7}, "result": '{"x": 7}'}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 7})); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
     with caplog.at_level(logging.WARNING, logger="fanops.llm"):
         assert claude_json("q", _SCHEMA) == {"x": 7}
@@ -445,96 +267,20 @@ def test_claude_json_happy_path_no_salvage_warning(mocker, caplog):
 
 def test_claude_json_raises_schema_error_when_repair_fails(mocker):
     from fanops.llm import LlmSchemaError
-    envelope = {"structured_output": None, "result": "prose with no json object"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    env = _grok_ok_env({"x": 1}); del env["structuredOutput"]; env["text"] = "prose with no json object"
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(LlmSchemaError, match="was not JSON"):
+    with pytest.raises(LlmSchemaError, match="no structuredOutput or JSON text"):
         claude_json("q", _SCHEMA)
-
-
-# --- MOL-248: no-tools finalizer turn on vision path when repair empty ---
-
-def test_claude_json_meta_vision_prose_triggers_one_no_tools_finalizer(mocker):
-    from fanops.llm import claude_json_meta
-    prose = "I see the frames but here is my reasoning, not JSON."
-    seq = iter([json.dumps({"structured_output": None, "result": prose, "num_turns": 2}),
-                json.dumps({"structured_output": {"x": 4}, "num_turns": 1})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert out == {"x": 4}
-    assert run.call_count == 2
-    final_cmd = run.call_args_list[1][0][0]
-    i = final_cmd.index("--allowedTools"); assert final_cmd[i + 1] == ""
-    final_prompt = run.call_args_list[1].kwargs["input"]
-    assert "ONLY" in final_prompt and json.dumps(_SCHEMA) in final_prompt
-
-def test_claude_json_meta_finalizer_success_avoids_schema_error(mocker):
-    from fanops.llm import claude_json_meta
-    seq = iter([json.dumps({"structured_output": None, "result": "no json here", "num_turns": 2}),
-                json.dumps({"structured_output": {"x": 11}, "num_turns": 1})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert out == {"x": 11}
-
-def test_no_finalizer_when_structured_output_present(mocker):
-    # MOL-234: happy-path negative — finalizer must NOT fire when structured_output is already valid.
-    from fanops.llm import claude_json_meta
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
-        "returncode": 0, "stdout": json.dumps({"structured_output": {"x": 3}, "num_turns": 2}), "stderr": ""})())
-    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert out == {"x": 3} and run.call_count == 1
-
-def test_claude_json_meta_no_finalizer_when_repair_salvages(mocker):
-    from fanops.llm import claude_json_meta
-    picks = {"x": 8}
-    prose = f'vision prose {json.dumps(picks)}'
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
-        "returncode": 0, "stdout": json.dumps({"structured_output": None, "result": prose, "num_turns": 2}), "stderr": ""})())
-    out, _, _ = claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert out == picks and run.call_count == 1
 
 def test_claude_json_no_finalizer_without_images_even_when_repair_fails(mocker):
     from fanops.llm import LlmSchemaError
-    envelope = {"structured_output": None, "result": "prose with no json object"}
+    env = _grok_ok_env({"x": 1}); del env["structuredOutput"]; env["text"] = "prose with no json object"
     run = mocker.patch("fanops.llm.subprocess.run", return_value=type("R", (), {
-        "returncode": 0, "stdout": json.dumps(envelope), "stderr": ""})())
+        "returncode": 0, "stdout": json.dumps(env), "stderr": ""})())
     with pytest.raises(LlmSchemaError):
         claude_json("q", _SCHEMA)
     assert run.call_count == 1
-
-def test_claude_json_meta_finalizer_still_raises_when_it_also_fails(mocker):
-    from fanops.llm import LlmSchemaError, claude_json_meta
-    seq = iter([json.dumps({"structured_output": None, "result": "no json", "num_turns": 2}),
-                json.dumps({"structured_output": None, "result": "still no json", "num_turns": 1})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    with pytest.raises(LlmSchemaError):
-        claude_json_meta("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_count == 2
-
-
-# --- MOL-232: finalizer turn is schema-generic (not picker-specific) ---
-
-_GENERIC_SCHEMA = {"type": "object", "properties": {"label": {"type": "string"}, "score": {"type": "number"}},
-                 "required": ["label", "score"]}
-
-def test_finalizer_turn_recovers_structured_output(mocker):
-    from fanops.llm import claude_json_meta
-    expected = {"label": "bright", "score": 0.92}
-    seq = iter([json.dumps({"structured_output": None, "result": "analysis prose only", "num_turns": 2}),
-                json.dumps({"structured_output": expected, "num_turns": 1})])
-    def fake(cmd, **kw):
-        return type("R", (), {"returncode": 0, "stdout": next(seq), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=fake)
-    out, _, _ = claude_json_meta("classify", _GENERIC_SCHEMA, images=["/f/x.jpg"])
-    assert out == expected and run.call_count == 2
-    final_cmd = run.call_args_list[1][0][0]
-    i = final_cmd.index("--allowedTools"); assert final_cmd[i + 1] == ""
 
 
 # --- MOL-247: _extract_json_object salvages fenced + balanced-brace prose ---
@@ -547,145 +293,16 @@ def test_extract_json_object_from_prose():
     assert _extract_json_object(unfenced) == expected
 
 
-# --- MOL-249: repair-empty -> typed LlmSchemaError (result-resolution path) ---
-
 def test_no_json_object_raises_llm_schema_error(mocker):
     from fanops.llm import LlmSchemaError
-    envelope = {"structured_output": None, "result": "pure prose with no extractable object"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    env = _grok_ok_env({"x": 1}); del env["structuredOutput"]; env["text"] = "pure prose with no extractable object"
+    class R: returncode = 0; stdout = json.dumps(env); stderr = ""
     mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(LlmSchemaError, match="was not JSON"):
+    with pytest.raises(LlmSchemaError, match="no structuredOutput or JSON text"):
         claude_json("q", _SCHEMA)
 
 
-# --- T01: cursor-agent transport (FANOPS_LLM_TRANSPORT=cursor) ---
-
-def test_cursor_json_happy_envelope(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    envelope = {"type": "result", "subtype": "success", "result": '{"x": 7}', "model": "claude-4-sonnet"}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    out = claude_json("pick", _SCHEMA)
-    assert out == {"x": 7}
-    cmd = run.call_args[0][0]
-    assert cmd[0] == "cursor-agent" and "-p" in cmd and "json" in cmd
-    assert "--trust" in cmd                              # headless gate answers must not hit the workspace-trust wall
-    assert json.dumps(_SCHEMA) in run.call_args.kwargs["input"]
-
-def test_cursor_json_toolchain_banner(mocker, monkeypatch):
-    from fanops.llm import LlmToolchainError
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    class R: returncode = 1; stdout = "Usage: cursor-agent [options]"; stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with pytest.raises(LlmToolchainError):
-        claude_json("q", _SCHEMA)
-
-def test_cursor_json_timeout(mocker, monkeypatch):
-    from fanops.llm import LlmTimeoutError
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("fanops.llm.subprocess.run", side_effect=subprocess.TimeoutExpired("cursor-agent", 1))
-    with pytest.raises(LlmTimeoutError, match="cursor-agent"):
-        claude_json("q", _SCHEMA)
-
-def test_cursor_json_prose_wrapped_repair(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    picks = {"x": 9}
-    prose = f'Here: {json.dumps(picks)}'
-    envelope = {"result": prose}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    assert claude_json("q", _SCHEMA) == picks
-
-def test_dispatch_routes_cursor(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    envelope = {"result": '{"x": 1}'}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA)
-    assert run.call_args[0][0][0] == "cursor-agent"
-
-def test_dispatch_default_stays_claude(mocker, monkeypatch):
-    monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
-    envelope = {"structured_output": {"x": 1}}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA)
-    assert run.call_args[0][0][0] == "claude"
-
-def test_dispatch_unknown_warns_claude(mocker, monkeypatch, caplog):
-    import logging
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "bogus")
-    envelope = {"structured_output": {"x": 1}}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    with caplog.at_level(logging.WARNING, logger="fanops.config"):
-        claude_json("q", _SCHEMA)
-    assert run.call_args[0][0][0] == "claude"
-    assert any("FANOPS_LLM_TRANSPORT" in r.message for r in caplog.records)
-
-def test_cursor_gate_model_not_forwarded_uses_auto(mocker, monkeypatch):
-    # The per-gate claude tier (opus/sonnet) is Claude-only — it is NOT forwarded to cursor-agent,
-    # which picks its OWN model (no --model) unless the operator forces one via FANOPS_LLM_MODEL.
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
-    envelope = {"result": '{"x": 2}'}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA, model="opus")
-    assert run.call_args[0][0][0] == "cursor-agent"
-    assert "--model" not in run.call_args[0][0]                # AUTO — gate tier dropped
-
-def test_cursor_operator_forced_model_pins(mocker, monkeypatch):
-    # FANOPS_LLM_MODEL forces ONE cursor model (alias-resolved) even though the per-gate tier is dropped.
-    import fanops.llm as llm_mod
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    monkeypatch.setenv("FANOPS_LLM_MODEL", "opus")
-    monkeypatch.setitem(llm_mod._CURSOR_MODEL_ALIASES, "opus", "claude-4-opus")
-    envelope = {"result": '{"x": 2}'}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA, model="opus")
-    i = run.call_args[0][0].index("--model")
-    assert run.call_args[0][0][i + 1] == "claude-4-opus"
-
-def test_cursor_missing_binary(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    def absent(cmd, **kw): raise FileNotFoundError(2, "No such file", cmd[0])
-    mocker.patch("fanops.llm.subprocess.run", side_effect=absent)
-    with pytest.raises(ToolchainMissingError, match="cursor-agent"):
-        claude_json("q", _SCHEMA)
-
-def test_dispatch_cursor_vision_refuses_silent_claude_fallback(mocker, monkeypatch):
-    # Transport is absolute (Go-Live single switch): cursor + vision must NOT shell claude behind the
-    # operator's back — that split captions→cursor / moments→claude and broke consistency.
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    run = mocker.patch("fanops.llm.subprocess.run")
-    with pytest.raises(ToolchainMissingError, match="Go-Live|single switch|vision"):
-        claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_count == 0
-
-
-def test_dispatch_claude_vision_uses_claude(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
-    envelope = {"structured_output": {"x": 5}, "num_turns": 2}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_args[0][0][0] == "claude"
-
-
-# --- grok transport (FANOPS_LLM_TRANSPORT=grok) ---
-
-def _grok_ok_env(obj, *, num_turns=1, model_key="grok-4.6-build"):
-    return {
-        "text": json.dumps(obj),
-        "stopReason": "end_turn",
-        "sessionId": "s",
-        "requestId": "r",
-        "num_turns": num_turns,
-        "structuredOutput": obj,
-        "modelUsage": {model_key: {"modelCalls": 1}},
-    }
+# --- grok transport ---
 
 def test_dispatch_routes_grok(mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
@@ -775,16 +392,9 @@ def test_grok_missing_binary(mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     def absent(cmd, **kw): raise FileNotFoundError(2, "No such file", cmd[0])
     mocker.patch("fanops.llm.subprocess.run", side_effect=absent)
-    with pytest.raises(ToolchainMissingError, match="grok"):
+    with pytest.raises(ToolchainMissingError, match="grok") as ei:
         claude_json("q", _SCHEMA)
-
-def test_dispatch_grok_vision_refuses_silent_claude_fallback(mocker, monkeypatch):
-    from fanops.errors import ToolchainMissingError
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
-    run = mocker.patch("fanops.llm.subprocess.run")
-    with pytest.raises(ToolchainMissingError, match="Go-Live|single switch|vision"):
-        claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_count == 0
+    assert "FANOPS_LLM_TRANSPORT=claude" not in str(ei.value)
 
 def test_grok_unknown_model_is_toolchain_error(mocker, monkeypatch):
     from fanops.llm import LlmToolchainError
@@ -839,14 +449,6 @@ def test_grok_success_envelope_digits_are_not_rate_limit(mocker, monkeypatch):
     sleep = mocker.patch("fanops.llm._sleep")
     assert claude_json("q", _SCHEMA) == {"x": 1}
     assert run.call_count == 1 and sleep.call_count == 0
-
-def test_dispatch_claude_unchanged_when_not_grok(mocker, monkeypatch):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
-    envelope = {"structured_output": {"x": 1}}
-    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
-    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
-    claude_json("q", _SCHEMA)
-    assert run.call_args[0][0][0] == "claude"
 
 def test_grok_isolation_env_zeros(mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
@@ -921,32 +523,6 @@ def test_grok_models_ok_argv(mocker, monkeypatch):
     assert _REAL_GROK_MODELS_OK() is False
 
 
-# --- 2026-07-12 incident: a claude CLI predating --json-schema (2.0.30, pinned by a stale daemon
-# plist PATH) rejected EVERY gate call with rc=1 "error: unknown option '--json-schema'" — hook=null
-# clips + fallback hashtag-only captions for days. The transport now retries ONCE without the flag,
-# carrying the schema in the prompt (the cursor transport's mechanism), so an outdated CLI degrades
-# to prompt-side schema instead of mass-failing every moment_hooks/captions gate. ---
-
-def _json_schema_reject():
-    return type("R", (), {"returncode": 1, "stdout": "",
-                          "stderr": "error: unknown option '--json-schema'"})()
-
-def test_json_schema_flag_rejected_falls_back_to_prompt_side_schema(mocker):
-    # old CLI: no --json-schema, no structured_output — the retry parses `result` instead.
-    ok = type("R", (), {"returncode": 0, "stdout": json.dumps({"result": '{"x": 7}'}), "stderr": ""})()
-    run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
-    assert claude_json("pick a number", _SCHEMA) == {"x": 7}
-    assert run.call_count == 2
-    assert "--json-schema" in run.call_args_list[0][0][0]      # tried the native flag first
-    retry_cmd = run.call_args_list[1][0][0]
-    assert "--json-schema" not in retry_cmd                    # retried without it
-    assert retry_cmd[0] == "claude" and "--strict-mcp-config" in retry_cmd
-    i = retry_cmd.index("--allowedTools"); assert retry_cmd[i + 1] == ""   # still a pure generator
-    retry_prompt = run.call_args_list[1].kwargs["input"]
-    assert json.dumps(_SCHEMA) in retry_prompt                 # the schema rides the prompt instead
-    assert "ONLY a single JSON object" in retry_prompt
-    assert "pick a number" in retry_prompt                     # original prompt preserved
-
 def test_grok_json_schema_retry_writes_schema_into_prompt_file(mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     ok = type("R", (), {"returncode": 0, "stdout": json.dumps(_grok_ok_env({"x": 3})), "stderr": ""})()
@@ -971,7 +547,7 @@ def test_grok_json_schema_retry_writes_schema_into_prompt_file(mocker, monkeypat
 
 def test_json_schema_fallback_logs_warning_breadcrumb(mocker, caplog):
     import logging
-    ok = type("R", (), {"returncode": 0, "stdout": json.dumps({"result": '{"x": 1}'}), "stderr": ""})()
+    ok = type("R", (), {"returncode": 0, "stdout": json.dumps(_grok_ok_env({"x": 1})), "stderr": ""})()
     mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
     with caplog.at_level(logging.WARNING, logger="fanops.llm"):
         claude_json("q", _SCHEMA)
@@ -981,7 +557,7 @@ def test_json_schema_fallback_retry_failure_keeps_classification(mocker):
     # the retry's own failure surfaces through the existing typed classification (here: hard failure)
     hard = type("R", (), {"returncode": 1, "stdout": "", "stderr": "auth failed"})()
     run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), hard])
-    with pytest.raises(RuntimeError, match="claude -p failed"):
+    with pytest.raises(RuntimeError, match="grok failed"):
         claude_json("q", _SCHEMA)
     assert run.call_count == 2
 
@@ -1005,12 +581,84 @@ def test_other_toolchain_errors_do_not_trigger_fallback(mocker):
         claude_json("q", _SCHEMA)
     assert run.call_count == 1
 
-def test_json_schema_fallback_on_vision_path_keeps_read_grant(mocker):
-    # the fallback lives in the shared _run, so the vision gates inherit it — Read grant intact.
-    ok = type("R", (), {"returncode": 0,
-                        "stdout": json.dumps({"result": '{"x": 2}', "num_turns": 2}), "stderr": ""})()
+
+# --- D2/D3: grok is the only constructible transport, including vision ---
+
+def test_claude_json_meta_dispatch_never_shells_claude(mocker, monkeypatch):
+    from fanops.llm import claude_json_meta
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    for val in ("claude", "cursor", None):
+        if val is None:
+            monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
+        else:
+            monkeypatch.setenv("FANOPS_LLM_TRANSPORT", val)
+        run.reset_mock()
+        claude_json_meta("q", _SCHEMA)
+        cmd = run.call_args[0][0]
+        assert cmd[0] == "grok"
+        assert "claude" not in cmd and "cursor-agent" not in cmd
+
+def test_grok_vision_uses_prompt_json_inline_data(mocker, tmp_path):
+    import base64
+    jpeg = tmp_path / "frame.jpg"
+    jpeg.write_bytes(b"\xff\xd8\xfftiny")
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("judge", _SCHEMA, images=[str(jpeg)])
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "grok"
+    assert "--prompt-json" in cmd
+    assert "--prompt-file" not in cmd
+    assert cmd[cmd.index("--tools") + 1] == ""
+    payload = json.loads(cmd[cmd.index("--prompt-json") + 1])
+    imgs = [b for b in payload if b.get("type") == "image"]
+    assert len(imgs) == 1
+    assert imgs[0]["data"] == base64.b64encode(jpeg.read_bytes()).decode("ascii")
+    assert imgs[0]["data"]
+    assert imgs[0]["mimeType"] == "image/jpeg"
+    dumped = json.dumps(payload)
+    assert "file://" not in dumped
+
+def test_grok_captions_still_prompt_file(mocker):
+    class R: returncode = 0; stdout = json.dumps(_grok_ok_env({"x": 1})); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    claude_json("q", _SCHEMA, images=None)
+    cmd = run.call_args[0][0]
+    assert "--prompt-file" in cmd
+    assert "--prompt-json" not in cmd
+
+def test_grok_vision_json_schema_retry_stays_prompt_json(mocker, tmp_path):
+    jpeg = tmp_path / "frame.jpg"
+    jpeg.write_bytes(b"\xff\xd8\xfftiny")
+    ok = type("R", (), {"returncode": 0, "stdout": json.dumps(_grok_ok_env({"x": 3})), "stderr": ""})()
     run = mocker.patch("fanops.llm.subprocess.run", side_effect=[_json_schema_reject(), ok])
-    assert claude_json("judge", _SCHEMA, images=["/f/1.jpg"]) == {"x": 2}
-    retry_cmd = run.call_args_list[1][0][0]
-    assert "--json-schema" not in retry_cmd
-    i = retry_cmd.index("--allowedTools"); assert retry_cmd[i + 1] == "Read"
+    assert claude_json("judge", _SCHEMA, images=[str(jpeg)]) == {"x": 3}
+    assert run.call_count == 2
+    first_cmd, retry_cmd = run.call_args_list[0][0][0], run.call_args_list[1][0][0]
+    for cmd in (first_cmd, retry_cmd):
+        assert "--prompt-json" in cmd
+        assert "--prompt-file" not in cmd
+    retry_payload = json.loads(retry_cmd[retry_cmd.index("--prompt-json") + 1])
+    texts = [b["text"] for b in retry_payload if b.get("type") == "text"]
+    assert texts and json.dumps(_SCHEMA) in texts[0]
+
+def test_grok_vision_argv_over_argmax_is_context_limit(mocker, tmp_path):
+    from fanops.llm import LlmContextLimitError
+    jpeg = tmp_path / "frame.jpg"
+    jpeg.write_bytes(b"\xff\xd8\xfftiny")
+    run = mocker.patch("fanops.llm.subprocess.run")
+    with pytest.raises(LlmContextLimitError):
+        claude_json("x" * 900_000, _SCHEMA, images=[str(jpeg)])
+    assert run.call_count == 0
+
+def test_grok_e2big_is_context_limit_not_missing_binary(mocker):
+    import errno
+    from fanops.llm import LlmContextLimitError
+    def boom(cmd, **kw):
+        raise OSError(errno.E2BIG, "Argument list too long")
+    mocker.patch("fanops.llm.subprocess.run", side_effect=boom)
+    with pytest.raises(LlmContextLimitError):
+        claude_json("q", _SCHEMA)
+    # ToolchainMissingError is not a parent of LlmContextLimitError; the raise type is the pin.
+    assert not issubclass(LlmContextLimitError, ToolchainMissingError)

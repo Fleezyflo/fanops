@@ -870,66 +870,23 @@ def test_golive_status_carries_responder_and_daemon(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     st = views.golive_status(cfg)
     assert st.responder_mode == "llm"
-    assert st.llm_transport == "claude" and st.llm_cli_binary == "claude"
+    assert st.llm_transport == "grok" and st.llm_cli_binary == "grok"
     assert st.daemon is None or isinstance(st.daemon, dict)        # dict on darwin, None off-darwin — never raises
 
-def test_set_llm_transport_toggles_dual_write(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_llm_transport(cfg, "cursor")
-    assert res.ok and res.detail["llm_transport"] == "cursor" and res.detail["llm_cli_binary"] == "cursor-agent"
-    assert "FANOPS_LLM_TRANSPORT=cursor" in (tmp_path / ".env").read_text()
-    assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
-    res = golive.set_llm_transport(cfg, "claude")
-    assert res.ok and res.detail["llm_transport"] == "claude"
-    assert "FANOPS_LLM_TRANSPORT=claude" in (tmp_path / ".env").read_text()
-
-def test_set_llm_transport_accepts_grok(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_llm_transport(cfg, "grok")
-    assert res.ok and res.detail["llm_transport"] == "grok" and res.detail["llm_cli_binary"] == "grok"
-    assert "FANOPS_LLM_TRANSPORT=grok" in (tmp_path / ".env").read_text()
-
-def test_set_llm_transport_rejects_unknown(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_llm_transport(cfg, "openai")
-    assert not res.ok and "grok" in res.error
-
-def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
-    from fanops.studio.app import create_app
-    cfg = _clean(monkeypatch, tmp_path)
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/golive/llm-transport", data={"transport": "cursor"})
-    assert r.status_code == 200
-    assert cfg.llm_transport == "cursor"
-    assert "Switch to Claude" in r.get_data(as_text=True)
-
-def test_golive_llm_transport_grok_copy_is_captions_only(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "Grok (captions only; moments/hooks stay on Claude)" in html
-    assert 'name="transport" value="grok"' in html
-    r = _client(cfg).post("/golive/llm-transport", data={"transport": "grok"})
-    assert r.status_code == 200 and cfg.llm_transport == "grok"
-    grok_html = r.get_data(as_text=True)
-    assert "Grok (captions only; moments/hooks stay on Claude)" in grok_html
-    assert "● Grok (captions only; moments/hooks stay on Claude)" in grok_html
-    assert "grok Grok" not in grok_html
-    assert "<code>grok</code> Grok" not in grok_html
-
-
-def test_golive_grok_loaded_daemon_does_not_claim_pending_gates(tmp_path, monkeypatch):
+def test_golive_has_no_transport_switch(tmp_path, monkeypatch):
     from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     # Stub the snapshot — neighboring golive daemon tests mock launchctl; do not talk to live launchd.
     monkeypatch.setattr(views, "daemon_health", lambda _cfg: {
         "loaded": True, "verdict": "alive", "heartbeat_age_s": 5, "interval": 600,
     })
     html = _client(cfg).get("/golive").get_data(as_text=True)
-    assert "Grok (captions only; moments/hooks stay on Claude)" in html
-    assert "pending gates" not in html
-    assert "<code>grok</code> to answer caption gates only" in html
-
+    assert "Switch to Claude" not in html
+    assert 'name="transport"' not in html
+    assert "captions only; moments/hooks stay on Claude" not in html
+    assert "Hands-off processing" in html and "LLM transport" in html
+    assert "gates are answered by <code>grok</code>" in html
+    assert "Each tick invokes <code>grok</code> to answer pending gates." in html
 
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -938,6 +895,8 @@ def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     # The AI on/off toggle was retired: gates are always answered by the LLM, Review still gates publish.
     assert "AI responder" not in html
     assert "Review" in html
+    assert "Switch to Claude" not in html
+    assert 'name="transport"' not in html
 
 def test_golive_panel_renders_the_pause_control(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

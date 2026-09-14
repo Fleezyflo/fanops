@@ -285,24 +285,25 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
 
 
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
-# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH (2026-06-04): the responder
-# uses the operator's EXISTING `claude` subscription (plain `claude -p`, NOT `--bare`/API key), so
-# the llm trap is "FANOPS_RESPONDER=llm but `claude` is NOT on PATH" (no binary -> every gate raises
-# -> zero content), NOT a missing ANTHROPIC_API_KEY. The poster trap is unchanged: rest/mcp with no
-# BLOTATO_API_KEY (publish 401). Mirrors _check_accounts: 0 clean / actionable line + returns 2.
-# Tests patch shutil.which to control `claude` presence deterministically.
+# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH: the responder shells grok
+# (`grok login` session file, no API key), so the llm trap is "FANOPS_RESPONDER=llm but `grok`
+# is NOT on PATH" (no binary -> every gate raises -> zero content), NOT a missing API key.
+# The poster trap is unchanged: rest/mcp with no BLOTATO_API_KEY (publish 401). Mirrors
+# _check_accounts: 0 clean / actionable line + returns 2.
+# Tests patch shutil.which to control `grok` presence deterministically.
 
 def test_preflight_blocks_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # isolate the assertion to the llm case
-    mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `claude`
+    mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `grok`
     from fanops.config import Config
     from fanops.cli import _check_preflight
     rc = _check_preflight(Config(root=tmp_path))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "claude login" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypatch, mocker, capsys):
@@ -319,7 +320,8 @@ def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypat
     rc = main(["advance"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_refuses_manual_responder(tmp_path, monkeypatch, capsys):
@@ -347,63 +349,23 @@ def test_preflight_blocks_default_llm_when_claude_absent(tmp_path, monkeypatch, 
     rc = _check_preflight(Config(root=tmp_path))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypatch, mocker):
-    # The correctly-configured live cutover with the EXISTING subscription: FANOPS_RESPONDER=llm,
-    # `claude` ON PATH, NO ANTHROPIC_API_KEY (we ride OAuth, not a key), postiz + its key.
-    # Must pass — the gate blocks only the absent-`claude` case, and crucially does NOT require an
-    # API key (that was the old --bare contract this change removes).
+    # Correctly-configured live cutover: FANOPS_RESPONDER=llm, `grok` ON PATH, grok_models_ok,
+    # NO ANTHROPIC_API_KEY, postiz + its key. Must pass — the gate does NOT require an API key.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # NO api key — riding the subscription
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    mocker.patch("shutil.which", return_value="/usr/local/bin/claude")  # claude IS logged-in-capable
+    mocker.patch("shutil.which", return_value="/usr/local/bin/grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
-
-
-def test_preflight_blocks_cursor_when_cursor_agent_absent(tmp_path, monkeypatch, mocker, capsys):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
-    from fanops.config import Config
-    from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
-    err = capsys.readouterr().err
-    assert "cursor-agent" in err and "Traceback" not in err
-
-
-def test_preflight_cursor_blocks_when_vision_unsupported(tmp_path, monkeypatch, mocker, capsys):
-    # Absolute transport: cursor cannot run vision gates — refuse until Go-Live flips to claude.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/cursor-agent" if b == "cursor-agent" else None)
-    from fanops.config import Config
-    from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
-    err = capsys.readouterr().err
-    assert "vision" in err.lower() and "go-live" in err.lower() and "fallback" in err.lower()
-
-
-
-
-def test_preflight_cursor_blocks_even_if_claude_present(tmp_path, monkeypatch, mocker, capsys):
-    # Having claude on PATH must NOT paper over transport=cursor — no silent dual-CLI.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("shutil.which", return_value="/usr/local/bin/x")
-    from fanops.config import Config
-    from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
-    err = capsys.readouterr().err.lower()
-    assert "go-live" in err and "fallback" in err
 
 
 def test_preflight_blocks_grok_when_grok_absent(tmp_path, monkeypatch, mocker, capsys):
@@ -414,7 +376,10 @@ def test_preflight_blocks_grok_when_grok_absent(tmp_path, monkeypatch, mocker, c
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 2
     err = capsys.readouterr().err
-    assert "grok" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "moments/hooks stay on Claude" not in err
+    assert "set LLM transport to claude" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_grok_does_not_blanket_fail_vision(tmp_path, monkeypatch, mocker):

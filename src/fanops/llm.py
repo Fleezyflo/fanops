@@ -1,33 +1,21 @@
 # src/fanops/llm.py
-"""Wire an LLM via the Claude Code CLI in headless print mode (`claude -p`), NOT the Anthropic
-SDK — keeps one toolchain (no second SDK dependency) and fits the codebase's shell-a-binary idiom
-(like ffmpeg/whisper); `claude` becomes one more absence-guarded binary. We hand `claude` the EXACT
-pydantic JSON schema via --json-schema so the model returns schema-conformant output in
-`structured_output`, which collapses most "LLM returned malformed JSON" risk. A CLI that predates
---json-schema (2026-07-12: a stale daemon PATH pinned claude 2.0.30 and every gate call died on
-"unknown option") gets ONE flagless retry with the schema carried in the prompt instead — degraded
-conformance, never a mass failure. --allowedTools "" = pure generator (no tool use, no file access
-— the responder must not wander).
+"""Wire an LLM via the Grok CLI (`grok --prompt-file` / `--prompt-json`), not an SDK.
 
-AUTH (load-bearing — operator decision 2026-06-04: use the EXISTING `claude` subscription, NOT an
-API key): we DO NOT pass `--bare`. Under `--bare`, Anthropic auth is STRICTLY `ANTHROPIC_API_KEY`
-and **OAuth/keychain are NEVER read** — so a `claude login` session would still fail "Not logged
-in" (verified on this host: `claude --bare -p` → rc with "Not logged in", plain `claude -p` → ok).
-Plain `claude -p` uses the operator's existing logged-in `claude` session (the subscription), which
-is what we want: NO API key to provision in the cron environment. We keep the call a CLEAN PURE
-GENERATOR despite dropping `--bare` by passing `--strict-mcp-config` (no MCP servers from any config
-bleed into the moment/caption decision) plus `--allowedTools ""` (no tool use, no file access — the
-responder must not wander). Tradeoff vs `--bare`: a non-bare `claude -p` also loads hooks/auto-memory/
-CLAUDE.md-discovery, so it is slightly heavier per call and reads the host's `~/.claude` config; that
-is the accepted cost of riding the existing login instead of an API key. The cron environment
-therefore needs a logged-in `claude` (a valid `claude login` on the host), NOT `ANTHROPIC_API_KEY`.
-Documented in RUNTIME.md "the autonomous LLM responder" and README install."""
+Captions use `--prompt-file`; vision uses `--prompt-json` with inline base64 ACP image blocks.
+`--json-schema` is the native structured path; a CLI that rejects the flag gets one prompt-side
+schema retry. `--tools ""` keeps the call a pure generator.
+
+AUTH: `ANTHROPIC_API_KEY` stays unset — Grok uses the operator's `grok login` session, and
+`_grok_env` pops `XAI_API_KEY` / `GROK_CODE_XAI_API_KEY` so a leftover key cannot override it.
+Historical `--bare` was a Claude-subscription choice; we still do not provision an Anthropic API key.
+"""
 from __future__ import annotations
-import json, logging, os, random, subprocess, tempfile, time
+import base64, errno, json, logging, os, random, subprocess, tempfile, time
+from pathlib import Path
 from fanops.errors import ToolchainMissingError
 from fanops.llm_errors import (
     LlmContextLimitError,
-    LlmFramesUnreadError,
+    LlmFramesUnreadError,  # noqa: F401 — re-export; test_responder imports from here
     LlmRateLimitError,
     LlmSchemaError,
     LlmTimeoutError,
@@ -63,11 +51,7 @@ def _salvage_json(raw: str, schema: dict) -> dict | None:
             f"salvaged object missing schema required keys: {', '.join(missing)}")
     return salvaged
 
-# T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
-_CURSOR_SUPPORTS_VISION = False
-_CURSOR_MODEL_ALIASES: dict[str, str] = {}
-_CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
-_GROK_SUPPORTS_VISION = False
+_GROK_SUPPORTS_VISION = True  # measured: inline b64 ACP image, 64x64 crimson → color=red. empty data+file:// DROPPED.
 _GROK_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
 _GROK_TOOLCHAIN_MARKERS = ("unknown model", "invalid params", "not logged in")
 
@@ -141,304 +125,11 @@ def _rate_limit_status(returncode: int, stdout: str) -> int | None:
     status = env.get("api_error_status") if isinstance(env, dict) else None
     return status if status in _RATELIMIT_STATUSES else None
 
-def _frames_unread(env: dict) -> bool:
-    """HOOK-TRANSPORT: True iff the envelope PROVES the model answered without any tool turn — so the
-    granted Read tool never fired and the attached frames were NOT opened. `num_turns` counts the agent
-    turns; ==1 is a pure single-shot answer (no Read), >=2 means a tool turn ran (Read is the only tool
-    granted). num_turns absent/non-int -> UNVERIFIABLE (older CLI / a synthetic test envelope) -> NOT
-    treated as unread, so the no-num_turns path is byte-identical and never falsely re-asks."""
-    n = env.get("num_turns")
-    return isinstance(n, int) and n <= 1
 
-
-def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
-                     images: list[str] | None = None, model: str | None = None,
-                     read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Dispatch to exactly ONE CLI per FANOPS_LLM_TRANSPORT (Studio Go-Live — the single switch).
-
-    No silent cross-transport fallback: cursor means cursor-agent for every gate; grok means grok
-    for caption gates only (vision fail-closed, no silent claude fallback); claude means claude -p
-    for every gate. If transport is cursor or grok and a vision gate needs frames the CLI cannot
-    do, raise ToolchainMissingError telling the operator to flip the ONE switch to claude — never
-    shell `claude` behind their back (that was the captions-vs-moments split). Cursor uses its OWN
-    auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the per-gate claude tiers
-    (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
-    from fanops.config import Config, resolve_llm_transport
+def claude_json_meta(prompt, schema, *, timeout=300.0, images=None, model=None, read_root=None):
     if isinstance(schema, dict):
-        schema = _claude_strict_schema(schema)           # root: strip draft-2020-12 keywords CLI strict rejects
-    transport = resolve_llm_transport()
-    if transport == "cursor":
-        if images and not _CURSOR_SUPPORTS_VISION:
-            raise ToolchainMissingError(
-                "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
-                "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
-        forced = Config().llm_model   # AUTO unless FANOPS_LLM_MODEL forces one
-        return _cursor_json_meta(prompt, schema, timeout=timeout, images=images, model=forced, read_root=read_root)
-    if transport == "grok":
-        if images and not _GROK_SUPPORTS_VISION:
-            raise ToolchainMissingError(
-                "FANOPS_LLM_TRANSPORT=grok but grok cannot run vision-grounded gates — "
-                "set LLM transport to claude in Studio Go-Live (single switch; no silent claude fallback)")
-        return _grok_json_meta(prompt, schema, timeout=timeout, images=images,
-                               model=model, read_root=read_root)
-    return _claude_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
-
-
-def _claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
-                     images: list[str] | None = None, model: str | None = None,
-                     read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Call `claude -p` with a JSON schema; return (schema-valid object, model-that-answered,
-    frames_unread). frames_unread stays False on success: attached frames that stay unread raise
-    LlmFramesUnreadError so the caller re-runs instead of accepting a reason-only hook.
-    Prefers the envelope's `structured_output`; falls back to json.loads(`result`).
-    Raises ToolchainMissingError if `claude` is absent, RuntimeError on nonzero exit or
-    unparseable output. The CALLER (the responder) validates against the pydantic model and
-    quarantines per-request, so this stays a thin, honest shell wrapper.
-    NO `--bare`: the operator uses the existing `claude` subscription/OAuth (not ANTHROPIC_API_KEY);
-    `--strict-mcp-config` + `--allowedTools ""` keep it a clean, no-tool, no-MCP generator.
-    `images`: when given (the vision-grounded hook editor), the Read tool is granted and the frame
-    paths are named in the prompt so the model READS and SEES them before deciding (proven in the
-    Task 0a spike). Read is the ONLY tool granted — still no write/exec/MCP — and the no-image path
-    is byte-identical to before (pure no-tool generator).
-    `model` (V2 M1/F1): pin `claude -p --model` so the creative brain is REPRODUCIBLE — an unpinned
-    call drifts with whatever the CLI defaults to. The returned model prefers the envelope's reported
-    `model` (the true audit trail) and FALLS BACK to the pinned value when the envelope omits it."""
-    allowed = (f"Read(//{read_root}/**)" if read_root else "Read") if images else ""
-    # ECC fix #11: pass the prompt on STDIN (the documented `… | claude -p` headless form, default
-    # --input-format text), NOT as an argv positional. argv was world-visible via `ps`/`/proc/<pid>/
-    # cmdline` (transcript + brand guidance leaked to any local process) and a very large transcript
-    # could hit ARG_MAX -> E2BIG, surfaced misleadingly as "claude not found". STDIN has neither limit.
-    # --model (when pinned) is appended LAST so it never lands between --allowedTools and its value
-    # (the argv-order the tests assert on — audit H).
-    def _build_cmd(allowed: str, *, schema_flag: bool = True) -> list[str]:
-        return (["claude", "-p",
-                 "--output-format", "json"]
-                + (["--json-schema", json.dumps(schema)] if schema_flag else [])
-                + ["--allowedTools", allowed,
-                   "--strict-mcp-config"] + (["--model", model] if model else []))
-
-    def _run(stdin_prompt: str, allowed: str = allowed) -> dict:
-        def _attempt(schema_flag: bool) -> subprocess.CompletedProcess:
-            # Rate-limit backoff (mirrors the publishers' jittered exponential retry (postiz/zernio)):
-            # a 429/503/529 is rejected pre-processing and SAFE to retry. Without this a usage spike turned
-            # the whole autonomous run into a silent no-op (one log line per gate). A timeout / hard nonzero
-            # exit is NOT retried here (timeout has its own one-shot retry in the responder).
-            delay = _RL_BASE_DELAY
-            for attempt in range(_MAX_RL_RETRIES + 1):
-                try:
-                    r = subprocess.run(_build_cmd(allowed, schema_flag=schema_flag), check=False,
-                                       capture_output=True, text=True, timeout=timeout,
-                                       input=stdin_prompt if schema_flag else _prompt_side_schema(schema, stdin_prompt))
-                except (FileNotFoundError, OSError) as e:
-                    raise ToolchainMissingError(
-                        f"claude not found on PATH — install Claude Code to run the autonomous responder "
-                        f"({type(e).__name__})") from e
-                except subprocess.TimeoutExpired as e:
-                    raise LlmTimeoutError(f"claude -p timed out after {timeout}s") from e
-                rl = _rate_limit_status(r.returncode, r.stdout)
-                if rl is None:
-                    return r                                 # success or a hard (non-retryable) failure
-                if attempt >= _MAX_RL_RETRIES:
-                    raise LlmRateLimitError(
-                        f"claude -p rate-limited (api_error_status={rl}) after {_MAX_RL_RETRIES} retries")
-                logger.warning("claude -p rate-limited (api_error_status=%s) — backing off %.1fs "
-                               "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
-                _sleep(delay + random.uniform(0, delay))     # jitter so many gates don't retry in lockstep
-                delay *= 2
-            return r
-        r = _attempt(True)
-        if _json_schema_flag_rejected(r.returncode, r.stderr or r.stdout):
-            # An outdated claude CLI (pre---json-schema) rejects the flag with a usage error. Retry
-            # ONCE with the schema carried in the prompt instead (the cursor transport's mechanism) —
-            # degraded conformance beats mass-failing every gate. The retry's own failure falls
-            # through to the normal classification below (no loop: the retry never carries the flag).
-            logger.warning("claude CLI rejected --json-schema (outdated install?) — retrying with "
-                           "prompt-side schema")
-            r = _attempt(False)
-        if r.returncode != 0:
-            body = (r.stderr or r.stdout or "")[:300]
-            if _is_context_limit(body):                       # AGENT-2: a too-big payload -> typed, not generic
-                raise LlmContextLimitError(f"claude -p context limit (rc={r.returncode}): {body}")
-            if _is_toolchain_error(body):
-                raise LlmToolchainError(f"claude -p toolchain error (rc={r.returncode}): {body}")
-            raise RuntimeError(f"claude -p failed (rc={r.returncode}): {body}")
-        try:
-            env = json.loads(r.stdout)
-        except Exception as e:
-            raise LlmSchemaError(f"claude -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
-        if not isinstance(env, dict):
-            raise LlmSchemaError(f"claude -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
-        return env
-
-    # HOOK-TRANSPORT: hand the frames + a read-them-first instruction, then VERIFY the model actually
-    # OPENED them (num_turns proves a Read turn fired — Read is the only tool granted). If it answered
-    # text-only, re-ask. Frames + pick-reason without a Read are not a hook — raise so the gate retries.
-    frames_unread = False                                    # True only on the success-path tuple; unread raises
-    _FRAME_READ_TRIES = 3                                    # first call + re-asks; still unread -> raise
-    if images:
-        first = ("Read each image frame below with the Read tool FIRST, then return ONLY the JSON "
-                 "object matching the provided schema — no prose, no preamble, no explanation:\n"
-                 + "\n".join(images) + "\n\n" + prompt)
-        reask = ("You did NOT open the frames. You MUST call the Read tool on EACH path below "
-                 "BEFORE answering. Ground your answer in what you SEE in the frames, then return "
-                 "ONLY the JSON object matching the provided schema — no prose:\n"
-                 + "\n".join(images) + "\n\n" + prompt)
-        env = _run(first)
-        tries = 1
-        while _frames_unread(env) and tries < _FRAME_READ_TRIES:
-            env = _run(reask)
-            tries += 1
-        if _frames_unread(env):
-            raise LlmFramesUnreadError(
-                f"attached frames unread after {tries} tries — not accepting a text-grounded hook")
-    else:
-        env = _run(prompt)
-
-    def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
-        """Return (parsed object, repair_empty). repair_empty is True when `result` was prose that
-        survived neither json.loads nor _extract_json_object — the vision-finalizer gate signal."""
-        so = e.get("structured_output")
-        if isinstance(so, dict):
-            return so, False
-        result = e.get("result")
-        if isinstance(result, str):
-            try:
-                return json.loads(result), False
-            except Exception:
-                salvaged = _salvage_json(result, schema)
-                if salvaged is not None:
-                    logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
-                    return salvaged, False
-                return None, True
-        return None, False
-
-    rep = env.get("model")                                   # the model that actually answered, if reported
-    resolved = rep if isinstance(rep, str) and rep.strip() else model   # else fall back to the pinned value
-    obj, repair_empty = _resolve_from_env(env)
-    if obj is None and images and repair_empty:
-        env = _run("Your previous reply did not include the required JSON object. Respond with ONLY "
-                   "a single JSON object conforming to this schema — no prose, no markdown, no tool calls:\n"
-                   + json.dumps(schema) + "\n\nOriginal task:\n" + prompt, allowed="")
-        rep = env.get("model")
-        resolved = rep if isinstance(rep, str) and rep.strip() else resolved
-        obj, repair_empty = _resolve_from_env(env)
-    if obj is not None:
-        return obj, resolved, frames_unread
-    result = env.get("result")
-    if isinstance(result, str):
-        try:
-            return json.loads(result), resolved, frames_unread
-        except Exception as e:
-            salvaged = _salvage_json(result, schema)
-            if salvaged is not None:
-                logger.warning("claude -p result salvaged via JSON-repair (prose-wrapped reply)")
-                return salvaged, resolved, frames_unread
-            raise LlmSchemaError(f"claude -p `result` was not JSON: {result[:300]}") from e
-    raise LlmSchemaError(f"claude -p envelope had no structured_output or JSON result: {env}")
-
-def _resolve_cursor_model(model: str | None) -> str | None:
-    if not model: return None
-    return _CURSOR_MODEL_ALIASES.get(model, model)
-
-def _build_cursor_cmd(model: str | None) -> list[str]:
-    resolved = _resolve_cursor_model(model)
-    return ["cursor-agent", "-p", "--output-format", "json", "--trust"] + (["--model", resolved] if resolved else [])
-
-def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
-    rl = _rate_limit_status(returncode, stdout)
-    if rl is not None:
-        return rl
-    body = (stdout or stderr or "").lower()
-    if any(m in body for m in _CURSOR_RATE_LIMIT_MARKERS):
-        return 429
-    return None
-
-def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
-                      images: list[str] | None = None, model: str | None = None,
-                      read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Call `cursor-agent -p` with schema-prefixed stdin; return (object, model, frames_unread)."""
-    def _schema_stdin(base: str) -> str:
-        return _prompt_side_schema(schema, base)
-
-    def _run(stdin_prompt: str) -> dict:
-        delay = _RL_BASE_DELAY
-        for attempt in range(_MAX_RL_RETRIES + 1):
-            try:
-                r = subprocess.run(_build_cursor_cmd(model), check=False, capture_output=True, text=True,
-                                   timeout=timeout, input=_schema_stdin(stdin_prompt))
-            except (FileNotFoundError, OSError) as e:
-                raise ToolchainMissingError(
-                    f"cursor-agent not found on PATH — install Cursor CLI or set FANOPS_LLM_TRANSPORT=claude "
-                    f"({type(e).__name__})") from e
-            except subprocess.TimeoutExpired as e:
-                raise LlmTimeoutError(f"cursor-agent -p timed out after {timeout}s") from e
-            rl = _cursor_rate_limit_status(r.returncode, r.stdout, r.stderr)
-            if rl is None:
-                break
-            if attempt >= _MAX_RL_RETRIES:
-                raise LlmRateLimitError(
-                    f"cursor-agent -p rate-limited (status={rl}) after {_MAX_RL_RETRIES} retries")
-            logger.warning("cursor-agent -p rate-limited (status=%s) — backing off %.1fs "
-                           "(attempt %d/%d)", rl, delay, attempt + 1, _MAX_RL_RETRIES)
-            _sleep(delay + random.uniform(0, delay))
-            delay *= 2
-        if r.returncode != 0:
-            body = (r.stderr or r.stdout or "")[:300]
-            if _is_context_limit(body):
-                raise LlmContextLimitError(f"cursor-agent -p context limit (rc={r.returncode}): {body}")
-            if _is_toolchain_error(body):
-                raise LlmToolchainError(f"cursor-agent -p toolchain error (rc={r.returncode}): {body}")
-            raise RuntimeError(f"cursor-agent -p failed (rc={r.returncode}): {body}")
-        try:
-            env = json.loads(r.stdout)
-        except Exception as e:
-            raise LlmSchemaError(f"cursor-agent -p output could not parse as JSON envelope: {(r.stdout or '')[:300]}") from e
-        if not isinstance(env, dict):
-            raise LlmSchemaError(f"cursor-agent -p output could not parse as JSON envelope (not an object): {(r.stdout or '')[:300]}")
-        return env
-
-    frames_unread = False                                    # cursor json envelope has no num_turns analogue
-    env = _run(prompt)
-
-    def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:
-        so = e.get("structured_output")
-        if isinstance(so, dict):
-            return so, False
-        result = e.get("result")
-        if isinstance(result, str):
-            try:
-                return json.loads(result), False
-            except Exception:
-                salvaged = _salvage_json(result, schema)
-                if salvaged is not None:
-                    logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
-                    return salvaged, False
-                return None, True
-        return None, False
-
-    rep = env.get("model")
-    resolved = rep if isinstance(rep, str) and rep.strip() else _resolve_cursor_model(model)
-    obj, repair_empty = _resolve_from_env(env)
-    if obj is None and repair_empty:
-        env = _run("Your previous reply did not include the required JSON object. Respond with ONLY "
-                   "a single JSON object conforming to this schema — no prose, no markdown:\n"
-                   + json.dumps(schema) + "\n\nOriginal task:\n" + prompt)
-        rep = env.get("model")
-        resolved = rep if isinstance(rep, str) and rep.strip() else resolved
-        obj, repair_empty = _resolve_from_env(env)
-    if obj is not None:
-        return obj, resolved, frames_unread
-    result = env.get("result")
-    if isinstance(result, str):
-        try:
-            return json.loads(result), resolved, frames_unread
-        except Exception as e:
-            salvaged = _salvage_json(result, schema)
-            if salvaged is not None:
-                logger.warning("cursor-agent -p result salvaged via JSON-repair (prose-wrapped reply)")
-                return salvaged, resolved, frames_unread
-            raise LlmSchemaError(f"cursor-agent -p `result` was not JSON: {result[:300]}") from e
-    raise LlmSchemaError(f"cursor-agent -p envelope had no structured_output or JSON result: {env}")
+        schema = _claude_strict_schema(schema)
+    return _grok_json_meta(prompt, schema, timeout=timeout, images=images, model=model, read_root=read_root)
 
 def _resolve_grok_model(model: str | None) -> str:
     from fanops.config import _GROK_MODEL_ALIASES
@@ -447,9 +138,22 @@ def _resolve_grok_model(model: str | None) -> str:
     return _GROK_MODEL_ALIASES.get(model, model)
 
 def _build_grok_cmd(prompt_path: str, model: str | None, *, cwd: str, schema: dict,
-                    schema_flag: bool = True) -> list[str]:
+                    schema_flag: bool = True, images: list[str] | None = None,
+                    prompt_text: str = "") -> list[str]:
     resolved = _resolve_grok_model(model)
-    cmd = ["grok", "--no-auto-update", "--cwd", cwd, "--prompt-file", prompt_path]
+    cmd = ["grok", "--no-auto-update", "--cwd", cwd]
+    if images:
+        blocks = [{"type": "text", "text": prompt_text}]
+        for path in images:
+            try:
+                raw = Path(path).read_bytes()
+            except OSError as e:
+                raise LlmToolchainError(f"grok vision frame unreadable {path}: {e}") from e
+            mime = "image/jpeg" if path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+            blocks.append({"type": "image", "mimeType": mime, "data": base64.b64encode(raw).decode("ascii")})
+        cmd += ["--prompt-json", json.dumps(blocks)]
+    else:
+        cmd += ["--prompt-file", prompt_path]
     if schema_flag:
         cmd += ["--json-schema", json.dumps(schema)]
     cmd += ["--output-format", "json", "--tools", "", "--disable-web-search", "--no-subagents",
@@ -505,7 +209,7 @@ def _write_grok_prompt(path: str, text: str) -> None:
 def _grok_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                     images: list[str] | None = None, model: str | None = None,
                     read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Call `grok --prompt-file` with a JSON schema; return (object, model, frames_unread)."""
+    """Call `grok` with a JSON schema; return (object, model, frames_unread=False)."""
     pin = _resolve_grok_model(model)
     with tempfile.TemporaryDirectory(prefix="fanops-grok-") as tmpdir:
         prompt_path = os.path.join(tmpdir, "prompt.txt")
@@ -513,19 +217,26 @@ def _grok_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         def _run(prompt_text: str) -> dict:
             def _attempt(schema_flag: bool) -> subprocess.CompletedProcess:
                 body_text = prompt_text if schema_flag else _prompt_side_schema(schema, prompt_text)
-                _write_grok_prompt(prompt_path, body_text)
+                if not images:
+                    _write_grok_prompt(prompt_path, body_text)
+                cmd = _build_grok_cmd(prompt_path, model, cwd=tmpdir, schema=schema,
+                                      schema_flag=schema_flag, images=images, prompt_text=body_text)
+                if sum(len(a) + 1 for a in cmd) > 900_000:
+                    raise LlmContextLimitError("grok argv exceeded ARG_MAX")
                 delay = _RL_BASE_DELAY
                 for attempt in range(_MAX_RL_RETRIES + 1):
                     try:
                         r = subprocess.run(
-                            _build_grok_cmd(prompt_path, model, cwd=tmpdir, schema=schema,
-                                            schema_flag=schema_flag),
-                            check=False, capture_output=True, text=True,
+                            cmd, check=False, capture_output=True, text=True,
                             timeout=timeout, cwd=tmpdir, env=_grok_env())
-                    except (FileNotFoundError, OSError) as e:
+                    except FileNotFoundError as e:
                         raise ToolchainMissingError(
-                            f"grok not found on PATH — install Grok CLI or set FANOPS_LLM_TRANSPORT=claude "
-                            f"({type(e).__name__})") from e
+                            f"grok not found on PATH — install Grok CLI ({type(e).__name__})") from e
+                    except OSError as e:
+                        if e.errno == errno.E2BIG:
+                            raise LlmContextLimitError("grok argv exceeded ARG_MAX") from e
+                        raise ToolchainMissingError(
+                            f"grok not found on PATH — install Grok CLI ({type(e).__name__})") from e
                     except subprocess.TimeoutExpired as e:
                         raise LlmTimeoutError(f"grok timed out after {timeout}s") from e
                     rl = _grok_rate_limit_status(r.returncode, r.stdout, r.stderr)

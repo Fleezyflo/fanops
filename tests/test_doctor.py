@@ -88,10 +88,10 @@ def test_doctor_always_checks_llm_cli(tmp_path, monkeypatch):
     # surfaced — empty/unset OR the literal 'llm' both resolve to llm; there is no responder that skips it.
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep["checks"])
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     rep2 = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep2["checks"])
+    assert any("grok" in c["label"].lower() for c in rep2["checks"])
 
 
 def test_doctor_flags_bad_responder_and_still_checks_cli(tmp_path, monkeypatch):
@@ -101,20 +101,7 @@ def test_doctor_flags_bad_responder_and_still_checks_cli(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
     resp_checks = [c for c in rep["checks"] if "FANOPS_RESPONDER" in c["label"]]
     assert resp_checks and all(not c["ok"] for c in resp_checks)
-    assert any("claude" in c["label"].lower() for c in rep["checks"])
-
-
-def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    rep = doctor.doctor_report(Config(root=tmp_path))
-    assert any("cursor-agent" in c["label"].lower() for c in rep["checks"])
-    # Absolute transport: no silent claude vision fallback — doctor fails the vision gate loudly.
-    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
-    assert vision["ok"] is False and "claude" in (vision.get("hint") or "").lower()
-
-
-_GROK_CAPTIONS_ONLY = "Grok (captions only; moments/hooks stay on Claude)"
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
 
 
 def test_doctor_grok_transport_checks_grok(tmp_path, monkeypatch, mocker):
@@ -126,28 +113,6 @@ def test_doctor_grok_transport_checks_grok(tmp_path, monkeypatch, mocker):
     path = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
     assert path["ok"] is True
     assert not any("NOT proof" in (c.get("hint") or "") for c in rep["checks"])
-    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
-    assert vision["ok"] is True and vision.get("severity") == "warn"
-    assert _GROK_CAPTIONS_ONLY in (vision.get("hint") or "")
-    assert "awaiting_moments=" not in (vision.get("hint") or "")
-
-
-def test_doctor_grok_warn_names_pending_vision_counts(tmp_path, monkeypatch, mocker):
-    from fanops.agentstep import write_request
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
-    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
-    cfg = Config(root=tmp_path)
-    write_request(cfg, kind="moments", key="src_1", payload={"source_id": "src_1"})
-    write_request(cfg, kind="moments", key="src_2", payload={"source_id": "src_2"})
-    write_request(cfg, kind="moment_hooks", key="h1", payload={"source_id": "src_1"})
-    rep = doctor.doctor_report(cfg)
-    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
-    hint = vision.get("hint") or ""
-    assert vision.get("severity") == "warn"
-    assert _GROK_CAPTIONS_ONLY in hint
-    assert "awaiting_moments=2" in hint
-    assert "awaiting_moment_hooks=1" in hint
 
 
 def test_doctor_grok_models_fail_is_fail_check(tmp_path, monkeypatch, mocker):
@@ -159,19 +124,6 @@ def test_doctor_grok_models_fail_is_fail_check(tmp_path, monkeypatch, mocker):
     assert grok_checks and any(c["ok"] is False for c in grok_checks)
     fail = next(c for c in grok_checks if c["ok"] is False)
     assert "grok login" in (fail.get("hint") or "")
-
-
-def test_doctor_grok_pending_oserror_does_not_crash(tmp_path, monkeypatch, mocker):
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
-    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
-    mocker.patch("fanops.agentstep.pending", side_effect=OSError("agent_io unreadable"))
-    rep = doctor.doctor_report(Config(root=tmp_path))
-    vision = next(c for c in rep["checks"] if "vision" in c["label"].lower())
-    hint = vision.get("hint") or ""
-    assert vision.get("severity") == "warn"
-    assert _GROK_CAPTIONS_ONLY in hint
-    assert "awaiting_moments=" not in hint
 
 
 def test_doctor_grok_missing_hint_names_login(tmp_path, monkeypatch):
@@ -706,15 +658,14 @@ def _by_label(rep, needle):
     return next((c for c in rep["checks"] if needle in c["label"]), None)
 
 
-def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
-    """PATH ok != authenticated. When the LLM CLI binary is present, severity=WARN (non-blocking)
-    makes explicit that PATH is NOT proof of login — never a silent authenticated PASS."""
+def test_cli_on_path_and_models_ok_is_pass(tmp_path, monkeypatch):
+    """Grok on PATH + grok_models_ok is a login-probe PASS — never the old claude/cursor
+    'PATH is NOT proof of login' WARN. Autouse `_hermetic_llm` already stubs both."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = next((c for c in rep["checks"] if "on PATH" in c["label"] and "NOT proof" in (c.get("hint") or "")), None)
-    assert cli is not None and cli["ok"] is True and cli.get("severity") == "warn"
-    assert "NOT proof" in cli.get("hint", "")
+    cli = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
+    assert cli["ok"] is True and cli.get("severity") != "warn"
+    assert "NOT proof" not in (cli.get("hint") or "")
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):

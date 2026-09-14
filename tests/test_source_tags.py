@@ -109,7 +109,7 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
 
 def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     captured = {}
-    envelope = {"structured_output": {
+    envelope = {"structuredOutput": {
         "keep": ["#hiphop", "#inventedslogan", "#rickross"],
         "reject": ["#fyp"]}, "result": "", "session_id": "s"}
 
@@ -119,7 +119,7 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
         stderr = ""
 
     def fake_run(cmd, **kw):
-        captured["prompt"] = kw.get("input") or ""
+        captured["prompt"] = open(cmd[cmd.index("--prompt-file") + 1]).read()
         if "--json-schema" in cmd:
             captured["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
         return R()
@@ -141,7 +141,7 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
 
 def test_shortlist_empty_catalog_does_not_invent(mocker):
     """Empty catalog is fail-closed: never invent names (skill: never invent)."""
-    envelope = {"structured_output": {"keep": ["#rickross", "#hiphop"], "reject": []},
+    envelope = {"structuredOutput": {"keep": ["#rickross", "#hiphop"], "reject": []},
                 "result": "", "session_id": "s"}
 
     class R:
@@ -260,7 +260,7 @@ def test_researched_without_catalog_rejudges(tmp_path):
 
 
 def test_catalog_search_feeds_judge(tmp_path, mocker):
-    envelope = {"structured_output": {
+    envelope = {"structuredOutput": {
         "keep": ["#rickross"],
         "reject": ["#fyp", "#whichwayamifacing"]}, "result": "", "session_id": "s"}
 

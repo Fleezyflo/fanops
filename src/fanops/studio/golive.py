@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 from fanops import cutover
-from fanops.config import Config, _LIVE_BACKENDS, _VALID_LLM_TRANSPORTS
+from fanops.config import Config, _LIVE_BACKENDS
 from fanops.accounts import (Accounts, write_integration, add_account as _accounts_add_account,
                              set_status as _accounts_set_status, remove_account as _accounts_remove_account,
                              set_persona as _accounts_set_persona,
@@ -260,19 +260,6 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     effect immediately AND persists. Works in dryrun OR live (it changes which posts are BORN, not whether they
     publish). No secret -> no key-leak surface. A durable-write failure -> clean error."""
     return set_flag(cfg, "FANOPS_ACCOUNT_CASTING", on)
-
-
-def set_llm_transport(cfg: Config, transport: str) -> ActionResult:
-    """Set FANOPS_LLM_TRANSPORT (claude | cursor | grok) from the Go-Live tab — which CLI the autonomous responder
-    shells to answer the agent gates. Dual-written (.env + os.environ) so it takes effect immediately on the
-    next gate without a Studio restart. Unknown values -> clean error."""
-    transport = (transport or "").strip().lower()
-    if transport not in _VALID_LLM_TRANSPORTS:
-        return ActionResult(ok=False, error="llm transport must be claude, cursor, or grok")
-    err = _dual_write(cfg, "FANOPS_LLM_TRANSPORT", transport)
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"llm_transport": transport, "llm_cli_binary": cfg.llm_cli_binary})
 
 
 def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:

@@ -34,7 +34,7 @@ def test_config_row_studio_settable_flag(tmp_path, monkeypatch):
     transport = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_LLM_TRANSPORT")
     assert resp["studio"] is False
     assert whisper["studio"] is False
-    assert transport["studio"] is True
+    assert transport["studio"] is False
 
 
 def test_format_config_report_header(tmp_path, monkeypatch):

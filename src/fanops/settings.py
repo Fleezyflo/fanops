@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 143 ms); the ~50 modules that import config must not pay that for a four-word frozenset.
 from fanops.config import (
     bool_word, env_bool, parse_scrape_cap, parse_scrape_delay,
-    _VALID_BACKENDS, _VALID_LLM_TRANSPORTS, _VALID_RESPONDERS,
+    _VALID_BACKENDS, _VALID_RESPONDERS,
     resolve_llm_transport, resolve_responder_mode,
 )
 
@@ -105,8 +105,6 @@ def _validate_llm_transport(v: object) -> str:
     if v is None: return ""
     s = str(v).strip().lower()
     if not s: return ""
-    if s not in _VALID_LLM_TRANSPORTS:
-        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: {', '.join(sorted(_VALID_LLM_TRANSPORTS))}")
     return s
 
 
@@ -132,8 +130,6 @@ def _strict_validate_llm_transport(v: object) -> str:
     if v is None: return ""
     s = str(v).strip().lower()
     if not s: return ""
-    if s not in _VALID_LLM_TRANSPORTS:
-        raise ValueError(f"unrecognized FANOPS_LLM_TRANSPORT={s!r}; valid: {', '.join(sorted(_VALID_LLM_TRANSPORTS))}")
     return s
 
 
@@ -209,7 +205,7 @@ class Settings(BaseSettings):
     FANOPS_IG_SCRAPE_PASSWORD: Annotated[str | None, EnvVar(dynamic=True)] = None
     FANOPS_REQUIRE_FULL_OBJECTIVE: BoolEnv = ""
     FANOPS_RESPONDER: DeprecatedStr = ""
-    FANOPS_LLM_TRANSPORT: StudioStr = ""
+    FANOPS_LLM_TRANSPORT: DeprecatedStr = ""
     FANOPS_LLM_MODEL: str = ""
     FANOPS_ARTIST_NAME: str = ""
     FANOPS_CLIP_PROFILE: StudioStr = ""
@@ -432,8 +428,7 @@ class Settings(BaseSettings):
         return resolve_responder_mode(self.FANOPS_RESPONDER)
 
     def llm_transport(self) -> str:
-        # Runtime-lenient helper (warn+claude). Doctor-strict path is _validate_llm_transport /
-        # _strict_validate_llm_transport against the same _VALID_LLM_TRANSPORTS.
+        # Always grok via resolve_llm_transport (leftover FANOPS_LLM_TRANSPORT values are ignored).
         return resolve_llm_transport(self.FANOPS_LLM_TRANSPORT)
 
     def opt_on(self, raw: str, *, default: bool) -> bool:

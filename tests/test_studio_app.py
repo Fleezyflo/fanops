@@ -126,7 +126,8 @@ def test_daemon_health_off_is_optin_not_fault(tmp_path):
     assert "data-daemon-warn" not in html                        # NOT framed as a fault
     assert "until fixed" not in html                             # the alarmist copy is gone
     assert "optional" in html.lower() and "off" in html.lower()  # honest opt-in framing
-    assert "claude" in html.lower()                              # discloses the recurring-LLM cost
+    assert "grok" in html.lower()                                # discloses the recurring-LLM cost
+    assert "claude" not in html.lower()
 
 def test_daemon_health_unknown_is_warn_not_optin(tmp_path):
     # MOL-963 R2c: missing snapshot must WARN, never fall into "off (optional)".

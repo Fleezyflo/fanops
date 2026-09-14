@@ -39,28 +39,26 @@ def test_tuning_passes_clean_overrides_unchanged(tmp_path):
     assert t["offbrand_en"] == ["\\bpls\\b"] and t["lift_weights"] == {"saves": 5}
 
 def test_llm_model_per_gate_defaults(monkeypatch, tmp_path):
-    # V2 M1/F1 PIN stays; the TIER is now PER-GATE. The `moments` gate is the CREATIVE VISION hook
-    # AUTHOR (it sees source frames + writes the on-screen retention hook) -> opus. `captions` (hashtags
-    # only) stays mechanical -> sonnet.
+    # D1: aliases always apply. moments → grok-4.6; captions → grok-4.5.
     monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
     c = Config(root=tmp_path)
-    assert c.llm_model is None                                  # no override → cursor AUTO / per-gate
-    assert c.llm_model_for("moments") == "opus"                 # Phase 1: vision hook author
-    assert c.llm_model_for("captions") == "sonnet"
-    assert c.llm_model_for("unknown_kind") == "sonnet"          # default-safe for any new gate
+    assert c.llm_model is None
+    assert c.llm_model_for("moments") == "grok-4.6"
+    assert c.llm_model_for("captions") == "grok-4.5"
+    assert c.llm_model_for("unknown_kind") == "grok-4.5"
 
 def test_llm_model_global_override_forces_all_gates(monkeypatch, tmp_path):
-    # FANOPS_LLM_MODEL forces ONE model for EVERY gate — operator escape hatch / a FULL id for repro.
+    # D1: leftover FANOPS_LLM_MODEL=claude-opus-4-x must not reach -m; maps to per-gate grok id.
     monkeypatch.setenv("FANOPS_LLM_MODEL", "claude-opus-4-x")
     c = Config(root=tmp_path)
     assert c.llm_model == "claude-opus-4-x"
-    assert c.llm_model_for("moments") == "claude-opus-4-x"      # creative gate forced
-    assert c.llm_model_for("captions") == "claude-opus-4-x"     # mechanical gate forced up
+    assert c.llm_model_for("moments") == "grok-4.6"
+    assert c.llm_model_for("captions") == "grok-4.5"
 
 def test_llm_model_blank_override_falls_back_to_per_gate(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")               # whitespace-only -> per-gate defaults
+    monkeypatch.setenv("FANOPS_LLM_MODEL", "   ")               # whitespace-only -> per-gate grok aliases
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "opus" and c.llm_model_for("captions") == "sonnet"
+    assert c.llm_model_for("moments") == "grok-4.6" and c.llm_model_for("captions") == "grok-4.5"
 
 def test_hook_router_default_off(monkeypatch, tmp_path):
     # M2 structural-hooks router: opt-in, default OFF (observe-only annotation when on; non-regression)
@@ -146,19 +144,23 @@ def test_responder_llm_explicit(monkeypatch, tmp_path):
     assert Config(root=tmp_path).responder_mode == "llm"
 
 def test_llm_transport_defaults_claude_when_unset(monkeypatch, tmp_path):
+    # D1: unset FANOPS_LLM_TRANSPORT resolves to grok (the only transport).
     monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
     cfg = Config(root=tmp_path)
-    assert cfg.llm_transport == "claude" and cfg.llm_cli_binary == "claude"
-
-def test_llm_transport_cursor(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    cfg = Config(root=tmp_path)
-    assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
+    assert cfg.llm_transport == "grok" and cfg.llm_cli_binary == "grok"
 
 def test_llm_transport_grok(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     cfg = Config(root=tmp_path)
     assert cfg.llm_transport == "grok" and cfg.llm_cli_binary == "grok"
+
+def test_llm_transport_claude_env_is_ignored(monkeypatch, tmp_path, caplog):
+    # D1: leftover FANOPS_LLM_TRANSPORT=claude cannot select another CLI.
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
+    with caplog.at_level(logging.WARNING):
+        cfg = Config(root=tmp_path)
+        assert cfg.llm_transport == "grok" and cfg.llm_cli_binary == "grok"
+    assert any("FANOPS_LLM_TRANSPORT" in r.getMessage() for r in caplog.records)
 
 def test_llm_model_for_maps_aliases_when_transport_grok(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
@@ -175,17 +177,19 @@ def test_llm_model_for_grok_pin_passthrough(monkeypatch, tmp_path):
     assert c.llm_model_for("captions") == "grok-4.6"
 
 def test_llm_model_for_claude_unchanged(monkeypatch, tmp_path):
+    # D1: aliases always apply (transport is always grok).
     monkeypatch.delenv("FANOPS_LLM_TRANSPORT", raising=False)
     monkeypatch.delenv("FANOPS_LLM_MODEL", raising=False)
     c = Config(root=tmp_path)
-    assert c.llm_model_for("moments") == "opus"
-    assert c.llm_model_for("captions") == "sonnet"
+    assert c.llm_model_for("moments") == "grok-4.6"
+    assert c.llm_model_for("captions") == "grok-4.5"
 
 def test_llm_transport_unknown_warns_and_falls_back(monkeypatch, tmp_path, caplog):
+    # D1: unknown leftover cannot select another CLI — resolve ignores it and returns grok.
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "openai")
     with caplog.at_level(logging.WARNING):
         cfg = Config(root=tmp_path)
-    assert cfg.llm_transport == "claude"
+        assert cfg.llm_transport == "grok"
     assert any("FANOPS_LLM_TRANSPORT" in r.getMessage() for r in caplog.records)
 
 def test_is_live_backend_requires_backend_and_key(monkeypatch, tmp_path):
@@ -583,11 +587,14 @@ def test_settings_responder_typo_raises_at_boundary(monkeypatch):
 
 
 def test_settings_llm_transport_typo_raises_at_boundary(monkeypatch):
-    from pydantic import ValidationError
+    # D1: leftover FANOPS_LLM_TRANSPORT=openai/claude must not ValidationError at Settings.strict_validate.
+    from fanops.settings import Settings
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "openai")
-    with pytest.raises(ValidationError) as ei:
-        _validate_settings()
-    assert "FANOPS_LLM_TRANSPORT" in str(ei.value)
+    Settings()
+    _validate_settings()
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "claude")
+    Settings()
+    _validate_settings()
 
 
 def test_settings_bool_typo_raises_at_boundary(monkeypatch):
@@ -718,17 +725,16 @@ def test_config_and_settings_share_one_boolean_vocabulary(monkeypatch, tmp_path)
 
 
 def test_config_and_settings_share_one_leaf_ownership():
-    """WP1: one _VALID_BACKENDS (Config + Settings + accounts), one responder helper, one LLM-transport
-    set, scrape parsers already single. Identity — a re-declaration in settings would fail `is`."""
+    """WP1: one _VALID_BACKENDS (Config + Settings + accounts), one responder helper,
+    scrape parsers already single. Identity — a re-declaration in settings would fail `is`."""
     from fanops import accounts as accounts_mod
     from fanops import settings as settings_mod
     from fanops.config import (
-        _VALID_BACKENDS, _VALID_LLM_TRANSPORTS, _VALID_RESPONDERS,
+        _VALID_BACKENDS, _VALID_RESPONDERS,
         parse_scrape_cap, parse_scrape_delay, resolve_llm_transport, resolve_responder_mode,
     )
     assert settings_mod._VALID_BACKENDS is _VALID_BACKENDS
     assert accounts_mod._VALID_BACKENDS is _VALID_BACKENDS
-    assert settings_mod._VALID_LLM_TRANSPORTS is _VALID_LLM_TRANSPORTS
     assert settings_mod._VALID_RESPONDERS is _VALID_RESPONDERS
     assert settings_mod.resolve_responder_mode is resolve_responder_mode
     assert settings_mod.resolve_llm_transport is resolve_llm_transport
@@ -867,7 +873,6 @@ def test_layer_a_daemon_llm_product_flags_go_through_config():
     assert "cfg.auto_adopt" in ensure_src
     assert 'os.getenv("FANOPS_AUTO_ADOPT")' not in ensure_src
     llm_src = inspect.getsource(claude_json_meta)
-    assert "llm_model" in llm_src
     assert 'os.getenv("FANOPS_LLM_MODEL")' not in llm_src
 
 
@@ -902,11 +907,10 @@ def test_config_scrape_knobs_runtime_fail_open(monkeypatch, tmp_path, caplog):
 
 
 def test_llm_transport_is_studio_settable():
-    """FANOPS_LLM_TRANSPORT is Studio-settable (Go-Live), so it is typed StudioStr — the canonical
-    STUDIO_SETTABLE projection (config_introspect's STUDIO column) must include it, not miss it as a
-    plain str (Wave 3.5 alignment)."""
-    from fanops.settings import STUDIO_SETTABLE
-    assert "FANOPS_LLM_TRANSPORT" in STUDIO_SETTABLE
+    # D4: FANOPS_LLM_TRANSPORT leaves STUDIO_SETTABLE (DeprecatedStr, same pattern as FANOPS_RESPONDER).
+    from fanops.settings import DEPRECATED, STUDIO_SETTABLE
+    assert "FANOPS_LLM_TRANSPORT" not in STUDIO_SETTABLE
+    assert "FANOPS_LLM_TRANSPORT" in DEPRECATED
 
 
 def test_responder_and_anthropic_are_deprecated_not_studio():

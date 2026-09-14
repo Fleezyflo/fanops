@@ -70,7 +70,7 @@ _STAGE = {
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor", "grok"})
+_VALID_LLM_TRANSPORTS = frozenset({"grok"})
 _GROK_MODEL_ALIASES = {"opus": "grok-4.6", "sonnet": "grok-4.5"}
 _VALID_RESPONDERS = frozenset({"llm"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
@@ -134,16 +134,11 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
     return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
 def resolve_llm_transport(raw: str | None = None) -> str:
-    """LLM CLI transport: claude (default/rollback), cursor-agent headless, or grok captions-only.
-    Unknown values warn + fall back. Runtime-lenient; Settings field validators / strict_validate refuse the same set loudly."""
+    """Grok is the only LLM CLI. Leftover FANOPS_LLM_TRANSPORT values are ignored."""
     v = (raw if raw is not None else os.getenv("FANOPS_LLM_TRANSPORT") or "").strip().lower()
-    if not v:
-        return "claude"
-    if v not in _VALID_LLM_TRANSPORTS:
-        _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: %s",
-                     v, ", ".join(sorted(_VALID_LLM_TRANSPORTS)))
-        return "claude"
-    return v
+    if v and v != "grok":
+        _log.warning("ignoring FANOPS_LLM_TRANSPORT=%r (grok is the only transport)", v)
+    return "grok"
 
 # THE boolean-word vocabulary for every FANOPS_* flag, declared once. It used to be hand-copied into
 # twenty property bodies below and declared a third time in settings.py — a word added to one copy and
@@ -652,7 +647,7 @@ class Config:
 
     @property
     def llm_cli_binary(self) -> str:
-        return {"cursor": "cursor-agent", "grok": "grok"}.get(self.llm_transport, "claude")
+        return "grok"
 
     @property
     def llm_model(self) -> str | None:
@@ -662,18 +657,15 @@ class Config:
         return g.strip() if g and g.strip() else None
 
     def llm_model_for(self, kind: str) -> str:
-        # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
-        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gate — hashtags-only
-        # `captions` — runs on `sonnet` (fast + plenty for the task). (P11/MOL-152: moment_casting is gone.)
-        # The CREATIVE VISION gates — `moments` (the pass-1 WINDOW picks) and `moment_hooks` (the pass-2
-        # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
-        # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
-        # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
+        # Per-gate grok id. Aliases always apply (opus→grok-4.6, sonnet→grok-4.5). A leftover
+        # FANOPS_LLM_MODEL pin that is not a grok- id maps to the per-gate grok default so it
+        # cannot reach `grok -m`.
         g = self.llm_model
         name = g if g else _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
-        if self.llm_transport == "grok":
-            return _GROK_MODEL_ALIASES.get(name, name)
-        return name
+        mapped = _GROK_MODEL_ALIASES.get(name, name)
+        if not mapped.startswith("grok-"):
+            return _GROK_MODEL_ALIASES[_GATE_MODEL_DEFAULTS.get(kind, "sonnet")]
+        return mapped
 
     @property
     def artist_name(self) -> str:
