@@ -637,7 +637,7 @@ def run_prepare(cfg: Config, base_time: Optional[str] = None, *, confirmed: bool
                     from fanops.log import get_logger
                     get_logger(cfg)("run", "-", "prepare_failed", err=str(exc)[:160])
                     return ActionResult(ok=False, error=f"prepare failed: {str(exc)[:160]}")
-                if summary["awaiting"]["moments"] == 0 and summary["awaiting"]["captions"] == 0:
+                if not any(summary["awaiting"].values()):
                     done = True; break
     except RunBusyError:
         return ActionResult(ok=False, error="pipeline busy — a run is driving")
