@@ -55,8 +55,8 @@ class GoLiveStatus:
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
     responder_mode: str = "llm"        # FANOPS_RESPONDER resolves to 'llm' (validate-or-refuse); gates answered by the LLM
-    llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor | grok (which CLI shells for gates)
-    llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent | grok)
+    llm_transport: str = "grok"        # grok is the only CLI
+    llm_cli_binary: str = "grok"       # grok is the only CLI
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
     paused: bool = False               # 00_control/paused — the operator brake on the unattended pump
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()

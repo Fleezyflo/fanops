@@ -41,11 +41,6 @@ def register_golive_routes(app, cfg):
         # (changes which posts are BORN, not whether they publish).
         return _golive_panel(golive.set_account_casting(cfg, request.form.get("on") == "1"))
 
-    @app.post("/golive/llm-transport")
-    def do_golive_llm_transport():
-        # FANOPS_LLM_TRANSPORT=claude|cursor|grok — which headless CLI shells when the AI responder is ON.
-        return _golive_panel(golive.set_llm_transport(cfg, request.form.get("transport", "")))
-
     @app.post("/golive/daemon-install")
     def do_golive_daemon_install():
         # Install + load the launchd pipeline driver (hands-off processing) — no CLI. Scheduling only; gates

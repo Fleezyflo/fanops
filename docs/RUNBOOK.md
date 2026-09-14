@@ -42,7 +42,7 @@ needed — the file streams into `01_inbox/` and is catalogued.)
 Run tab → **Prepare everything**. · **Success:** finished clips appear in the **Review** tab — the
 system writes its own captions and finishes the clips; no gates to answer by hand.
 
-> Auto-answering uses your `claude` login. Run `fanops autopilot` **once** to turn it on. Without it,
+> Auto-answering uses your `grok` login. Run `fanops autopilot` **once** to turn it on. Without it,
 > the moment/caption gates wait for you in the **Gates** tab — see step 4.
 
 ### 4 · Answer gates (only if you skipped autopilot)

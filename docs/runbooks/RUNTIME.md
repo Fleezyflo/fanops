@@ -42,9 +42,9 @@ Environment variables (read at runtime from `.env`, see `src/fanops/config.py`):
 | `POSTIZ_URL` | URL | Base URL of your Postiz instance (required when any channel routes to `postiz`). |
 | `POSTIZ_API_KEY` | string | Postiz public API key (`x-api-key`). Required when any channel routes to `postiz`. |
 | `ZERNIO_API_KEY` | string | Zernio API key. Required when any channel routes to `zernio` (TikTok). |
-| `FANOPS_RESPONDER` | `llm` (only) | Gates are answered ONLY by the LLM responder (default transport: plain `claude -p` on the operator's existing Claude subscription/login — NO API key). Leave unset (resolves to `llm`) or set `llm`; **any other value is a hard refuse** (`doctor`/`advance`/`run` exit non-zero). `advance`/`run` also **hard-fail (exit 2) unless the resolved `cfg.llm_cli_binary` is on PATH** — the cutover-safety preflight is transport-aware (see below); login is `claude login` / `grok login` / Cursor CLI as appropriate. |
-| `FANOPS_LLM_TRANSPORT` | `claude` (default) \| `cursor` \| `grok` | LLM CLI transport. Default/`claude` = full pipeline via `claude -p` (also the rollback). `cursor` = `cursor-agent`. `grok` = **captions only** (moments/hooks stay on Claude): vision gates fail closed (`ToolchainMissingError`); flip transport back to `claude` for those gates. Grok shells `grok --prompt-file` (never argv/STDIN). **Do not set `XAI_API_KEY`** in FanOps `.env`/cron/launchd — the child env **pops** `XAI_API_KEY` and `GROK_CODE_XAI_API_KEY` (`grok login` session file). Preflight is transport-aware: missing `grok` or failed `grok models` → exit 2; grok does **not** get cursor's blanket vision refuse at preflight. |
-| `claude` (CLI, logged in) | — | Required when `FANOPS_LLM_TRANSPORT` is `claude` (the default **and** rollback) — not ALWAYS required for every transport. Default transport shells plain `claude -p` (NOT `--bare`), so it uses the host's `claude login` session — **no `ANTHROPIC_API_KEY` needed**. `claude` absent on the claude transport ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). `--strict-mcp-config --allowedTools ""` keep it a clean no-tool/no-MCP generator. Grok captions-only uses the grok CLI + `grok login` session file (no `XAI_API_KEY`). Cursor uses `cursor-agent`. (`ANTHROPIC_API_KEY` is NOT required; if set, `claude` will use it, but the subscription login is the supported path.) |
+| `FANOPS_RESPONDER` | `llm` (only) | Gates are answered ONLY by the LLM responder (grok CLI on the operator's `grok login` session file — NO API key, **do not set `XAI_API_KEY`**). Leave unset (resolves to `llm`) or set `llm`; **any other value is a hard refuse** (`doctor`/`advance`/`run` exit non-zero). `advance`/`run` also **hard-fail (exit 2) unless `grok` is on PATH** and `grok models` succeeds. Claude CLI is not required. |
+| `FANOPS_LLM_TRANSPORT` | ignored | Vestigial, ignored; grok is the only CLI. Leftover values do not select another binary. All three gates (hooks, captions, moments) are answered by `grok`. Captions use `grok --prompt-file`; vision uses `--prompt-json` ACP image blocks with inline base64 `data`. **Do not set `XAI_API_KEY`** in FanOps `.env`/cron/launchd — the child env **pops** `XAI_API_KEY` and `GROK_CODE_XAI_API_KEY` (`grok login` session file). Missing `grok` or failed `grok models` → exit 2. Claude CLI is not required. |
+| `grok` (CLI, logged in) | — | Required. Grok is the only gate binary. `grok login` session file — **no `XAI_API_KEY`**, **no `ANTHROPIC_API_KEY`**. `grok` absent ⇒ `advance`/`run` exit 2 (the silent-zero-output guard). Claude CLI is not required. Historical `--bare` forced Anthropic API-key auth; that key stays unset because Grok does not use it. |
 | `FANOPS_ARTIST_NAME` | string (optional) | Artist **display name** used as the YouTube title fallback when a post has no explicit title (audit h). Default `"Moh Flow"` (unchanged). Distinct from the `@mohflow` caption mention (`tagging.ARTIST_HANDLE`). |
 | `FANOPS_BURN_SUBS` | `1`/`true`/… (default **ON**) \| `0`/`false`/`no`/`off` | **Legacy** transcript-caption toggle — **ignored at render since PR 994** (hook-only overlay). Render always burns the retention hook (`Moment.hook`) when present; transcript captions are never layered. Kept for settings/doctor registration parity only. See `docs/CONFIG.md`. |
 | `FANOPS_SUBTITLE_FONT` | string (optional) | Font face for the `.ass` subtitles. Default `"Arial Unicode MS"` — an Arabic-capable face so RTL captions render. Override if the host lacks that font or you prefer another Unicode/Arabic typeface. |
@@ -89,20 +89,15 @@ autonomous run — it logs a warning and falls back to all defaults.
 doing any work, right after `_check_accounts`. It **refuses to run (exit 2, one-line message to
 stderr, no traceback)** for the env mismatches that would otherwise make the pipeline do
 credentialless *nothing* — the #1 cutover trap (not only two: LLM-CLI PATH/login, Postiz, Zernio,
-and grok `models`). Preflight is **transport-aware** (resolved `cfg.llm_cli_binary`; grok is
-captions-only; claude remains the default and rollback):
+and grok `models`). Preflight requires `grok` on PATH and a passing `grok models` probe
+(`cfg.llm_cli_binary` is always `grok`; leftover `FANOPS_LLM_TRANSPORT` values are ignored):
 
-- **`claude` is not on PATH (or not logged in)** — default transport. The responder
-  shells plain `claude -p` (your existing subscription/login; no API key). With no `claude`
-  binary it would fail every gate, clear nothing, and publish nothing **without crashing**
-  (the preflight hard-blocks the binary-absent case; a logged-out `claude` surfaces via the
-  `run halted`/heartbeat path). This is the guaranteed-silent failure the heartbeat/dead-man's
-  switch is designed to *detect after the fact*; the preflight catches it **up front** instead.
-  Preflight is **transport-aware**: with `FANOPS_LLM_TRANSPORT=grok`, missing `grok` or a failed
-  `grok models` probe → exit 2 (`grok login`, session file; **no `XAI_API_KEY`** in FanOps
-  `.env`/cron/launchd). Grok is captions-only — no cursor-style vision blanket refuse at
-  preflight; vision gates fail closed at call time (`ToolchainMissingError`). Rollback:
-  `FANOPS_LLM_TRANSPORT=claude`.
+- **`grok` is not on PATH (or `grok models` fails)** — grok is the only transport. The responder
+  shells the grok CLI (`grok login` session file; **no `XAI_API_KEY`** in FanOps `.env`/cron/launchd).
+  With no `grok` binary it would fail every gate, clear nothing, and publish nothing **without crashing**
+  (the preflight hard-blocks the binary-absent case; a logged-out `grok` fails `grok models` and also
+  exits 2). Claude CLI is not required. Vision is `--prompt-json` ACP image with inline base64 `data`
+  (not a blanket refuse at preflight).
 - **`FANOPS_POSTER=postiz` but `POSTIZ_URL` / `POSTIZ_API_KEY` unset** — publishing would fail auth.
 - **Any channel routed to `zernio` but `ZERNIO_API_KEY` unset** — TikTok publish would fail auth.
 
@@ -150,7 +145,7 @@ fanops advance                  # now the normal pipeline clips/captions/schedul
 
 ## Daily loop (hand-answering gates)
 
-Gates are answered ONLY by the LLM (`fanops respond`/`run` shell `claude -p`), but you can still
+Gates are answered ONLY by the LLM (`fanops respond`/`run` shell `grok`), but you can still
 review and hand-answer them in the Studio Gates tab — or, at the file layer, by writing the
 `*.response.json` files yourself. This section describes that human-in-the-loop cadence.
 
@@ -163,7 +158,7 @@ review and hand-answer them in the Studio Gates tab — or, at the file layer, b
    correlates — see `agentstep.py`.) The creative instructions you are answering *to*
    live in `context.md` and are injected into each request as `guidance`.
    - Or run **`fanops respond`** to answer them automatically with the LLM responder
-     (`claude -p`, using your `claude login` session — this is the default answer path).
+     (`grok`, using your `grok login` session — this is the default answer path).
 3. **`fanops advance`** again — ingests the moment decisions, renders the per-aspect
    clips, and opens the **caption** requests. Answer those the same way (or `respond`),
    then `advance` once more to crosspost and publish what is due.
@@ -194,8 +189,8 @@ fanops run [--base-time T]
 
 `run` drives the gates with the LLM responder and advances until the pipeline is
 **stable** (no pending moments **and** no pending captions), up to **10 iterations**. Gates
-are answered ONLY by the LLM, so unattended operation just needs `claude` on `PATH` and
-authenticated (`claude login` — see below); the preflight hard-fails (exit 2) if it is missing.
+are answered ONLY by the LLM, so unattended operation just needs `grok` on `PATH` and
+authenticated (`grok login` — see below); the preflight hard-fails (exit 2) if it is missing.
 
 **The learning loop closes inside `run` (E1).** After the respond→advance loop converges,
 `run` runs one `track`+`adjust` pass — `pull_metrics → classify_outcomes → amplify → retire`
@@ -233,14 +228,14 @@ two `\theartbeat\t` lines in `run.log` and pages if (a) the latest `heartbeat` t
 prior one or is older than the cron interval (cron dead), (b) `published_in_run == 0` for the
 last N lines (stuck pipeline), or (c) `last_published_age_hours` exceeds a threshold.
 
-**Catching a silently-unauthed responder.** Because the responder shells plain `claude -p` using
-the host's `claude login` session (see *the autonomous LLM
-responder* below) — a responder that is **running but logged out** (`claude login` was never run
+**Catching a silently-unauthed responder.** Because the responder shells `grok` using
+the host's `grok login` session file (see *the autonomous LLM
+responder* below) — a responder that is **running but logged out** (`grok login` was never run
 on the host) fails every gate with "Not logged in", clears nothing, and publishes nothing, **without
 crashing** (each gate is quarantined and logged). The dead-man's-switch is how you catch this failure:
 `published_in_run` stays **0 forever** *and* the digest's **"Pending agent gates"** section keeps
 naming the same unanswered gates. The heartbeat proves the cron is alive; the zero delta + the
-pending-gates list prove it is making no progress — so the operator knows to fix the **key**
+pending-gates list prove it is making no progress — so the operator knows to fix the **login**
 (grep `run.log` for repeated `responder … error … Not logged in`), not the scheduler.
 
 **Graceful degradation on a fatal auth error.** If a fatal Postiz/Zernio auth error escapes
@@ -278,7 +273,7 @@ Each `advance()` pass runs inside a **run lease** when invoked as a top-level dr
 not re-acquire. Recovery verbs (`retry-source`, `resolve`, …) use only the **ledger lock** — a mid-run
 commit can still surface `LockBusyError`; retry the mutate, not the run.
 
-The slow `claude -p` responder call runs **outside** the ledger flock (by design) but **inside** the
+The slow grok responder call runs **outside** the ledger flock (by design) but **inside** the
 run lease when a driver holds it — the `request_id` TOCTOU guard in `responder.py` detects a mid-call
 re-seed but cannot repair it; the run lease is the cross-driver prevention it always lacked.
 
@@ -506,36 +501,30 @@ analyzed posts and acts on the tails (`src/fanops/adjust.py`):
 The system answers its own gates autonomously with a model — no human in the loop. Set
 `FANOPS_RESPONDER=llm`. The responder (`src/fanops/responder.py::LlmResponder`) reads each
 pending request, calls the model, validates the output against the gate's schema, and writes
-the response file. **`get_responder(cfg)` returns a working responder out of the box** — the
-default model is the Claude Code CLI (`claude -p`); there is no stub to fill.
+the response file. **`get_responder(cfg)` returns a working responder out of the box** — grok
+is the only CLI; there is no stub to fill.
 
-**Transport — `claude -p`, not the Anthropic SDK.** The default model
-(`_default_claude_model`) shells the Claude Code CLI in headless print mode via
-`src/fanops/llm.py::claude_json`:
-`claude -p "<prompt>" --output-format json --json-schema '<schema>' --allowedTools "" --strict-mcp-config`
-(plain `claude -p`, NOT `--bare`, so it uses the host's `claude login` subscription — no API key).
-Chosen over the SDK to keep one toolchain (no second SDK dependency) and fit the codebase's
-shell-a-binary idiom (like ffmpeg/whisper) — `claude` is just one more absence-guarded binary.
-`--allowedTools ""` makes it a pure generator (no tool use / file access). The prompt is built
-from a **committed template** (`src/fanops/prompts.py::moment_prompt` / `caption_prompt`) and
-paired with the gate's exact pydantic JSON schema, so most "LLM returned malformed JSON" risk
-collapses into `structured_output`.
+**Transport — grok CLI, not an SDK.** The default model (`_default_claude_model`) shells grok
+via `src/fanops/llm.py::claude_json` → `_grok_json_meta`. Captions use `grok --prompt-file`;
+vision uses `--prompt-json` ACP image blocks with inline base64 `data`. `--json-schema` is the
+native structured path; `--tools ""` keeps the call a pure generator. Chosen over an SDK to keep
+one toolchain (no second SDK dependency) and fit the codebase's shell-a-binary idiom (like
+ffmpeg/whisper). The prompt is built from a **committed template**
+(`src/fanops/prompts.py::moment_prompt` / `caption_prompt`) and paired with the gate's exact
+pydantic JSON schema, so most "LLM returned malformed JSON" risk collapses into
+`structured_output`.
 
-**Requirement — `claude` on `PATH` AND logged in (the EXISTING subscription; load-bearing).**
-We shell **plain `claude -p` (NOT `--bare`)** — operator decision 2026-06-04: use the existing
-Claude subscription, not an API key. **Why not `--bare`:** under `--bare`, Anthropic auth is
-STRICTLY `ANTHROPIC_API_KEY` and OAuth/keychain are NEVER read — so a `claude login` session would
-fail "Not logged in" (verified on the host). Plain `claude -p` uses that login. To stay a clean
-generator without `--bare` we pass **`--strict-mcp-config --allowedTools ""`** (no MCP servers, no
-tool use). So the host needs a **`claude login`** session (cron inherits the user's `~/.claude`),
-**NOT `ANTHROPIC_API_KEY`**. Failure modes, both **quarantined per request** (not a crash): if
-`claude` is absent, `claude_json` raises `ToolchainMissingError` (and the preflight hard-blocks the
-run); if `claude` is present but logged OUT, `claude -p` exits non-zero with `"Not logged in ·
-Please run /login"` → `RuntimeError` → the gate logs `error` and stays pending (so a logged-out
-host yields **zero autonomous content**, silently but loggedly — check `run.log` for repeated
-`responder … error … Not logged in`, and run `claude login`). *(If `ANTHROPIC_API_KEY` happens to
-be exported, `claude` will use it — fine for a 3P/Bedrock setup — but the subscription login is the
-supported default path.)*
+**Requirement — `grok` on `PATH` AND logged in (`grok login` session file; load-bearing).**
+**Do not set `XAI_API_KEY`** — `_grok_env` pops `XAI_API_KEY` and `GROK_CODE_XAI_API_KEY` so a
+leftover key cannot override the session file. Claude CLI is not required. Historical `--bare`
+was a Claude-subscription choice: under `--bare`, Anthropic auth is STRICTLY
+`ANTHROPIC_API_KEY` and OAuth/keychain are NEVER read. That key stays unset because Grok does
+not use it. Cron/launchd inherit the user's grok session file. Failure modes, both
+**quarantined per request** (not a crash): if `grok` is absent, `claude_json` raises
+`ToolchainMissingError` (and the preflight hard-blocks the run); if `grok` is present but logged
+OUT, `grok models` / the gate call fail → the gate logs `error` and stays pending (so a
+logged-out host yields **zero autonomous content**, silently but loggedly — check `run.log` for
+repeated `responder … error … Not logged in`, and run `grok login`).
 
 **Per-request quarantine (audit H2 / N1).** `answer_pending` isolates each gate: one bad
 request logs and leaves *that* gate pending, and never halts the others (mirrors `advance()`'s
@@ -572,7 +561,7 @@ forge instructions.
 
 **To use a different model** (e.g. for tests or an alternate backend): inject a callable —
 `LlmResponder(cfg, model=my_callable)`, where `my_callable(kind, payload) -> dict`. The default
-`claude -p` path is used only when no model is injected.
+grok path is used only when no model is injected.
 
 ---
 
@@ -642,10 +631,10 @@ design goal is **honest surfacing** (a loud doctor check / logged breadcrumb), N
 |---|---|---|
 | **Half-live / one-valid-channel** (banner says LIVE, every publish halts in `queued`) | doctor check *"live route exists (FANOPS_LIVE=1 actually publishes)"* (`is_live and not live_route_exists`); a route-read hiccup logs a `half_live_error` breadcrumb rather than a silent pass. | Route a channel to a provider with creds in Go-Live, or `fanops` back to dryrun. |
 | **`FANOPS_ROOT` shell vs daemon plist divergence** (CLI roots at cwd, daemon pinned elsewhere → two ledgers) | `daemon.root_divergence` → `ERROR` + exit 2 on every verb except `fanops daemon status` (which prints both roots). See `docs/CONFIG.md` (Bootstrap). | Export `FANOPS_ROOT` (or `cd` to the workspace) so shell and daemon share one ledger. |
-| **Credentials soft-stall** (creds present but dead/logged-out → keeps running, ships/verifies nothing, no crash) | doctor checks *"`claude`/`cursor-agent` on PATH"* (logged-in responder), Postiz/Zernio reach; at runtime the heartbeat's `published_in_run == 0` across N runs + the digest's **Pending agent gates** list. | Re-auth the named surface (`claude login`, fix the key) — grep `run.log` for repeated `Not logged in`. |
+| **Credentials soft-stall** (creds present but dead/logged-out → keeps running, ships/verifies nothing, no crash) | doctor checks *"`grok` on PATH"* (logged-in responder), Postiz/Zernio reach; at runtime the heartbeat's `published_in_run == 0` across N runs + the digest's **Pending agent gates** list. | Re-auth the named surface (`grok login`, fix the key) — grep `run.log` for repeated `Not logged in`. |
 | **Postiz nginx-green / Node crash-loop** (docker health-check passes while the Node backend crash-loops) | doctor check *"Postiz backend reachable (real /integrations probe, not the nginx health-check)"* (`postiz_doctor_check`, probes PAST nginx). | Restart / rebuild the Postiz stack; see `docs/POSTIZ_OPS.md`. |
 | **Daemon stale heartbeat** (pump dead/stopped → approved posts silently never send) | doctor check *"publish daemon alive + queue draining (heartbeat + past-due backlog)"* (`_daemon_liveness_check`; FAIL-CLOSED when the heartbeat is absent or older than 3× the tick, or queued posts are past-due). | Restart the pump (`fanops daemon install` / `fanops daemon status`). |
-| **Responder pending-forever** (gates never clear → pipeline alive but stuck) | the digest's **`## Pending agent gates (responder has not cleared)`** section (same gate re-named across runs) + the heartbeat zero-delta; doctor's *"FANOPS_RESPONDER valid"* + LLM-CLI-on-PATH checks catch the misconfig up front. | Fix the KEY, not the scheduler: `claude login`, correct `FANOPS_RESPONDER`, then re-run. |
+| **Responder pending-forever** (gates never clear → pipeline alive but stuck) | the digest's **`## Pending agent gates (responder has not cleared)`** section (same gate re-named across runs) + the heartbeat zero-delta; doctor's *"FANOPS_RESPONDER valid"* + LLM-CLI-on-PATH checks catch the misconfig up front. | Fix the login, not the scheduler: `grok login`, correct `FANOPS_RESPONDER`, then re-run. |
 
 **Explicitly OUT OF SCOPE (do not build):** daemon self-heal of IG/Meta credentials, and any
 auto-remediation that ships or promotes content to clear a wedge. Wedges are surfaced for a
@@ -679,20 +668,20 @@ cp .env.example .env
 # FANOPS_POSTER=postiz   # legacy hint; per-channel backends are set in Go-Live
 ```
 
-**5. Ensure `claude` is logged in on the host** *(required for the autonomous LLM responder)* —
-   the responder shells plain `claude -p` (NOT `--bare`), so it uses your **existing Claude
-   subscription / `claude login` session** — **no API key needed**. (We dropped `--bare`
-   precisely because `--bare` ignores OAuth/keychain and would force an `ANTHROPIC_API_KEY`; the
-   call stays a clean generator via `--strict-mcp-config --allowedTools ""`.) Just log in once:
+**5. Ensure `grok` is logged in on the host** *(required for the autonomous LLM responder)* —
+   the responder shells the grok CLI, so it uses your **`grok login` session file** — **no API
+   key needed**. **Do not set `XAI_API_KEY`**. Claude CLI is not required. Historical `--bare`
+   ignored OAuth/keychain and would have forced an `ANTHROPIC_API_KEY`; that key stays unset
+   because Grok does not use it. Just log in once:
 
 ```bash
-claude login                              # one-time: authenticate the subscription on this host
+grok login                                # one-time: authenticate the grok session on this host
 # FANOPS_RESPONDER defaults to llm — no need to set it; gates are always answered by the LLM
-claude -p 'say ok' --output-format json   # smoke: confirms the logged-in session works headless (no API key)
+grok --no-auto-update models              # smoke: confirms the logged-in session (no API key)
 ```
-   NOTE: cron/launchd runs as your user and inherits the same `~/.claude` login, so a `claude
-   login` done once in your shell is available to the scheduled `fanops run`. No `ANTHROPIC_API_KEY`
-   export is required (if one happens to be set, `claude` will use it — but it is not needed).
+   NOTE: cron/launchd runs as your user and inherits the same grok session file, so a `grok
+   login` done once in your shell is available to the scheduled `fanops run`. No `XAI_API_KEY`
+   or `ANTHROPIC_API_KEY` export is required.
    ──────────────────────────────────────────────────────────────────────────────
    *Everything below is already built — these are verification + scheduling steps.*
 
@@ -718,9 +707,9 @@ fanops run    # dryrun default — schedules payloads, posts nothing
 ```cron
 */30 * * * * export FANOPS_ROOT=$HOME/FanOps && cd "$FANOPS_ROOT" && /path/to/.venv/bin/fanops run >> run.out 2>&1
 ```
-   (No `ANTHROPIC_API_KEY` in the cron line — the responder uses the host's `claude login` session.
-   The cron job runs as your user and inherits `~/.claude`, so the one-time `claude login` from
-   step 5 covers it.)
+   (No `XAI_API_KEY` or `ANTHROPIC_API_KEY` in the cron line — the responder uses the host's
+   `grok login` session file. The cron job runs as your user and inherits that session, so the
+   one-time `grok login` from step 5 covers it.)
    Then point an **external monitor** at the heartbeat (see *Heartbeat / dead-man's-switch*
    above): page if the `heartbeat` ts stops advancing (cron is dead), or if
    **`published_in_run == 0` for N consecutive runs** (the pipeline is alive but stuck — most
