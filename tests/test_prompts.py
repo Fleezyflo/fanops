@@ -204,7 +204,7 @@ def test_moment_pick_prompt_emphatic_json_only():
     assert "SEPARATE pass" in p                                       # picker-vs-hook boundary preserved
 
 def test_picker_prompt_and_vision_wrapper_json_only():
-    # MOL-250: direct content assertions on hardened picker prompt + gate-neutral vision wrappers.
+    # MOL-250: direct content assertions on hardened picker prompt + gate-neutral vision attach.
     import inspect
     from fanops import llm as llm_mod
     p = moment_pick_prompt({"duration": 42.0, "transcript": [], "signal_peaks": [],
@@ -212,11 +212,10 @@ def test_picker_prompt_and_vision_wrapper_json_only():
     assert "ONLY the JSON object matching the provided schema" in p     # A8.2 emphatic ONLY-JSON
     assert "no prose" in p.lower()
     assert "do not describe or narrate the frames" in p.lower()       # A8.3 no describe-frames invite
-    src = inspect.getsource(llm_mod._claude_json_meta)
-    for marker in ("Read each image frame below", "You did NOT open the frames"):
-        assert marker in src
-        chunk = src.split(marker, 1)[1].split("\\n", 1)[0]
-        assert "hook" not in chunk.lower()                              # A8.1 gate-neutral wrappers
+    src = inspect.getsource(llm_mod._build_grok_cmd)
+    assert '"type": "image"' in src and "data" in src                 # inline b64 ACP image block
+    assert "file://" not in src
+    assert "hook" not in src.lower()                                  # A8.1 gate-neutral attach
 
 def test_moment_pick_prompt_has_data_not_instructions_directive():
     # FIX 7: transcript text flows into the `claude -p` prompt; a crafted video could inject
