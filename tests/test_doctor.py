@@ -658,15 +658,14 @@ def _by_label(rep, needle):
     return next((c for c in rep["checks"] if needle in c["label"]), None)
 
 
-def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
-    """PATH ok != authenticated. When the LLM CLI binary is present, severity=WARN (non-blocking)
-    makes explicit that PATH is NOT proof of login — never a silent authenticated PASS."""
+def test_cli_on_path_and_models_ok_is_pass(tmp_path, monkeypatch):
+    """Grok on PATH + grok_models_ok is a login-probe PASS — never the old claude/cursor
+    'PATH is NOT proof of login' WARN. Autouse `_hermetic_llm` already stubs both."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = next((c for c in rep["checks"] if "on PATH" in c["label"] and "NOT proof" in (c.get("hint") or "")), None)
-    assert cli is not None and cli["ok"] is True and cli.get("severity") == "warn"
-    assert "NOT proof" in cli.get("hint", "")
+    cli = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
+    assert cli["ok"] is True and cli.get("severity") != "warn"
+    assert "NOT proof" not in (cli.get("hint") or "")
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
