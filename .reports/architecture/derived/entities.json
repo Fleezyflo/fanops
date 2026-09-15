@@ -96,7 +96,7 @@
     ],
     "fanops.health": [
       {
-        "line": 24,
+        "line": 26,
         "members": [
           "FRESH",
           "MISSING",

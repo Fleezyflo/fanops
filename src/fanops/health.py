@@ -5,7 +5,9 @@ MOL-298: runtime dependency verdicts are a THIN VIEW over health_model (one Post
 from __future__ import annotations
 import json
 import logging
+import os
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,12 +35,19 @@ class SnapshotRead:
     data: dict | None = None
 
 def _docker_health() -> DepHealth:
-    """Docker daemon verdict (tests patch health.subprocess — kept here, not in health_model)."""
+    """Docker daemon verdict (tests patch health.subprocess.Popen — kept here, not in health_model)."""
     if not shutil.which("docker"):
         return DepHealth("docker", False, "docker CLI not installed")
     try:
-        r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
-        return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
+        p = subprocess.Popen(["docker", "info"], start_new_session=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            p.communicate(timeout=_DOCKER_INFO_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            raise
+        return DepHealth("docker", p.returncode == 0, "daemon up" if p.returncode == 0 else "daemon down")
     except Exception as exc:
         _log.warning("_docker_health: docker info failed (%s)", exc)
         return DepHealth("docker", False, f"{type(exc).__name__}")

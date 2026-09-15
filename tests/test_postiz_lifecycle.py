@@ -49,8 +49,22 @@ def test_ensure_up_is_inert_in_tests(monkeypatch):
         called["n"] += 1
         raise AssertionError("subprocess must NOT run during the test suite")
     monkeypatch.setattr(pl.subprocess, "run", boom)
+    monkeypatch.setattr(pl.subprocess, "Popen", boom)
     pl.ensure_up(_cfg("postiz"))          # must not raise, must not call subprocess
     pl.ensure_up(_cfg("dryrun"))
+    assert called["n"] == 0
+
+
+def test_ensure_up_skips_script_when_docker_down(monkeypatch):
+    monkeypatch.setattr(pl, "_should_autostart", lambda cfg: True)
+    monkeypatch.setattr("fanops.health._docker_health",
+                        lambda: types.SimpleNamespace(ok=False, name="docker", detail="TimeoutExpired"))
+    called = {"n": 0}
+    def boom(*a, **k):
+        called["n"] += 1
+        raise AssertionError("Popen must not run when docker is down")
+    monkeypatch.setattr(pl.subprocess, "Popen", boom)
+    pl.ensure_up(_cfg("postiz"))
     assert called["n"] == 0
 
 

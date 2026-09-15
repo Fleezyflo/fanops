@@ -12,14 +12,13 @@ _DAEMON_TRANSIENT_MAX = 3    # MOL-125: daemon re-queue cycles for failed-but-tr
 
 def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
     """MOL-125: before publish_due, re-queue failed transient posts (no real submission_id) for another
-    daemon attempt. Bounded by _DAEMON_TRANSIENT_MAX — after that they stay terminal failed."""
+    daemon attempt. No retry cap — never-sent vendor-down is not a terminal failed budget."""
     from fanops.studio.views_common import is_transient_failure
     requeued = 0
     led = Ledger.load(cfg)
     candidates = [p for p in led.posts_in_state(PostState.failed)
                   if not is_real_submission_id(p.submission_id)
-                  and is_transient_failure(p)
-                  and int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX]
+                  and is_transient_failure(p)]
     if not candidates:
         return 0
     now = datetime.now(timezone.utc)
@@ -33,15 +32,10 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
                     continue
                 if not is_transient_failure(cur):
                     continue
-                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
-                if n > _DAEMON_TRANSIENT_MAX:
-                    continue
                 cur.submission_id = None
                 if not (cur.scheduled_time or "").strip():
                     cur.scheduled_time = iso_z(now)
-                # MOL-812: counter is a field; clear the old counter-only prose so Studio never shows it.
-                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
-                                  daemon_transient_retry=n)
+                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None)
                 requeued += 1
     except Exception as exc:                             # a re-queue txn hiccup must not sink the publish pass (fail-open)
         get_logger(cfg)("publish", "-", "requeue_transient_failed", err=str(exc)[:120], requeued=requeued)
