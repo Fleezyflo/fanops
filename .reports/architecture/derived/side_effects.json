@@ -143,33 +143,33 @@
     "fanops.post.publish_requeue": [
       {
         "call": "Ledger.transaction",
-        "line": 27
+        "line": 26
       },
       {
         "call": "Ledger.transaction",
-        "line": 76
+        "line": 70
       },
       {
         "call": "Ledger.transaction",
-        "line": 115
+        "line": 109
       }
     ],
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 189
+        "line": 190
       },
       {
         "call": "Ledger.transaction",
-        "line": 235
+        "line": 236
       },
       {
         "call": "Ledger.transaction",
-        "line": 375
+        "line": 377
       },
       {
         "call": "Ledger.transaction",
-        "line": 415
+        "line": 417
       }
     ],
     "fanops.recaption": [
@@ -531,7 +531,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 63
+        "line": 70
       }
     ],
     "fanops.post.metrics.postiz_read": [
@@ -541,7 +541,7 @@
       },
       {
         "call": "requests.get",
-        "line": 157
+        "line": 160
       }
     ],
     "fanops.post.metrics.zernio_read": [
@@ -706,13 +706,13 @@
     ],
     "fanops.health": [
       {
-        "call": "subprocess.run",
-        "line": 40
+        "call": "subprocess.Popen",
+        "line": 42
       }
     ],
     "fanops.health_probes": [
       {
-        "call": "subprocess.run",
+        "call": "subprocess.Popen",
         "line": 25
       }
     ],
@@ -788,12 +788,12 @@
     ],
     "fanops.postiz_lifecycle": [
       {
-        "call": "subprocess.run",
-        "line": 71
+        "call": "subprocess.Popen",
+        "line": 78
       },
       {
         "call": "subprocess.run",
-        "line": 110
+        "line": 123
       }
     ],
     "fanops.reframe": [

@@ -17,13 +17,20 @@ _STAGE_HANG_CEILING_S = 3600
 
 
 def _docker_dep() -> DepHealth:
-    import shutil, subprocess
+    import os, shutil, signal, subprocess
     _DOCKER_INFO_TIMEOUT = 8
     if not shutil.which("docker"):
         return DepHealth("docker", False, "docker CLI not installed")
     try:
-        r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
-        return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
+        p = subprocess.Popen(["docker", "info"], start_new_session=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            p.communicate(timeout=_DOCKER_INFO_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            raise
+        return DepHealth("docker", p.returncode == 0, "daemon up" if p.returncode == 0 else "daemon down")
     except Exception as exc:
         _log.warning("_docker_dep: docker info failed (%s)", exc)
         return DepHealth("docker", False, f"{type(exc).__name__}")

@@ -1,5 +1,5 @@
 # tests/test_publish_transient_network_mol125.py — MOL-125: DNS/read-timeout transients classify
-# retryable; pre-send exhaustion lands failed (re-queueable), not terminal on first blip; 4xx unchanged.
+# retryable; pre-send exhaustion stays queued (never-sent), not terminal on first blip; 4xx unchanged.
 import requests as _rq
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -94,7 +94,7 @@ def test_transient_pre_send_not_failed_on_first_failure(tmp_path, monkeypatch, m
     assert p.state is not PostState.published
 
 
-def test_transient_pre_send_exhausted_lands_failed_requeueable(tmp_path, monkeypatch, mocker):
+def test_transient_pre_send_exhausted_stays_queued(tmp_path, monkeypatch, mocker):
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
@@ -106,10 +106,11 @@ def test_transient_pre_send_exhausted_lands_failed_requeueable(tmp_path, monkeyp
     mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed
-    assert is_transient_failure(p)
-    assert p.error_kind is ErrorKind.transient
+    assert p.state is PostState.queued
+    assert p.error_kind is None
     assert not p.submission_id
+    assert p.daemon_transient_retry == 0
+    assert (p.error_reason or "").startswith("publish deferred:")
 
 
 def test_permanent_4xx_still_fails_immediately(tmp_path, monkeypatch, mocker):
@@ -132,40 +133,22 @@ def test_permanent_4xx_still_fails_immediately(tmp_path, monkeypatch, mocker):
     assert classify_failure(p) != "transient"
 
 
-def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatch, mocker):
+def test_daemon_transient_requeue_bounded_then_stays_failed(tmp_path, monkeypatch):
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
+    import fanops.post.run as run
     with Ledger.transaction(cfg) as led:
         led.posts["p1"] = led.posts["p1"].model_copy(
             update={"state": PostState.failed, "error_kind": ErrorKind.transient,
                     "error_reason": "publish failed: NameResolutionError zernio.com",
-                    "daemon_transient_retry": 0})
-    import fanops.post.run as run
-    from fanops.studio.views_results import operator_error
-    max_d = run._DAEMON_TRANSIENT_MAX
-    for i in range(max_d):
-        n = _requeue_transient_failed_for_daemon(cfg)
-        assert n == 1
-        with Ledger.transaction(cfg) as led:
-            p = led.posts["p1"]
-            assert p.state is PostState.queued
-            assert p.daemon_transient_retry == i + 1
-            assert p.error_reason is None
-            assert "transient_daemon_retry" not in (p.error_reason or "")
-            # Re-fail with typed kind + prose only (no machine counter in error_reason).
-            led.posts["p1"] = p.model_copy(
-                update={"state": PostState.failed, "error_kind": ErrorKind.transient,
-                        "error_reason": "publish failed: NameResolutionError zernio.com"})
-    assert _requeue_transient_failed_for_daemon(cfg) == 0
-    final = Ledger.load(cfg).posts["p1"]
-    assert final.state is PostState.failed
-    assert final.daemon_transient_retry == max_d
-    assert "transient_daemon_retry" not in (final.error_reason or "")
-    # MOL-812: classify_failure buckets from error_kind — re-queued-then-failed stays "transient".
-    assert classify_failure(final) == "transient"
-    assert "transient_daemon_retry" not in operator_error(final.error_reason)
-    assert "transient_daemon_retry" not in operator_error(final.error_reason, kind=classify_failure(final))
+                    "daemon_transient_retry": run._DAEMON_TRANSIENT_MAX})
+    assert _requeue_transient_failed_for_daemon(cfg) == 1
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None
+    assert p.error_reason is None
+    assert p.daemon_transient_retry == run._DAEMON_TRANSIENT_MAX
 
 
 def test_recover_posts_retries_transient_failed(tmp_path):

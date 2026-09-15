@@ -38,7 +38,7 @@ def test_is_transient_publish_error_classifies():
 
 
 def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkeypatch, mocker):
-    # ConnectionError during media ensure → retry → exhausted → failed (re-queueable), NOT needs_reconcile.
+    # ConnectionError during media ensure → retry → exhausted → queued (never-sent), NOT failed.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
@@ -53,8 +53,10 @@ def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkey
     mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed, f"expected failed (re-queueable), got {p.state}"
-    assert "connection" in (p.error_reason or "").lower() or "publish failed" in (p.error_reason or "").lower()
+    assert p.state is PostState.queued, f"expected queued, got {p.state}"
+    assert p.error_kind is None
+    assert p.daemon_transient_retry == 0
+    assert (p.error_reason or "").startswith("publish deferred:")
     assert calls["n"] == run._PUBLISH_TRANSIENT_MAX   # retried to exhaustion
 
 

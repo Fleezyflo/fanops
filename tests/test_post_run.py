@@ -305,7 +305,7 @@ def test_publish_does_not_redrive_submitting_post(tmp_path, monkeypatch, mocker)
     assert _posted(log) == []                                              # no vendor POST either
 
 def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, mocker):
-    # Per-post isolation: clip A's upload 503s; clip B still runs. Leftover dryrun:// is not a permalink.
+    # HTTP 503 is transient but not vendor_unreachable: pa stays queued; pb still publishes.
     _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     for pid, cid in [("pa", "c_a"), ("pb", "c_b")]:
@@ -317,12 +317,36 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
                           scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued, public_url="dryrun://1"))
     led.posts["pb"].media_urls = ["https://uploads.postiz.com/ok.mp4"]
     led.save()
-    _wire_vendor(mocker, on_upload=lambda url, **kw: _R(503, {}, text="server down"))
+    _wire_live(mocker, on_upload=lambda url, **kw: _R(503, {}, text="server down"))
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pa"].state is PostState.failed
-    assert "503" in (led.posts["pa"].error_reason or "") or "publish failed" in (led.posts["pa"].error_reason or "").lower()
-    _assert_not_published(led.posts["pb"])
+    assert led.posts["pa"].state is PostState.queued
+    assert led.posts["pa"].error_kind is None
+    assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
+    assert led.posts["pb"].state is PostState.published
+
+
+def test_publish_due_connection_error_trips_provider_circuit(tmp_path, monkeypatch, mocker):
+    # Never-sent ConnectionError trips (provider, "*"): first stays queued; second is never claimed.
+    import requests as _rq
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pa", cid="c_a", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="pb", cid="c_b", when="2020-01-01T00:00:00Z")
+    def boom(url, **kw):
+        raise _rq.exceptions.ConnectionError("connection refused")
+    _wire_vendor(mocker, on_upload=boom)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.posts["pa"].state is PostState.queued
+    assert led.posts["pa"].error_kind is None
+    assert not led.posts["pa"].submission_id
+    assert led.posts["pa"].daemon_transient_retry == 0
+    assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
+    assert led.posts["pb"].state is PostState.queued
+    assert led.posts["pb"].error_reason is None
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skip_rate_limited_circuit" in log
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
     # AUDIT C1: a 5xx park is not an exception — the rest of the due queue still runs. Leftover

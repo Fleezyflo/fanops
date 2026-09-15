@@ -8,6 +8,7 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import requests
 from fanops.config import Config
 from fanops.accounts import Account, AccountStatus, Accounts
 from fanops.errors import redact
@@ -351,10 +352,11 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                                            error_reason="publish transient error (retries exhausted): " + red)
                         post = led.posts[post_id]
                     else:
-                        # MOL-812: retry count lives on Post.daemon_transient_retry — error_reason is prose only.
-                        led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.transient,
-                                           error_reason="publish failed: " + red)
+                        led.set_post_state(post_id, PostState.queued, error_kind=None,
+                                           error_reason="publish deferred: " + red)
                         post = led.posts[post_id]
+                        if _tally is not None and isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                            _tally["vendor_unreachable"] = 1
                 else:
                     kind = ErrorKind.bad_payload if isinstance(exc, ValueError) else ErrorKind.unknown
                     led.set_post_state(post_id, PostState.failed, error_kind=kind, error_reason=(
@@ -482,7 +484,7 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         key = (provider, (acct_id or post.account_id or "").strip() or "_")
-        if key in tripped:
+        if key in tripped or (provider, "*") in tripped:
             log("publish", post.id, "skip_rate_limited_circuit",
                 account=post.account, platform=post.platform.value)
             continue
@@ -492,6 +494,8 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             published += 1
         if tally.get("rate_limited"):
             tripped.add(key)
+        if tally.get("vendor_unreachable"):
+            tripped.add((provider, "*"))
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
         not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued

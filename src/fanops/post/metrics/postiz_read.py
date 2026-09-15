@@ -108,6 +108,9 @@ class PostizMetricsClient:
                 # row would make record_metrics WHOLESALE-zero the post's already-captured metrics; skipping
                 # preserves the prior snapshot and the post is simply re-polled next pass. Log it, keep going.
                 get_logger(self.cfg)("postiz_metrics", str(sid), "fetch_failed", err=str(e)[:120])
+                if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+                    get_logger(self.cfg)("postiz_metrics", str(sid), "vendor_unreachable")
+                    break
                 continue
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows
