@@ -445,26 +445,33 @@ def test_429_on_presign_surfaces_and_never_succeeds(tmp_path, monkeypatch, mocke
 
 
 def test_500_on_presign_fails_never_publishes(tmp_path, monkeypatch, mocker):
-    # 28 — a 5xx on PRESIGN is unambiguous: nothing was posted, no media exists. failed (re-queueable) is
-    # correct; published is not.
+    # 28 — a 5xx on PRESIGN is unambiguous: nothing was posted. never-sent 5xx stays queued (not a success).
     cfg = _live_cfg(tmp_path, monkeypatch); _accounts(tmp_path); _queued(cfg)
     _mock_presign(mocker, _R(500, {}, text="internal"))
     _mock_put(mocker)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed
+    assert p.state is PostState.queued
+    assert p.state is not PostState.failed
+    assert p.state is not PostState.published
+    assert p.error_kind is None
+    assert (p.error_reason or "").startswith("publish deferred:")
     assert p.published_at is None
 
 
 def test_502_on_presign_is_not_a_success(tmp_path, monkeypatch, mocker):
-    # 29 — a platform_error upstream is not an upload.
+    # 29 — a platform_error upstream is not an upload. never-sent 5xx stays queued (not a success).
     cfg = _live_cfg(tmp_path, monkeypatch); _accounts(tmp_path); _queued(cfg)
     _mock_presign(mocker, _R(502, {}, text="bad gateway"))
     _mock_put(mocker)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed
+    assert p.state is PostState.queued
+    assert p.state is not PostState.failed
     assert p.state is not PostState.published
+    assert p.error_kind is None
+    assert (p.error_reason or "").startswith("publish deferred:")
+    assert p.published_at is None
 
 
 # ---------------------------------------------------------------- §9.6 Malformed responses (30-34)
