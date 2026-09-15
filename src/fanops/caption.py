@@ -138,17 +138,13 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
-    # HV1-WALK: do not open the caption gate until this source has a completed lock row.
-    # Empty completed lock (`researched_at` + `lock: []`) DOES open and ships empty tags.
-    # Missing sidecar / no researched_at → clip stays rendered; no request file.
-    if not _source_lock_completed(cfg, src):
-        return led
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
     # request back). Absent registry / None value -> no key (byte-identical to before).
     personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
-    lock = _source_lock_tags(cfg, src)
+    # no early return. hydrate-only must not become the menu:
+    lock = _source_lock_tags(cfg, src) if _source_lock_completed(cfg, src) else []
     meas = load_measurements(cfg)
     hashtag_metrics = _hashtag_metrics_for(meas, lock)
     payload = {

@@ -40,6 +40,31 @@ def test_run_prepare_completes_while_holding_lease(tmp_path, monkeypatch):
     assert (res.detail or {}).get("errors", 0) == 0
 
 
+def test_run_prepare_keeps_looping_while_moment_hooks_pending(tmp_path, monkeypatch):
+    """D1: moments=0 captions=0 hooks>0 must NOT converge."""
+    monkeypatch.chdir(tmp_path)
+    from fanops.studio import actions_run
+    cfg = Config(root=tmp_path)
+    _write_run_accounts(cfg)
+    n = {"advance": 0}
+
+    def fake_advance(_cfg, base_time=None):
+        n["advance"] += 1
+        if n["advance"] == 1:
+            return {"awaiting": {"moments": 0, "moment_hooks": 2, "captions": 0}, "errors": 0}
+        return {"awaiting": {"moments": 0, "moment_hooks": 0, "captions": 0}, "errors": 0}
+
+    # run_prepare does `from fanops.pipeline import advance` at call time.
+    monkeypatch.setattr("fanops.pipeline.advance", fake_advance)
+    monkeypatch.setattr(
+        "fanops.responder.get_responder",
+        lambda _cfg: type("R", (), {"answer_pending": staticmethod(lambda *_a, **_k: 0)})(),
+    )
+    res = actions_run.run_prepare(cfg, confirmed=True)
+    assert res.ok is True
+    assert n["advance"] == 2
+
+
 def test_run_prepare_competing_flock_is_busy(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from fanops.studio import actions_run

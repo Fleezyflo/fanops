@@ -1317,7 +1317,7 @@ def test_graph_refused_does_not_wipe_scrape_admits(tmp_path):
     assert "#likes" not in rec["lock"]
 
 
-def test_request_captions_noops_without_researched_at(tmp_path):
+def test_request_captions_opens_without_researched_at(tmp_path):
     from fanops.agentstep import request_path
     from fanops.ledger import Ledger
     from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
@@ -1328,7 +1328,7 @@ def test_request_captions_noops_without_researched_at(tmp_path):
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", "clip_1").exists()
+    assert request_path(cfg, "captions", "clip_1").exists()
     p = source_tag_locks_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({
