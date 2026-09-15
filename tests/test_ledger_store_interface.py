@@ -1,8 +1,8 @@
 # tests/test_ledger_store_interface.py — MOL-346/M1-F: LedgerStore protocol + sqlite-only seam.
-from contextlib import contextmanager
 from fanops.config import Config
 from fanops.ledger import Ledger, LedgerStore
 from fanops.ledger_sqlite import SqliteLedgerStore
+from fanops.models import Source, SourceState
 
 
 def test_sqlite_ledger_store_satisfies_protocol(tmp_path):
@@ -26,40 +26,22 @@ def test_sqlite_store_round_trips_raw_doc(tmp_path):
     assert store.read_raw() == doc
 
 
-def test_ledger_save_routes_through_store(tmp_path, monkeypatch):
+def test_ledger_save_routes_through_store(tmp_path):
+    """Ledger.save must persist s1 to disk — a call-count spy can no-op write_raw and still pass."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    hits = {"lock": 0, "write": 0}
-    real_lock = led._store.lock
-    real_write = led._store.write_raw
-    @contextmanager
-    def spy_lock(*a, **kw):
-        hits["lock"] += 1
-        with real_lock(*a, **kw): yield
-    def spy_write(doc):
-        hits["write"] += 1
-        return real_write(doc)
-    monkeypatch.setattr(led._store, "lock", spy_lock)
-    monkeypatch.setattr(led._store, "write_raw", spy_write)
+    led.add_source(Source(id="s1", source_path="/x.mp4", width=1, height=1, state=SourceState.catalogued))
     led.save()
-    assert hits["lock"] == 1 and hits["write"] == 1
+    assert "s1" in Ledger.load(cfg).sources
+    raw = SqliteLedgerStore(cfg).read_raw()
+    assert raw is not None and "s1" in raw["sources"]
 
 
-def test_transaction_exit_save_routes_through_store(tmp_path, monkeypatch):
+def test_transaction_exit_save_routes_through_store(tmp_path):
+    """Ledger.transaction exit-save must persist s1 — call-count spies are not a document on disk."""
     cfg = Config(root=tmp_path)
-    hits = {"lock": 0, "write": 0}
-    real_lock = SqliteLedgerStore.lock
-    real_write = SqliteLedgerStore.write_raw
-    @contextmanager
-    def spy_lock(self, timeout=None):
-        hits["lock"] += 1
-        with real_lock(self, timeout=timeout): yield
-    def spy_write(self, doc):
-        hits["write"] += 1
-        return real_write(self, doc)
-    monkeypatch.setattr(SqliteLedgerStore, "lock", spy_lock)
-    monkeypatch.setattr(SqliteLedgerStore, "write_raw", spy_write)
     with Ledger.transaction(cfg) as led:
-        from fanops.models import Source, SourceState
         led.add_source(Source(id="s1", source_path="/x.mp4", width=1, height=1, state=SourceState.catalogued))
-    assert hits["lock"] == 1 and hits["write"] == 1
+    assert "s1" in Ledger.load(cfg).sources
+    raw = SqliteLedgerStore(cfg).read_raw()
+    assert raw is not None and "s1" in raw["sources"]

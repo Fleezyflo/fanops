@@ -55,12 +55,16 @@ def test_live_post_states_membership_pinned():
 # be unlinked in the same breath. cmd_gc only sweeps clips still in retired/analyzed state, so a
 # ledger-row-less file is unreachable by gc forever — a permanent orphan. Unlink it here or it leaks.
 def test_cascade_unlinks_dropped_clip_file(tmp_path):
+    cfg = Config(root=tmp_path)
     led = _seed(tmp_path, PostState.rejected)                   # rejected post -> clip is droppable
     f = tmp_path / "orphan.mp4"; f.write_bytes(b"x")
     led.clips["c"] = led.clips["c"].model_copy(update={"path": str(f)})
+    led.save()
+    led = Ledger.load(cfg)
     led.reconcile_moments("s", {})                              # empty keep -> drops m -> cascade pops clip c
     led.save()                                                  # M22: unlinks drain on commit, not during cascade
-    assert "c" not in led.clips, "the rejected-post clip is still dropped from the ledger"
+    again = Ledger.load(cfg)
+    assert "c" not in again.clips, "the rejected-post clip is still dropped from the ledger"
     assert not f.exists(), "the dropped clip's on-disk file must be unlinked, not left as a gc-unreachable orphan"
 
 def test_cascade_clip_unlink_is_fail_open_when_file_missing(tmp_path):
