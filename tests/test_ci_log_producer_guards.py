@@ -72,3 +72,20 @@ def test_log_reading_step_allowlists_its_producer_outcome(consumer):
     assert f"{outcome} !=" not in cond, (
         f"{consumer!r} gates on a {outcome} DENYLIST; a producer that never ran reports 'skipped', "
         f"which a denylist admits — that is how a failed install produced a missing-{log} traceback.")
+
+
+def test_launchd_e2e_job_installs_ci_unit_lock():
+    """Defect D5: macos launchd-e2e installs the unit lock, not the CUDA e2e lock."""
+    doc = yaml.safe_load(_CI_E2E_YML.read_text(encoding="utf-8")) or {}
+    job = (doc.get("jobs") or {}).get("launchd-e2e")
+    assert isinstance(job, dict), "job launchd-e2e vanished from ci-e2e.yml"
+    setup = next((s for s in job.get("steps") or []
+                  if isinstance(s, dict) and str(s.get("uses") or "").startswith("actions/setup-python")), None)
+    assert setup is not None
+    assert setup.get("with", {}).get("cache-dependency-path") == "requirements/ci-unit.txt"
+    install = next((s for s in job.get("steps") or []
+                    if isinstance(s, dict) and "pip install" in (s.get("run") or "")), None)
+    assert install is not None
+    run = install.get("run") or ""
+    assert "requirements/ci-unit.txt" in run
+    assert "ci-e2e.txt" not in run

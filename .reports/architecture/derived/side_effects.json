@@ -61,31 +61,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1121
+        "line": 1122
       },
       {
         "call": "Ledger.transaction",
-        "line": 1136
+        "line": 1137
       },
       {
         "call": "Ledger.transaction",
-        "line": 1172
+        "line": 1173
       },
       {
         "call": "Ledger.transaction",
-        "line": 1182
+        "line": 1183
       },
       {
         "call": "Ledger.transaction",
-        "line": 1209
+        "line": 1210
       },
       {
         "call": "Ledger.transaction",
-        "line": 1218
+        "line": 1219
       },
       {
         "call": "Ledger.transaction",
-        "line": 1229
+        "line": 1230
       }
     ],
     "fanops.cli_run": [
@@ -511,7 +511,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1401
+        "line": 1402
       }
     ],
     "fanops.post.compress": [
@@ -557,41 +557,41 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 235
+        "line": 236
       },
       {
         "call": "requests.post",
-        "line": 265
+        "line": 266
       },
       {
         "call": "requests.post",
-        "line": 336
+        "line": 337
       },
       {
         "call": "requests.get",
-        "line": 363
+        "line": 364
       },
       {
         "call": "requests.post",
-        "line": 570
+        "line": 571
       }
     ],
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 351
+        "line": 352
       },
       {
         "call": "requests.post",
-        "line": 381
+        "line": 382
       },
       {
         "call": "requests.get",
-        "line": 412
+        "line": 413
       },
       {
         "call": "requests.post",
-        "line": 498
+        "line": 499
       }
     ]
   },
@@ -606,7 +606,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1433
+        "line": 1434
       }
     ],
     "fanops.post.compress": [

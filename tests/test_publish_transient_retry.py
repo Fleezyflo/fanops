@@ -27,6 +27,20 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
                           submission_id=sub))
 
 
+def test_never_sent_transport_classifies():
+    # Defect D1: never-established vs maybe-sent. ReadTimeout is transient AND maybe-sent.
+    from urllib3.exceptions import NewConnectionError
+    from fanops.post.publish_errors import _is_never_sent_transport
+    assert _is_never_sent_transport(_rq.exceptions.ConnectTimeout("connect timed out")) is True
+    inner = NewConnectionError(None, "Failed to establish a new connection: [Errno 61] Connection refused")
+    wrapped = _rq.exceptions.ConnectionError(inner)
+    if wrapped.__cause__ is None:
+        wrapped.__cause__ = inner
+    assert _is_never_sent_transport(wrapped) is True
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError("dropped")) is False
+    assert _is_never_sent_transport(_rq.exceptions.ReadTimeout("read timed out")) is False
+
+
 def test_is_transient_publish_error_classifies():
     assert _is_transient_publish_error(_rq.exceptions.ConnectionError("dropped")) is True
     assert _is_transient_publish_error(_rq.exceptions.Timeout("timed out")) is True

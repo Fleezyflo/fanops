@@ -59,6 +59,7 @@ from fanops.log import get_logger
 from fanops.models import ErrorKind, PostState, error_kind_for_http_status
 from fanops.text import safe_public_url
 from fanops.post.compress import maybe_shrink_for_cap
+from fanops.post.publish_errors import _is_never_sent_transport
 from fanops.post.zernio_outcome import (Created, IdempotentReplay, ReconciliationRequired, TerminalFailure,
                                         ZernioCreateResult)
 
@@ -475,8 +476,8 @@ class ZernioPoster:
 
     def _create(self, post, led: Ledger) -> ZernioCreateResult:
         """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
-        never leaves this class. Raises ONLY ZernioAuthError, which must halt the whole run rather than burn
-        one post (a bad key fails every post).
+        never leaves this class. Raises ZernioAuthError (halt the run — a bad key fails every post) and
+        never-established transport (ConnectTimeout / refused / DNS), which `_publish_one` already classifies.
 
         Every send carries the SAME x-request-id, so a retry after a lost response, a 429, or a crash is a
         REPLAY (HTTP 200 + existingPost), not a second post. Every boundary where the request MAY have
@@ -497,15 +498,17 @@ class ZernioPoster:
             try:
                 resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=_CREATE_TIMEOUT)
             except requests.exceptions.RequestException as exc:
-                if isinstance(exc, requests.exceptions.ConnectTimeout):
+                if isinstance(exc, requests.exceptions.ConnectTimeout) or (
+                    _is_never_sent_transport(exc) and not sent_any
+                ):
                     # The connection was never established, so THIS attempt sent nothing. Retry inside the
-                    # deadline; past it the verdict depends on whether an EARLIER attempt reached Zernio.
+                    # deadline; past it re-raise so `_publish_one` queues. If an earlier attempt may have
+                    # reached Zernio, park instead.
                     wait = delay + random.uniform(0, delay)
                     if attempt < _MAX_RETRIES - 1 and _fits_deadline(started, wait):
                         time.sleep(wait); delay *= 2; continue
                     if not sent_any:
-                        return TerminalFailure("connect_timeout",
-                                               f"could not connect after {attempt + 1} attempt(s); nothing was sent")
+                        raise
                     return ReconciliationRequired("connect_timeout_after_send",
                                                   f"an earlier attempt reached Zernio and this one could not re-check "
                                                   f"within {_RETRY_DEADLINE_S:.0f}s — may be live")
