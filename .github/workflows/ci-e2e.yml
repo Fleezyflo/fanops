@@ -144,11 +144,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/ci-e2e.txt
+          cache-dependency-path: requirements/ci-unit.txt
       - name: Install from hashed lock (dev+transcribe+studio+compose+framing; MOL-195/196 — reproducible)
         run: |
           python -m pip install --upgrade pip
-          pip install --require-hashes -r requirements/ci-e2e.txt
+          pip install --require-hashes -r requirements/ci-unit.txt
           pip install -e . --no-deps
       - name: Integration suite — launchd lifecycle (macos_only)
         env:

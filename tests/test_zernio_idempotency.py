@@ -17,7 +17,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import ZernioAuthError
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, Platform, PostState, is_real_submission_id
+from fanops.models import Clip, ClipState, ErrorKind, Post, Platform, PostState, is_real_submission_id
 from fanops.post import Poster
 from fanops.post import run as run_mod
 from fanops.post import zernio
@@ -447,18 +447,25 @@ def test_34_429_retry_after_beyond_the_deadline_never_sends_again(tmp_path, monk
     assert p.state is PostState.needs_reconcile
     assert "rate_limited_may_be_live" in p.error_reason
 
-def test_35_connecttimeout_past_the_deadline_with_nothing_sent_is_terminal(tmp_path, monkeypatch):
-    # A connection never established sent nothing, so `failed` (re-queueable) is CORRECT and safe here — the
-    # one boundary where terminal is provable.
-    cfg = _cfg(tmp_path, monkeypatch); clock = _clocked(monkeypatch)
-    class _SlowTimeout(_Rec):
-        def __call__(s, *a, **k):
-            clock.advance(120.0)                          # each attempt burns wall-clock before failing
-            return super().__call__(*a, **k)
-    rec = _SlowTimeout(requests.exceptions.ConnectTimeout("blip"))
-    p = _publish(cfg, _post(), rec, monkeypatch)
-    assert p.state is PostState.failed
-    assert "connect_timeout" in p.error_reason and "nothing was sent" in p.error_reason
+def test_35_connecttimeout_past_the_deadline_with_nothing_sent_stays_queued(tmp_path, monkeypatch):
+    # Defect D1: never-established POST raises into `_publish_one`, which re-queues (error_kind=None).
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = _cfg(tmp_path, monkeypatch)
+    f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id="post_x", parent_id="c1", account="tk", account_id="acc_abc",
+                          platform=Platform.tiktok, caption="fire", state=PostState.queued,
+                          created_at=_BIRTH, media_urls=["https://media.zernio.com/x.mp4"],
+                          scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
+    rec = _Rec(requests.exceptions.ConnectTimeout("blip"))
+    monkeypatch.setattr(zernio.requests, "post", rec)
+    run_mod._publish_one(cfg, "post_x", "zernio")
+    p = Ledger.load(cfg).posts["post_x"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None
+    assert (p.error_reason or "").startswith("publish deferred:")
+    assert not is_real_submission_id(p.submission_id)
 
 def test_36_the_budget_is_driven_by_monotonic_not_the_wall_clock(monkeypatch):
     # An NTP correction / DST step must neither extend nor collapse the budget. Pin the formula exactly to

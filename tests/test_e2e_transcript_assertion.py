@@ -10,9 +10,12 @@ The E2E's real contract (its own comment) is "the transcript is non-empty and ca
 — i.e. REAL whisper produced a REAL, substantive transcript, NOT that one specific word survived.
 `real_transcript_signal()` encodes that contract so it can be unit-tested against fixtures here
 (both engines' ACTUAL transcripts) without a 30s real-tooling run. RED/GREEN is proven against the
-real espeak transcript captured from the failing CI log.
+real espeak transcript captured from the failing CI log. The E2E does not assert a vocoder token
+(`"anymore"`) and does not pin pick end 6.5 — that is not a cue end on the espeak-length segment.
 """
 from fanops.transcribe import real_transcript_signal
+from fanops.moments import validate_pick
+from fanops.models import MomentPick, Source
 
 # The two transcripts whisper-tiny ACTUALLY produced from the E2E's sample, verbatim:
 #   - macOS `say`  : "They slept on me not anymore." (passed the old "slept" check)
@@ -44,6 +47,15 @@ def test_signal_rejects_empty_transcript():
 def test_signal_rejects_one_word_stub():
     # `len(joined) > 0` would wrongly accept this; the multi-word requirement rejects it.
     assert real_transcript_signal(_STUB_ONE_WORD) is False
+
+
+def test_pick_6_5_is_not_a_cue_end_on_espeak_length_segment():
+    # Defect D6: 0.0–6.5 is not a trusted cue end on the espeak-length segment (end 1.68).
+    seg = {**_ESPEAK_TRANSCRIPT[0], "avg_logprob": -0.2, "compression_ratio": 1.0}
+    src = Source(id="src_1", source_path="/x", duration=8.0, language="en", transcript=[seg])
+    bad = validate_pick(MomentPick(start=0.0, end=6.5, reason="the line"), duration=8.0, src=src)
+    assert bad is not None
+    assert validate_pick(MomentPick(start=0.0, end=1.68, reason="the line"), duration=8.0, src=src) is None
 
 
 def test_signal_rejects_segments_without_real_whisper_timing():

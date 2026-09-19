@@ -1060,9 +1060,10 @@ def cmd_run(cfg: Config, args) -> int:
             try:
                 with fail_open("run.ensure_keeper_loaded"):
                     daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
+                from fanops.health import refresh_runtime_snapshots
+                refresh_runtime_snapshots(cfg)
                 if (s := _cmd_run_pass(cfg, base_time)) is not None:
                     _heartbeat(cfg, s, origin="loop"); print(s)
-                    from fanops.health import refresh_runtime_snapshots
                     refresh_runtime_snapshots(cfg)
             except RunBusyError as e:
                 print(str(e), file=sys.stderr)   # skip this tick; next --interval retries

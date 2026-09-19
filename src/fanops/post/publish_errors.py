@@ -5,6 +5,35 @@ import requests
 from fanops.errors import AuthError
 
 
+def _is_never_sent_transport(exc: Exception) -> bool:
+    """True only when the create POST never established (safe to re-queue).
+    `_is_transient_publish_error` cannot carry this: ReadTimeout is transient and maybe-sent."""
+    if isinstance(exc, requests.exceptions.ReadTimeout):
+        return False
+    if isinstance(exc, requests.exceptions.ConnectTimeout):
+        return True
+    names: set[str] = set()
+    cur: BaseException | None = exc
+    for _ in range(8):
+        if cur is None:
+            break
+        names.add(type(cur).__name__)
+        nxt = cur.__cause__
+        if nxt is None:
+            nxt = getattr(cur, "reason", None)
+            if not isinstance(nxt, BaseException):
+                nxt = None
+        cur = nxt
+    if names & {"NewConnectionError", "NameResolutionError", "ConnectTimeout"}:
+        return True
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        msg = str(exc).lower()
+        return any(s in msg for s in (
+            "connection refused", "failed to establish", "nameresolution",
+            "name resolution", "errno 61", "errno 111", "newconnectionerror"))
+    return False
+
+
 def _is_transient_publish_error(exc: Exception) -> bool:
     """True for network/timeout/5xx blips where retrying (or parking needs_reconcile) beats terminal failed.
     Permanent 4xx/auth/validation -> False (retrying won't help). AuthError is never transient."""
