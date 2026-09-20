@@ -21,7 +21,9 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[1]
 _CI_YML = _ROOT / ".github" / "workflows" / "ci.yml"
 _CI_E2E_YML = _ROOT / ".github" / "workflows" / "ci-e2e.yml"
+_CI_UNIT_LOCK = _ROOT / "requirements" / "ci-unit.txt"
 _E2E_LOCK = _ROOT / "requirements" / "ci-e2e.txt"
+_LOCK_DEPS = _ROOT / "scripts" / "lock-deps.sh"
 
 # consumer step name -> (producer step id, the log it reads)
 _CONSUMERS = {
@@ -55,6 +57,25 @@ def test_e2e_lock_pins_the_linux_only_whisper_closure():
         "requirements/ci-e2e.txt pins openai-whisper but not triton — the lock was compiled off "
         "linux/x86_64, so its marker-gated deps were dropped and CI's --require-hashes install "
         "will refuse them. Regenerate with ./scripts/lock-deps.sh on linux/py3.12.")
+
+
+def test_ci_unit_lock_omits_pywebview():
+    """Hashed darwin install of pywebview pulls unpinned pyobjc-core>=9.0; --require-hashes refuses."""
+    lock = _CI_UNIT_LOCK.read_text(encoding="utf-8")
+    assert not _pinned(lock, "pywebview"), (
+        "requirements/ci-unit.txt pins pywebview — hashed install on darwin pulls unpinned "
+        "pyobjc-core>=9.0 and --require-hashes refuses. Drop --extra desktop from the ci-unit "
+        "compile in scripts/lock-deps.sh; tests mock pywebview (test_studio_desktop.py).")
+
+
+def test_lock_deps_unit_compile_omits_desktop():
+    """The lock can be hand-edited; lock-deps.sh is the writer of the hashed unit extras."""
+    script = _LOCK_DEPS.read_text(encoding="utf-8")
+    lines = [ln for ln in script.splitlines() if "--output-file requirements/ci-unit.txt" in ln]
+    assert lines, "scripts/lock-deps.sh has no ci-unit _compile --output-file"
+    assert all("desktop" not in ln for ln in lines), (
+        "ci-unit _compile still lists --extra desktop; hashed darwin install of pywebview "
+        "pulls unpinned pyobjc-core>=9.0")
 
 
 @pytest.mark.parametrize("consumer", sorted(_CONSUMERS))
