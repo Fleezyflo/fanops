@@ -82,6 +82,23 @@ def test_reconcile_marks_failed_when_not_live(tmp_path):
     led = reconcile_posts(led, cfg, get_status=get_status)
     assert led.posts["p2"].state is PostState.failed
     assert "platform rejected" in (led.posts["p2"].error_reason or "")
+    assert led.posts["p2"].submission_id == "sub_2"              # Postiz keep-sid
+
+
+def test_tiktok_failed_poll_without_candidate_remints_transient(tmp_path):
+    # D1: TikTok vendor-failed poll with no candidate remints — transient + clear sid.
+    # Observation is what get_status emits after folding live platforms[].errorMessage.
+    capacity = "TikTok direct posting is at capacity right now."
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="tt", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="z_mine"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "failed", "errorMessage": capacity})
+    p = led.posts["tt"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.transient
+    assert p.submission_id is None
+    assert capacity in (p.error_reason or "")
 
 
 def test_reconcile_leaves_in_progress_parked(tmp_path):
@@ -586,10 +603,8 @@ def test_reconcile_published_post_is_archived(tmp_path):
 
 def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tmp_path):
     # I5: a `submitting` post crash-stranded >24h on a never-real fanops_ token cannot be polled.
-    # It leaves inflight as failed/unknown — never needs_reconcile (would stay inflight forever)
-    # and never transient (daemon would auto-retry a fanops_ id). Never GET.
+    # Parks needs_reconcile (no error_kind) so auto-heal can still bind. Never GET. Never failed.
     from datetime import datetime, timezone, timedelta
-    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
@@ -598,9 +613,8 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
     p = led.posts["ps"]
     assert polled == []                                          # age ladder must not depend on a GET
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
     assert "unpollable" in (p.error_reason or "")
 
 
@@ -634,23 +648,22 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
 
 
 def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
-    # I5 exception to "waiting is not failing": a fanops_ birth token cannot be polled, so past 24h
-    # (here 80h) it leaves inflight as failed/unknown. A real backend id at this age is still
-    # untouched (test_a_real_token_past_the_old_horizon_is_also_untouched). Never GET.
+    # Already-parked birth token: first arm is submitting/submitted only, so a needs_reconcile
+    # fanops_ row stays byte-identical (auto-heal can still bind). Never GET.
     from datetime import datetime, timezone, timedelta
-    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    before = led.posts["pg"].model_dump()
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
     p = led.posts["pg"]
     assert polled == []
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
-    assert "unpollable" in (p.error_reason or "")
+    assert p.model_dump() == before
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
+    assert "unpollable" not in (p.error_reason or "")
 
 
 @pytest.mark.parametrize("legacy", [
@@ -730,11 +743,10 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypa
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if token.startswith("fanops_"):
         assert polled == []                                 # birth token is not a GET key
-        assert p.state is PostState.failed                  # I5: unpollable past 24h leaves inflight
-        assert p.state is not PostState.needs_reconcile
-        from fanops.models import ErrorKind
-        assert p.error_kind is ErrorKind.unknown            # never transient — daemon must not auto-retry
-        assert "unpollable" in (p.error_reason or "")
+        assert p.model_dump() == before                     # already-parked: no invented failed
+        assert p.state is PostState.needs_reconcile
+        assert p.error_kind is None
+        assert "unpollable" not in (p.error_reason or "")
     elif poll == "published":
         assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
@@ -817,7 +829,7 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
 def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_nothing(tmp_path):
     # MOL-791: the preview carries TWO row kinds in ONE shape, told apart by would_set_state vs state.
     #   esc   — 30h `submitting`, CLIENT token: I5 unpollable close fires (would_set_state MOVES to
-    #           failed). No lateness row: a fanops_ token can never match a backend row.
+    #           needs_reconcile). No lateness row: a fanops_ token can never match a backend row.
     #   old   — 80h `needs_reconcile`, REAL id, never mirrored: the deleted give-up rung would have
     #           declared it lost; now it previews as LATENESS ONLY (would_set_state == state).
     #   fresh — 2h `submitting`, client token: previews nothing at all.
@@ -838,7 +850,7 @@ def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_no
     writes = [r for r in rows if r["would_set_state"] != r["state"]]
     late = [r for r in rows if r["would_set_state"] == r["state"]]
     assert [r["post_id"] for r in writes] == ["esc"]          # the unpollable close, and only it, would write
-    assert writes[0]["would_set_state"] == "failed" and "unpollable" in writes[0]["reason"]
+    assert writes[0]["would_set_state"] == "needs_reconcile" and "unpollable" in writes[0]["reason"]
     assert [r["post_id"] for r in late] == ["old"]            # esc (client token) + fresh (on time) are silent
     assert late[0]["state"] == "needs_reconcile" and late[0]["event"] == "note lateness"
     assert "80h past scheduled_time" in late[0]["reason"] and "never mirrored" in late[0]["reason"]
@@ -1126,6 +1138,7 @@ def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, 
     assert p.state is PostState.failed
     assert p.error_kind is ErrorKind.unknown
     assert p.error_reason.endswith("(no detail)")
+    assert p.submission_id == "postiz_1"
 
 
 def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
@@ -1198,9 +1211,8 @@ def test_a_zernio_backed_resting_post_is_never_stamped_absent(tmp_path, monkeypa
 def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, monkeypatch, mocker):
     # A `fanops_` idempotency token is not a Postiz row id, so no window can ever hold it: mirroring it
     # would record a permanent `absent` that says nothing about the post. It is still VISITED, because the
-    # (state, age) ladder un-strands a crash-stranded submit claim — I5 closes an unpollable token past
-    # 24h as failed/unknown (never GET, never mirrored).
-    from fanops.models import ErrorKind
+    # (state, age) ladder un-strands a crash-stranded submit claim — I5 parks an unpollable token past
+    # 24h as needs_reconcile (never GET, never mirrored, no error_kind).
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "tok", PostState.submitting, "fanops_deadbeef", hours_ago=30)
@@ -1208,9 +1220,8 @@ def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, mon
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["tok"]
     assert p.postiz_state is None                             # no row could name it -> no observation
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
     assert "unpollable" in (p.error_reason or "")
 
 
@@ -1287,6 +1298,30 @@ def test_reopen_http_207_failed_for_sid_recovery(tmp_path):
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["p207"].state is PostState.needs_reconcile
     assert "sid recovery" in (out.posts["p207"].error_reason or "")
+
+
+def test_reopen_tiktok_no_detail_and_unpollable_without_candidate(tmp_path):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _post(led, "tt_nd", PostState.failed, sub="z_hex")
+    led.posts["tt_nd"] = led.posts["tt_nd"].model_copy(update={
+        "platform": Platform.tiktok,
+        "error_reason": "reconciled: poster reports failed (no detail)"})
+    _post(led, "tt_up", PostState.failed, sub="fanops_x")
+    led.posts["tt_up"] = led.posts["tt_up"].model_copy(update={
+        "platform": Platform.tiktok, "reconcile_candidate_id": None,
+        "error_reason": ("unpollable birth token closed after 30h — "
+                         "backend will never answer fanops_*; verify on the channel before retry "
+                         "(retry may double-post)")})
+    _post(led, "ig_nd", PostState.failed, sub="postiz_1")
+    led.posts["ig_nd"] = led.posts["ig_nd"].model_copy(update={
+        "error_kind": ErrorKind.unknown,
+        "error_reason": "reconciled: poster reports failed (no detail)"})
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    assert out.posts["tt_nd"].state is PostState.needs_reconcile
+    assert out.posts["tt_up"].state is PostState.needs_reconcile
+    assert out.posts["ig_nd"].state is PostState.failed
 
 
 def _tiktok_unbound(led, pid, *, sub="fanops_tok", caption="beat drop #fyp", account_id="integ-1",
