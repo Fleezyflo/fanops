@@ -140,7 +140,10 @@ def _reopen_misclassified_failures(led: Ledger, log) -> None:
             continue
         reason = post.error_reason or ""
         cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
-        if "http_207" in reason or (cand and "unpollable" in reason):
+        if ("http_207" in reason or (cand and "unpollable" in reason)
+                or ((post.platform is Platform.tiktok)
+                    and "poster reports failed (no detail)" in reason)
+                or "unpollable birth token" in reason):
             led.set_post_state(post.id, PostState.needs_reconcile,
                                error_reason="healed: reopening misclassified failed for sid recovery")
             log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
@@ -491,9 +494,9 @@ def _apply_age_terminal(post, now) -> dict | None:
     not past the deadline:
 
       not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
-          (submitting/submitted/needs_reconcile)
-          -> failed + ErrorKind.unknown (a birth token cannot be polled; inflight only while a
-             future observation can resolve it; unknown so the daemon cannot auto-retry a fanops_ id)
+          (submitting/submitted)
+          -> needs_reconcile, no error_kind, same unpollable reason (a birth token cannot be
+             polled; already-parked needs_reconcile stays so auto-heal can still bind)
 
       remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
           -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
@@ -506,13 +509,13 @@ def _apply_age_terminal(post, now) -> dict | None:
     hrs = int(age.total_seconds() // 3600)
     real = is_real_submission_id(getattr(post, "submission_id", None))
     if (not real) and age > _SUBMITTING_ESCALATE_AFTER and post.state in (
-            PostState.submitting, PostState.submitted, PostState.needs_reconcile):
-        return {"update": {"state": PostState.failed,
-                           "error_kind": ErrorKind.unknown,
-                           "error_reason": (f"unpollable birth token closed after {hrs}h — "
-                                            "backend will never answer fanops_*; verify on the "
-                                            "channel before retry (retry may double-post)")[:400]},
-                "log": "closed: unpollable->failed"}
+            PostState.submitting, PostState.submitted):
+        return {"update": {"state": PostState.needs_reconcile,
+                           "error_reason": (
+                               f"unpollable birth token closed after {int(age.total_seconds()) // 3600}h — "
+                               "backend will never answer fanops_*; verify on the channel before retry "
+                               "(retry may double-post)")[:400]},
+                "log": "closed: unpollable->needs_reconcile"}
     if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
         return {"update": {"state": PostState.needs_reconcile,
                            "error_reason": (f"escalated submitting->needs_reconcile after {hrs}h "
@@ -870,9 +873,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                         f"re-queueable (report 11 §5)")[:400])
                 log("reconcile", post.id, "failed_held_unverified_candidate", candidate=cand)
                 continue
-            led.set_post_state(post.id, PostState.failed,
-                error_kind=info.get("errorKind") or ErrorKind.unknown, error_reason=(
-                f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})"))
+            reason = (
+                f"reconciled: poster reports failed ({info.get('errorMessage', 'no detail')})")
+            if post.platform is Platform.tiktok:
+                led.posts[post.id] = post.model_copy(update={"submission_id": None})
+                led.set_post_state(post.id, PostState.failed,
+                    error_kind=ErrorKind.transient, error_reason=reason)
+            else:
+                led.set_post_state(post.id, PostState.failed,
+                    error_kind=info.get("errorKind") or ErrorKind.unknown, error_reason=reason)
             log("reconcile", post.id, "failed")
         else:
             # QUEUE / in-progress / scheduled / unknown / absent.

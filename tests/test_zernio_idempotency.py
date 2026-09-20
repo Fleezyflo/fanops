@@ -595,17 +595,23 @@ def test_45c_a_held_candidate_row_is_not_selected_by_the_transient_requeue(tmp_p
     assert is_transient_failure(after) is False
 
 def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, monkeypatch):
-    # The B-case: no candidate => unchanged pre-existing behaviour. Negative control for 45b/45c.
+    # TikTok vendor-failed poll, no candidate: remint door. Live GET shape is platforms[].errorMessage.
     cfg = _cfg(tmp_path, monkeypatch)
+    from types import SimpleNamespace
     from fanops import reconcile as rec_mod
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_mine"                            # no reconcile_candidate_id
-    out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
-                                  get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
+    capacity = "TikTok direct posting is at capacity right now."
+    body = {"post": {"platforms": [{"status": "failed", "errorMessage": capacity}]}}
+    monkeypatch.setattr(
+        "fanops.post.metrics.zernio_read.requests.get",
+        lambda *a, **k: SimpleNamespace(status_code=200, text="{}", json=lambda: body))
+    out = rec_mod.reconcile_posts(_led(cfg, p), cfg)
     after = out.posts[p.id]
     assert after.state is PostState.failed
-    assert "poster reports failed" in after.error_reason
-    assert after.error_kind is ErrorKind.unknown
+    assert after.error_kind is ErrorKind.transient
+    assert after.submission_id is None
+    assert capacity in after.error_reason
     assert after.reconcile_candidate_id is None
 
 def test_46_candidate_is_mirrored_into_error_reason(tmp_path, monkeypatch):

@@ -127,6 +127,13 @@ def test_status_failed(tmp_path, monkeypatch, mocker):
     mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, {"status": "error"}))
     assert ZernioStatusClient(cfg).get_status("zid") == {"status": "failed"}
 
+def test_status_failed_reads_platform_error_message(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    msg = "TikTok direct posting is at capacity right now."
+    body = {"post": {"platforms": [{"status": "failed", "errorMessage": msg}]}}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    assert ZernioStatusClient(cfg).get_status("zid")["errorMessage"] == msg
+
 def test_status_unknown_state_parks_never_failed(tmp_path, monkeypatch, mocker):
     # processing/queued/anything-unrecognized -> 'scheduled' (parked) — NEVER guessed failed (a failed is
     # re-queueable -> the double-post hazard for a possibly-live post).
