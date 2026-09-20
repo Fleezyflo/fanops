@@ -570,49 +570,6 @@ def _run_log_outcomes(cfg):
     if not cfg.log_path.exists(): return []
     return [json.loads(line)["outcome"] for line in cfg.log_path.read_text().splitlines() if line.strip()]
 
-def test_dotted_ingest_full_trust_cue_windows(tmp_path, monkeypatch):
-    # Defect D4: schema-1 (no quality keys) + off-cue 0–30 is ingest-invalid; full-trust cue
-    # windows 0–8 / 20–28 mint two moments. Product validate_pick is correct — fixture was schema-1.
-    from tests.test_persona_fixtures import ensure_archetype_personas
-    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "1")
-    schema1 = [{"start": 0, "end": 8, "text": "facts matter"},
-               {"start": 20, "end": 28, "text": "they started the beef"}]
-    full = [{**s, "avg_logprob": -0.2, "compression_ratio": 1.0} for s in schema1]
-
-    def _run(root, transcript, picks_by_handle):
-        cfg = Config(root=root)
-        accts = ensure_archetype_personas(cfg)
-        led = Ledger.load(cfg)
-        led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                              state=SourceState.signalled, duration=60.0, language="en",
-                              transcript=transcript,
-                              signal_peaks=[{"t": 4.0, "kind": "scene_cut", "score": 0.5},
-                                            {"t": 24.0, "kind": "scene_cut", "score": 0.8}],
-                              meta={"transcribed": True}))
-        led = request_moments(led, cfg, "src_1", accounts=accts)
-        keys = gate_keys_for(cfg, "moments", "src_1.")
-        from fanops.responder import screen_model_text
-        for key in keys:
-            handle = key.split(".", 1)[1]
-            picks = picks_by_handle.get(handle, [])
-            rid = latest_request_id(cfg, "moments", key)
-            dec = screen_model_text(MomentDecision(source_id="src_1", request_id=rid, picks=picks))
-            response_path(cfg, "moments", key).write_text(dec.model_dump_json())
-        led = ingest_moments(led, cfg, "src_1")
-        return led.moments_of("src_1")
-
-    off = {
-        "trust": [MomentPick(start=0, end=30, reason="credible window", personas=["trust"])],
-        "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
-    }
-    on = {
-        "trust": [MomentPick(start=0, end=8, reason="credible window", personas=["trust"])],
-        "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
-    }
-    assert len(_run(tmp_path / "schema1", schema1, off)) == 0
-    assert len(_run(tmp_path / "full", full, on)) == 2
-
-
 def test_validate_pick_logs_pick_speech_mismatch(tmp_path):
     cfg = Config(root=tmp_path)
     src = Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),

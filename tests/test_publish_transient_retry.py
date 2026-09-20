@@ -29,14 +29,14 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
 
 def test_never_sent_transport_classifies():
     # Defect D1: never-established vs maybe-sent. ReadTimeout is transient AND maybe-sent.
-    from urllib3.exceptions import NewConnectionError
     from fanops.post.publish_errors import _is_never_sent_transport
     assert _is_never_sent_transport(_rq.exceptions.ConnectTimeout("connect timed out")) is True
-    inner = NewConnectionError(None, "Failed to establish a new connection: [Errno 61] Connection refused")
-    wrapped = _rq.exceptions.ConnectionError(inner)
-    if wrapped.__cause__ is None:
-        wrapped.__cause__ = inner
-    assert _is_never_sent_transport(wrapped) is True
+    refused = (
+        "HTTPSConnectionPool(host='127.0.0.1', port=5000): Max retries exceeded with url: "
+        "/api/v1/posts (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection "
+        "object>: Failed to establish a new connection: [Errno 61] Connection refused'))"
+    )
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError(refused)) is True
     assert _is_never_sent_transport(_rq.exceptions.ConnectionError("dropped")) is False
     assert _is_never_sent_transport(_rq.exceptions.ReadTimeout("read timed out")) is False
 
