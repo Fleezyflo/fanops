@@ -1311,9 +1311,7 @@ def test_reopen_tiktok_no_detail_and_unpollable_without_candidate(tmp_path):
     _post(led, "tt_up", PostState.failed, sub="fanops_x")
     led.posts["tt_up"] = led.posts["tt_up"].model_copy(update={
         "platform": Platform.tiktok, "reconcile_candidate_id": None,
-        "error_reason": ("unpollable birth token closed after 30h — "
-                         "backend will never answer fanops_*; verify on the channel before retry "
-                         "(retry may double-post)")})
+        "error_reason": "unpollable fanops_* after 30h: GET 400 Invalid post ID; remint maybe-sent"})
     _post(led, "ig_nd", PostState.failed, sub="postiz_1")
     led.posts["ig_nd"] = led.posts["ig_nd"].model_copy(update={
         "error_kind": ErrorKind.unknown,
@@ -1322,7 +1320,9 @@ def test_reopen_tiktok_no_detail_and_unpollable_without_candidate(tmp_path):
     assert out.posts["tt_nd"].state is PostState.needs_reconcile
     assert "poster reports failed (no detail)" in (out.posts["tt_nd"].error_reason or "")
     assert out.posts["tt_up"].state is PostState.needs_reconcile
-    assert "unpollable birth token" in (out.posts["tt_up"].error_reason or "")
+    assert "unpollable fanops_*" in (out.posts["tt_up"].error_reason or "")
+    assert "GET 400" in (out.posts["tt_up"].error_reason or "")
+    assert "maybe-sent" in (out.posts["tt_up"].error_reason or "")
     assert "sid recovery" not in (out.posts["tt_up"].error_reason or "")
     assert out.posts["ig_nd"].state is PostState.failed
 
@@ -1354,8 +1354,7 @@ def test_restore_heal_stamp_on_tiktok_birth_token(tmp_path):
     p = out.posts["tt_heal"]
     assert p.state is PostState.needs_reconcile
     assert p.submission_id == "fanops_deadbeef"
-    assert "unpollable birth token" in (p.error_reason or "")
-    assert "sid recovery" not in (p.error_reason or "")
+    assert p.error_reason == "unpollable fanops_* after 24h: GET 400 Invalid post ID; remint maybe-sent"
 
 
 def _zernio_due_cfg(tmp_path, monkeypatch):
@@ -1396,9 +1395,7 @@ def test_reconcile_due_tiktok_failed_hex_husk_remints_same_pass(tmp_path, monkey
 def test_reconcile_due_tiktok_failed_fanops_parks_not_reminted(tmp_path, monkeypatch):
     _zernio_reads(monkeypatch, bodies={}, lists=[])
     cfg = _zernio_due_cfg(tmp_path, monkeypatch)
-    unpollable = ("unpollable birth token closed after 24h — "
-                  "backend will never answer fanops_*; verify on the channel before retry "
-                  "(retry may double-post)")
+    unpollable = "unpollable fanops_* after 24h: GET 400 Invalid post ID; remint maybe-sent"
     led = Ledger.load(cfg)
     led.add_post(Post(id="tt_tok", parent_id="c", account="tt", account_id="1",
                       platform=Platform.tiktok, caption="x", state=PostState.failed,
@@ -1409,7 +1406,7 @@ def test_reconcile_due_tiktok_failed_fanops_parks_not_reminted(tmp_path, monkeyp
     p = Ledger.load(cfg).posts["tt_tok"]
     assert p.state is PostState.needs_reconcile
     assert p.submission_id == "fanops_dd1d40908f62"
-    assert "unpollable birth token" in (p.error_reason or "")
+    assert p.error_reason == unpollable
 
 
 def test_reconcile_reads_zernio_queued_real_sid_not_polled(tmp_path, monkeypatch):
