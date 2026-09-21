@@ -48,7 +48,7 @@
         <div class="posted-head">{{ (r.published_at or r.scheduled_time) | localdt or '—' }} · <strong>{{ r.account }}</strong> {{ r.platform }} {{ state_badge(r.posted_via, testid='posted-channel-chip') }}{% if r.is_archived %} <span class="chip muted">Archived</span>{% endif %}{% if r.batch_id %} <a class="muted batch-chip" href="{{ url_for('posted', batch=r.batch_id, account=active) }}">{{ r.batch_id }}</a>{% endif %}{% if r.failure_kind %} <span class="chip fail-kind">{{ r.failure_kind | failure_label }}</span>{% endif %}</div>
         <p class="clamp-1">{% if r.variant_hook %}✦ {{ r.variant_hook }} · {% endif %}{{ r.caption or '—' }}</p>
         <div class="posted-primary">
-          {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error(kind=r.failure_kind) }}</span>
+          {% if r.posted_via == 'failed' %}<span class="err">{{ (r.error_reason or 'failed') | operator_error }}</span>
           {% else %}<span>Lift {% if r.lift_score is not none %}<span class="lift-num">{{ '%.3f'|format(r.lift_score) }}</span>{% else %}—{% endif %} {{ lineage_delta(r) }}</span>{% endif %}{# MOL-51: Lift value is the dominant per-row datum → MOL-50's .lift-num (Δ vs best stays the quiet .delta-best annotation) #}
           {% if r.posted_via == 'live' and r.public_url %}<a class="live-link" href="{{ r.public_url }}" target="_blank" rel="noopener">View on {{ r.platform }} ↗</a>
           {% elif r.posted_via == 'inflight' %}<span class="muted">{{ r.inflight_headline }}</span>{% if r.error_reason %} · <span class="err">{{ r.error_reason | operator_error }}</span>{% endif %}

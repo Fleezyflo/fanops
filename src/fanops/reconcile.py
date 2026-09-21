@@ -135,17 +135,28 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
 
 def _reopen_misclassified_failures(led: Ledger, log) -> None:
     """Retroactive heal: rows wrongly parked failed (http_207 pre-fix, unpollable with a candidate)."""
+    heal = "healed: reopening misclassified failed for sid recovery"
+    unpollable = "unpollable fanops_* after 24h: GET 400 Invalid post ID; remint maybe-sent"
     for post in list(led.posts.values()):
+        reason = post.error_reason or ""
+        if (post.state is PostState.needs_reconcile
+                and post.platform is Platform.tiktok
+                and not is_real_submission_id(post.submission_id)
+                and reason == heal):
+            led.set_post_state(post.id, PostState.needs_reconcile, error_reason=unpollable)
+            log("reconcile", post.id, "restored: unpollable fanops_*")
+            continue
         if post.state is not PostState.failed:
             continue
-        reason = post.error_reason or ""
         cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
-        if ("http_207" in reason or (cand and "unpollable" in reason)
-                or ((post.platform is Platform.tiktok)
-                    and "poster reports failed (no detail)" in reason)
-                or "unpollable birth token" in reason):
-            led.set_post_state(post.id, PostState.needs_reconcile,
-                               error_reason="healed: reopening misclassified failed for sid recovery")
+        if "http_207" in reason or (cand and "unpollable" in reason):
+            led.set_post_state(post.id, PostState.needs_reconcile, error_reason=heal)
+            log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
+        elif ((post.platform is Platform.tiktok
+               and is_real_submission_id(post.submission_id)
+               and "poster reports failed (no detail)" in reason)
+              or "unpollable fanops_*" in reason or "unpollable birth token" in reason):
+            led.set_post_state(post.id, PostState.needs_reconcile)
             log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
 
 
@@ -512,15 +523,13 @@ def _apply_age_terminal(post, now) -> dict | None:
             PostState.submitting, PostState.submitted):
         return {"update": {"state": PostState.needs_reconcile,
                            "error_reason": (
-                               f"unpollable birth token closed after {int(age.total_seconds()) // 3600}h — "
-                               "backend will never answer fanops_*; verify on the channel before retry "
-                               "(retry may double-post)")[:400]},
+                               f"unpollable fanops_* after {hrs}h: GET 400 Invalid post ID; remint maybe-sent")[:400]},
                 "log": "closed: unpollable->needs_reconcile"}
     if post.state is PostState.submitting and age > _SUBMITTING_ESCALATE_AFTER:
         return {"update": {"state": PostState.needs_reconcile,
-                           "error_reason": (f"escalated submitting->needs_reconcile after {hrs}h "
-                                            "(submit unresolved past deadline) — verify on the channel "
-                                            "before any resubmit")},
+                           "error_reason": (
+                               f"escalated submitting->needs_reconcile after {hrs}h: "
+                               "real sid unresolved; remint maybe-sent")},
                 "log": "escalated: submitting->needs_reconcile"}
     return None
 
@@ -882,7 +891,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             else:
                 led.set_post_state(post.id, PostState.failed,
                     error_kind=info.get("errorKind") or ErrorKind.unknown, error_reason=reason)
-            log("reconcile", post.id, "failed")
+            log("reconcile", post.id, "failed", err=reason[:120])
         else:
             # QUEUE / in-progress / scheduled / unknown / absent.
             if post.state in (PostState.failed, PostState.error):
