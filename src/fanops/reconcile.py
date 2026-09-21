@@ -135,17 +135,30 @@ def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[s
 
 def _reopen_misclassified_failures(led: Ledger, log) -> None:
     """Retroactive heal: rows wrongly parked failed (http_207 pre-fix, unpollable with a candidate)."""
+    heal = "healed: reopening misclassified failed for sid recovery"
+    unpollable = ("unpollable birth token closed after 24h — "
+                  "backend will never answer fanops_*; verify on the channel before retry "
+                  "(retry may double-post)")
     for post in list(led.posts.values()):
+        reason = post.error_reason or ""
+        if (post.state is PostState.needs_reconcile
+                and post.platform is Platform.tiktok
+                and not is_real_submission_id(post.submission_id)
+                and reason == heal):
+            led.set_post_state(post.id, PostState.needs_reconcile, error_reason=unpollable)
+            log("reconcile", post.id, "healed: restore unpollable reason")
+            continue
         if post.state is not PostState.failed:
             continue
-        reason = post.error_reason or ""
         cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
-        if ("http_207" in reason or (cand and "unpollable" in reason)
-                or ((post.platform is Platform.tiktok)
-                    and "poster reports failed (no detail)" in reason)
-                or "unpollable birth token" in reason):
-            led.set_post_state(post.id, PostState.needs_reconcile,
-                               error_reason="healed: reopening misclassified failed for sid recovery")
+        if "http_207" in reason or (cand and "unpollable" in reason):
+            led.set_post_state(post.id, PostState.needs_reconcile, error_reason=heal)
+            log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
+        elif ((post.platform is Platform.tiktok
+               and is_real_submission_id(post.submission_id)
+               and "poster reports failed (no detail)" in reason)
+              or "unpollable birth token" in reason):
+            led.set_post_state(post.id, PostState.needs_reconcile)
             log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
 
 
@@ -882,7 +895,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             else:
                 led.set_post_state(post.id, PostState.failed,
                     error_kind=info.get("errorKind") or ErrorKind.unknown, error_reason=reason)
-            log("reconcile", post.id, "failed")
+            log("reconcile", post.id, "failed", err=reason[:120])
         else:
             # QUEUE / in-progress / scheduled / unknown / absent.
             if post.state in (PostState.failed, PostState.error):
