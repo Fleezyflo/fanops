@@ -133,8 +133,9 @@ def replace_locked_captions(led, cfg: Config, clip, src) -> None:
 def posted_text_for(cfg: Config, led: Ledger, post) -> str:
     """IG/TT vendor content: compose_posted_caption(post.caption, picks ∩ source lock).
 
-    A missing lock file (no completed row) ships the stored caption, hashes included.
-    A completed lock whose intersection is empty does not. YouTube does not call this.
+    A missing lock file (no sidecar row) ships the stored caption, hashes included.
+    A completed lock whose intersection is empty does not. An unfinished row that
+    already has a lock list still intersects. YouTube does not call this.
     Wire contract: src/fanops/post/CLAUDE.md.
     """
     sentence = (getattr(post, "caption", None) or "") if post is not None else ""
@@ -143,10 +144,12 @@ def posted_text_for(cfg: Config, led: Ledger, post) -> str:
         clip = led.clips.get(getattr(post, "parent_id", None))
         moment = led.moments.get(clip.parent_id) if clip is not None else None
         src = led.sources.get(moment.parent_id) if moment is not None else None
-    if not _source_lock_completed(cfg, src):
+    if _source_lock_record(cfg, src) is None:
         return (sentence or "").strip()
     picks = getattr(post, "hashtags", None) if post is not None else None
     tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4)
+    if not tags and not _source_lock_completed(cfg, src):
+        return (sentence or "").strip()
     return compose_posted_caption(sentence, tags)
 
 

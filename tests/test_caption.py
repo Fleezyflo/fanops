@@ -660,6 +660,20 @@ def test_posted_text_for_missing_lock_file_keeps_stored_caption(tmp_path):
     assert posted_text_for(cfg, led, led.posts["p1"]) == "hello #keep"
 
 
+def test_posted_text_for_unfinished_lock_row_still_intersects(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"src_1": {"lock": ["#keep"], "hydrated_at": "2026-08-17T00:00:00Z"}}))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", hashtags=["#keep", "#nope"]))
+    assert posted_text_for(cfg, led, led.posts["p1"]) == "x\n#keep"
+
+
 def test_posted_text_for_empty_intersection_strips_inline_hashtags(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)  # completed lock: []
     led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
