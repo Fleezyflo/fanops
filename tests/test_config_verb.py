@@ -1,6 +1,6 @@
 """MOL-294: fanops config introspection verb."""
 from fanops.config import Config
-from fanops.config_introspect import config_rows, format_config_report
+from fanops.config_introspect import _display_value, _is_secret, config_rows, format_config_report
 from fanops.settings import Settings
 from tests.keyring_fake import install_mem_keyring
 
@@ -106,3 +106,29 @@ def test_config_row_infra_keys_non_studio_with_kind(tmp_path, monkeypatch):
     assert rows["FANOPS_STUDIO_GENERATION"]["kind"] == "process" and rows["FANOPS_STUDIO_GENERATION"]["studio"] is False
     assert rows["META_GRAPH_TOKEN"]["dynamic"] is True
     assert rows["FANOPS_IG_SCRAPE_PASSWORD"]["dynamic"] is True
+
+
+def test_config_masks_ig_scrape_password_not_unrelated_env(tmp_path, monkeypatch):
+    """FANOPS_IG_SCRAPE_PASSWORD is a secret: fanops config prints (set), never the value.
+    Dynamic FANOPS_IG_SCRAPE_PASSWORD_* siblings share that display path. Other env vars do not."""
+    monkeypatch.chdir(tmp_path)
+    marker = "ig-scrape-value-must-not-print"
+    sibling = "ig-scrape-sibling-value"
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", marker)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "visible-user")
+    assert _is_secret("FANOPS_IG_SCRAPE_PASSWORD")
+    assert _is_secret("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE")
+    assert not _is_secret("FANOPS_IG_SCRAPE_USER")
+    assert not _is_secret("SOME_OTHER_PASSWORD")
+    assert _display_value("FANOPS_IG_SCRAPE_PASSWORD", marker) == "(set)"
+    assert marker not in _display_value("FANOPS_IG_SCRAPE_PASSWORD", marker)
+    assert _display_value("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", sibling) == "(set)"
+    assert sibling not in _display_value("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", sibling)
+    assert _display_value("FANOPS_IG_SCRAPE_USER", "visible-user") == "visible-user"
+    row = next(r for r in config_rows(Config(root=tmp_path)) if r["name"] == "FANOPS_IG_SCRAPE_PASSWORD")
+    assert row["effective"] == "(set)"
+    assert row["default"] == "(none)"
+    report = format_config_report(Config(root=tmp_path))
+    assert marker not in report
+    user = next(r for r in config_rows(Config(root=tmp_path)) if r["name"] == "FANOPS_IG_SCRAPE_USER")
+    assert user["effective"] == "visible-user"

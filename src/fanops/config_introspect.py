@@ -18,6 +18,10 @@ _SECRET_SUFFIX = ("_API_KEY", "_SECRET", "_TOKEN", "_ACCESS_KEY", "_SECRET_ACCES
 
 
 def _is_secret(name: str) -> bool:
+    # PASSWORD is not a generic suffix: only the IG scrape password and its dynamic
+    # FANOPS_IG_SCRAPE_PASSWORD_* siblings. A blanket `_PASSWORD` match would mask unrelated env vars.
+    if name == "FANOPS_IG_SCRAPE_PASSWORD" or name.startswith("FANOPS_IG_SCRAPE_PASSWORD_"):
+        return True
     return any(name.endswith(s) or s in name for s in _SECRET_SUFFIX)
 
 

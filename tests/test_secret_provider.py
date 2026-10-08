@@ -191,3 +191,17 @@ def test_broken_backend_quiet_never_warns(monkeypatch, caplog):
         assert sp.get_secret("POSTIZ_API_KEY", quiet=True) is None
         assert sp.get_secret("META_GRAPH_TOKEN", quiet=True) is None
     assert not [r for r in caplog.records if "keyring read unavailable" in r.getMessage()]
+
+
+def test_ig_scrape_password_is_a_secret_key():
+    assert "FANOPS_IG_SCRAPE_PASSWORD" in secret_provider._SECRET_KEYS
+    assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD")
+    assert secret_provider.is_secret_env_key("POSTIZ_API_KEY")
+    assert secret_provider.is_secret_env_key("META_GRAPH_TOKEN__STAN")
+
+
+def test_ig_scrape_password_siblings_and_unrelated_names_are_not_secret_keys():
+    assert not secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE")
+    assert not secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_USER")
+    assert not secret_provider.is_secret_env_key("SOME_OTHER_PASSWORD")
+    assert not secret_provider.is_secret_env_key("FANOPS_LIVE")
