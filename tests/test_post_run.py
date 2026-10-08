@@ -836,3 +836,94 @@ def test_publish_one_accounts_none_skips_status_guard(tmp_path, monkeypatch, moc
     _http_media(led, "p_int"); _wire_live(mocker)
     assert _publish_one(cfg, "p_int", "postiz", accounts=None) == PostState.published.value
     assert Ledger.load(cfg).posts["p_int"].state is PostState.published
+
+
+_LANDED = "https://www.instagram.com/reel/LANDED/"
+_STALE_URL = "https://www.instagram.com/reel/STALE/"
+
+
+def _stub_network(monkeypatch, publish):
+    """Poster + upload double so finalize is the writer under test. No live POST."""
+    import fanops.post.run as run
+
+    class _Poster:
+        def publish(self, led, post_id):
+            return publish(led, post_id)
+
+    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _Poster())
+    monkeypatch.setattr(run, "_ensure_media", lambda *a, **k: None)
+    return run._publish_one
+
+
+def test_finalize_copies_net_fields_while_row_is_submitting(tmp_path, monkeypatch):
+    # The gate is not "never copy": a fresh row still submitting receives the network snapshot.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
+
+    def publish(led, post_id):
+        led.set_post_state(post_id, PostState.submitted)
+        p = led.posts[post_id]
+        p.submission_id = "vendor_1"
+        p.public_url = _LIVE_PERMALINK
+        return led
+
+    assert _stub_network(monkeypatch, publish)(cfg, "p1", "postiz") == PostState.published.value
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == _LIVE_PERMALINK
+    assert p.submission_id == "vendor_1"
+
+
+def test_finalize_keeps_mark_published_url(tmp_path, monkeypatch):
+    # mark_published lands a permalink while the network phase still holds a different one.
+    # Finalize must not copy that stale snapshot onto the already-published row.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
+
+    def publish(led, post_id):
+        led.set_post_state(post_id, PostState.submitted)
+        p = led.posts[post_id]
+        p.submission_id = "vendor_stale"
+        p.public_url = _STALE_URL
+        with Ledger.transaction(cfg) as fresh:
+            row = fresh.posts[post_id]
+            row.public_url = _LANDED
+            fresh.set_post_state(post_id, PostState.published)
+        return led
+
+    _stub_network(monkeypatch, publish)(cfg, "p1", "postiz")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == _LANDED
+    assert p.submission_id is None
+    assert p.published_at is None
+
+
+def test_finalize_keeps_reconcile_promotion(tmp_path, monkeypatch):
+    # Reconcile promotes submitting → published (url + real sid + published_at) during the
+    # network phase. The throwaway park (needs_reconcile, other sid, no url) must not land.
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
+    recon_at = "2026-06-02T19:11:00Z"
+    recon_sid = "recon_sid_9"
+
+    def publish(led, post_id):
+        led.set_post_state(post_id, PostState.needs_reconcile, error_reason="stale park")
+        p = led.posts[post_id]
+        p.submission_id = "vendor_stale"
+        p.public_url = None
+        with Ledger.transaction(cfg) as fresh:
+            row = fresh.posts[post_id]
+            fresh.posts[post_id] = row.model_copy(update={
+                "public_url": _LANDED, "submission_id": recon_sid, "published_at": recon_at,
+                "reconcile_candidate_id": None})
+            fresh.set_post_state(post_id, PostState.published, error_reason=None)
+        return led
+
+    assert _stub_network(monkeypatch, publish)(cfg, "p1", "postiz") == PostState.needs_reconcile.value
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == _LANDED
+    assert p.submission_id == recon_sid
+    assert p.published_at == recon_at
+    assert p.error_reason is None
