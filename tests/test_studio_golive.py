@@ -126,14 +126,25 @@ def _ready_live_postiz(monkeypatch, tmp_path, url):
     return cfg
 
 
-# ---- set_postiz_config: dual-write (.env + os.environ), auth tested, key NEVER returned ----
+# ---- set_postiz_config: probe first, then dual-write; key NEVER returned ----
 def test_set_postiz_config_dual_writes_and_tests_auth(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    seen = {}
+    def probe(c):
+        seen["url"] = c.postiz_url
+        seen["key"] = c.postiz_api_key
+        assert os.environ["POSTIZ_URL"] == "https://old.example/api"          # not persisted before the probe
+        assert "postiz.example.com" not in (tmp_path / ".env").read_text()
+        return True
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)
     res = golive.set_postiz_config(cfg, "https://postiz.example.com", "SECRETKEY")
     assert res.ok is True
+    assert seen["url"] == "https://postiz.example.com/api" and seen["key"] == "SECRETKEY"
     env = (tmp_path / ".env").read_text()                # durable (URL only — secret is keyring)
     assert "POSTIZ_URL=https://postiz.example.com/api" in env and "POSTIZ_API_KEY" not in env
+    assert "old.example" not in env
     assert os.environ["POSTIZ_URL"] == "https://postiz.example.com/api"     # in-process (no restart needed)
     assert os.environ["POSTIZ_API_KEY"] == "SECRETKEY"
     assert "SECRETKEY" not in repr(res)                  # the key must NEVER appear in a result
@@ -150,36 +161,96 @@ def test_set_postiz_config_reports_auth_failure_redacted(tmp_path, monkeypatch):
     monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "WRONGKEY")
     assert res.ok is False and "POSTIZ_API_KEY" in res.error
+    assert "saved" not in res.error.lower()
     assert "WRONGKEY" not in repr(res)                   # key never echoed even on failure
+    assert not (tmp_path / ".env").exists()
+    assert "POSTIZ_URL" not in os.environ
 
-def test_set_postiz_config_auth_fail_notes_credentials_saved(tmp_path, monkeypatch):
-    # W9: the key WAS written (dual-write happens before the auth test), so a rejected key must tell the
-    # operator it was saved (re-enter to correct) — not imply nothing happened. Still never echoes the key.
+def test_set_postiz_config_auth_fail_leaves_previous_url(tmp_path, monkeypatch):
+    # A rejected key must not persist the candidate URL or replace the stored key, and must not
+    # tell the operator the credentials were saved. The probe still hits the candidate.
     cfg = _clean(monkeypatch, tmp_path)
     _no_proxy(monkeypatch)
-    with _http_stub(_AuthFailHandler) as url:
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "old-key")
+    seen = {}
+    class _Record(_AuthFailHandler):
+        def do_GET(self):
+            seen["path"] = self.path
+            seen["auth"] = self.headers.get("Authorization")
+            seen["env_url"] = os.environ.get("POSTIZ_URL")
+            seen["file"] = (tmp_path / ".env").read_text()
+            super().do_GET()
+    with _http_stub(_Record) as url:
         res = golive.set_postiz_config(cfg, url, "WRONGKEY")
-    assert res.ok is False and "saved" in (res.error or "").lower() and "POSTIZ_API_KEY" in (res.error or "")
+    assert res.ok is False and "saved" not in (res.error or "").lower() and "POSTIZ_API_KEY" in (res.error or "")
     assert "WRONGKEY" not in repr(res)
-    assert os.environ.get("POSTIZ_API_KEY") == "WRONGKEY"
+    assert seen["path"].endswith("/public/v1/integrations") and seen["auth"] == "WRONGKEY"
+    assert seen["env_url"] == "https://old.example/api" and url not in seen["file"]
+    assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+    assert os.environ["POSTIZ_API_KEY"] == "old-key"
     env = (tmp_path / ".env").read_text()
-    assert "POSTIZ_URL=" in env and "POSTIZ_API_KEY" not in env
-    import keyring
-    assert keyring.get_password("fanops", "POSTIZ_API_KEY") == "WRONGKEY"
+    assert env == "POSTIZ_URL=https://old.example/api\n"
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "old-key"
+
+def test_set_postiz_config_persists_only_after_auth(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _no_proxy(monkeypatch)
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "old-key")
+    seen = {}
+    class _Record(_PostizOkHandler):
+        def do_GET(self):
+            seen["auth"] = self.headers.get("Authorization")
+            seen["env_url"] = os.environ.get("POSTIZ_URL")
+            seen["file"] = (tmp_path / ".env").read_text()
+            super().do_GET()
+    with _http_stub(_Record) as url:
+        res = golive.set_postiz_config(cfg, url, "NEWKEY")
+    assert res.ok is True and seen["auth"] == "NEWKEY"
+    assert seen["env_url"] == "https://old.example/api" and "old.example" in seen["file"]
+    normalized = url.rstrip("/") + "/api"
+    assert os.environ["POSTIZ_URL"] == normalized and os.environ["POSTIZ_API_KEY"] == "NEWKEY"
+    body = (tmp_path / ".env").read_text()
+    assert f"POSTIZ_URL={normalized}" in body and "old.example" not in body and "NEWKEY" not in body
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "NEWKEY"
+    assert "NEWKEY" not in repr(res)
 
 def test_set_postiz_config_url_only_keeps_existing_key(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "existing")
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "existing-ring")
+    seen = {}
+    def probe(c):
+        seen["key"] = c.postiz_api_key
+        return True
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "")    # blank key -> not rewritten
-    assert res.ok is True
+    assert res.ok is True and seen["key"] == "existing-ring"            # keyring wins; blank input is not stored
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "existing-ring"
+    assert os.environ["POSTIZ_API_KEY"] == "existing"
     env = (tmp_path / ".env").read_text()
     assert "POSTIZ_URL=" in env and "POSTIZ_API_KEY" not in env
 
 def test_set_postiz_config_unreachable_reports_clean(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: False)   # bad URL / down
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    def probe(c):
+        assert c.postiz_url == "https://nope.example.com/api"
+        assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+        return False
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)   # bad URL / down
     res = golive.set_postiz_config(cfg, "https://nope.example.com", "K")
-    assert res.ok is False and "reach" in res.error.lower()
+    assert res.ok is False and "reach" in res.error.lower() and "saved" not in res.error.lower()
+    assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+    assert os.environ["POSTIZ_API_KEY"] == "old-key"
+    assert "nope.example" not in (tmp_path / ".env").read_text()
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") is None
 
 
 # ---- refresh_integrations ----
@@ -401,10 +472,12 @@ def test_golive_status_typo_backend_is_not_false_live(tmp_path, monkeypatch):
 # ---- .env write failure must surface as a clean ActionResult, never a 500 (the tab's invariant) ----
 def test_set_postiz_config_disk_error_is_clean_not_raise(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)   # probe succeeds; the write is what fails
     monkeypatch.setattr(golive, "set_env_var", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only fs")))
     res = golive.set_postiz_config(cfg, "https://x.example.com", "K")
     assert res.ok is False and ".env" in res.error
     assert "POSTIZ_URL" not in os.environ                # os.environ NOT mutated when the durable write failed
+    assert "POSTIZ_API_KEY" not in os.environ
 
 def test_go_dryrun_disk_error_is_clean(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_POSTER", "postiz")
@@ -413,12 +486,15 @@ def test_go_dryrun_disk_error_is_clean(tmp_path, monkeypatch):
     assert res.ok is False and ".env" in res.error
 
 def test_set_postiz_config_newline_in_key_blocked_cleanly(tmp_path, monkeypatch):
-    # end-to-end: a key with an embedded newline (injection attempt) is rejected by set_env_var and
-    # surfaced as a clean ActionResult, never written, never a 500.
+    # A key with an embedded newline is rejected before the probe and before any write.
     cfg = _clean(monkeypatch, tmp_path)
+    def boom(c): raise AssertionError("probe must not run")
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "good\nINJECTED=1")
     assert res.ok is False
     assert os.environ.get("INJECTED") is None            # the injected key never lands
+    assert "POSTIZ_URL" not in os.environ
+    assert not (tmp_path / ".env").exists()
 
 
 # ---- Flask wiring (create_app + test_client), mirroring test_studio_publish_now's route tests ----
