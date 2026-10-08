@@ -326,7 +326,8 @@
       "compile": [
         "fanops.config",
         "fanops.hashtags",
-        "fanops.ledger"
+        "fanops.ledger",
+        "fanops.models"
       ],
       "lazy": [
         "fanops.source_tags"
@@ -3063,7 +3064,7 @@
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
-    "fanops.models": 68,
+    "fanops.models": 69,
     "fanops.moment_hook_learning": 1,
     "fanops.moments": 4,
     "fanops.overlay": 4,
@@ -3196,7 +3197,7 @@
     "fanops.canary_baseline": 4,
     "fanops.canary_identity": 4,
     "fanops.caption": 11,
-    "fanops.caption_compose": 3,
+    "fanops.caption_compose": 4,
     "fanops.caption_ingest": 4,
     "fanops.casting": 0,
     "fanops.cli": 23,
@@ -5211,7 +5212,7 @@
     "G2_largest_scc_size": 100,
     "G2_module_sccs_total": 82,
     "G2_non_trivial_sccs": 5,
-    "compile_edges_G1": 826,
+    "compile_edges_G1": 827,
     "lazy_edges": 460,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 114,
