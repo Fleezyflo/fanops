@@ -232,11 +232,10 @@ def _mint_surface_post(led: Ledger, cfg: Config, clip, m, surf, i: int, *,
         caption = f"{caption}\n{ARTIST_HANDLE}"
     render_id = None
     media_urls = []
+    # Any existing row blocks a new create under this pid, including rejected and failed.
+    # Popping those and re-adding stamps a fresh created_at, which is a new Zernio create.
+    # Operator remint is studio repost_post (a new id), not this path.
     existing = led.posts.get(pid)
-    if existing is not None:
-        if existing.state in (PostState.rejected, PostState.failed):
-            led.posts.pop(pid, None)
-            existing = None
     if existing is not None:
         return 0
     # post_type: Postiz IG service vocab ("post"); TikTok stays None — Zernio OpenAPI v1.0.4
