@@ -1,10 +1,21 @@
 # Unit: ig_hashtag_scrape resolve / measure / harvest / configured (no network).
+import plistlib
 from pathlib import Path
+
+import pytest
+
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable,
                                        measure_and_harvest_scrape, resolve_hashtag_scrape,
                                        scrape_configured, search_hashtags_scrape)
 from hashtag_scrape_fakes import _FakeClient, _Media
+
+
+@pytest.fixture(autouse=True)
+def _safari_plist_is_temp(tmp_path, monkeypatch):
+    """Scrape tests must not write the operator's Safari plist."""
+    import fanops.ig_hashtag_scrape as igs
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: tmp_path / "com.apple.Safari.plist")
 
 
 def test_scrape_configured_needs_user_and_session_or_password(tmp_path, monkeypatch):
@@ -503,3 +514,106 @@ def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeyp
         clock=lambda: 0 if hits["n"] < 2 else 5)
     assert got == ("safari", "u")
     assert slept
+
+
+def _plist(path: Path) -> dict:
+    return plistlib.loads(path.read_bytes())
+
+
+def test_enable_safari_apple_events_restores_previous_false(tmp_path, monkeypatch):
+    """A previous false is put back when the caller restores. Other keys stay."""
+    import fanops.ig_hashtag_scrape as igs
+    plist = tmp_path / "prefs" / "com.apple.Safari.plist"
+    plist.parent.mkdir()
+    plist.write_bytes(plistlib.dumps({
+        "AllowJavaScriptFromAppleEvents": False, "Keep": "x"}))
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: plist)
+    prev = igs._enable_safari_apple_events()
+    assert prev is False
+    turned = _plist(plist)
+    assert turned["AllowJavaScriptFromAppleEvents"] is True
+    assert turned["IncludeDevelopMenu"] is True
+    assert turned["Keep"] == "x"
+    igs._restore_safari_apple_events(prev)
+    restored = _plist(plist)
+    assert restored["AllowJavaScriptFromAppleEvents"] is False
+    assert restored["Keep"] == "x"
+
+
+def test_enable_safari_apple_events_leaves_existing_true(tmp_path, monkeypatch):
+    """Already true stays true. Enable does not rewrite the plist."""
+    import fanops.ig_hashtag_scrape as igs
+    plist = tmp_path / "com.apple.Safari.plist"
+    plist.write_bytes(plistlib.dumps({"AllowJavaScriptFromAppleEvents": True, "Keep": 1}))
+    raw = plist.read_bytes()
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: plist)
+    prev = igs._enable_safari_apple_events()
+    assert prev is True
+    assert plist.read_bytes() == raw
+    igs._restore_safari_apple_events(prev)
+    assert plist.read_bytes() == raw
+    assert _plist(plist)["AllowJavaScriptFromAppleEvents"] is True
+
+
+def test_enable_safari_apple_events_restores_absent_key(tmp_path, monkeypatch):
+    """A missing key is removed again. It is not left true and not forced false."""
+    import fanops.ig_hashtag_scrape as igs
+    plist = tmp_path / "com.apple.Safari.plist"
+    plist.write_bytes(plistlib.dumps({"Keep": 1}))
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: plist)
+    prev = igs._enable_safari_apple_events()
+    assert prev is None
+    assert _plist(plist)["AllowJavaScriptFromAppleEvents"] is True
+    igs._restore_safari_apple_events(prev)
+    restored = _plist(plist)
+    assert "AllowJavaScriptFromAppleEvents" not in restored
+    assert restored["Keep"] == 1
+
+
+def test_safari_eval_restores_apple_events_when_the_call_ends(tmp_path, monkeypatch):
+    """do JavaScript holds the pref only for that call, then restores the previous false."""
+    import subprocess
+    import fanops.ig_hashtag_scrape as igs
+    plist = tmp_path / "com.apple.Safari.plist"
+    plist.write_bytes(plistlib.dumps({"AllowJavaScriptFromAppleEvents": False, "Keep": "x"}))
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: plist)
+    during = {}
+
+    def fake_co(cmd, *a, **k):
+        during["on"] = _plist(plist)["AllowJavaScriptFromAppleEvents"]
+        return "2\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
+    assert igs.safari_eval("1+1", "u") == "2"
+    assert during["on"] is True
+    restored = _plist(plist)
+    assert restored["AllowJavaScriptFromAppleEvents"] is False
+    assert restored["Keep"] == "x"
+
+    def boom(cmd, *a, **k):
+        raise subprocess.CalledProcessError(1, cmd, stderr="no instagram tab")
+
+    monkeypatch.setattr("subprocess.check_output", boom)
+    try:
+        igs.safari_eval("1+1", "u")
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError:
+        pass
+    assert _plist(plist)["AllowJavaScriptFromAppleEvents"] is False
+
+
+def test_ensure_scrape_safari_does_not_leave_apple_events_on(tmp_path, monkeypatch):
+    """The ensure seat ends with the previous false restored, including when no user is given."""
+    import fanops.ig_hashtag_scrape as igs
+    plist = tmp_path / "com.apple.Safari.plist"
+    plist.write_bytes(plistlib.dumps({"AllowJavaScriptFromAppleEvents": False}))
+    raw = plist.read_bytes()
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: plist)
+    monkeypatch.delenv("FANOPS_IG_SCRAPE_USER", raising=False)
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: "")
+    cfg = Config(root=tmp_path)
+    assert igs.ensure_scrape_safari(cfg, None) is False
+    assert plist.read_bytes() == raw
+    monkeypatch.setattr("subprocess.check_output", lambda *a, **k: "2\n")
+    assert igs.ensure_scrape_safari(cfg, "u") is True
+    assert _plist(plist)["AllowJavaScriptFromAppleEvents"] is False

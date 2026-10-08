@@ -203,24 +203,62 @@ def stop_scrape_chrome(cfg: Config, user: str) -> None:
         time.sleep(0.2)
 
 
-def _enable_safari_apple_events() -> None:
-    """Safari refuses do JavaScript until this pref is on. Plist write — no Chrome."""
+_APPLE_EVENTS_KEY = "AllowJavaScriptFromAppleEvents"
+
+
+def _safari_prefs_path() -> Path:
+    return Path.home() / "Library/Preferences/com.apple.Safari.plist"
+
+
+def _load_safari_prefs(prefs: Path) -> dict:
     import plistlib
-    prefs = Path.home() / "Library/Preferences/com.apple.Safari.plist"
-    data: dict = {}
-    if prefs.is_file():
-        try:
-            data = plistlib.loads(prefs.read_bytes())
-        except (OSError, plistlib.InvalidFileException, ValueError):
-            data = {}
-    if not isinstance(data, dict):
-        data = {}
-    if data.get("AllowJavaScriptFromAppleEvents") is True:
-        return
-    data["AllowJavaScriptFromAppleEvents"] = True
-    data["IncludeDevelopMenu"] = True
+    if not prefs.is_file():
+        return {}
+    try:
+        loaded = plistlib.loads(prefs.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _write_safari_prefs(prefs: Path, data: dict) -> None:
+    import plistlib
     prefs.parent.mkdir(parents=True, exist_ok=True)
     prefs.write_bytes(plistlib.dumps(data))
+
+
+def _enable_safari_apple_events():
+    """Set AllowJavaScriptFromAppleEvents so Safari will run do JavaScript.
+
+    Returns the previous value. True means it was already on and must stay on.
+    None means the key was absent.
+    """
+    prefs = _safari_prefs_path()
+    data = _load_safari_prefs(prefs)
+    prev = data[_APPLE_EVENTS_KEY] if _APPLE_EVENTS_KEY in data else None
+    if prev is True:
+        return True
+    data[_APPLE_EVENTS_KEY] = True
+    data["IncludeDevelopMenu"] = True
+    _write_safari_prefs(prefs, data)
+    return prev
+
+
+def _restore_safari_apple_events(prev) -> None:
+    """Put AllowJavaScriptFromAppleEvents back when the scrape JS call ends.
+
+    A previous true is left true. None removes the key.
+    """
+    if prev is True:
+        return
+    prefs = _safari_prefs_path()
+    data = _load_safari_prefs(prefs)
+    if prev is None:
+        data.pop(_APPLE_EVENTS_KEY, None)
+    else:
+        data[_APPLE_EVENTS_KEY] = prev
+    if data or prefs.is_file():
+        _write_safari_prefs(prefs, data)
 
 
 def _safari_osascript(script: str, *args: str) -> str:
@@ -312,7 +350,11 @@ def safari_eval(expr: str, user: str | None = None) -> str:
         "  error \"no instagram tab\"\n"
         "end run\n"
     )
-    return _safari_osascript(script, expr, prefix)
+    prev = _enable_safari_apple_events()
+    try:
+        return _safari_osascript(script, expr, prefix)
+    finally:
+        _restore_safari_apple_events(prev)
 
 
 def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool = False,
@@ -327,7 +369,6 @@ def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool 
     """
     import time
     del navigate
-    _enable_safari_apple_events()
     for u in scrape_users(cfg) or ((user,) if user else ()):
         stop_scrape_chrome(cfg, u)
     if not user:
