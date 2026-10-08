@@ -61,8 +61,20 @@ def _capture(mocker, *, posts_get=None):
     mocker.patch("requests.get", side_effect=_g)
     return cap
 
-def _matching_postiz_row(*, intg_id="intg_1", content="fire", sid="postiz_existing"):
-    return {"id": sid, "state": "QUEUE", "integration": {"id": intg_id}, "content": content}
+_ROW_IMAGE = [{"path": "https://uploads.postiz.com/x.mp4"}]
+
+
+def _matching_postiz_row(*, intg_id="intg_1", content="fire", sid="postiz_existing", image=None,
+                         nest=True):
+    """A list row shaped like the POST: content and image live on posts[0].value[0]."""
+    row = {"id": sid, "state": "QUEUE", "integration": {"id": intg_id}}
+    if not nest:
+        row["content"] = content
+        return row
+    imgs = [dict(i) for i in (_ROW_IMAGE if image is None else image)]
+    row["posts"] = [{"integration": {"id": intg_id},
+                     "value": [{"content": content, "image": imgs}]}]
+    return row
 
 def _integrations_get(mocker, *, posts_get=None):
     def _g(url, **kw):
@@ -273,13 +285,134 @@ def test_publish_network_error_parks_needs_reconcile_no_repost(tmp_path, monkeyp
 
 
 def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocker):
+    # Identity is nested content + image + integration. The row has no top-level content.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     post_mock = mocker.patch("fanops.post.postiz.requests.post")
-    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [_matching_postiz_row()]}))
+    row = _matching_postiz_row()
+    assert "content" not in row
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
     led = PostizPoster(cfg).publish(led, "p1")
     post_mock.assert_not_called()
     assert led.posts["p1"].state is PostState.submitted
     assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_publish_adopts_nested_content_when_top_level_content_differs(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    post_mock = mocker.patch("fanops.post.postiz.requests.post")
+    row = _matching_postiz_row()
+    row["content"] = "not the payload"
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_not_called()
+    assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_publish_does_not_adopt_top_level_content_alone(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    row = _matching_postiz_row(nest=False)
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_publish_does_not_adopt_when_image_differs(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    row = _matching_postiz_row(image=[{"path": "https://uploads.postiz.com/other.mp4"}])
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_publish_adopts_when_image_id_and_path_match(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post(); post.media_urls = ["mid_9|https://uploads.postiz.com/x.mp4"]
+    led = _led(cfg, post)
+    post_mock = mocker.patch("fanops.post.postiz.requests.post")
+    row = _matching_postiz_row(image=[{"id": "mid_9", "path": "https://uploads.postiz.com/x.mp4"}])
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_not_called()
+    assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_publish_does_not_adopt_path_only_when_payload_wrote_an_id(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post(); post.media_urls = ["mid_9|https://uploads.postiz.com/x.mp4"]
+    led = _led(cfg, post)
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    row = _matching_postiz_row(image=[{"path": "https://uploads.postiz.com/x.mp4"}])
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_publish_adopts_when_integration_is_only_on_the_nested_post(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    post_mock = mocker.patch("fanops.post.postiz.requests.post")
+    row = _matching_postiz_row()
+    row.pop("integration")
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_not_called()
+    assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_publish_does_not_adopt_when_integration_ids_disagree(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    row = _matching_postiz_row()
+    row["posts"][0]["integration"] = {"id": "other"}
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [row]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_publish_does_not_adopt_submission_held_by_another_post(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, _post())
+    other = _post("p2")
+    other.submission_id = "postiz_existing"
+    led.add_post(other)
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": [_matching_postiz_row()]}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].submission_id == "postiz_new"
+    assert led.posts["p2"].submission_id == "postiz_existing"
+
+
+def test_adopt_submission_does_not_write_id_on_failed_match(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, _post())
+    payload = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                                   media_urls=["https://uploads.postiz.com/x.mp4"],
+                                   scheduled_time="2099-01-01T00:00:00Z", post_type="post")
+    out = PostizPoster(cfg)._adopt_submission(
+        led, "p1", "postiz_existing", _matching_postiz_row(nest=False), payload)
+    assert out.posts["p1"].submission_id is None
+    assert out.posts["p1"].state is PostState.submitting
+
+
+def test_adopt_submission_does_not_write_id_held_by_another_post(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
+    led = _led(cfg, _post())
+    other = _post("p2")
+    other.submission_id = "postiz_existing"
+    led.add_post(other)
+    payload = build_postiz_payload(integration_id="intg_1", platform="instagram", content="fire",
+                                   media_urls=["https://uploads.postiz.com/x.mp4"],
+                                   scheduled_time="2099-01-01T00:00:00Z", post_type="post")
+    out = PostizPoster(cfg)._adopt_submission(led, "p1", "postiz_existing", _matching_postiz_row(), payload)
+    assert out.posts["p1"].submission_id is None
+    assert out.posts["p1"].state is PostState.submitting
+    assert out.posts["p2"].submission_id == "postiz_existing"
 
 
 def test_postiz_connecttimeout_no_existing_stays_queued(tmp_path, monkeypatch, mocker):
