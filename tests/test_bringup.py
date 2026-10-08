@@ -97,6 +97,8 @@ def test_git_plane_reports_behind_without_failing_and_never_mutates(tmp_path, mo
     assert plane["ok"] is True                       # advisory -> never fails the run
     assert plane["behind"] == 7
     assert "7" in plane["detail"]
+    assert any(arg == "HEAD...origin/main" for c in calls for arg in c)
+    assert not any(arg == "main...origin/main" for c in calls for arg in c)
     # the non-goal that MATTERS: bring-up must NEVER mutate the tree — no mutating verb in ANY argv
     mutating = {"merge", "reset", "checkout", "rebase", "pull"}
     assert not any(mutating & set(c) for c in calls), f"git plane mutated: {calls}"
@@ -109,6 +111,59 @@ def test_git_plane_fetch_failure_is_still_advisory(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     plane = daemon._plane_git(cfg)
     assert plane["ok"] is True                       # a fetch failure never blocks bring-up
+
+
+def test_up_postiz_ensure_failure_is_not_ready_before_daemon(tmp_path, monkeypatch):
+    """postiz-ondemand.sh ensure failing must not return a success verdict, and must
+    not reach the daemon plane."""
+    _point_ondemand_at_real_file(tmp_path, monkeypatch)
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: tmp_path)
+    launchctl: list[list[str]] = []
+
+    def fake_run(cmd, *a, **k):
+        cmd = list(cmd)
+        if cmd[:1] == ["launchctl"]:
+            launchctl.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:1] == ["bash"] and cmd[-1:] == ["ensure"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="postiz: backend did not answer")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
+    result = daemon.up(Config(root=tmp_path))
+    assert result["ready"] is False
+    assert result["first_fail"] == "postiz"
+    assert result["daemon"] is None
+    assert result["verdict"].startswith("NOT-READY")
+    assert result["verdict"] != "READY"
+    assert launchctl == []
+
+
+def test_git_plane_detached_checkout_behind_origin_is_not_current(tmp_path, monkeypatch):
+    """A detached HEAD that is not origin/main must not look current. The comparison
+    is HEAD, not a branch named main. The checkout path is injected."""
+    calls: list[list[str]] = []
+
+    def fake_git(cmd, *a, **k):
+        calls.append(list(cmd))
+        if "--abbrev-ref" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="HEAD\n", stderr="")
+        if "rev-list" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0\t4\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(daemon.subprocess, "run", fake_git)
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: tmp_path)
+    plane = daemon._plane_git(Config(root=tmp_path))
+    assert plane["ok"] is False
+    assert plane["behind"] == 4
+    assert "current" not in plane["detail"]
+    assert any(arg == "HEAD...origin/main" for c in calls for arg in c)
+    assert not any(arg == "main...origin/main" for c in calls for arg in c)
+    mutating = {"merge", "reset", "checkout", "rebase", "pull"}
+    assert not any(mutating & set(c) for c in calls)
+    real = "/Users/molhamhomsi/Moh Flow Fanops/.worktrees/live-origin-main"
+    assert all(real not in " ".join(c) for c in calls)
 
 
 # ── postiz plane: shells out to the on-demand script; honest gate ─────────────────────────────
@@ -269,7 +324,8 @@ def test_daemon_ensure_signature_and_behavior_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(**{main_print: (0, "")}))
     cfg = Config(root=tmp_path)
     res = daemon.ensure(cfg)
-    assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
+    # Aliveness is unchanged (loaded, no bootstrap). A missing heartbeat SHA is not "already current".
+    assert res == {"label": daemon.LABEL, "loaded": True, "action": "sha_missing"}
 
 
 def test_daemon_plane_off_darwin_typed_skip_no_exception(tmp_path, monkeypatch):

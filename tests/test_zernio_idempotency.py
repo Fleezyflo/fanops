@@ -529,9 +529,20 @@ def test_43_extra_ignore_forward_compat_is_unbroken():
              caption="x", state=PostState.needs_reconcile, some_future_key="v")
     assert not hasattr(p, "some_future_key")
 
+def _refuse_live_zernio_get(monkeypatch):
+    """reconcile_posts still calls ZernioStatusClient.fetch_body and zernio_list_posts.
+
+    Those ignore the injected get_status and GET zernio.com with timeout=30. Two read timeouts
+    exceed pytest-timeout (60s) before the assertions run. This file is offline."""
+    def _offline(*_a, **_k):
+        raise requests.ConnectionError("offline")
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.requests.get", _offline)
+
+
 def test_44_reconcile_never_polls_the_candidate(tmp_path, monkeypatch):
     # NEGATIVE CONTROL for the §5 verdict. _RECONCILABLE deliberately INCLUDES needs_reconcile, so a
     # candidate used as a poll key would be polled every pass.
+    _refuse_live_zernio_get(monkeypatch)
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
@@ -547,6 +558,7 @@ def test_45_reconcile_never_promotes_from_the_candidate(tmp_path, monkeypatch):
     # The misattribution this design exists to prevent: poll the candidate, find it live (of course it is —
     # that is WHY Zernio rejected us as a duplicate) and stamp OUR row `published` with ANOTHER post's
     # permalink. Here the candidate polls `published`; the post's own id does not.
+    _refuse_live_zernio_get(monkeypatch)
     cfg = _cfg(tmp_path, monkeypatch)
     from fanops import reconcile as rec_mod
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
