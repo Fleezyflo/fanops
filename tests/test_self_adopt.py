@@ -154,25 +154,90 @@ def test_storm_guard_lets_settled_pump_through(tmp_path, monkeypatch):
     assert res["action"] == "kickstart_stale_code"
 
 
-def test_no_kickstart_while_run_flock_held(tmp_path, monkeypatch):
+def _hold_flock(cfg, body: dict):
+    import fcntl
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text(json.dumps(body))
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _release_flock(fd):
+    import fcntl
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def test_no_kickstart_while_young_run_flock_held(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
     cfg, calls, uid = _fake_ensure_run(
         monkeypatch, tmp_path,
         list_out='\t"PID" = 4321;\n',
         ps_etime="27:46:39\n")
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
     _loop_hb(cfg, "aaa")
-    lp = _lock_path(cfg)
-    lp.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
-    import fcntl
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    started = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fd = _hold_flock(cfg, {"pid": os.getpid(), "started": started})
     try:
         res = daemon.ensure(cfg)
         assert _kickstart_argv(uid) not in calls
         assert res["action"] == "none"
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        _release_flock(fd)
+
+
+def test_aged_run_flock_does_not_skip_kickstart(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    cfg, calls, uid = _fake_ensure_run(
+        monkeypatch, tmp_path,
+        list_out='\t"PID" = 4321;\n',
+        ps_etime="27:46:39\n")
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+    _loop_hb(cfg, "aaa")
+    started = (datetime.now(timezone.utc) - timedelta(seconds=daemon._adopt_settle_s(cfg) + 5))
+    fd = _hold_flock(cfg, {"pid": os.getpid(), "started": started.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    try:
+        res = daemon.ensure(cfg)
+        assert _kickstart_argv(uid) in calls
+        assert res["action"] == "kickstart_stale_code"
+    finally:
+        _release_flock(fd)
+
+
+def test_untimestamped_run_flock_does_not_skip_kickstart(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(
+        monkeypatch, tmp_path,
+        list_out='\t"PID" = 4321;\n',
+        ps_etime="27:46:39\n")
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+    _loop_hb(cfg, "aaa")
+    fd = _hold_flock(cfg, {"pid": os.getpid()})
+    try:
+        res = daemon.ensure(cfg)
+        assert _kickstart_argv(uid) in calls
+        assert res["action"] == "kickstart_stale_code"
+    finally:
+        _release_flock(fd)
+
+
+def test_disk_revert_replaces_imported_interpreter(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(
+        monkeypatch, tmp_path,
+        list_out='\t"PID" = 4321;\n',
+        ps_etime="27:46:39\n")
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("old-disk-sha", "git-head"))
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+    _loop_hb(cfg, "new-running-sha")
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) in calls
+    assert res["action"] == "kickstart_stale_code"
 
 
 def test_ensure_does_not_refresh_daemon_strip_snapshot(tmp_path, monkeypatch):

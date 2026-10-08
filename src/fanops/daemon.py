@@ -319,6 +319,36 @@ def _pump_pid_age_s() -> tuple[int | None, int | None]:
     return pid, age
 
 
+def _lock_started_age_s(cfg: Config) -> int | None:
+    """Age in seconds of the run flock's existing `started` timestamp, or None.
+
+    `pipeline_run.run_lease` writes that field. A missing or unparseable value is
+    not a young hold — the kickstart veto must not last forever.
+    """
+    from fanops.pipeline_run import _lock_path, _read_body
+    raw = _read_body(_lock_path(cfg)).get("started")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return int((datetime.now(timezone.utc) - started).total_seconds())
+
+
+def _kickstart_imported_interpreter(cfg: Config) -> None:
+    """Replace the pump process so it re-imports the interpreter now on disk.
+
+    Forward drift and a disk revert (HEAD moved backward under a process that
+    already imported the previous modules) share this path. The launchctl call
+    is the replacement; this does not signal a pump by hand.
+    """
+    _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}", timeout=_KICKSTART_TIMEOUT)
+    _kickstart_studio_if_present(cfg)
+
+
 # ── side-effecting verbs ─────────────────────────────────────────────────────────────────────
 
 def install(cfg: Config, *, interval: int) -> dict:
@@ -405,24 +435,27 @@ def ensure(cfg: Config) -> dict:
                 pid, age = _pump_pid_age_s()
                 settle = _adopt_settle_s(cfg)
                 from fanops.pipeline_run import run_held
+                held = run_held(cfg)
+                flock_age = _lock_started_age_s(cfg) if held else None
+                # Young holds still veto. The bound is the lock's `started` timestamp
+                # against the existing settle window — not a second timer.
+                young_flock = held and flock_age is not None and flock_age < settle
                 if pid is not None and (age is None or age < settle):
                     _log.warning("ensure.kickstart_stale_code: pump pid=%s age=%ss < %ss settle (or unreadable) "
                                  "— skipping to avoid a restart storm (running=%s deployed=%s)",
                                  pid, age, settle, running, deployed)
-                elif run_held(cfg):
+                elif young_flock:
                     # A live pass holds the run flock for the whole transcribe/produce — SIGTERM here
                     # restarts whisper from zero and the operator sees a "stuck" stage that was not stuck.
-                    _log.warning("ensure.kickstart_stale_code: run flock held — skipping mid-pass SIGTERM "
-                                 "(running=%s deployed=%s)", running, deployed)
+                    _log.warning("ensure.kickstart_stale_code: run flock held %ss < %ss — skipping mid-pass "
+                                 "SIGTERM (running=%s deployed=%s)", flock_age, settle, running, deployed)
                 else:
                     sync_ok, sync_note = _sync_locked_deps()
                     if not sync_ok:
                         _log.warning("ensure.kickstart_stale_code: %s — skipping kickstart onto half-synced venv "
                                      "(running=%s deployed=%s)", sync_note or "deps sync failed", running, deployed)
                     else:
-                        _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
-                                   timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
-                        _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
+                        _kickstart_imported_interpreter(cfg)
                         if action == "none":
                             action = "kickstart_stale_code"
             elif advance == "blocked" and action == "none":

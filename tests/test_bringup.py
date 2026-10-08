@@ -113,6 +113,32 @@ def test_git_plane_fetch_failure_is_still_advisory(tmp_path, monkeypatch):
     assert plane["ok"] is True                       # a fetch failure never blocks bring-up
 
 
+def test_up_postiz_ensure_failure_is_not_ready_before_daemon(tmp_path, monkeypatch):
+    """postiz-ondemand.sh ensure failing must not return a success verdict, and must
+    not reach the daemon plane."""
+    _point_ondemand_at_real_file(tmp_path, monkeypatch)
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: tmp_path)
+    launchctl: list[list[str]] = []
+
+    def fake_run(cmd, *a, **k):
+        cmd = list(cmd)
+        if cmd[:1] == ["launchctl"]:
+            launchctl.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[:1] == ["bash"] and cmd[-1:] == ["ensure"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="postiz: backend did not answer")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(daemon.subprocess, "run", fake_run)
+    result = daemon.up(Config(root=tmp_path))
+    assert result["ready"] is False
+    assert result["first_fail"] == "postiz"
+    assert result["daemon"] is None
+    assert result["verdict"].startswith("NOT-READY")
+    assert result["verdict"] != "READY"
+    assert launchctl == []
+
+
 def test_git_plane_detached_checkout_behind_origin_is_not_current(tmp_path, monkeypatch):
     """A detached HEAD that is not origin/main must not look current. The comparison
     is HEAD, not a branch named main. The checkout path is injected."""
