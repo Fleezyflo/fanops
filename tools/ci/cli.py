@@ -48,11 +48,12 @@ def cmd_deployed(require_live: bool) -> int:
     settings, sec_err = probe_security()
     findings = checks.run_deployed(reg, live, live_error=err, workflow_states=states,
                                    workflow_error=wf_err, security_settings=settings,
-                                   security_error=sec_err)
+                                   security_error=sec_err, live_protection=data)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
     # --require-live escalates an unreadable probe to a FAILURE — but ONLY for the probes this job
-    # can actually authenticate. DC-3 needs `administration: read` and DC-9 needs admin on the repo
-    # object; neither is a grantable GITHUB_TOKEN scope, so both wait on an operator-supplied PAT.
+    # can actually authenticate. DC-3 reads GET /branches/main/protection with PROTECTION_READ_TOKEN
+    # (GITHUB_TOKEN cannot; an unset or rejected token is still a failure). DC-9 needs admin on the
+    # repo object, which this job does not grant to GITHUB_TOKEN, so it is not escalated.
     # DC-8 needs `actions: read`, which the job HAS — so an unreadable workflow list there is a real
     # regression and fails.
     #

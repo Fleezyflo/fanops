@@ -95,21 +95,60 @@ def dc2_registry_jobs_bijection(reg: dict, jobs: list[dict]) -> list[Finding]:
     return out
 
 
-def dc3_deployed_state(reg: dict, live_contexts, live_error: str | None = None) -> list[Finding]:
-    """Registry `required_contexts` vs live GitHub required contexts.
+_EXACT_REQUIRED_CONTEXT = "unit (fast, no toolchain)"
+
+
+def _enabled_flag(value) -> object:
+    """Branch-protection booleans arrive as `{"enabled": bool}`."""
+    if isinstance(value, dict):
+        return value.get("enabled")
+    return value
+
+
+def dc3_protection_document(data: dict) -> list[Finding]:
+    """The live GET /branches/main/protection document, not just the context set.
+
+    Required context is exactly `unit (fast, no toolchain)`. Force-push is off.
+    `enforce_admins` is false. A missing or differently shaped flag is a failure —
+    absence must not read as the safe value."""
+    out: list[Finding] = []
+    contexts = list((data.get("required_status_checks") or {}).get("contexts") or [])
+    exact = [_EXACT_REQUIRED_CONTEXT]
+    if contexts != exact:
+        out.append(Finding("DC-3", "-",
+            f"live required contexts {contexts!r} != {exact!r}", True))
+    force = _enabled_flag(data.get("allow_force_pushes"))
+    if force is not False:
+        out.append(Finding("DC-3", "-",
+            f"allow_force_pushes enabled={force!r} — force-push must be off", True))
+    admins = _enabled_flag(data.get("enforce_admins"))
+    if admins is not False:
+        out.append(Finding("DC-3", "-",
+            f"enforce_admins enabled={admins!r} — must be false", True))
+    return out
+
+
+def dc3_deployed_state(reg: dict, live_contexts, live_error: str | None = None,
+                       live_protection: dict | None = None) -> list[Finding]:
+    """Registry `required_contexts` vs live GitHub required contexts, plus the protection document.
 
     A live-probe failure is an explicit non-authoritative SKIP, never a pass — the caller decides
-    whether that is tolerable (local) or a hard failure (--require-live, the authenticated job)."""
+    whether that is tolerable (local) or a hard failure (--require-live, the authenticated job).
+    When the GET succeeded, `live_protection` is that document and the exact-context, force-push,
+    and enforce_admins checks run on it."""
     if live_error is not None:
         return [Finding("DC-3", "-",
             f"NON-AUTHORITATIVE: live protection unreadable ({live_error}) — deployed-state not verified",
             blocking=False, skipped=True)]
     declared = set(reg.get("required_contexts") or [])
     live = set(live_contexts or [])
-    if live == declared:
-        return []
-    return [Finding("DC-3", "-",
-        f"live required != declared — missing={sorted(declared - live)} unexpected={sorted(live - declared)}", True)]
+    out: list[Finding] = []
+    if live != declared:
+        out.append(Finding("DC-3", "-",
+            f"live required != declared — missing={sorted(declared - live)} unexpected={sorted(live - declared)}", True))
+    if live_protection is not None:
+        out.extend(dc3_protection_document(live_protection))
+    return out
 
 
 def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
@@ -285,10 +324,12 @@ def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
 
 def run_deployed(reg: dict, live_contexts, live_error: str | None = None,
                  workflow_states=None, workflow_error: str | None = None,
-                 security_settings=None, security_error: str | None = None) -> list[Finding]:
+                 security_settings=None, security_error: str | None = None,
+                 live_protection: dict | None = None) -> list[Finding]:
     """Deployed-state plane: registry <-> live GitHub. DC-3 (protection), DC-8 (workflow
     enablement), DC-9 (repository security settings). Each probe carries its OWN error so one
-    unreadable plane never masks another as clean."""
-    return (dc3_deployed_state(reg, live_contexts, live_error)
+    unreadable plane never masks another as clean. `live_protection` is the GET body when the
+    protection probe succeeded."""
+    return (dc3_deployed_state(reg, live_contexts, live_error, live_protection)
             + dc8_declared_workflow_disabled(reg, workflow_states, workflow_error)
             + dc9_repo_security_settings(reg, security_settings, security_error))
