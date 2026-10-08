@@ -535,6 +535,50 @@ def test_doctor_passes_stale_heartbeat_during_live_mid_pass(tmp_path, monkeypatc
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
+def test_halted_sleep_does_not_clear_daemon_staleness(tmp_path):
+    """A fresh halted line must not clear a stale heartbeat. The pass logged halted and sleeps."""
+    import json
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path)
+    _write_heartbeat(cfg, age_seconds=3 * 3600)
+    rec = {"ts": datetime.now(timezone.utc).isoformat(), "level": "info", "stage": "run",
+           "unit_id": "-", "outcome": "halted", "err": "RuntimeError: boom"}
+    with cfg.log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    FUT = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    _seed_queued_post(cfg, when=FUT)
+
+    def _stale_reader(_cfg, _interval):
+        return {"installed": True, "loaded": True, "verdict": "loaded", "heartbeat_age_s": 3 * 3600}
+
+    c = doctor._daemon_liveness_check(cfg, status_reader=_stale_reader)
+    assert c["ok"] is False
+    assert "heartbeat is" in c["hint"]
+
+
+def test_activity_after_halted_still_clears_daemon_staleness(tmp_path):
+    """A newer non-halted line is a working pass. Only a newest halted sleep keeps staleness."""
+    import json
+    from datetime import datetime, timezone, timedelta
+    cfg = Config(root=tmp_path)
+    _write_heartbeat(cfg, age_seconds=3 * 3600)
+    now = datetime.now(timezone.utc)
+    halted = {"ts": (now - timedelta(seconds=5)).isoformat(), "level": "info", "stage": "run",
+              "unit_id": "-", "outcome": "halted"}
+    working = {"ts": now.isoformat(), "level": "info", "stage": "llm", "unit_id": "src-1", "outcome": "ok"}
+    with cfg.log_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(halted) + "\n")
+        fh.write(json.dumps(working) + "\n")
+    FUT = (now + timedelta(days=1)).isoformat()
+    _seed_queued_post(cfg, when=FUT)
+
+    def _stale_reader(_cfg, _interval):
+        return {"installed": True, "loaded": True, "verdict": "loaded", "heartbeat_age_s": 3 * 3600}
+
+    c = doctor._daemon_liveness_check(cfg, status_reader=_stale_reader)
+    assert c["ok"] is True
+
+
 def test_doctor_hint_says_log_silent_when_stage_wedged(tmp_path, monkeypatch):
     # Change 1d wording: when a stage IS held AND the log has gone SILENT past the ceiling, the doctor
     # mid-pass hint says "log SILENT {n}s", NOT "has run {stage_age}s" — silence is the wedged signal.

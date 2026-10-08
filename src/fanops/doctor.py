@@ -8,6 +8,7 @@ Instagram probe; empty `{}` / garbage is not a session. It does not call `_persi
 not in this module.
 """
 from __future__ import annotations
+import json
 import logging
 import shutil
 from fanops.config import Config
@@ -111,6 +112,46 @@ _DAEMON_DEFAULT_INTERVAL_S = 600                           # fallback tick inter
 _GATE_STALE_TICKS = 3                                      # a pending agent-gate older than this many ticks is WARN-worthy (responder may be stuck)
 
 
+def _newest_owned_activity(cfg: Config) -> dict | None:
+    """Newest owned run.log record, or None.
+
+    Same ownership rule as daemon._newest_activity_ts: a JSON line with `ts`,
+    skipping a MANUAL heartbeat (stage=heartbeat without origin=loop).
+    """
+    p = cfg.log_path
+    if not p.exists():
+        return None
+    last = None
+    try:
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("stage") == "heartbeat" and rec.get("origin") != "loop":
+                continue
+            if rec.get("ts"):
+                last = rec
+    except OSError:
+        return None
+    return last
+
+
+def _activity_is_halted_sleep(rec: dict | None) -> bool:
+    """True when the newest activity is a pass that logged halted and then sleeps.
+
+    cmd_run writes outcome=halted and then sleeps the interval. The line is fresh,
+    so the activity signal reports alive, but it must not clear heartbeat staleness.
+    """
+    if not rec:
+        return False
+    return rec.get("outcome") == "halted" or rec.get("stage") == "halted"
+
+
 def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     """T12: (dict) 'the publish pump is alive AND the queue is draining'. TWO fail conditions:
       (a) the last `fanops run` heartbeat in run.log is older than _DAEMON_STALE_TICKS install intervals
@@ -197,7 +238,9 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
     from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
     alive_mid, progress_line, snap = daemon_progress(cfg)
     stale = age is None or age > _DAEMON_STALE_TICKS * interval
-    if alive_mid:
+    # A halted pass logs outcome=halted and then sleeps. That line is fresh, so the
+    # activity signal reports alive_mid, but it is not a working pass.
+    if alive_mid and not _activity_is_halted_sleep(_newest_owned_activity(cfg)):
         stale = False
     ok = (not stale) and backlog_n == 0 and not backlog_unknown
     if ok:
