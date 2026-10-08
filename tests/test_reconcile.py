@@ -1574,7 +1574,8 @@ def test_vendor_lookup_does_not_promote_id_another_post_holds(tmp_path, monkeypa
     _tiktok_unbound(led, "pv", caption=cap)
     led.add_post(Post(id="other", parent_id="c", account="tt", account_id="integ-2",
                       platform=Platform.tiktok, caption="x", state=PostState.published,
-                      submission_id="z_vendor"))
+                      submission_id="z_vendor",
+                      public_url="https://www.tiktok.com/@other/video/1"))
     _zernio_reads(monkeypatch, bodies={"z_vendor": _zernio_published_body()},
                   lists=[{"_id": "z_vendor", "content": cap}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
@@ -1608,7 +1609,8 @@ def test_promote_bound_publish_refuses_failed_search_and_held_id(tmp_path):
     _tiktok_unbound(led, "pv", caption=cap)
     led.add_post(Post(id="other", parent_id="c", account="tt", account_id="integ-2",
                       platform=Platform.tiktok, caption="x", state=PostState.published,
-                      submission_id="z_held"))
+                      submission_id="z_held",
+                      public_url="https://www.tiktok.com/@other/video/2"))
     post = led.posts["pv"]
     log = get_logger(cfg)
     now = datetime.now(timezone.utc)
@@ -1623,6 +1625,12 @@ def test_promote_bound_publish_refuses_failed_search_and_held_id(tmp_path):
         cfg, led, post, log, now, captured_url=url, new_sub="z_held") is False
     assert led.posts["pv"].state is PostState.needs_reconcile
     assert led.posts["pv"].submission_id == "fanops_tok"
+    assert rec_mod._promote_bound_publish(
+        cfg, led, post, log, now, captured_url=url, new_sub="z_new",
+        search_row={"_id": "z_new", "content": cap}) is True
+    assert led.posts["pv"].state is PostState.published
+    assert led.posts["pv"].submission_id == "z_new"
+    assert led.posts["other"].submission_id == "z_held"
 
 
 def test_vendor_lookup_ambiguous_refuses_bind(tmp_path, monkeypatch):
