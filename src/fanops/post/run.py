@@ -47,6 +47,8 @@ _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload tran
 # Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
 # network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
 # loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
+# Applied only while the freshly loaded row is still submitting — a concurrent mark_published or
+# reconcile promotion, including a public_url that already landed, is not overwritten by this snapshot.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "daemon_transient_retry",
                     "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id")
 
@@ -222,9 +224,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
     NETWORK (lock-free): on a THROWAWAY loaded ledger, ensure media (upload) + poster.publish. A
       per-post failure marks THIS post failed (FIX F54); a needs_reconcile park is NOT downgraded to
       failed (AUDIT C1/#17 — failed is re-queueable => double-post); a FATAL AuthError RE-RAISES (H8).
-    FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
-      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). Returns the
-      final post-state value (or None if not claimable)."""
+    FINALIZE (tight txn): merge network post fields into a FRESHLY loaded ledger only while that row
+      is still submitting — a concurrent promotion and its public_url stay — plus the clip media
+      cache. Never persist the stale full snapshot (B4). Returns the final state (or None)."""
     # Pre-claim guard (CULM-1): same gate as publish_due — never claim a post we can't address.
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
@@ -378,12 +380,14 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
-        upd = {f: v for f, v in net.items()
-               if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
-        if upd:
-            led.posts[post_id] = p.model_copy(update=upd)
-            p = led.posts[post_id]
+        # Network snapshot lands only while this attempt still owns the row.
+        if p.state is PostState.submitting:
+            # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
+            upd = {f: v for f, v in net.items()
+                   if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
+            if upd:
+                led.posts[post_id] = p.model_copy(update=upd)
+                p = led.posts[post_id]
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and _media_cache_hit(clip_media, backend):
             if not c.media_url or not _media_cache_hit(c.media_url, backend):
