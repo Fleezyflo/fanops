@@ -1,5 +1,6 @@
 # src/fanops/health_probes.py — live probes, snapshot readers, dep/daemon health checks.
 from __future__ import annotations
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -118,24 +119,61 @@ def daemon_liveness_check(cfg: Config) -> dict:
     return _daemon_liveness_check(cfg)
 
 
+def _liveness_activity_ts(cfg: Config) -> datetime | None:
+    """Newest owned run.log timestamp that counts as liveness.
+
+    Owned matches daemon._newest_activity_ts: JSON with a truthy ts; manual heartbeats
+    (stage=heartbeat without origin=loop) and TSV do not count. outcome=halted does not
+    count either — the run loop writes that line and then sleeps, and the sleep must not
+    refresh the alive window for _STAGE_HANG_CEILING_S."""
+    p = cfg.log_path
+    if not p.exists():
+        return None
+    last_ts = None
+    try:
+        for line in p.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("stage") == "heartbeat" and rec.get("origin") != "loop":
+                continue
+            if rec.get("outcome") == "halted":
+                continue
+            ts = rec.get("ts")
+            if ts:
+                last_ts = ts
+    except OSError:
+        return None
+    if last_ts is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(last_ts)
+    except ValueError:
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
 def daemon_progress(cfg: Config) -> tuple[bool, str | None, dict | None]:
     """Activity-aware mid-pass liveness — the ONE owner both daemon.status and doctor call so the
     verdict is identical on every surface (no split-brain). Two signals combine:
       • snap = run_stage_snapshot(cfg) — the flock-held {stage, unit, stage_age} or None.
-      • act  = daemon._newest_activity_ts(cfg) — the NEWEST run.log line of any kind.
-    ALIVE when the log is FRESH (silent < ceiling): a stage that keeps emitting is working, however
-    long it runs (a big transcribe/LLM stage legitimately runs >1h and logs every ~60s — that is NOT
-    wedged). WEDGED only when a stage IS held AND the log has gone SILENT past the ceiling. A dead
+      • act  = _liveness_activity_ts(cfg) — newest owned run.log line that is not a halt.
+    ALIVE when that activity is FRESH (silent < ceiling): a stage that keeps emitting is working,
+    however long it runs (a big transcribe/LLM stage legitimately runs >1h and logs every ~60s —
+    that is NOT wedged). A halted line is not activity, so halt-then-sleep does not refresh this
+    window. WEDGED only when a stage IS held AND the log has gone SILENT past the ceiling. A dead
     process (no launchd PID) is caught IMMEDIATELY by daemon.status — this override governs only the
     narrow "PID alive but stage silently hung" case, at the cost of up to _STAGE_HANG_CEILING_S (1h)
     detection lag (the ceiling MUST exceed the longest legitimate silent gap, or it false-flags a
     working pass). Returns the (alive_mid, line, snap) triple both callers destructure."""
-    from fanops import daemon
     snap = None; act = None
     try:
         from fanops.pipeline_run import run_stage_snapshot
         snap = run_stage_snapshot(cfg)
-        act = daemon._newest_activity_ts(cfg)
+        act = _liveness_activity_ts(cfg)
     except Exception as exc:
         _log.debug("daemon_progress fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     silent_s = (datetime.now(timezone.utc) - act).total_seconds() if act else None

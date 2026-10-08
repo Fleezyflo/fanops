@@ -54,13 +54,13 @@ def test_daemon_progress_absent_when_no_lease(tmp_path):
     assert alive is False and line is None and snap is None
 
 
-def _write_log_line(cfg, *, stage="stage", ts=None):
-    """Append one run.log line at `ts` (any stage) — the activity signal daemon_progress now reads."""
+def _write_log_line(cfg, *, stage="stage", ts=None, outcome="ok"):
+    """Append one run.log line at `ts` (any stage) — the activity signal daemon_progress reads."""
     import json
     from datetime import datetime, timezone
     cfg.reports.mkdir(parents=True, exist_ok=True)
     ts = ts or datetime.now(timezone.utc).isoformat()
-    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": "ok"}
+    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": outcome}
     with cfg.log_path.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
 
@@ -134,6 +134,36 @@ def test_daemon_progress_wedged_when_stage_held_and_log_silent(tmp_path):
         assert line is not None and "transcribe" in line and "SILENT" in line
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
+
+
+def test_daemon_progress_halted_line_does_not_refresh_alive_window(tmp_path):
+    # A fresh outcome=halted line must not extend the alive window out to the ceiling.
+    from datetime import datetime, timezone, timedelta
+    from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
+    cfg = Config(root=tmp_path)
+    old = datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 30)
+    _write_log_line(cfg, stage="llm", ts=old.isoformat())
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is False and line is None and snap is None
+
+
+def test_daemon_progress_halted_line_alone_is_not_alive(tmp_path):
+    from fanops.health_model import daemon_progress
+    cfg = Config(root=tmp_path)
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is False and line is None and snap is None
+
+
+def test_daemon_progress_halt_does_not_hide_fresh_real_activity(tmp_path):
+    from fanops.health_model import daemon_progress
+    cfg = Config(root=tmp_path)
+    _write_log_line(cfg, stage="llm")
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is True and snap is None
+    assert line is not None and line.startswith("active:")
 
 
 def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
