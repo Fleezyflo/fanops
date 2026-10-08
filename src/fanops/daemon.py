@@ -386,9 +386,17 @@ def ensure(cfg: Config) -> dict:
     if cfg.auto_adopt:
         from fanops.errors import fail_open
         with fail_open("ensure.kickstart_stale_code"):
+            root = _code_checkout_root()
+            # Detached production checkout (com.fanops.run → .worktrees/live-origin-main):
+            # a merge to origin/main does not move HEAD until this fast-forward.
+            advance = _advance_detached_checkout(root) if root is not None else "not_detached"
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            if running is not None and deployed is not None and running != deployed:
+            if running is None or deployed is None:
+                # Missing is its own outcome. "none" means the two SHAs matched.
+                if action == "none":
+                    action = "sha_missing"
+            elif running != deployed:
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -417,6 +425,9 @@ def ensure(cfg: Config) -> dict:
                         _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
                         if action == "none":
                             action = "kickstart_stale_code"
+            elif advance == "blocked" and action == "none":
+                # Checkout did not move onto origin/main. Not a SHA match.
+                action = "checkout_blocked"
     ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
     return {"label": LABEL, "loaded": loaded, "action": action}
 
@@ -595,8 +606,8 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
     """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
     Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
     `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
-    _heartbeat_age_s). None is load-bearing: the keeper's drift branch treats it as 'don't kickstart'
-    (disarm), so a pre-upgrade pump missing the `code` key is never stormed."""
+    _heartbeat_age_s). None is not a match: `ensure` records `sha_missing` instead of calling the
+    pump already current. It still does not kickstart — there is no proven drift to aim at."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -701,19 +712,18 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
     `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
     per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
     per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
-    BOTH are absent so the caller DISARMS self-adopt and logs a DEGRADED line rather than appear
-    armed but never fire. NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
+    BOTH are absent so the caller records sha_missing rather than a silent match. NB: the signal
+    follows the CODE tree, NOT cfg.root — cfg.root is the DATA
     workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
     a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open
-    import fanops, pathlib
     head = None
     with fail_open("version_signal.git"):
-        code_root = pathlib.Path(fanops.__file__).resolve().parent
-        r = subprocess.run(["git", "-C", str(code_root), "rev-parse", "HEAD"],
-                           capture_output=True, text=True, timeout=15)
-        if r.returncode == 0 and r.stdout.strip():
-            head = r.stdout.strip()
+        code_root = _code_checkout_root()
+        if code_root is not None:
+            r = _git_at(code_root, "rev-parse", "HEAD", timeout=15)
+            if r is not None and r.returncode == 0 and r.stdout.strip():
+                head = r.stdout.strip()
     if head:
         return head, "git-head"
     try:
@@ -725,37 +735,134 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
 
 # ── the four planes (each returns a small verdict dict; tests drive them in isolation) ──────────
 
-def _plane_git(cfg: Config) -> dict:
-    """ADVISORY git freshness: `git fetch`, then report how far the CODE checkout's `main` trails
-    `origin/main`. Runs against the tree holding the running `fanops` package (NOT cfg.root — the DATA
-    workspace, which by the FANOPS_ROOT split may have no .git), same as the self-adopt signal. NEVER
-    mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior sync clobbered a live
-    accounts.json, another produced a false verdict). Always ok=True: a stale tree or a failed fetch is
-    surfaced, never fatal. The operator decides whether to sync."""
-    import fanops, pathlib
-    code_root = pathlib.Path(fanops.__file__).resolve().parent
-    behind = ahead = None
+def _git_at(root: Path, *args: str, timeout: float = 30) -> subprocess.CompletedProcess | None:
+    """One git invocation in `root`. None on a missing binary or a timeout — callers fail closed."""
     try:
-        fetched = subprocess.run(["git", "-C", str(code_root), "fetch", "origin"],
-                                 capture_output=True, text=True, timeout=60)
-        if fetched.returncode != 0:
-            return {"plane": "git", "ok": True, "behind": None, "ahead": None,
-                    "detail": f"advisory: git fetch failed ({_tail(fetched.stderr, 2) or 'non-zero'}) — skipped freshness check"}
-        rev = subprocess.run(["git", "-C", str(code_root), "rev-list", "--left-right", "--count", "main...origin/main"],
-                             capture_output=True, text=True, timeout=30)
-        if rev.returncode == 0 and rev.stdout.strip():
-            parts = rev.stdout.split()
-            if len(parts) == 2:
-                ahead, behind = int(parts[0]), int(parts[1])
-    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        return subprocess.run(["git", "-C", str(root), *args],
+                              capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _head_detached(root: Path) -> bool | None:
+    """True when HEAD is detached, False on a branch, None when git cannot say."""
+    rev = _git_at(root, "rev-parse", "--abbrev-ref", "HEAD", timeout=15)
+    if rev is None or rev.returncode != 0:
+        return None
+    name = (rev.stdout or "").strip()
+    if not name:
+        return None
+    return name == "HEAD"
+
+
+def _ahead_behind_origin(root: Path) -> tuple[int | None, int | None]:
+    """(ahead, behind) of this checkout's HEAD versus origin/main.
+
+    Compares HEAD, not a branch named main. com.fanops.run imports
+    .worktrees/live-origin-main at a detached HEAD; that branch can sit on
+    origin/main while the imported checkout does not.
+    """
+    rev = _git_at(root, "rev-list", "--left-right", "--count", "HEAD...origin/main")
+    if rev is None or rev.returncode != 0 or not (rev.stdout or "").strip():
+        return None, None
+    parts = rev.stdout.split()
+    if len(parts) != 2:
+        return None, None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None, None
+
+
+def _detached_matches_origin(root: Path) -> bool | None:
+    """True when a detached HEAD is exactly origin/main.
+
+    None when the checkout is not detached or git cannot say. False when it is
+    detached and not origin/main (including an unreadable comparison).
+    """
+    if _head_detached(root) is not True:
+        return None
+    ahead, behind = _ahead_behind_origin(root)
+    if ahead is None or behind is None:
+        return False
+    return ahead == 0 and behind == 0
+
+
+def _is_live_origin_checkout(root: Path) -> bool:
+    """True for the detached production checkout com.fanops.run imports.
+
+    Only this directory is fast-forwarded. A detached CI checkout or a dev
+    worktree is not it. Tests inject a temp `.../.worktrees/live-origin-main`.
+    """
+    return root.name == "live-origin-main" and root.parent.name == ".worktrees"
+
+
+def _advance_detached_checkout(root: Path) -> str:
+    """Fast-forward the live code checkout onto origin/main.
+
+    com.fanops.run imports .worktrees/live-origin-main (detached HEAD). A merge
+    to origin/main does not move that HEAD until fetch + `merge --ff-only`.
+    Any other checkout is left alone. Never resets. Returns 'advanced',
+    'current', 'not_detached', or 'blocked'.
+    """
+    if not _is_live_origin_checkout(root) or _head_detached(root) is not True:
+        return "not_detached"
+    fetched = _git_at(root, "fetch", "origin", timeout=60)
+    if fetched is None or fetched.returncode != 0:
+        return "blocked"
+    ahead, behind = _ahead_behind_origin(root)
+    if ahead == 0 and behind == 0:
+        return "current"
+    if ahead is None or behind is None:
+        return "blocked"
+    merged = _git_at(root, "merge", "--ff-only", "origin/main", timeout=60)
+    if merged is None or merged.returncode != 0:
+        return "blocked"
+    ahead_after, behind_after = _ahead_behind_origin(root)
+    if ahead_after == 0 and behind_after == 0:
+        return "advanced"
+    return "blocked"
+
+
+def _plane_git(cfg: Config) -> dict:
+    """ADVISORY git freshness of the CODE checkout this process imported.
+
+    com.fanops.run imports `.worktrees/live-origin-main` (detached HEAD). Compare
+    that checkout's HEAD to origin/main — a branch named `main` can be current
+    while the detached checkout is not. NEVER mutates the tree (no merge/reset/
+    checkout). A detached checkout that is not origin/main does not look current
+    (ok=False). A branch checkout stays advisory (ok=True) even when behind.
+    Tests inject the checkout by monkeypatching `_code_checkout_root`.
+    """
+    root = _code_checkout_root()
+    if root is None:
         return {"plane": "git", "ok": True, "behind": None, "ahead": None,
-                "detail": f"advisory: freshness check skipped ({type(e).__name__})"}
+                "detail": "advisory: code checkout not found — skipped freshness check"}
+    fetch_note = None
+    fetched = _git_at(root, "fetch", "origin", timeout=60)
+    if fetched is None:
+        fetch_note = "advisory: freshness check skipped (git unavailable)"
+    elif fetched.returncode != 0:
+        fetch_note = (f"advisory: git fetch failed ({_tail(fetched.stderr, 2) or 'non-zero'})"
+                      " — skipped freshness check")
+    detached = _head_detached(root)
+    ahead, behind = _ahead_behind_origin(root)
+    matches = ahead == 0 and behind == 0
+    if detached is True and not matches:
+        if behind:
+            detail = f"detached checkout is {behind} commit(s) behind origin/main"
+        else:
+            detail = "detached checkout is not origin/main"
+        return {"plane": "git", "ok": False, "behind": behind, "ahead": ahead, "detail": detail}
+    if fetch_note and behind is None:
+        return {"plane": "git", "ok": True, "behind": None, "ahead": None, "detail": fetch_note}
     if behind is None:
-        detail = "advisory: could not compare main to origin/main (skipped)"
+        detail = "advisory: could not compare checkout HEAD to origin/main (skipped)"
     elif behind == 0:
-        detail = "main is current with origin/main"
+        detail = "checkout is current with origin/main"
     else:
-        detail = f"main is {behind} commit(s) behind origin/main — sync is the operator's call (bring-up does not mutate the tree)"
+        detail = (f"checkout is {behind} commit(s) behind origin/main — sync is the operator's call "
+                  "(bring-up does not mutate the tree)")
     return {"plane": "git", "ok": True, "behind": behind, "ahead": ahead, "detail": detail}
 
 
@@ -785,7 +892,12 @@ _CI_UNIT_LOCK = "requirements/ci-unit.txt"
 
 
 def _code_checkout_root() -> Path | None:
-    """Repo root that holds the running `fanops` package (editable checkout), or None."""
+    """Repo root of the `fanops` package this process imported, or None.
+
+    Production `com.fanops.run` imports `.worktrees/live-origin-main` (detached
+    HEAD), so this is that worktree when the keeper or the pump is that venv.
+    Tests monkeypatch this and must not point it at the real worktree.
+    """
     import fanops
     here = Path(fanops.__file__).resolve().parent
     for cand in (here, *here.parents):

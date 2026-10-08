@@ -107,7 +107,20 @@ def test_no_kickstart_when_running_sha_absent(tmp_path, monkeypatch):
     res = daemon.ensure(cfg)
 
     assert _kickstart_argv(uid) not in calls
-    assert res["action"] == "none"
+    assert res["action"] == "sha_missing"
+
+
+def test_missing_disk_sha_is_not_already_current(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: (None, "unavailable"))
+    _loop_hb(cfg, "abc123")
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in calls
+    assert res["action"] == "sha_missing"
+    assert res["action"] != "none"
 
 
 def test_storm_guard_holds(tmp_path, monkeypatch):
@@ -188,3 +201,107 @@ def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path):
     sig, src = daemon._version_signal(Config(tmp_path))
     assert (sig, src) == (want, "git-head")
     assert not (tmp_path / ".git").exists()
+
+
+_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "fanops-test",
+    "GIT_AUTHOR_EMAIL": "fanops-test@example.com",
+    "GIT_COMMITTER_NAME": "fanops-test",
+    "GIT_COMMITTER_EMAIL": "fanops-test@example.com",
+}
+_REAL_LIVE_CHECKOUT = "/Users/molhamhomsi/Moh Flow Fanops/.worktrees/live-origin-main"
+
+
+def _git(repo, *args):
+    env = {**os.environ, **_GIT_IDENTITY}
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
+                          text=True, env=env)
+
+
+def _injected_live_checkout(tmp_path, *, diverge=False):
+    """A temp `.worktrees/live-origin-main` detached off origin/main. Not the real one."""
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / ".worktrees" / "live-origin-main"
+    repo.parent.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, **_GIT_IDENTITY}
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True,
+                   capture_output=True, env=env)
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, env=env)
+    _git(repo, "remote", "add", "origin", str(origin))
+    marker = repo / "f.txt"
+    marker.write_text("v1\n")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "v1")
+    _git(repo, "push", "origin", "main")
+    marker.write_text("v2\n")
+    _git(repo, "commit", "-am", "v2")
+    _git(repo, "push", "origin", "main")
+    tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "--detach", "HEAD~1")
+    if diverge:
+        marker.write_text("local\n")
+        _git(repo, "commit", "-am", "local")
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    return repo, head, tip
+
+
+def test_ensure_fast_forwards_injected_live_checkout(tmp_path, monkeypatch):
+    repo, old, tip = _injected_live_checkout(tmp_path)
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: repo)
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+    _loop_hb(cfg, old)
+
+    res = daemon.ensure(cfg)
+
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    assert head == tip and head != old
+    assert res["action"] == "kickstart_stale_code"
+    assert _kickstart_argv(uid) in calls
+    assert all(_REAL_LIVE_CHECKOUT not in " ".join(c) for c in calls)
+
+
+def test_ensure_does_not_reset_a_diverged_live_checkout(tmp_path, monkeypatch):
+    repo, old, _tip = _injected_live_checkout(tmp_path, diverge=True)
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: repo)
+    _loop_hb(cfg, old)
+
+    res = daemon.ensure(cfg)
+
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == old
+    assert res["action"] == "checkout_blocked"
+    assert _kickstart_argv(uid) not in calls
+    assert not any("reset" in c for c in calls)
+    assert all(_REAL_LIVE_CHECKOUT not in " ".join(c) for c in calls)
+
+
+def test_ensure_leaves_a_non_live_detached_checkout_alone(tmp_path, monkeypatch):
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "other-checkout"
+    env = {**os.environ, **_GIT_IDENTITY}
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True,
+                   capture_output=True, env=env)
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, env=env)
+    _git(repo, "remote", "add", "origin", str(origin))
+    (repo / "f.txt").write_text("v1\n")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "v1")
+    _git(repo, "push", "origin", "main")
+    (repo / "f.txt").write_text("v2\n")
+    _git(repo, "commit", "-am", "v2")
+    _git(repo, "push", "origin", "main")
+    _git(repo, "checkout", "--detach", "HEAD~1")
+    old = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: repo)
+    _loop_hb(cfg, old)
+
+    res = daemon.ensure(cfg)
+
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == old
+    assert res["action"] == "none"
+    assert _kickstart_argv(uid) not in calls

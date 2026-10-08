@@ -362,6 +362,62 @@ def test_deploy_code_check_omitted_when_daemon_not_loaded(tmp_path):
     assert doctor._deploy_code_check(Config(root=tmp_path), daemon_status=_unloaded) is None
 
 
+def test_deploy_code_check_fails_when_heartbeat_sha_missing(tmp_path, monkeypatch):
+    from fanops import daemon
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: None)
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("bbb222cafef00d", "git-head"))
+    row = doctor._deploy_code_check(Config(root=tmp_path), daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "heartbeat SHA" in row["hint"]
+
+
+def test_deploy_code_check_fails_when_disk_sha_missing(tmp_path, monkeypatch):
+    from fanops import daemon
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "aaa111deadbeef")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: (None, "unavailable"))
+    row = doctor._deploy_code_check(Config(root=tmp_path), daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "disk SHA" in row["hint"]
+
+
+def test_deploy_code_check_fails_when_live_checkout_is_not_origin_main(tmp_path, monkeypatch):
+    """Matching heartbeat and disk SHAs still fail when the imported live checkout
+    is detached and not origin/main. The checkout path is injected."""
+    import os
+    import subprocess
+    from fanops import daemon
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / ".worktrees" / "live-origin-main"
+    repo.parent.mkdir(parents=True)
+    env = {**os.environ, "GIT_AUTHOR_NAME": "fanops-test", "GIT_AUTHOR_EMAIL": "t@example.com",
+           "GIT_COMMITTER_NAME": "fanops-test", "GIT_COMMITTER_EMAIL": "t@example.com"}
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True,
+                   capture_output=True, env=env)
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True, env=env)
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
+                              text=True, env=env)
+
+    git("remote", "add", "origin", str(origin))
+    (repo / "f.txt").write_text("v1\n")
+    git("add", "f.txt")
+    git("commit", "-m", "v1")
+    git("push", "origin", "main")
+    (repo / "f.txt").write_text("v2\n")
+    git("commit", "-am", "v2")
+    git("push", "origin", "main")
+    git("checkout", "--detach", "HEAD~1")
+    monkeypatch.setattr(daemon, "_code_checkout_root", lambda: repo)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "same-sha")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("same-sha", "git-head"))
+    row = doctor._deploy_code_check(Config(root=tmp_path), daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "not origin/main" in row["hint"]
+    real = "/Users/molhamhomsi/Moh Flow Fanops/.worktrees/live-origin-main"
+    assert str(repo) != real
+
+
 def test_doctor_fails_on_dead_daemon_or_past_due_backlog(tmp_path, monkeypatch):
     from datetime import datetime, timezone, timedelta
     FUT = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()

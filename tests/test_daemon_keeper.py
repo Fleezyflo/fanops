@@ -32,7 +32,8 @@ def test_ensure_noop_when_pump_loaded(tmp_path, monkeypatch):
 
     res = daemon.ensure(cfg)
 
-    assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
+    # Loaded pump is not bootstrapped. Missing heartbeat SHA is not reported as already current.
+    assert res == {"label": daemon.LABEL, "loaded": True, "action": "sha_missing"}
     assert not any(c[1] == "bootstrap" for c in fake.calls)
 
 

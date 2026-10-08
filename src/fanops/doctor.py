@@ -247,10 +247,24 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
         return None                                              # N/A — pump not loaded
     running = daemon._last_heartbeat_code(cfg)
     deployed = daemon._version_signal(cfg)[0]
-    if running is not None and deployed is not None and running != deployed:
+    if running is None or deployed is None:
+        missing = []
+        if running is None:
+            missing.append("heartbeat SHA")
+        if deployed is None:
+            missing.append("disk SHA")
+        return _check(lbl, False,
+                      f"missing {' and '.join(missing)} — cannot prove the pump is on current code")
+    if running != deployed:
         return _check(lbl, False,
                       f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
                       f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
+    root = daemon._code_checkout_root()
+    if (root is not None and daemon._is_live_origin_checkout(root)
+            and daemon._detached_matches_origin(root) is False):
+        return _check(lbl, False,
+                      "detached code checkout is not origin/main — fast-forward "
+                      ".worktrees/live-origin-main or this check stays red")
     return _check(lbl, True, "")
 
 
