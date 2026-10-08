@@ -236,20 +236,24 @@ def _rate_fail(cfg, pid, *, account_id="ig1", sub=None, retry=0):
                           scheduled_time="2026-08-31T07:00:00Z"))
 
 
-def test_requeue_rate_limit_one_per_account_id(tmp_path, monkeypatch):
+def test_requeue_rate_limit_without_real_id_stays_failed(tmp_path, monkeypatch):
+    # No real submission id is not proof the create never landed. Do not queue a second create.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_API_KEY", "k")
     monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
     cfg = Config(root=tmp_path)
     _rate_fail(cfg, "r1", account_id="ig1")
     _rate_fail(cfg, "r2", account_id="ig1")
-    assert _requeue_rate_limited_for_daemon(cfg) == 1
+    before = {pid: Ledger.load(cfg).posts[pid].scheduled_time for pid in ("r1", "r2")}
+    assert _requeue_rate_limited_for_daemon(cfg) == 0
     led = Ledger.load(cfg)
-    queued = [p.id for p in led.posts.values() if p.state is PostState.queued]
-    failed = [p.id for p in led.posts.values() if p.state is PostState.failed]
-    assert len(queued) == 1 and len(failed) == 1
-    assert led.posts[queued[0]].error_kind is None
-    assert led.posts[failed[0]].error_kind is ErrorKind.rate_limit
+    assert [p.id for p in led.posts.values() if p.state is PostState.queued] == []
+    for pid in ("r1", "r2"):
+        p = led.posts[pid]
+        assert p.state is PostState.failed
+        assert p.error_kind is ErrorKind.rate_limit
+        assert not p.submission_id
+        assert p.scheduled_time == before[pid]
 
 
 def test_requeue_rate_limit_skips_real_submission_id(tmp_path, monkeypatch):

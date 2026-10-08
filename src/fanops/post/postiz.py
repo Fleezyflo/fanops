@@ -4,7 +4,7 @@ FanOps stays the clip+caption engine; a self-hosted Postiz instance (AGPL, githu
 postiz-app) is the distribution layer. A swappable-poster slot: build the post body,
 POST it, map the response to the ledger's submit/reconcile/fail states with the SAME asymmetric-retry
 safety (a bad key halts by type; a 5xx/timeout after the body was sent parks needs_reconcile, never
-re-POSTs — Postiz has no idempotency key).
+re-POSTs; a 429 stops — Postiz has no idempotency key, so the create is not sent again).
 
 REST contract (docs.postiz.com/public-api): Authorization: {apiKey} header; POST /public/v1/upload
 (multipart) -> {id, path@uploads.postiz.com}; POST /public/v1/posts with
@@ -16,8 +16,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import random
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -31,7 +29,6 @@ from fanops.post.publish_errors import _is_never_sent_transport
 from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
-_MAX_RETRIES = 4
 _PUBLIC = "/public/v1"
 _YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
 _POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouTube settings DTO accepts (@IsDefined post_type)
@@ -565,57 +562,57 @@ class PostizPoster:
         existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
         if existing_sid:
             return self._adopt_submission(led, post_id, existing_sid, existing_raw)
-        delay, last = 1.0, None
-        for attempt in range(_MAX_RETRIES):
+        try:
+            resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
+            if existing_sid:
+                return self._adopt_submission(led, post_id, existing_sid, existing_raw)
+            if _is_never_sent_transport(exc):
+                raise
+            # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
+            # park for reconcile, never re-POST into a possible second live post.
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason=f"postiz network error, may be live: {str(exc)[:160]}")
+            return led
+        if resp.status_code in (200, 201):
+            body = None
+            sid = None
             try:
-                resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
-            except requests.exceptions.RequestException as exc:
-                existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
-                if existing_sid:
-                    return self._adopt_submission(led, post_id, existing_sid, existing_raw)
-                if _is_never_sent_transport(exc):
-                    raise
-                # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
-                # park for reconcile, never re-POST into a possible second live post.
-                led.set_post_state(post_id, PostState.needs_reconcile,
-                                   error_reason=f"postiz network error, may be live: {str(exc)[:160]}")
-                return led
-            last = resp
-            if resp.status_code in (200, 201):
+                body = resp.json()
+                sid = _extract_postiz_id(body)
+            except Exception as exc:
+                _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
                 body = None
                 sid = None
-                try:
-                    body = resp.json()
-                    sid = _extract_postiz_id(body)
-                except Exception as exc:
-                    _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
-                    body = None
-                    sid = None
-                if not sid:
-                    led.set_post_state(post_id, PostState.needs_reconcile,
-                                       error_reason="postiz 2xx but no recognizable post id (body withheld)")
-                    return led
-                led.set_post_state(post_id, PostState.submitted)
-                post = led.posts[post_id]
-                post.submission_id = sid
-                post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
-                                   or safe_public_url(post.public_url))
-                return led
-            if resp.status_code == 401:
-                raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
-            if 500 <= resp.status_code < 600:
-                # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
+            if not sid:
                 led.set_post_state(post_id, PostState.needs_reconcile,
-                                   error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
+                                   error_reason="postiz 2xx but no recognizable post id (body withheld)")
                 return led
-            if resp.status_code == 429:
-                time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
-            break                                            # other 4xx -> fail
+            led.set_post_state(post_id, PostState.submitted)
+            post = led.posts[post_id]
+            post.submission_id = sid
+            post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
+                               or safe_public_url(post.public_url))
+            return led
+        if resp.status_code == 401:
+            raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
+        if 500 <= resp.status_code < 600:
+            # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
+            return led
+        if resp.status_code == 429:
+            # Whether Postiz applied the body before 429 is unproven. There is no idempotency key,
+            # so another create — including sleep-and-continue — is a second post. Stop.
+            led.set_post_state(post_id, PostState.failed,
+                               error_kind=error_kind_for_http_status(429),
+                               error_reason="postiz 429 (body withheld)")
+            return led
         # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
-        # re-queueable -> double-post risk). Today the 5xx branch returns before here, but guard it
-        # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
+        # re-queueable -> double-post risk). 5xx and transport ambiguity return above.
         if led.posts[post_id].state is not PostState.needs_reconcile:
-            code = getattr(last, "status_code", None)
+            code = resp.status_code
             kind = error_kind_for_http_status(code) if isinstance(code, int) else ErrorKind.unknown
             led.set_post_state(post_id, PostState.failed, error_kind=kind,
                                error_reason=f"postiz {code if code is not None else '?'} (body withheld)")  # body may echo the auth header -> never persist it

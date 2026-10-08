@@ -208,8 +208,9 @@ def test_publish_401_is_typed_auth_redacted(tmp_path, monkeypatch, mocker):
 def test_publish_5xx_parks_needs_reconcile_no_repost(tmp_path, monkeypatch, mocker):
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(500, {}, text="boom"))
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(500, {}, text="boom"))
     led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
     assert led.posts["p1"].state is PostState.needs_reconcile
 
 def test_publish_5xx_error_reason_withholds_response_body(tmp_path, monkeypatch, mocker):
@@ -325,23 +326,28 @@ def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch,
     assert calls["n"] == 2
 
 def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
-    # A 429 is rejected pre-processing (not posted), so retrying is safe; exhausting retries -> failed
-    # (re-queueable), never needs_reconcile. Mock sleep so the jittered backoff doesn't stall the test.
+    # One 429 stops the create. Postiz has no idempotency key, so the loop must not POST again.
+    # The row is failed (rate_limit), not needs_reconcile — 5xx stays the ambiguous park.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
-    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
     led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
     assert led.posts["p1"].state is PostState.failed
+    assert led.posts["p1"].error_kind is ErrorKind.rate_limit
+    assert not led.posts["p1"].submission_id
 
-def test_publish_429_retries_then_succeeds(tmp_path, monkeypatch, mocker):
-    # audit gap: only 429-EXHAUSTION was covered. A 429 is rejected pre-processing (not posted), so the
-    # retry is safe — a transient 429 followed by a 2xx must land SUBMITTED, not failed. Mock sleep.
+def test_publish_429_does_not_create_again(tmp_path, monkeypatch, mocker):
+    # A following 2xx must not be reached. Sleep-and-continue would build a second Postiz post.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
-    mocker.patch("fanops.post.postiz.requests.post",
-                 side_effect=[_R(429, {}, text="rate"), _R(201, {"id": "postiz_9"})])
+    posted = mocker.patch("fanops.post.postiz.requests.post",
+                          side_effect=[_R(429, {}, text="rate"), _R(201, {"id": "postiz_9"})])
     led = PostizPoster(cfg).publish(led, "p1")
-    assert led.posts["p1"].state is PostState.submitted and led.posts["p1"].submission_id == "postiz_9"
+    assert posted.call_count == 1
+    p = led.posts["p1"]
+    assert p.state is PostState.failed and p.error_kind is ErrorKind.rate_limit
+    assert p.submission_id != "postiz_9"
 
 
 # ---- MOL-786: the publish boundary declares the token and enforces the media invariants ----
