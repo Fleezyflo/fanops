@@ -10,15 +10,24 @@ be added that does — a reconciler that can change what it measures is not a re
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 from .common import DEFAULT_BRANCH, DEFAULT_REPO
 
 
-def _gh_json(path: str, timeout: int):
-    """GET one gh API path. Returns (parsed, error); error is None on success, a message otherwise."""
+def _gh_json(path: str, timeout: int, *, token: str | None = None):
+    """GET one gh API path. Returns (parsed, error); error is None on success, a message otherwise.
+
+    `token`, when set, is the subprocess GH_TOKEN and does not replace the parent environment.
+    The protection GET needs a credential GITHUB_TOKEN cannot hold."""
+    env = None
+    if token:
+        env = dict(os.environ)
+        env["GH_TOKEN"] = token
     try:
-        r = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=timeout,
+                           env=env)
     except FileNotFoundError:
         return None, "gh CLI not found"
     except subprocess.TimeoutExpired:
@@ -32,8 +41,14 @@ def _gh_json(path: str, timeout: int):
 
 
 def probe_protection(repo: str = DEFAULT_REPO, branch: str = DEFAULT_BRANCH, timeout: int = 30):
-    """Returns (data, error). error is None on success; a message on any failure."""
-    return _gh_json(f"repos/{repo}/branches/{branch}/protection", timeout)
+    """Returns (data, error). error is None on success; a message on any failure.
+
+    GET /repos/{repo}/branches/{branch}/protection. GITHUB_TOKEN is not granted this read
+    (HTTP 403). The credential is PROTECTION_READ_TOKEN. Unset is an error, not a skip."""
+    token = (os.environ.get("PROTECTION_READ_TOKEN") or "").strip()
+    if not token:
+        return None, "PROTECTION_READ_TOKEN is unset — GITHUB_TOKEN cannot GET branch protection"
+    return _gh_json(f"repos/{repo}/branches/{branch}/protection", timeout, token=token)
 
 
 def required_contexts(data: dict) -> list[str]:

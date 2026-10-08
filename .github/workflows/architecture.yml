@@ -156,10 +156,10 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     # `actions: read` is what DC-8 needs to list live workflow enablement, and it IS a grantable
     # GITHUB_TOKEN scope (DC-6 validates that against the union of three authoritative sources).
-    # It is NOT the scope DC-3 wants: `administration` is grantable nowhere, which is why the
-    # protection probe still 403s here and waits on an operator-supplied fine-grained PAT. Adding a
-    # job-level block REPLACES the workflow default, so `contents: read` is restated — checkout
-    # needs it.
+    # `administration` is not a GITHUB_TOKEN permission (the workflow is rejected at parse time),
+    # so GET /branches/main/protection uses the repo secret PROTECTION_READ_TOKEN. An empty or
+    # rejected token still fails this job under --require-live. Adding a job-level block REPLACES
+    # the workflow default, so `contents: read` is restated — checkout needs it.
     permissions:
       contents: read
       actions: read
@@ -227,7 +227,11 @@ jobs:
       # import, before it can probe anything. This workflow is otherwise stdlib-only (header).
       - name: Deployed-state reconciliation (registry vs live GitHub settings)
         env:
+          # GITHUB_TOKEN lists workflows (DC-8) and cannot GET branch protection.
+          # PROTECTION_READ_TOKEN is the credential for that GET only. Missing or rejected:
+          # the probe errors and --require-live fails the job. This step only GETs.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROTECTION_READ_TOKEN: ${{ secrets.PROTECTION_READ_TOKEN }}
         run: |
           python -m pip install --quiet pyyaml jsonschema
           python -m tools.ci deployed --require-live

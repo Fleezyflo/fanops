@@ -138,6 +138,9 @@ def test_reconcile_job_checks_protection_on_pull_request(monkeypatch):
     assert deployed is not None, "reconcile lost the deployed-state step"
     run = deployed.get("run") or ""
     assert "python -m tools.ci deployed --require-live" in run
+    env = deployed.get("env") or {}
+    assert "PROTECTION_READ_TOKEN" in str(env.get("PROTECTION_READ_TOKEN") or ""), (
+        "reconcile must pass a token that can GET branch protection; GITHUB_TOKEN 403s")
 
     reg = load_registry()
     assert reg["required_contexts"] == [_REQUIRED_CONTEXT]
@@ -147,6 +150,41 @@ def test_reconcile_job_checks_protection_on_pull_request(monkeypatch):
     monkeypatch.setattr("tools.ci.cli.probe_workflows", lambda *a, **k: (states, None))
     monkeypatch.setattr("tools.ci.cli.probe_security", lambda *a, **k: (None, "needs admin"))
     assert cmd_deployed(True) == 1
+
+
+def _exact_protection():
+    return {
+        "required_status_checks": {"contexts": [_REQUIRED_CONTEXT]},
+        "allow_force_pushes": {"enabled": False},
+        "enforce_admins": {"enabled": False},
+    }
+
+
+def test_protection_document_exact_context_force_off_admins_false():
+    """A readable GET must match the document, not merely be non-empty."""
+    reg = load_registry()
+    good = _exact_protection()
+    assert checks.dc3_protection_document(good) == []
+    assert checks.dc3_deployed_state(reg, [_REQUIRED_CONTEXT], live_protection=good) == []
+
+    extra = _exact_protection()
+    extra["required_status_checks"] = {"contexts": [_REQUIRED_CONTEXT, "other"]}
+    ctx = checks.dc3_protection_document(extra)
+    assert any(f.blocking and "unit (fast, no toolchain)" in f.divergence for f in ctx)
+
+    force = _exact_protection()
+    force["allow_force_pushes"] = {"enabled": True}
+    assert any("force-push" in f.divergence and f.blocking
+               for f in checks.dc3_protection_document(force))
+
+    admins = _exact_protection()
+    admins["enforce_admins"] = {"enabled": True}
+    assert any("enforce_admins" in f.divergence and f.blocking
+               for f in checks.dc3_protection_document(admins))
+
+    missing = _exact_protection()
+    del missing["allow_force_pushes"]
+    assert any(f.blocking for f in checks.dc3_protection_document(missing))
 
 
 def test_deployed_probe_failures_do_not_mask_each_other():
