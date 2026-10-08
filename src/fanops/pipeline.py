@@ -268,10 +268,27 @@ def _stage_structural_hooks(led: Ledger, cfg: Config, log) -> Ledger:
     return led
 
 
+def _caption_refresh_blocked(led: Ledger, clip) -> bool:
+    """True when this moment already has a rejected or failed post.
+
+    Re-opening the caption gate moves the clip to captions_requested; ingest then makes it
+    captioned and the seed mints again under the same clip id. This stage does not pop and
+    does not change post state, so operator remint stays repost_post and ErrorKind.unknown
+    is not daemon-retried."""
+    moment_id = clip.parent_id
+    ids = {x.id for x in led.clips.values() if x.parent_id == moment_id}
+    ids.add(clip.id)
+    return any(
+        p.parent_id in ids and p.state in (PostState.rejected, PostState.failed)
+        for p in led.posts.values()
+    )
+
+
 def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
     """Re-open caption gates whose on-disk request is missing/stale OR whose clip is missing captions
     for casting-admitted surfaces (a TikTok-only ingest that already advanced to queued/captioned).
-    Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost."""
+    Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost.
+    A moment with a rejected or failed post is not re-opened: that path mints a new create."""
     for c in list(led.clips.values()):
         if c.state not in (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued):
             continue
@@ -282,6 +299,10 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
         need = {f"{a}/{p.value}" for a, p in want}
         have = set(c.meta_captions or {})
         if not need:
+            continue
+        if _caption_refresh_blocked(led, c):
+            if c.state in (ClipState.captions_requested, ClipState.captioned):
+                led.set_clip_state(c.id, ClipState.queued)
             continue
         if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
             continue

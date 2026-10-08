@@ -272,7 +272,7 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}
 
 
-def _refresh_fixture(tmp_path, *, clip_state, meta_captions):
+def _refresh_fixture(tmp_path, *, clip_state, meta_captions, posts=()):
     from fanops.pipeline import _stage_refresh_caption_requests
     from fanops.source_tags import source_tag_locks_path
     cfg = Config(root=tmp_path)
@@ -287,6 +287,8 @@ def _refresh_fixture(tmp_path, *, clip_state, meta_captions):
                               state=MomentState.clipped, affinities=["a"]))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(clip_path),
                           aspect=Fmt.r9x16, state=clip_state, meta_captions=meta_captions))
+        for post in posts:
+            led.add_post(post)
     lock_p = source_tag_locks_path(cfg)
     lock_p.parent.mkdir(parents=True, exist_ok=True)
     lock_p.write_text(json.dumps({
@@ -356,3 +358,105 @@ def test_refresh_opens_caption_gate_for_rendered_clip(tmp_path):
                                         lambda *a, **k: logs.append((a, k)))
     assert latest_request_id(cfg, "captions", "clip_1")
     assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+
+
+_OFF_LOCK_META = {"a/instagram": {"caption": "cap #beatmaking", "hashtags": ["#offlock"]},
+                  "a/youtube": {"caption": "cap #beatmaking", "hashtags": ["#alpha"]}}
+_BORN = "2020-01-01T00:00:00Z"
+
+
+def _surface_post(pid, *, state, error_kind=None):
+    from fanops.models import Platform, Post
+    return Post(id=pid, parent_id="clip_1", account="a", account_id="1",
+                platform=Platform.instagram, caption="cap #beatmaking", hashtags=["#offlock"],
+                state=state, created_at=_BORN, error_kind=error_kind,
+                submission_id="fanops_deadbeef")
+
+
+def test_refresh_does_not_redrive_failed_unknown_into_a_new_create(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import ErrorKind, PostState
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post(pid, state=PostState.failed, error_kind=ErrorKind.unknown)])
+    led = Ledger.load(cfg)
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert led.clips["clip_1"].state is ClipState.queued
+    assert not logs
+    post = led.posts[pid]
+    assert post.state is PostState.failed
+    assert post.error_kind is ErrorKind.unknown
+    assert post.created_at == _BORN
+    with Ledger.transaction(cfg) as led2:
+        crosspost_clips(led2, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    again = Ledger.load(cfg)
+    assert len(again.posts) == 1
+    assert again.posts[pid].state is PostState.failed
+    assert again.posts[pid].created_at == _BORN
+    assert again.posts[pid].error_kind is ErrorKind.unknown
+
+
+def test_refresh_does_not_redrive_rejected_into_a_new_create(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import PostState
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post(pid, state=PostState.rejected)])
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.queued
+    assert not logs
+    with Ledger.transaction(cfg) as led2:
+        crosspost_clips(led2, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    again = Ledger.load(cfg)
+    assert len(again.posts) == 1
+    assert again.posts[pid].state is PostState.rejected
+    assert again.posts[pid].created_at == _BORN
+
+
+def test_refresh_parks_inflight_request_so_failed_post_is_not_reminted(tmp_path, mocker):
+    from fanops.agentstep import latest_request_id, request_path, response_path
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import CaptionItem, CaptionSet, ErrorKind, PostState
+    from fanops.pipeline import _stage_ingest_captions, _stage_refresh_caption_requests
+    _fake_ffmpeg(mocker)
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META)
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    items = [CaptionItem(surface=s["surface"], caption="impact.", hashtags=["#alpha"], language="en")
+             for s in req["surfaces"]]
+    response_path(cfg, "captions", "clip_1").write_text(
+        CaptionSet(request_id=rid, items=items).model_dump_json())
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    with Ledger.transaction(cfg) as led:
+        led.add_post(_surface_post(pid, state=PostState.failed, error_kind=ErrorKind.unknown))
+        _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg), lambda *_a, **_k: None)
+        _stage_ingest_captions(led, cfg, lambda *_a, **_k: None)
+        crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    out = Ledger.load(cfg)
+    assert out.clips["clip_1"].state is ClipState.queued
+    assert len(out.posts) == 1
+    assert out.posts[pid].state is PostState.failed
+    assert out.posts[pid].created_at == _BORN
+    assert out.posts[pid].error_kind is ErrorKind.unknown
+
+
+def test_refresh_still_reopens_off_lock_awaiting_post(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.models import PostState
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post("p_wait", state=PostState.awaiting_approval)])
+    assert latest_request_id(cfg, "captions", "clip_1")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    assert logs
+    assert Ledger.load(cfg).posts["p_wait"].state is PostState.awaiting_approval
+    assert Ledger.load(cfg).posts["p_wait"].created_at == _BORN
