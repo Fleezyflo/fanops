@@ -2,11 +2,13 @@ name: architecture
 
 # Cycle 7 — continuous architecture & implementation governance.
 #
-# Two advisory jobs on a PR, plus a scheduled reconciler. The split is EVIDENCE-BASED, not guessed:
+# Two advisory jobs on a PR. The reconciler also runs on every pull request, so the merge
+# path checks live branch protection instead of waiting for the Monday schedule. The split
+# is EVIDENCE-BASED, not guessed:
 #
 #   impact     the PR's architectural blast radius  seconds    EVERY pull request
 #   controls   the negative-control suite           minutes    PATH-SELECTED (+ on push to main)
-#   reconcile  derived/ regen + DC-3 vs live        minutes    schedule / workflow_dispatch
+#   reconcile  derived/ regen + DC-3 vs live        minutes    pull_request + schedule / workflow_dispatch
 #
 # No exact count or duration is written here ON PURPOSE. A number in a comment is a number that
 # rots, and a rotted number in a governance file is this repo's signature defect (AR-03: the doc
@@ -151,7 +153,7 @@ jobs:
 
   reconcile:
     name: scheduled reconciliation
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     # `actions: read` is what DC-8 needs to list live workflow enablement, and it IS a grantable
     # GITHUB_TOKEN scope (DC-6 validates that against the union of three authoritative sources).
     # It is NOT the scope DC-3 wants: `administration` is grantable nowhere, which is why the

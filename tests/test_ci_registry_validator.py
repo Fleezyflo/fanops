@@ -8,24 +8,30 @@
 # find no blocking registry<->workflow divergence.
 #
 # The deployed-state plane (DC-3 protection, DC-8 workflow enablement, DC-9 repo security settings)
-# needs the network, so its VERDICT is scheduled and out of this offline gate. What IS pinned here:
-# each of those checks is a pure function, so this file injects live readings directly and proves
-# they discriminate and are wired into `run_deployed`. No probe runs.
+# needs the network. This offline gate does not execute the probes; the `reconcile` job does, on
+# pull_request as well as on its schedule. What IS pinned here: each of those checks is a pure
+# function, so this file injects live readings directly and proves they discriminate and are wired
+# into `run_deployed`. No probe runs.
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.ci import checks, schema, selftest  # noqa: E402
-from tools.ci.common import PROSE_DOCS, SCHEMA  # noqa: E402
+from tools.ci.cli import cmd_deployed  # noqa: E402
+from tools.ci.common import PROSE_DOCS, SCHEMA, declared_workflows  # noqa: E402
 from tools.ci.registry import load_registry, shape_findings  # noqa: E402
 from tools.ci.workflows import discover_jobs  # noqa: E402
+
+_ARCH_YML = _ROOT / ".github" / "workflows" / "architecture.yml"
+_REQUIRED_CONTEXT = "unit (fast, no toolchain)"
 
 
 def test_schema_is_not_stale():
@@ -57,7 +63,7 @@ def test_static_planes_have_no_blocking_divergence():
     phantom control (DC-2), prose calling a required context advisory (DC-4), a job that drops its
     timeout / SHA-pin or declares an unknown GITHUB_TOKEN permission (DC-6), or an advisory job that
     can hard-fail the workflow (DC-7) — reddens the required `unit` lane here. No network (DC-3 is
-    deployed-state, scheduled, out of this gate)."""
+    deployed-state; this gate does not probe live GitHub)."""
     reg = load_registry()
     findings = shape_findings(reg) + checks.run_static(reg, discover_jobs(), PROSE_DOCS)
     blocking = [f for f in findings if f.blocking and not f.skipped]
@@ -106,6 +112,41 @@ def test_deployed_plane_wires_every_deployed_check():
     assert "DC-9" in blocking, f"run_deployed dropped DC-9; got {sorted(blocking)}"
     assert victim in blocking["DC-8"] and "disabled_manually" in blocking["DC-8"]
     assert "dependabot_security_updates" in blocking["DC-9"]
+
+
+def test_reconcile_job_checks_protection_on_pull_request(monkeypatch):
+    """The merge path is a pull request. Job id `reconcile` must run there.
+
+    A job-level `if` that is false skips the job, and a skipped job is a workflow success —
+    the live protection probe never runs, so an unreadable probe becomes a pass. The deployed
+    step keeps `--require-live`, which turns that probe error into a non-zero exit. The
+    required status context stays the registry's single unit context; this job is not added
+    to that list.
+    """
+    doc = yaml.safe_load(_ARCH_YML.read_text(encoding="utf-8")) or {}
+    job = (doc.get("jobs") or {}).get("reconcile")
+    assert isinstance(job, dict), "architecture.yml lost job id reconcile"
+    cond = " ".join(str(job.get("if") or "").split())
+    for event in ("pull_request", "schedule", "workflow_dispatch"):
+        assert f"github.event_name == '{event}'" in cond, cond
+    assert job.get("continue-on-error") is not True, (
+        "continue-on-error would report the check green when the protection probe fails")
+    deployed = next(
+        (s for s in (job.get("steps") or [])
+         if isinstance(s, dict) and str(s.get("name") or "").startswith("Deployed-state")),
+        None)
+    assert deployed is not None, "reconcile lost the deployed-state step"
+    run = deployed.get("run") or ""
+    assert "python -m tools.ci deployed --require-live" in run
+
+    reg = load_registry()
+    assert reg["required_contexts"] == [_REQUIRED_CONTEXT]
+
+    states = declared_workflows(reg)
+    monkeypatch.setattr("tools.ci.cli.probe_protection", lambda *a, **k: (None, "HTTP 403"))
+    monkeypatch.setattr("tools.ci.cli.probe_workflows", lambda *a, **k: (states, None))
+    monkeypatch.setattr("tools.ci.cli.probe_security", lambda *a, **k: (None, "needs admin"))
+    assert cmd_deployed(True) == 1
 
 
 def test_deployed_probe_failures_do_not_mask_each_other():
