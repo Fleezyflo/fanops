@@ -12,22 +12,47 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import urllib.error
+import urllib.request
 
 from .common import DEFAULT_BRANCH, DEFAULT_REPO
 
+_API = "https://api.github.com/"
 
-def _gh_json(path: str, timeout: int, *, token: str | None = None):
-    """GET one gh API path. Returns (parsed, error); error is None on success, a message otherwise.
 
-    `token`, when set, is the subprocess GH_TOKEN and does not replace the parent environment.
-    The protection GET needs a credential GITHUB_TOKEN cannot hold."""
-    env = None
-    if token:
-        env = dict(os.environ)
-        env["GH_TOKEN"] = token
+def _github_api_get(path: str, token: str, timeout: int):
+    """GET one REST path with exactly `token` — no gh CLI, no inherited GH_TOKEN/GITHUB_TOKEN."""
+    url = _API + path.lstrip("/")
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "fanops-tools-ci-protection-probe",
+        },
+        method="GET",
+    )
     try:
-        r = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=timeout,
-                           env=env)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace").strip()
+        return None, detail or f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        return None, str(e.reason)
+    except TimeoutError:
+        return None, f"GET {path} timed out after {timeout}s"
+    try:
+        return json.loads(body), None
+    except json.JSONDecodeError as ex:
+        return None, f"unparseable JSON from {path}: {ex}"
+
+
+def _gh_json(path: str, timeout: int):
+    """GET one gh API path. Returns (parsed, error); error is None on success, a message otherwise."""
+    try:
+        r = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
         return None, "gh CLI not found"
     except subprocess.TimeoutExpired:
@@ -48,7 +73,7 @@ def probe_protection(repo: str = DEFAULT_REPO, branch: str = DEFAULT_BRANCH, tim
     token = (os.environ.get("PROTECTION_READ_TOKEN") or "").strip()
     if not token:
         return None, "PROTECTION_READ_TOKEN is unset — GITHUB_TOKEN cannot GET branch protection"
-    return _gh_json(f"repos/{repo}/branches/{branch}/protection", timeout, token=token)
+    return _github_api_get(f"repos/{repo}/branches/{branch}/protection", token, timeout)
 
 
 def required_contexts(data: dict) -> list[str]:

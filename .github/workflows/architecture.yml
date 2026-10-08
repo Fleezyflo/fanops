@@ -228,8 +228,8 @@ jobs:
       - name: Deployed-state reconciliation (registry vs live GitHub settings)
         env:
           # GITHUB_TOKEN lists workflows (DC-8) and cannot GET branch protection.
-          # PROTECTION_READ_TOKEN is the credential for that GET only. Missing or rejected:
-          # the probe errors and --require-live fails the job. This step only GETs.
+          # PROTECTION_READ_TOKEN: fine-grained PAT, Administration read on Fleezyflo/fanops only.
+          # Missing or rejected: the probe errors and --require-live fails the job. GET only.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PROTECTION_READ_TOKEN: ${{ secrets.PROTECTION_READ_TOKEN }}
         run: |

@@ -88,7 +88,12 @@ OWN error: one unreadable plane must never report another as clean, which is how
   this repo has shipped once already (`impact --strict`, unclearable on deletions). A divergence it
   CAN see still blocks.
 - **DC-3: live branch protection vs the registry context list** — same job; `--require-live` turns
-  an unreadable branch-protection probe into a failure.
+  an unreadable branch-protection probe into a failure. The GET uses the repo secret
+  `PROTECTION_READ_TOKEN` only (direct REST, not `gh` and not `GITHUB_TOKEN`). Mint a **fine-grained**
+  PAT on `Fleezyflo/fanops` with **Administration: Read** and no other repository permissions, set
+  `gh secret set PROTECTION_READ_TOKEN --repo Fleezyflo/fanops`, and verify `GET …/branches/main/protection`
+  succeeds while `DELETE …/branches/main/protection` returns 403. Do not store a classic `repo`-scope
+  token or your interactive `gh` credential in that secret.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on

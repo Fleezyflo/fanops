@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 from tools.ci import checks, schema, selftest  # noqa: E402
 from tools.ci.cli import cmd_deployed  # noqa: E402
 from tools.ci.common import PROSE_DOCS, SCHEMA, declared_workflows  # noqa: E402
+from tools.ci.live import probe_protection  # noqa: E402
 from tools.ci.registry import load_registry, shape_findings  # noqa: E402
 from tools.ci.workflows import discover_jobs  # noqa: E402
 
@@ -150,6 +151,14 @@ def test_reconcile_job_checks_protection_on_pull_request(monkeypatch):
     monkeypatch.setattr("tools.ci.cli.probe_workflows", lambda *a, **k: (states, None))
     monkeypatch.setattr("tools.ci.cli.probe_security", lambda *a, **k: (None, "needs admin"))
     assert cmd_deployed(True) == 1
+
+
+def test_probe_protection_unset_fails_closed(monkeypatch):
+    """DC-3 must not fall back to gh's logged-in credential or GITHUB_TOKEN."""
+    monkeypatch.delenv("PROTECTION_READ_TOKEN", raising=False)
+    data, err = probe_protection()
+    assert data is None
+    assert err and "PROTECTION_READ_TOKEN" in err
 
 
 def _exact_protection():
