@@ -1114,7 +1114,8 @@ def test_healthy_scrape_users_default_skips_loginrequired_freeze(tmp_path, monke
     assert _healthy_scrape_users(cfg, t0, require_budget_room=False) == []
 
 
-def test_corrupt_cooldown_fails_open(tmp_path):
+def test_corrupt_cooldown_is_frozen_and_not_rewritten(tmp_path):
+    """A torn cooldown file is a freeze. The tick must not scrape and must not replace the bytes."""
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1124,9 +1125,105 @@ def test_corrupt_cooldown_fails_open(tmp_path):
     _cooldown_path(cfg).write_text("{not-json")
     client = _FakeClient({"#hiphop": 10})
     out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client, now=t0)
-    assert out["refreshed"] is False
+    assert out["refreshed"] is False and out["reason"] == "cooldown"
+    assert out["cooldown_reason"] == "auth_death"
     assert client.media_calls == []
     assert _cooldown_path(cfg).read_text() == "{not-json"
+
+
+def test_cooldown_read_errors_look_frozen_and_are_not_rewritten(tmp_path, monkeypatch):
+    """OSError, ValueError, and TypeError from the cooldown file are a freeze, not an empty blob."""
+    import pathlib
+    from datetime import datetime, timezone
+    from fanops.hashtag_scrape_policy import (
+        _COOLDOWN_NAME, _account_rec, _clear_cooldown, _cooldown_path, _healthy_scrape_users,
+        _is_frozen, _load_cooldown_blob, _persist_cooldown, _read_active_cooldown,
+        scrape_user_blocked,
+    )
+    cfg = Config(root=tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "held")
+    p = _cooldown_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps({"accounts": {"held": {
+        "reason": "auth_death", "until": "2099-01-01T00:00:00+00:00",
+        "streak": 1, "day": "2026-10-08", "used": 17,
+    }}})
+    p.write_text(body)
+    real = pathlib.Path.read_text
+
+    def _boom(exc):
+        def read_text(self, *a, **k):
+            if self.name == _COOLDOWN_NAME:
+                raise exc
+            return real(self, *a, **k)
+        return read_text
+
+    for exc in (OSError("unread"), ValueError("bad"), TypeError("bad")):
+        monkeypatch.setattr(pathlib.Path, "read_text", _boom(exc))
+        blob = _load_cooldown_blob(cfg)
+        assert _is_frozen(_account_rec(blob, "held"), now) is True
+        assert scrape_user_blocked(cfg, "held", now) is True
+        assert _read_active_cooldown(cfg, now) is not None
+        assert _healthy_scrape_users(cfg, now, require_session=False) == []
+        got = _persist_cooldown(cfg, now, reason="throttle", user="other", used_delta=3)
+        assert _is_frozen(got, now) is True
+        _clear_cooldown(cfg, now=now, used_delta=1, user="held")
+        _clear_cooldown(cfg, now=now, used_delta=1)
+        assert p.read_bytes() == body.encode()
+
+
+def test_missing_cooldown_file_is_not_frozen(tmp_path):
+    from datetime import datetime, timezone
+    from fanops.hashtag_scrape_policy import (
+        _cooldown_path, _load_cooldown_blob, _persist_cooldown, scrape_user_blocked,
+    )
+    cfg = Config(root=tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    assert _load_cooldown_blob(cfg) == {}
+    assert scrape_user_blocked(cfg, "u", now) is False
+    _persist_cooldown(cfg, now, reason="throttle", user="u", used_delta=2)
+    saved = json.loads(_cooldown_path(cfg).read_text())
+    assert saved["accounts"]["u"]["reason"] == "throttle"
+    assert saved["accounts"]["u"]["used"] == 2
+    assert saved["accounts"]["u"]["day"] == "2026-10-08"
+
+
+def test_non_object_cooldown_is_frozen_and_not_rewritten(tmp_path):
+    from datetime import datetime, timezone
+    from fanops.hashtag_scrape_policy import (
+        _clear_cooldown, _cooldown_path, _persist_cooldown, scrape_user_blocked,
+    )
+    cfg = Config(root=tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    p = _cooldown_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("[]\n")
+    before = p.read_bytes()
+    assert scrape_user_blocked(cfg, "held", now) is True
+    _persist_cooldown(cfg, now, reason="throttle", user="held", used_delta=4)
+    _clear_cooldown(cfg, now=now, used_delta=1, user="held")
+    assert p.read_bytes() == before
+
+
+def test_readable_cooldown_keeps_auth_hold_and_day_counter(tmp_path):
+    """A real blob's auth hold and UTC day counter survive a peer persist and a peer clear."""
+    from datetime import datetime, timezone
+    from fanops.controlio import write_json_atomic
+    from fanops.hashtag_scrape_policy import _clear_cooldown, _cooldown_path, _persist_cooldown
+    cfg = Config(root=tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    write_json_atomic(_cooldown_path(cfg), {"accounts": {
+        "held": {"reason": "auth_death", "until": "2099-01-01T00:00:00+00:00",
+                 "streak": 1, "day": "2026-10-08", "used": 17},
+        "other": {"reason": "throttle", "until": "2026-10-08T18:00:00+00:00",
+                  "streak": 1, "day": "2026-10-08", "used": 3},
+    }})
+    _persist_cooldown(cfg, now, reason="throttle", user="other", used_delta=1)
+    _clear_cooldown(cfg, now=now, used_delta=1, user="other")
+    held = json.loads(_cooldown_path(cfg).read_text())["accounts"]["held"]
+    assert held["reason"] == "auth_death"
+    assert held["day"] == "2026-10-08" and held["used"] == 17
 
 
 def test_zero_progress_pass_preserves_hashtags_bytes(tmp_path, monkeypatch):
