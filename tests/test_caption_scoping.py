@@ -272,7 +272,7 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}
 
 
-def _refresh_fixture(tmp_path, *, clip_state, meta_captions, posts=()):
+def _refresh_fixture(tmp_path, *, clip_state, meta_captions, posts=(), lock=("#alpha",), write_lock=True):
     from fanops.pipeline import _stage_refresh_caption_requests
     from fanops.source_tags import source_tag_locks_path
     cfg = Config(root=tmp_path)
@@ -289,11 +289,12 @@ def _refresh_fixture(tmp_path, *, clip_state, meta_captions, posts=()):
                           aspect=Fmt.r9x16, state=clip_state, meta_captions=meta_captions))
         for post in posts:
             led.add_post(post)
-    lock_p = source_tag_locks_path(cfg)
-    lock_p.parent.mkdir(parents=True, exist_ok=True)
-    lock_p.write_text(json.dumps({
-        "src_1": {"pile": ["#alpha"], "lock": ["#alpha"], "researched_at": "2026-08-17T00:00:00Z"},
-    }))
+    if write_lock:
+        lock_p = source_tag_locks_path(cfg)
+        lock_p.parent.mkdir(parents=True, exist_ok=True)
+        lock_p.write_text(json.dumps({
+            "src_1": {"pile": list(lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+        }))
     logs = []
     with Ledger.transaction(cfg) as led:
         _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg),
@@ -460,3 +461,77 @@ def test_refresh_still_reopens_off_lock_awaiting_post(tmp_path):
     assert logs
     assert Ledger.load(cfg).posts["p_wait"].state is PostState.awaiting_approval
     assert Ledger.load(cfg).posts["p_wait"].created_at == _BORN
+
+
+_TAG_LINE = "#beatmaking #songwriting #music #musicblog"
+
+
+def _platform_posts(sentence, hashtags):
+    from fanops.models import Platform, Post, PostState
+    return [
+        Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=plat,
+             caption=sentence, hashtags=list(hashtags), state=PostState.awaiting_approval,
+             created_at=_BORN)
+        for plat, pid in (
+            (Platform.instagram, "p_ig"),
+            (Platform.tiktok, "p_tt"),
+            (Platform.youtube, "p_yt"),
+        )
+    ]
+
+
+def test_refresh_strips_empty_intersection_on_ig_tiktok_and_youtube(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.models import PostState
+    meta = {f"a/{name}": {"caption": _TAG_LINE, "hashtags": []}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta, lock=(),
+        posts=_platform_posts(_TAG_LINE, []))
+    led = Ledger.load(cfg)
+    assert led.clips["clip_1"].state is ClipState.queued
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert not logs
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        post = led.posts[pid]
+        assert post.state is PostState.awaiting_approval
+        assert post.created_at == _BORN
+        assert "#" not in post.caption
+        assert post.hashtags == []
+    for name in ("instagram", "tiktok", "youtube"):
+        entry = led.clips["clip_1"].meta_captions[f"a/{name}"]
+        assert "#" not in entry["caption"]
+        assert entry["hashtags"] == []
+
+
+def test_refresh_missing_lock_file_keeps_stored_caption(tmp_path):
+    from fanops.source_tags import source_tag_locks_path
+    meta = {f"a/{name}": {"caption": _TAG_LINE, "hashtags": ["#beatmaking"]}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta, write_lock=False,
+        posts=_platform_posts(_TAG_LINE, ["#beatmaking"]))
+    assert not source_tag_locks_path(cfg).exists()
+    led = Ledger.load(cfg)
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        assert led.posts[pid].caption == _TAG_LINE
+        assert led.posts[pid].hashtags == ["#beatmaking"]
+        assert led.posts[pid].created_at == _BORN
+
+
+def test_refresh_lock_change_replaces_stored_caption_without_remint(tmp_path):
+    from fanops.models import PostState
+    sentence = "hello #offlock #alpha"
+    meta = {f"a/{name}": {"caption": sentence, "hashtags": ["#offlock", "#alpha"]}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta,
+        posts=_platform_posts(sentence, ["#offlock", "#alpha"]))
+    led = Ledger.load(cfg)
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        post = led.posts[pid]
+        assert post.state is PostState.awaiting_approval
+        assert post.created_at == _BORN
+        assert post.caption == "hello"
+        assert post.hashtags == ["#alpha"]
+        assert "#offlock" not in post.caption

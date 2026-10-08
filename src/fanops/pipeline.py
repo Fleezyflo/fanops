@@ -21,7 +21,8 @@ from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
-from fanops.caption_compose import _source_lock_completed, _source_lock_tags, _tags_off_lock
+from fanops.caption_compose import (_source_lock_completed, _source_lock_tags, _tags_off_lock,
+                                    replace_locked_captions)
 from fanops.crosspost import crosspost_clips, owner_caption_surfaces
 from fanops.post.run import publish_due
 from fanops.reconcile import reconcile_due
@@ -300,12 +301,6 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
         have = set(c.meta_captions or {})
         if not need:
             continue
-        if _caption_refresh_blocked(led, c):
-            if c.state in (ClipState.captions_requested, ClipState.captioned):
-                led.set_clip_state(c.id, ClipState.queued)
-            continue
-        if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
-            continue
         src = led.sources.get(m.parent_id)
         off_lock = _source_lock_completed(cfg, src) and any(
             _tags_off_lock(cfg, src, (c.meta_captions or {}).get(s, {}).get("hashtags") or [])
@@ -319,6 +314,16 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
             if tags:
                 stored_empty = False
                 break
+        # Decide the re-open from the pre-replacement tags. Replacement then writes Post.caption
+        # for a completed lock; a missing lock file is not completed and is left stored.
+        if _source_lock_completed(cfg, src):
+            replace_locked_captions(led, cfg, c, src)
+        if _caption_refresh_blocked(led, c):
+            if c.state in (ClipState.captions_requested, ClipState.captioned):
+                led.set_clip_state(c.id, ClipState.queued)
+            continue
+        if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
+            continue
         if c.state in (ClipState.captioned, ClipState.queued) and need <= have and not off_lock:
             if not (lock_now and stored_empty):
                 continue
