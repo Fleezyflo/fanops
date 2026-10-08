@@ -1069,7 +1069,7 @@ def cmd_run(cfg: Config, args) -> int:
                 print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
             except Exception as e:
                 # Outer tick fault (heartbeat/snapshots): REFUSE → next interval; not fail_open theatre.
-                cli_run.log_run_halted(cfg, f"{type(e).__name__}: {e}"[:160])
+                get_logger(cfg)("run", "-", "halted", ts="", err=f"{type(e).__name__}: {e}"[:160])
                 print(f"run halted: {type(e).__name__}: {e}", file=sys.stderr)
                 if decide("transient", 1) is EscalationPosture.refuse:
                     pass

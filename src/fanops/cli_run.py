@@ -89,15 +89,6 @@ class _CmdRunPassOutcome:
     learn_skip_stderr: str | None = None
 
 
-def log_run_halted(cfg: Config, err: str) -> None:
-    """Halt breadcrumb that is not liveness.
-
-    daemon._newest_activity_ts counts a JSON line with a truthy ts. get_logger sets ts and then
-    applies **fields, so ts="" clears it. daemon_progress also ignores outcome=halted, including
-    older lines that still carry a timestamp. The loop sleeps after this line."""
-    get_logger(cfg)("run", "-", "halted", ts="", err=err)
-
-
 def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
     """One respond+advance converge-then-learn pass. status=None with halt_stderr = halted."""
     from fanops import cli
@@ -128,7 +119,7 @@ def cmd_run_pass(cfg: Config, base_time: str) -> _CmdRunPassOutcome:
                 s = cli.advance(cfg, base_time=base_time)
             except Exception as e:
                 # Progress spine: converge fault → NONZERO (None → cmd_run exit 1; loop skips tick).
-                log_run_halted(cfg, f"{type(e).__name__}: {e}"[:160])
+                get_logger(cfg)("run", "-", "halted", ts="", err=f"{type(e).__name__}: {e}"[:160])
                 halt_stderr = f"run halted: {type(e).__name__}: {e}"
                 if decide("toolchain_run", 0) is EscalationPosture.nonzero:
                     return _CmdRunPassOutcome(status=None, halt_stderr=halt_stderr)
