@@ -63,18 +63,20 @@ def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
 
 
 def _http_reachable(url: str | None, name: str) -> DepHealth:
+    """A completed GET is not up. 401 and 5xx are down. Transport failure stays unreachable."""
     import requests
     url = (url or "").rstrip("/")
     if not url:
         return DepHealth(name, False, "not configured")
     try:
-        requests.get(url, timeout=3)
-        return DepHealth(name, True, "reachable")
+        resp = requests.get(url, timeout=3)
     except requests.exceptions.RequestException:
         return DepHealth(name, False, "unreachable")
+    return DepHealth(name, False, f"HTTP {resp.status_code}")
 
 
 def zernio_dep_health(cfg: Config) -> DepHealth:
+    """Skipped when Zernio is not configured. A completed GET is not up; 401 and 5xx are down."""
     if not cfg.backend_has_creds("zernio"):
         return DepHealth("zernio", True, "skipped (not configured)")
     return _http_reachable(cfg.zernio_url, "zernio")

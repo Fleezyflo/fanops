@@ -176,3 +176,63 @@ def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_heartbeat_age_s", lambda c: 350.0)
     age2, stale2, iv2 = heartbeat_stale(cfg, interval=100)
     assert stale2 is True and iv2 == 100
+
+
+def _zernio_cfg(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    monkeypatch.setenv("ZERNIO_API_URL", "http://zernio.test/v1")
+    return Config(root=tmp_path)
+
+
+def _http(status_code):
+    return type("R", (), {"status_code": status_code})()
+
+
+def test_zernio_completed_get_is_not_up(tmp_path, monkeypatch):
+    from fanops.health_model import HealthReport, project_prometheus_health, zernio_dep_health
+    seen = []
+
+    def fake_get(url, timeout=3):
+        seen.append((url, timeout))
+        return _http(200)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    h = zernio_dep_health(_zernio_cfg(tmp_path, monkeypatch))
+    assert seen == [("http://zernio.test/v1", 3)]
+    assert h.name == "zernio" and h.ok is False and h.detail == "HTTP 200"
+    body = "\n".join(project_prometheus_health(
+        HealthReport(checks=[], notes=[], deps=[h]), heartbeat=(None, True, 600)))
+    assert 'fanops_dep_up{dep="zernio"} 0' in body
+
+
+def test_zernio_401_and_5xx_are_down(tmp_path, monkeypatch):
+    from fanops.health_model import HealthReport, project_prometheus_health, zernio_dep_health
+    cfg = _zernio_cfg(tmp_path, monkeypatch)
+    for code in (401, 500, 503):
+        monkeypatch.setattr("requests.get", lambda *a, code=code, **k: _http(code))
+        h = zernio_dep_health(cfg)
+        assert h.ok is False and h.detail == f"HTTP {code}"
+        body = "\n".join(project_prometheus_health(
+            HealthReport(checks=[], notes=[], deps=[h]), heartbeat=(None, True, 600)))
+        assert 'fanops_dep_up{dep="zernio"} 0' in body
+
+
+def test_zernio_transport_error_is_unreachable(tmp_path, monkeypatch):
+    import requests
+    from fanops.health_model import zernio_dep_health
+
+    def boom(*_a, **_k):
+        raise requests.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr("requests.get", boom)
+    h = zernio_dep_health(_zernio_cfg(tmp_path, monkeypatch))
+    assert h.ok is False and h.detail == "unreachable"
+
+
+def test_zernio_skipped_when_not_configured(tmp_path, monkeypatch):
+    from fanops.health_model import zernio_dep_health
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr("requests.get", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("network")))
+    h = zernio_dep_health(Config(root=tmp_path))
+    assert h.ok is True and h.detail == "skipped (not configured)"

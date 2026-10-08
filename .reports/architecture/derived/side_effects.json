@@ -531,7 +531,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 71
+        "line": 72
       }
     ],
     "fanops.post.metrics.postiz_read": [
