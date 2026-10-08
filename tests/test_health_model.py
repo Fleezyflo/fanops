@@ -54,13 +54,13 @@ def test_daemon_progress_absent_when_no_lease(tmp_path):
     assert alive is False and line is None and snap is None
 
 
-def _write_log_line(cfg, *, stage="stage", ts=None):
-    """Append one run.log line at `ts` (any stage) — the activity signal daemon_progress now reads."""
+def _write_log_line(cfg, *, stage="stage", ts=None, outcome="ok"):
+    """Append one run.log line at `ts` (any stage) — the activity signal daemon_progress reads."""
     import json
     from datetime import datetime, timezone
     cfg.reports.mkdir(parents=True, exist_ok=True)
     ts = ts or datetime.now(timezone.utc).isoformat()
-    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": "ok"}
+    rec = {"ts": ts, "level": "info", "stage": stage, "unit_id": "-", "outcome": outcome}
     with cfg.log_path.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
 
@@ -136,6 +136,36 @@ def test_daemon_progress_wedged_when_stage_held_and_log_silent(tmp_path):
         fcntl.flock(fd, fcntl.LOCK_UN); os.close(fd)
 
 
+def test_daemon_progress_halted_line_does_not_refresh_alive_window(tmp_path):
+    # A fresh outcome=halted line must not extend the alive window out to the ceiling.
+    from datetime import datetime, timezone, timedelta
+    from fanops.health_model import daemon_progress, _STAGE_HANG_CEILING_S
+    cfg = Config(root=tmp_path)
+    old = datetime.now(timezone.utc) - timedelta(seconds=_STAGE_HANG_CEILING_S + 30)
+    _write_log_line(cfg, stage="llm", ts=old.isoformat())
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is False and line is None and snap is None
+
+
+def test_daemon_progress_halted_line_alone_is_not_alive(tmp_path):
+    from fanops.health_model import daemon_progress
+    cfg = Config(root=tmp_path)
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is False and line is None and snap is None
+
+
+def test_daemon_progress_halt_does_not_hide_fresh_real_activity(tmp_path):
+    from fanops.health_model import daemon_progress
+    cfg = Config(root=tmp_path)
+    _write_log_line(cfg, stage="llm")
+    _write_log_line(cfg, stage="run", outcome="halted")
+    alive, line, snap = daemon_progress(cfg)
+    assert alive is True and snap is None
+    assert line is not None and line.startswith("active:")
+
+
 def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
     from fanops.health_model import heartbeat_stale
     from fanops import daemon
@@ -146,3 +176,63 @@ def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_heartbeat_age_s", lambda c: 350.0)
     age2, stale2, iv2 = heartbeat_stale(cfg, interval=100)
     assert stale2 is True and iv2 == 100
+
+
+def _zernio_cfg(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    monkeypatch.setenv("ZERNIO_API_URL", "http://zernio.test/v1")
+    return Config(root=tmp_path)
+
+
+def _http(status_code):
+    return type("R", (), {"status_code": status_code})()
+
+
+def test_zernio_completed_get_is_not_up(tmp_path, monkeypatch):
+    from fanops.health_model import HealthReport, project_prometheus_health, zernio_dep_health
+    seen = []
+
+    def fake_get(url, timeout=3):
+        seen.append((url, timeout))
+        return _http(200)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    h = zernio_dep_health(_zernio_cfg(tmp_path, monkeypatch))
+    assert seen == [("http://zernio.test/v1", 3)]
+    assert h.name == "zernio" and h.ok is False and h.detail == "HTTP 200"
+    body = "\n".join(project_prometheus_health(
+        HealthReport(checks=[], notes=[], deps=[h]), heartbeat=(None, True, 600)))
+    assert 'fanops_dep_up{dep="zernio"} 0' in body
+
+
+def test_zernio_401_and_5xx_are_down(tmp_path, monkeypatch):
+    from fanops.health_model import HealthReport, project_prometheus_health, zernio_dep_health
+    cfg = _zernio_cfg(tmp_path, monkeypatch)
+    for code in (401, 500, 503):
+        monkeypatch.setattr("requests.get", lambda *a, code=code, **k: _http(code))
+        h = zernio_dep_health(cfg)
+        assert h.ok is False and h.detail == f"HTTP {code}"
+        body = "\n".join(project_prometheus_health(
+            HealthReport(checks=[], notes=[], deps=[h]), heartbeat=(None, True, 600)))
+        assert 'fanops_dep_up{dep="zernio"} 0' in body
+
+
+def test_zernio_transport_error_is_unreachable(tmp_path, monkeypatch):
+    import requests
+    from fanops.health_model import zernio_dep_health
+
+    def boom(*_a, **_k):
+        raise requests.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr("requests.get", boom)
+    h = zernio_dep_health(_zernio_cfg(tmp_path, monkeypatch))
+    assert h.ok is False and h.detail == "unreachable"
+
+
+def test_zernio_skipped_when_not_configured(tmp_path, monkeypatch):
+    from fanops.health_model import zernio_dep_health
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr("requests.get", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("network")))
+    h = zernio_dep_health(Config(root=tmp_path))
+    assert h.ok is True and h.detail == "skipped (not configured)"
