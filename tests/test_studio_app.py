@@ -336,6 +336,9 @@ def test_mark_posted_success_does_not_leak_raw_dict_repr(tmp_path):
     # A success message must be human-readable, never a dict repr.
     # R1/D9: mark_posted requires a non-empty url now — pass a real https permalink.
     cfg = Config(root=tmp_path); _seed(cfg, tmp_path)
+    led = Ledger.load(cfg)
+    led.posts["p_base"] = led.posts["p_base"].model_copy(update={"submission_id": "zernio-real-99"})
+    led.save()
     r = _client(cfg).post("/publish/posted/p_base", data={"url": "https://www.instagram.com/p/abc/"})
     assert r.status_code == 200
     assert b"post_id" not in r.data                             # no raw Python dict key leaked (Jinja escapes ' -> &#39;)
