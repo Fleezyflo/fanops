@@ -618,6 +618,62 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     assert "unpollable" in (p.error_reason or "")
 
 
+def test_unpollable_age_close_stays_out_of_studio_rearm(tmp_path):
+    # An aged birth token must not become failed/unknown: recover_posts rearms that bucket and
+    # clears submission_id. needs_reconcile is the park; the real-id submitting rung stays.
+    from datetime import datetime, timezone, timedelta
+    from fanops.studio.actions_recover import recover_posts
+    from fanops.studio.views_results import _RETRYABLE_FAILURES
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    now = datetime.now(timezone.utc)
+    for pid, state in (("sub", PostState.submitting), ("sent", PostState.submitted)):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x", state=state,
+                          submission_id=f"fanops_{pid}", error_kind=ErrorKind.unknown,
+                          scheduled_time=old))
+    led.add_post(Post(id="parked", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.needs_reconcile,
+                      submission_id="fanops_parked", error_kind=ErrorKind.unknown,
+                      scheduled_time=old))
+    led.add_post(Post(id="real", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.submitting,
+                      submission_id="blotato_REAL_1", scheduled_time=old))
+    for pid in ("sub", "sent"):
+        term = rec_mod._apply_age_terminal(led.posts[pid], now)
+        assert term["update"]["state"] is PostState.needs_reconcile
+        assert term["update"]["error_kind"] is None
+        assert "submission_id" not in term["update"]
+    assert rec_mod._apply_age_terminal(led.posts["parked"], now) is None
+    real_term = rec_mod._apply_age_terminal(led.posts["real"], now)
+    assert real_term["update"]["state"] is PostState.needs_reconcile
+    assert real_term["update"].get("error_kind") is not ErrorKind.unknown
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {"status": "in-progress"})
+    for pid in ("sub", "sent"):
+        p = led.posts[pid]
+        assert p.state is PostState.needs_reconcile
+        assert p.error_kind is None
+        assert p.submission_id == f"fanops_{pid}"
+        assert "unpollable" in (p.error_reason or "")
+    assert led.posts["parked"].state is PostState.needs_reconcile
+    assert led.posts["parked"].submission_id == "fanops_parked"
+    assert led.posts["real"].state is PostState.needs_reconcile
+    assert led.posts["real"].submission_id == "blotato_REAL_1"
+    assert "escalated" in (led.posts["real"].error_reason or "")
+    led.save()
+    recover_posts(cfg, ["sub", "sent", "parked", "real"], action="retry", reason="probe")
+    after = Ledger.load(cfg)
+    for pid in ("sub", "sent", "parked"):
+        assert after.posts[pid].state is PostState.needs_reconcile
+        assert after.posts[pid].state is not PostState.queued
+        assert after.posts[pid].submission_id == led.posts[pid].submission_id
+    assert after.posts["real"].submission_id == "blotato_REAL_1"
+    assert after.posts["real"].state is not PostState.queued
+    assert "unknown" in _RETRYABLE_FAILURES
+
+
 def test_submitting_not_escalated_when_fresh(tmp_path):
     # A submitting post only a few hours past schedule is left untouched (slow submit, not crash-stranded).
     from datetime import datetime, timezone, timedelta

@@ -574,8 +574,11 @@ def _apply_age_terminal(post, now) -> dict | None:
 
       not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
           (submitting/submitted)
-          -> needs_reconcile, no error_kind, same unpollable reason (a birth token cannot be
-             polled; already-parked needs_reconcile stays so auto-heal can still bind)
+          -> needs_reconcile, error_kind cleared to None (never ErrorKind.unknown —
+             that kind sits in Studio recover's rearm bucket, which clears
+             submission_id into a second create). The birth token stays. A birth
+             token cannot be polled; already-parked needs_reconcile is not rewritten
+             so auto-heal can still bind. needs_reconcile is not re-queueable.
 
       remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
           -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
@@ -590,6 +593,7 @@ def _apply_age_terminal(post, now) -> dict | None:
     if (not real) and age > _SUBMITTING_ESCALATE_AFTER and post.state in (
             PostState.submitting, PostState.submitted):
         return {"update": {"state": PostState.needs_reconcile,
+                           "error_kind": None,
                            "error_reason": (
                                f"unpollable fanops_* after {hrs}h: GET 400 Invalid post ID; remint maybe-sent")[:400]},
                 "log": "closed: unpollable->needs_reconcile"}
