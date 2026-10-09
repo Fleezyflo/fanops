@@ -2939,6 +2939,7 @@
       "werkzeug"
     ],
     "lazy": [
+      "av",
       "certifi",
       "collections",
       "copy",
