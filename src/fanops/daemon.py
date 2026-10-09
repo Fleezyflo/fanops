@@ -485,10 +485,14 @@ def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
     stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env).
-    Copytruncates an over-cap launchd log when its fd is O_APPEND, without kickstart."""
+    Copytruncates an over-cap launchd log when its fd is O_APPEND, without kickstart. A rotation
+    failure is logged and does not skip the rest of ensure."""
     _require_darwin()
-    with fail_open("ensure.rotate_launchd_logs"):
+    try:
         rotate_launchd_logs(cfg)
+    except Exception as exc:
+        _log.warning("ensure.rotate_launchd_logs: %s: %s",
+                     type(exc).__name__, str(exc)[:200], exc_info=True)
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
