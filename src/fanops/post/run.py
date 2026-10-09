@@ -8,7 +8,6 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-import requests
 from fanops.config import Config
 from fanops.accounts import Account, AccountStatus, Accounts
 from fanops.errors import redact
@@ -18,7 +17,9 @@ from fanops.post import get_poster, get_media_uploader
 from fanops.post.media import ensure_clip_media, _uploader_kwargs, _media_cache_hit
 from fanops.post.publish_archive import _archive_published
 from fanops.post.publish_dryrun import _handle_dryrun_boundary
-from fanops.post.publish_errors import _is_fatal_auth_error, _is_transient_publish_error
+from fanops.post.publish_errors import (
+    _is_fatal_auth_error, _is_never_sent_transport, _is_transient_publish_error,
+)
 from fanops.post.publish_requeue import _requeue_failed_posts
 from fanops.timeutil import parse_iso as _parse, iso_z, publish_buckets as _publish_buckets, is_scheduled_due, schedule_utc
 from fanops.log import get_logger
@@ -355,7 +356,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                         led.set_post_state(post_id, PostState.queued, error_kind=None,
                                            error_reason="publish deferred: " + red)
                         post = led.posts[post_id]
-                        if _tally is not None and isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                        if _tally is not None and _is_never_sent_transport(exc):
                             _tally["vendor_unreachable"] = 1
                 else:
                     kind = ErrorKind.bad_payload if isinstance(exc, ValueError) else ErrorKind.unknown
@@ -484,7 +485,11 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             continue
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         key = (provider, (acct_id or post.account_id or "").strip() or "_")
-        if key in tripped or (provider, "*") in tripped:
+        if (provider, "*") in tripped:
+            log("publish", post.id, "skip_vendor_unreachable_circuit",
+                account=post.account, platform=post.platform.value)
+            continue
+        if key in tripped:
             log("publish", post.id, "skip_rate_limited_circuit",
                 account=post.account, platform=post.platform.value)
             continue
