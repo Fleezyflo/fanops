@@ -207,8 +207,18 @@ def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STU
             and (old_pid is None or fp.get("pid") != old_pid))
 
 
-def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict | None:
-    """MOL-728: probe the resident's /_fingerprint endpoint. Returns the JSON payload or None on error."""
+def _probe_error_text(exc: BaseException) -> str:
+    """Exception type and message for a fingerprint probe. Callers put this on the failure path."""
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT, *,
+                            probe_error: list[str] | None = None) -> dict | None:
+    """MOL-728: probe the resident's /_fingerprint endpoint.
+
+    Returns the JSON object, or None when the probe fails. `probe_error`, when passed, receives
+    ``"<ExceptionType>: <message>"`` for that failure. A debug log alone never reaches the CI log.
+    """
     from fanops.errors import fail_open
     conn = http.client.HTTPConnection(host or STUDIO_DEFAULT_HOST, port, timeout=2.0)
     try:
@@ -218,9 +228,15 @@ def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_
             conn.request("GET", "/_fingerprint")
             resp = conn.getresponse()
             if resp.status != 200:
+                snippet = resp.read()[:200]
+                if probe_error is not None:
+                    probe_error.append(_probe_error_text(
+                        http.client.HTTPException(f"HTTP {resp.status}: {snippet!r}")))
                 return None
             return json.loads(resp.read().decode())
     except Exception as exc:
+        if probe_error is not None:
+            probe_error.append(_probe_error_text(exc))
         logging.getLogger("fanops.daemon").debug(
             "daemon._studio_get_fingerprint fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
         return None

@@ -180,3 +180,48 @@ def test_redeploy_studio_verifies_full_lifecycle(cfg, monkeypatch):
     sha, _src = daemon._version_signal(cfg)
     _stub_fingerprint(monkeypatch, {"pid": 9999, "generation": "existing-gen", "sha": sha})
     assert daemon._redeploy_studio(cfg, wait=True) is True
+
+
+def test_studio_get_fingerprint_returns_probe_error_text(monkeypatch):
+    # The lifecycle failure path needs the exception type and message. A debug log does not.
+    class _Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            raise ConnectionRefusedError("[Errno 61] Connection refused")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPConnection", _Conn)
+    noted: list[str] = []
+    assert daemon._studio_get_fingerprint(port=9323, probe_error=noted) is None
+    assert noted == ["ConnectionRefusedError: [Errno 61] Connection refused"]
+    assert daemon._studio_get_fingerprint(port=9323) is None
+
+
+def test_studio_get_fingerprint_records_non_200(monkeypatch):
+    class _Resp:
+        status = 503
+
+        def read(self):
+            return b"unavailable"
+
+    class _Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            return _Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPConnection", _Conn)
+    noted: list[str] = []
+    assert daemon._studio_get_fingerprint(port=9324, probe_error=noted) is None
+    assert noted == ["HTTPException: HTTP 503: b'unavailable'"]
