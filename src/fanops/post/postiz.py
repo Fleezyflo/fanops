@@ -4,7 +4,7 @@ FanOps stays the clip+caption engine; a self-hosted Postiz instance (AGPL, githu
 postiz-app) is the distribution layer. A swappable-poster slot: build the post body,
 POST it, map the response to the ledger's submit/reconcile/fail states with the SAME asymmetric-retry
 safety (a bad key halts by type; a 5xx/timeout after the body was sent parks needs_reconcile, never
-re-POSTs — Postiz has no idempotency key).
+re-POSTs; a 429 adopts a matching row or parks needs_reconcile — no idempotency key, so no second create).
 
 REST contract (docs.postiz.com/public-api): Authorization: {apiKey} header; POST /public/v1/upload
 (multipart) -> {id, path@uploads.postiz.com}; POST /public/v1/posts with
@@ -16,8 +16,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import random
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -31,7 +29,6 @@ from fanops.post.publish_errors import _is_never_sent_transport
 from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
-_MAX_RETRIES = 4
 _PUBLIC = "/public/v1"
 _YOUTUBE_TITLE_FLOOR = "New clip"   # YouTube REQUIRES a 2-100 char title; last-resort so no caller ever emits an invalid one
 _POSTIZ_POST_TYPES = ("post", "story")   # the only tokens the vendor's non-YouTube settings DTO accepts (@IsDefined post_type)
@@ -443,6 +440,83 @@ def _row_integration_id(raw: dict) -> str | None:
     return None
 
 
+def _payload_value(obj: dict) -> dict | None:
+    """posts[0].value[0] — the object build_postiz_payload writes content and image onto."""
+    try:
+        value = obj["posts"][0]["value"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _image_identity(images) -> tuple[tuple[str | None, str | None], ...] | None:
+    """(id, path) pairs. Those are the fields _postiz_image writes onto posts[0].value[0].image."""
+    if not isinstance(images, list):
+        return None
+    out = []
+    for img in images:
+        if not isinstance(img, dict):
+            return None
+        iid, path = img.get("id"), img.get("path")
+        if iid is not None and not isinstance(iid, str):
+            return None
+        if path is not None and not isinstance(path, str):
+            return None
+        out.append((iid, path))
+    return tuple(out)
+
+
+def _row_integration_ids(raw: dict) -> list[str]:
+    """Integration ids the row parser already reads, on the row and on posts[0] (where the payload writes it)."""
+    found: list[str] = []
+    top = _row_integration_id(raw)
+    if top:
+        found.append(top)
+    posts = raw.get("posts")
+    if isinstance(posts, list) and posts and isinstance(posts[0], dict):
+        nested = _row_integration_id(posts[0])
+        if nested:
+            found.append(nested)
+    return found
+
+
+def _row_matches_payload(raw: dict, payload: dict) -> bool:
+    """Caption text plus integration id is not identity.
+
+    Content is posts[0].value[0].content (the field the POST writes), not top-level content.
+    Media is posts[0].value[0].image, compared on id and path only.
+    """
+    if not isinstance(raw, dict) or not isinstance(payload, dict):
+        return False
+    want = _payload_value(payload)
+    got = _payload_value(raw)
+    if want is None or got is None:
+        return False
+    want_content = want.get("content")
+    if not isinstance(want_content, str) or got.get("content") != want_content:
+        return False
+    want_images = _image_identity(want.get("image"))
+    if want_images is None or _image_identity(got.get("image")) != want_images:
+        return False
+    try:
+        want_intg = payload["posts"][0]["integration"]["id"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    if not isinstance(want_intg, str) or not want_intg:
+        return False
+    found = _row_integration_ids(raw)
+    return bool(found) and all(i == want_intg for i in found)
+
+
+def _submission_held_by_other(led: Ledger, sid: str, post_id: str) -> bool:
+    for other in led.posts.values():
+        if other.id == post_id:
+            continue
+        if other.submission_id == sid:
+            return True
+    return False
+
+
 def postiz_check_auth(cfg: Config) -> bool:
     """Cheap auth probe for the Go-Live 'Save & test' button: hit the integrations endpoint and report
     whether the key works. True on success, raise PostizAuthError on 401 (so the surface can name the
@@ -480,7 +554,12 @@ class PostizPoster:
                     t = (m.hook or "").strip()
         return t if len(t) >= 2 else self.cfg.artist_name
 
-    def _adopt_submission(self, led: Ledger, post_id: str, sid: str, body=None) -> Ledger:
+    def _adopt_submission(self, led: Ledger, post_id: str, sid: str, body=None, payload=None) -> Ledger:
+        raw = body if isinstance(body, dict) else None
+        if payload is None or raw is None or not _row_matches_payload(raw, payload):
+            return led
+        if not isinstance(sid, str) or not sid or _submission_held_by_other(led, sid, post_id):
+            return led
         led.set_post_state(post_id, PostState.submitted)
         post = led.posts[post_id]
         post.submission_id = sid
@@ -488,8 +567,12 @@ class PostizPoster:
                            or safe_public_url(post.public_url))
         return led
 
-    def _existing_submission_for_payload(self, post, payload: dict) -> tuple[str | None, dict | None]:
-        """Read-before-write dedup: GET the posts window and match integration id + content."""
+    def _existing_submission_for_payload(self, led: Ledger, post, payload: dict) -> tuple[str | None, dict | None]:
+        """Read-before-write: adopt a row only when it is this payload, and the id is free.
+
+        Match posts[0].value[0].content and posts[0].value[0].image (id and path). Top-level
+        content is not identity. Refuse an id another ledger post already holds.
+        """
         from datetime import timedelta
         from fanops.timeutil import parse_iso
         from fanops.post.metrics.postiz_read import PostizStatusClient
@@ -502,10 +585,7 @@ class PostizPoster:
         else:
             start = now - timedelta(hours=24)
         end = now
-        try:
-            want_intg = payload["posts"][0]["integration"]["id"]
-            want_content = payload["posts"][0]["value"][0]["content"]
-        except (IndexError, KeyError, TypeError):
+        if _payload_value(payload) is None:
             return None, None
         try:
             rows = PostizStatusClient(self.cfg)._fetch_posts(start, end)
@@ -514,14 +594,13 @@ class PostizPoster:
             return None, None
         for sid, rec in rows.items():
             raw = rec.get("raw")
-            if not isinstance(raw, dict):
+            if not isinstance(raw, dict) or not isinstance(sid, str) or not sid:
                 continue
-            if raw.get("content") != want_content:
+            if not _row_matches_payload(raw, payload):
                 continue
-            if _row_integration_id(raw) != want_intg:
+            if _submission_held_by_other(led, sid, post.id):
                 continue
-            if isinstance(sid, str) and sid:
-                return sid, raw
+            return sid, raw
         return None, None
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
@@ -562,60 +641,72 @@ class PostizPoster:
                                        content=content, media_urls=media_urls,
                                        scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)
-        existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
+        existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
         if existing_sid:
-            return self._adopt_submission(led, post_id, existing_sid, existing_raw)
-        delay, last = 1.0, None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
-            except requests.exceptions.RequestException as exc:
-                existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
-                if existing_sid:
-                    return self._adopt_submission(led, post_id, existing_sid, existing_raw)
-                if _is_never_sent_transport(exc):
-                    raise
-                # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
-                # park for reconcile, never re-POST into a possible second live post.
-                led.set_post_state(post_id, PostState.needs_reconcile,
-                                   error_reason=f"postiz network error, may be live: {str(exc)[:160]}")
+            led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
+            if (led.posts[post_id].state is PostState.submitted
+                    and led.posts[post_id].submission_id == existing_sid):
                 return led
-            last = resp
-            if resp.status_code in (200, 201):
+        try:
+            resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
+        except requests.exceptions.RequestException as exc:
+            existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
+            if existing_sid:
+                led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
+                if (led.posts[post_id].state is PostState.submitted
+                        and led.posts[post_id].submission_id == existing_sid):
+                    return led
+            if _is_never_sent_transport(exc):
+                raise
+            # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
+            # park for reconcile, never re-POST into a possible second live post.
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason=f"postiz network error, may be live: {str(exc)[:160]}")
+            return led
+        if resp.status_code in (200, 201):
+            body = None
+            sid = None
+            try:
+                body = resp.json()
+                sid = _extract_postiz_id(body)
+            except Exception as exc:
+                _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
                 body = None
                 sid = None
-                try:
-                    body = resp.json()
-                    sid = _extract_postiz_id(body)
-                except Exception as exc:
-                    _log.warning("postiz publish: could not parse 2xx body for %s (%s)", post_id, exc)
-                    body = None
-                    sid = None
-                if not sid:
-                    led.set_post_state(post_id, PostState.needs_reconcile,
-                                       error_reason="postiz 2xx but no recognizable post id (body withheld)")
-                    return led
-                led.set_post_state(post_id, PostState.submitted)
-                post = led.posts[post_id]
-                post.submission_id = sid
-                post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
-                                   or safe_public_url(post.public_url))
-                return led
-            if resp.status_code == 401:
-                raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
-            if 500 <= resp.status_code < 600:
-                # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
+            if not sid:
                 led.set_post_state(post_id, PostState.needs_reconcile,
-                                   error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
+                                   error_reason="postiz 2xx but no recognizable post id (body withheld)")
                 return led
-            if resp.status_code == 429:
-                time.sleep(delay + random.uniform(0, delay)); delay *= 2; continue
-            break                                            # other 4xx -> fail
+            led.set_post_state(post_id, PostState.submitted)
+            post = led.posts[post_id]
+            post.submission_id = sid
+            post.public_url = (safe_public_url(_postiz_permalink(self.cfg, sid, body))
+                               or safe_public_url(post.public_url))
+            return led
+        if resp.status_code == 401:
+            raise PostizAuthError("Postiz 401 unauthorized — check POSTIZ_API_KEY (response body withheld)")
+        if 500 <= resp.status_code < 600:
+            # Ambiguous after the body was sent (no idempotency key) — park, do NOT re-POST.
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
+            return led
+        if resp.status_code == 429:
+            # Whether Postiz applied the body before 429 is unproven. There is no idempotency key,
+            # so another create — including sleep-and-continue — is a second post. Adopt a matching
+            # row when the lookup finds one; otherwise park needs_reconcile. `failed` is re-queueable.
+            existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
+            if existing_sid:
+                led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
+                if (led.posts[post_id].state is PostState.submitted
+                        and led.posts[post_id].submission_id == existing_sid):
+                    return led
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason="postiz 429, may be live (reconcile by hand) — body withheld")
+            return led
         # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
-        # re-queueable -> double-post risk). Today the 5xx branch returns before here, but guard it
-        # so a future edit to the retry/return flow can't strand a needs_reconcile post as failed.
+        # re-queueable -> double-post risk). 5xx and transport ambiguity return above.
         if led.posts[post_id].state is not PostState.needs_reconcile:
-            code = getattr(last, "status_code", None)
+            code = resp.status_code
             kind = error_kind_for_http_status(code) if isinstance(code, int) else ErrorKind.unknown
             led.set_post_state(post_id, PostState.failed, error_kind=kind,
                                error_reason=f"postiz {code if code is not None else '?'} (body withheld)")  # body may echo the auth header -> never persist it
