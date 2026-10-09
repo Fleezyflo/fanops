@@ -346,7 +346,29 @@ def test_publish_due_connection_error_trips_provider_circuit(tmp_path, monkeypat
     assert led.posts["pb"].state is PostState.queued
     assert led.posts["pb"].error_reason is None
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "skip_rate_limited_circuit" in log
+    assert "skip_vendor_unreachable_circuit" in log
+    assert "skip_rate_limited_circuit" not in log
+
+def test_publish_due_read_timeout_does_not_trip_provider_circuit(tmp_path, monkeypatch, mocker):
+    # ReadTimeout is not host-down: first stays on the transient defer; second still publishes.
+    import requests as _rq
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="pa", cid="c_a", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="pb", cid="c_b", when="2020-01-01T00:00:00Z")
+    def on_upload(url, **kw):
+        name = (kw.get("files") or {}).get("file", ("",))[0]
+        if str(name).startswith("c_a"):
+            raise _rq.ReadTimeout("read timed out")
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/ok.mp4"})
+    _wire_live(mocker, on_upload=on_upload)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    led = Ledger.load(cfg)
+    assert led.posts["pa"].state is PostState.queued
+    assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
+    assert led.posts["pb"].state is PostState.published
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "skip_vendor_unreachable_circuit" not in log
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
     # AUDIT C1: a 5xx park is not an exception — the rest of the due queue still runs. Leftover
