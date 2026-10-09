@@ -4,7 +4,7 @@ FanOps stays the clip+caption engine; a self-hosted Postiz instance (AGPL, githu
 postiz-app) is the distribution layer. A swappable-poster slot: build the post body,
 POST it, map the response to the ledger's submit/reconcile/fail states with the SAME asymmetric-retry
 safety (a bad key halts by type; a 5xx/timeout after the body was sent parks needs_reconcile, never
-re-POSTs; a 429 stops — Postiz has no idempotency key, so the create is not sent again).
+re-POSTs; a 429 adopts a matching row or parks needs_reconcile — no idempotency key, so no second create).
 
 REST contract (docs.postiz.com/public-api): Authorization: {apiKey} header; POST /public/v1/upload
 (multipart) -> {id, path@uploads.postiz.com}; POST /public/v1/posts with
@@ -692,10 +692,16 @@ class PostizPoster:
             return led
         if resp.status_code == 429:
             # Whether Postiz applied the body before 429 is unproven. There is no idempotency key,
-            # so another create — including sleep-and-continue — is a second post. Stop.
-            led.set_post_state(post_id, PostState.failed,
-                               error_kind=error_kind_for_http_status(429),
-                               error_reason="postiz 429 (body withheld)")
+            # so another create — including sleep-and-continue — is a second post. Adopt a matching
+            # row when the lookup finds one; otherwise park needs_reconcile. `failed` is re-queueable.
+            existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
+            if existing_sid:
+                led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
+                if (led.posts[post_id].state is PostState.submitted
+                        and led.posts[post_id].submission_id == existing_sid):
+                    return led
+            led.set_post_state(post_id, PostState.needs_reconcile,
+                               error_reason="postiz 429, may be live (reconcile by hand) — body withheld")
             return led
         # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
         # re-queueable -> double-post risk). 5xx and transport ambiguity return above.

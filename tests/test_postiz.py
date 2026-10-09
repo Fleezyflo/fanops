@@ -8,7 +8,7 @@ import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
-from fanops.models import Clip, ClipState, ErrorKind, Post, Platform, PostState
+from fanops.models import Clip, ClipState, ErrorKind, Post, Platform, PostState, is_real_submission_id
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
                                 postiz_list_integrations, postiz_check_auth, PostizIntegration,
                                 _extract_postiz_id, rewrite_media_base, _mirror_media_to_r2)
@@ -458,17 +458,19 @@ def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch,
     assert led.posts["p1"].submission_id == "postiz_existing"
     assert calls["n"] == 2
 
-def test_publish_429_exhausted_marks_failed(tmp_path, monkeypatch, mocker):
-    # One 429 stops the create. Postiz has no idempotency key, so the loop must not POST again.
-    # The row is failed (rate_limit), not needs_reconcile — 5xx stays the ambiguous park.
+def test_publish_429_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
+    # One 429. No matching row: park needs_reconcile. failed/rate_limit is re-queueable.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
     posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
     led = PostizPoster(cfg).publish(led, "p1")
     assert posted.call_count == 1
-    assert led.posts["p1"].state is PostState.failed
-    assert led.posts["p1"].error_kind is ErrorKind.rate_limit
-    assert not led.posts["p1"].submission_id
+    p = led.posts["p1"]
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is not ErrorKind.rate_limit
+    assert not is_real_submission_id(p.submission_id)
+    assert not p.submission_id
+    assert p.error_reason == "postiz 429, may be live (reconcile by hand) — body withheld"
 
 def test_publish_429_does_not_create_again(tmp_path, monkeypatch, mocker):
     # A following 2xx must not be reached. Sleep-and-continue would build a second Postiz post.
@@ -479,8 +481,30 @@ def test_publish_429_does_not_create_again(tmp_path, monkeypatch, mocker):
     led = PostizPoster(cfg).publish(led, "p1")
     assert posted.call_count == 1
     p = led.posts["p1"]
-    assert p.state is PostState.failed and p.error_kind is ErrorKind.rate_limit
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is not ErrorKind.rate_limit
     assert p.submission_id != "postiz_9"
+    assert not p.submission_id
+    assert p.error_reason == "postiz 429, may be live (reconcile by hand) — body withheld"
+
+def test_publish_429_adopts_matching_row(tmp_path, monkeypatch, mocker):
+    # Same adopt lookup as the transport-error path. A matching row is this post; do not POST again.
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
+    calls = {"n": 0}
+    def get_side(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, _INTGS)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _R(200, {"posts": []})
+        return _R(200, {"posts": [_matching_postiz_row()]})
+    mocker.patch("requests.get", side_effect=get_side)
+    led = PostizPoster(cfg).publish(led, "p1")
+    assert posted.call_count == 1
+    assert led.posts["p1"].state is PostState.submitted
+    assert led.posts["p1"].submission_id == "postiz_existing"
+    assert calls["n"] == 2
 
 
 # ---- MOL-786: the publish boundary declares the token and enforces the media invariants ----
