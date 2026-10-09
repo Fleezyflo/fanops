@@ -31,6 +31,33 @@ def _load_model(model: str):
     return WhisperModel(model, device="cpu", compute_type="int8")
 
 
+def _install_pyav19_open_compat(av_module=None) -> None:
+    """faster-whisper 1.2.1 always passes metadata_errors= to av.open. PyAV 19 removed that
+    keyword, so the first transcribe() raises TypeError, the subprocess exits 1, and no JSON
+    is written (the HF Hub unauthenticated warning is only the first stderr line). Upstream
+    master skips the kwarg when av major >= 19; apply that here until the release is on PyPI.
+    av is an optional [asr] extra — imported inside the function, same as _load_model."""
+    if av_module is None:
+        import av
+        av_module = av
+    try:
+        major = int(str(getattr(av_module, "__version__", "0")).split(".", 1)[0])
+    except ValueError:
+        return
+    if major < 19:
+        return
+    current = av_module.open
+    if getattr(current, "_fanops_pyav19", False):
+        return
+
+    def open_compat(*args, **kwargs):
+        kwargs.pop("metadata_errors", None)
+        return current(*args, **kwargs)
+
+    open_compat._fanops_pyav19 = True
+    av_module.open = open_compat
+
+
 def _seg_quality(s) -> dict:
     """Optional faster-whisper quality fields — preserved at the JSON boundary for speech-trust filtering."""
     out = {}
@@ -60,6 +87,7 @@ def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | Non
     anti-hallucination controls (2026-07-13 incident: repetition loops + a CJK mash on song
     playback) — VAD drops non-speech windows, conditioning-off stops one bad segment from cascading."""
     wm = _load_model(model)
+    _install_pyav19_open_compat()  # PyAV 19 rejects metadata_errors; must run before decode
     langs = [x for x in (language or "").replace(",", " ").split() if x]
     multi = len(langs) > 1                                # >1 candidate -> per-segment language detection
     segments, info = wm.transcribe(audio, language=(None if multi else (langs[0] if langs else None)),
