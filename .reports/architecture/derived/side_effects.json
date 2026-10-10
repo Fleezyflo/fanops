@@ -663,35 +663,35 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 212
+        "line": 213
       },
       {
         "call": "subprocess.run",
-        "line": 308
+        "line": 309
       },
       {
         "call": "subprocess.run",
-        "line": 313
+        "line": 314
       },
       {
         "call": "subprocess.run",
-        "line": 713
+        "line": 850
       },
       {
         "call": "subprocess.run",
-        "line": 739
+        "line": 876
       },
       {
         "call": "subprocess.run",
-        "line": 744
+        "line": 881
       },
       {
         "call": "subprocess.run",
-        "line": 772
+        "line": 909
       },
       {
         "call": "subprocess.run",
-        "line": 845
+        "line": 982
       }
     ],
     "fanops.discover": [

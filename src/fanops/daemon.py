@@ -14,11 +14,12 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, json, logging, os, plistlib, re, shutil, subprocess, sys, time
+import contextlib, ctypes, json, logging, os, plistlib, re, shutil, subprocess, sys, time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
-from fanops.errors import ToolchainMissingError
+from fanops.errors import ToolchainMissingError, fail_open
 
 _log = logging.getLogger(__name__)
 
@@ -351,10 +352,147 @@ def install(cfg: Config, *, interval: int) -> dict:
     return {"plist": str(pp), "interval": interval, "loaded": loaded,
             "responder": resolved, **keeper}
 
+# launchd opens StandardOutPath / StandardErrorPath once and does not rotate them. Those fds are
+# O_APPEND, so the keeper can copytruncate without a kickstart: the pump's next write goes to EOF.
+# Unreadable flags are not proof — the live file stays untouched.
+LAUNCHD_LOG_ROTATE_BYTES = 50 * 1024 * 1024
+_LAUNCHD_LOG_FDS = (("daemon.out", 1), ("daemon.err", 2))
+
+
+def _same_file_append(flags: int, ino: int, dev: int, path: Path) -> bool:
+    """True when `flags` includes O_APPEND and `path` is still that inode."""
+    if (flags & os.O_APPEND) == 0:
+        return False
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    return st.st_ino == ino and st.st_dev == dev
+
+
+def _darwin_fd_stat(pid: int, fd: int) -> tuple[int, int, int] | None:
+    """(open flags, inode, device) for one fd, or None when proc_pidfdinfo won't say."""
+    class _ProcFileinfo(ctypes.Structure):
+        _fields_ = [
+            ("fi_openflags", ctypes.c_uint32), ("fi_status", ctypes.c_uint32),
+            ("fi_offset", ctypes.c_int64), ("fi_type", ctypes.c_int32),
+            ("fi_guardflags", ctypes.c_uint32),
+        ]
+
+    class _VinfoStat(ctypes.Structure):
+        _fields_ = [
+            ("vst_dev", ctypes.c_uint32), ("vst_mode", ctypes.c_uint16), ("vst_nlink", ctypes.c_uint16),
+            ("vst_ino", ctypes.c_uint64), ("vst_uid", ctypes.c_uint32), ("vst_gid", ctypes.c_uint32),
+            ("vst_atime", ctypes.c_int64), ("vst_atimensec", ctypes.c_int64),
+            ("vst_mtime", ctypes.c_int64), ("vst_mtimensec", ctypes.c_int64),
+            ("vst_ctime", ctypes.c_int64), ("vst_ctimensec", ctypes.c_int64),
+            ("vst_birthtime", ctypes.c_int64), ("vst_birthtimensec", ctypes.c_int64),
+            ("vst_size", ctypes.c_int64), ("vst_blocks", ctypes.c_int64),
+            ("vst_blksize", ctypes.c_int32), ("vst_flags", ctypes.c_uint32),
+            ("vst_gen", ctypes.c_uint32), ("vst_rdev", ctypes.c_uint32),
+            ("vst_qspare", ctypes.c_int64 * 2),
+        ]
+
+    class _VnodeInfo(ctypes.Structure):
+        _fields_ = [
+            ("vi_stat", _VinfoStat), ("vi_type", ctypes.c_int), ("vi_pad", ctypes.c_int),
+            ("vi_fsid_0", ctypes.c_int32), ("vi_fsid_1", ctypes.c_int32),
+        ]
+
+    class _VnodeFdinfo(ctypes.Structure):
+        _fields_ = [("pfi", _ProcFileinfo), ("pvi", _VnodeInfo)]
+
+    try:
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        libc.proc_pidfdinfo.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        libc.proc_pidfdinfo.restype = ctypes.c_int
+        buf = ctypes.create_string_buffer(ctypes.sizeof(_VnodeFdinfo))
+        n = libc.proc_pidfdinfo(pid, fd, 1, buf, ctypes.sizeof(_VnodeFdinfo))
+    except (AttributeError, OSError) as exc:
+        _log.warning("launchd fd flags unreadable pid=%s fd=%s: %s", pid, fd, exc)
+        return None
+    if n < ctypes.sizeof(_VnodeFdinfo):
+        return None
+    info = _VnodeFdinfo.from_buffer_copy(buf)
+    return info.pfi.fi_openflags, info.pvi.vi_stat.vst_ino, info.pvi.vi_stat.vst_dev
+
+
+def launchd_fd_is_append(pid: int, fd: int, path: Path) -> bool:
+    """True only when `pid`'s `fd` is O_APPEND on `path`. Anything unreadable is not proven."""
+    if sys.platform != "darwin":
+        return False
+    info = _darwin_fd_stat(pid, fd)
+    if info is None:
+        return False
+    return _same_file_append(*info, path)
+
+
+def _copytruncate(path: Path, size: int) -> bool:
+    """Copy `path` to `path.1`, then truncate it. A failed copy leaves the live file alone."""
+    inode = path.stat().st_ino
+    tmp = path.with_name(path.name + ".1.tmp")
+    dest = path.with_name(path.name + ".1")
+    try:
+        shutil.copyfile(path, tmp)
+        if tmp.stat().st_size < size or path.stat().st_ino != inode:
+            return False
+        os.replace(tmp, dest)
+        if path.stat().st_ino != inode:
+            return False
+        os.truncate(path, 0)
+        return True
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning("rotate temp unlink %s failed: %s", tmp, exc)
+
+
+def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
+                        minimum_bytes: int | None = None,
+                        fd_is_append: Callable[[int, int, Path], bool] | None = None) -> list[str]:
+    """Copytruncate daemon.out / daemon.err once each exceeds the cap. Does not kickstart.
+
+    stdout is fd 1 and stderr is fd 2 — the descriptors launchd installs for StandardOutPath and
+    StandardErrorPath. Truncation happens only when that fd is still this path and O_APPEND.
+    """
+    cap = LAUNCHD_LOG_ROTATE_BYTES if minimum_bytes is None else minimum_bytes
+    probe = launchd_fd_is_append if fd_is_append is None else fd_is_append
+    use_pid = pid
+    rotated: list[str] = []
+    for name, fd in _LAUNCHD_LOG_FDS:
+        path = cfg.reports / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size < cap:
+            continue
+        if use_pid is None:
+            use_pid, _age = _pump_pid_age_s()
+        if use_pid is None or not probe(use_pid, fd, path):
+            _log.warning("rotate_launchd_logs: %s is %s bytes but O_APPEND on fd %s is not proven "
+                         "(pid=%s) — leaving it", name, size, fd, use_pid)
+            continue
+        if _copytruncate(path, size):
+            rotated.append(name)
+    return rotated
+
+
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
-    stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env)."""
+    stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env).
+    Copytruncates an over-cap launchd log when its fd is O_APPEND, without kickstart. A rotation
+    failure is logged and does not skip the rest of ensure."""
     _require_darwin()
+    try:
+        rotate_launchd_logs(cfg)
+    except Exception as exc:
+        _log.warning("ensure.rotate_launchd_logs: %s: %s",
+                     type(exc).__name__, str(exc)[:200], exc_info=True)
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
@@ -384,7 +522,6 @@ def ensure(cfg: Config) -> dict:
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
     if cfg.auto_adopt:
-        from fanops.errors import fail_open
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
