@@ -266,7 +266,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
                     break
-                raise
+                log("source_tags", sid, "search_fail", tag=tag, err=type(exc).__name__)
+                break
             if not _exact_hit(hits, tag):
                 pending.pop(0)
                 tags_this_walk += 1
@@ -282,9 +283,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     _remember_dead_dump(cfg, current, exc)
                     break
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
-                pending.pop(0)
-                tags_this_walk += 1
-                continue
+                break
             _apply_scrape_metrics(measurements, tag, metrics)
         _apply_cached_graph(cfg, measurements, tag)
         pending.pop(0)
