@@ -502,12 +502,83 @@ def test_search_hashtags_scrape_maps_incomplete_hits():
     assert all("play_count" not in r for r in rows)
 
 
-def test_search_hashtags_scrape_fail_open():
+def test_search_hashtags_scrape_client_error_raises():
+    """RuntimeError from search_hashtags propagates. Was test_search_hashtags_scrape_fail_open."""
     class _Boom:
         def search_hashtags(self, query):
             raise RuntimeError("network")
 
-    assert search_hashtags_scrape(_Boom(), "music") == []
+    try:
+        search_hashtags_scrape(_Boom(), "music")
+    except RuntimeError as exc:
+        assert str(exc) == "network"
+        return
+    raise AssertionError("RuntimeError must propagate out of search_hashtags_scrape")
+
+
+def test_search_runtime_error_leaves_name_for_later_play_count(tmp_path):
+    cfg = _cfg(tmp_path)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["plays", "later"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")], "later": [_Hit("later")]},
+                media_by_tag={
+                    "#plays": [_Media(1, "", play_count=1)],
+                    "#later": [_Media(1, "", play_count=90)],
+                },
+            )
+            self._broke = False
+
+        def search_hashtags(self, query):
+            if query == "later" and not self._broke:
+                self._broke = True
+                self.search_calls.append(query)
+                raise RuntimeError("network")
+            return super().search_hashtags(query)
+
+    client = _Client()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("remaining") == ["#later"]
+    assert not rec.get("researched_at")
+    assert "#later" not in (rec.get("verified") or [])
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    search_fails = [r for r in logged if r.get("outcome") == "search_fail"]
+    assert len(search_fails) == 1
+    assert search_fails[0]["tag"] == "#later" and search_fails[0]["err"] == "RuntimeError"
+    assert not cfg.hashtags_path.exists()
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["lock"] == ["#plays", "#later"]
+    assert rec2.get("researched_at")
+    assert not cfg.hashtags_path.exists()
+
+
+def test_measure_runtime_error_keeps_name_pending(tmp_path):
+    cfg = _cfg(tmp_path)
+    client = _SearchClient(
+        {"plays": [_Hit("plays")]},
+        refuse=RuntimeError("measure down"),
+    )
+    ensure_source_lock(cfg, _src(), client=client,
+                       research_fn=lambda *_a: ["plays"], **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("verified") == ["#plays"]
+    assert rec.get("remaining") == ["#plays"]
+    assert not rec.get("researched_at")
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    fails = [r for r in logged if r.get("outcome") == "measure_fail"]
+    assert len(fails) == 1
+    assert fails[0]["tag"] == "#plays" and fails[0]["err"] == "RuntimeError"
+    assert not any(r.get("outcome") == "stop_dead" for r in logged)
 
 
 def test_search_hashtags_scrape_reraises_login_required():
