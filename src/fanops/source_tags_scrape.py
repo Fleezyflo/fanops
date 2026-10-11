@@ -172,7 +172,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     measurements = dict(load_measurements(cfg))
     _restore_meters(measurements, prior.get("measurements"))
     verified_prior = prior.get("verified") if isinstance(prior.get("verified"), list) else None
-    if verified_prior:
+    if isinstance(verified_prior, list):
         verified = _dedupe_norm(verified_prior)
         pending = [t for t in verified if _scrape_number(measurements.get(t)) is None]
         extra = _unsearched_remaining(verified, prior.get("remaining"))
@@ -240,6 +240,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         verified = []
         pending = list(llm_names)
         search_needed = True
+    retryable_fail = False
     while pending:
         if len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
             break
@@ -267,6 +268,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     _remember_dead_dump(cfg, current, exc)
                     break
                 log("source_tags", sid, "search_fail", tag=tag, err=type(exc).__name__)
+                retryable_fail = True
                 break
             if not _exact_hit(hits, tag):
                 pending.pop(0)
@@ -283,6 +285,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                     _remember_dead_dump(cfg, current, exc)
                     break
                 log("source_tags", sid, "measure_fail", tag=tag, err=type(exc).__name__)
+                retryable_fail = True
                 break
             _apply_scrape_metrics(measurements, tag, metrics)
         _apply_cached_graph(cfg, measurements, tag)
@@ -291,7 +294,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     scrape_done = (not pending) or len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
-        if verified:
+        if verified or retryable_fail:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending,
                                catalog=catalog, catalog_at=catalog_at)
