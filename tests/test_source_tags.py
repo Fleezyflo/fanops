@@ -921,6 +921,147 @@ def test_lock_walk_marks_safari_tick_slot(tmp_path, monkeypatch):
     lock_ready_sources(cfg, open_client_fn=lambda c, user=None, **k: client,
                        research_fn=lambda *_a: ["music"], **_ok_graph())
     assert safari_tick_slot_claimed() == "lock"
+
+
+def _lock_ready_ledger(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    monkeypatch.setenv("FANOPS_LOCK_TAGS_PER_PASS", "1")
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    return cfg
+
+
+def test_lock_ready_search_fail_resumes_across_ticks(tmp_path, monkeypatch):
+    """First-name search_fail through lock_ready_sources keeps the pile until play_count lands."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _lock_ready_ledger(tmp_path, monkeypatch)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays", "later"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")], "later": [_Hit("later")]},
+                media_by_tag={
+                    "#plays": [_Media(1, "", play_count=1)],
+                    "#later": [_Media(1, "", play_count=90)],
+                },
+            )
+            self._broke = False
+
+        def search_hashtags(self, query):
+            if query == "plays" and not self._broke:
+                self._broke = True
+                self.search_calls.append(query)
+                raise RuntimeError("network")
+            return super().search_hashtags(query)
+
+    client = _Client()
+
+    def opener(_cfg, user=None, **_k):
+        return client
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("pile") == ["#plays", "#later"]
+    assert rec.get("verified") == []
+    assert rec.get("remaining")[0] == "#plays"
+    assert rec.get("remaining") == ["#plays", "#later"]
+    assert rec.get("catalog") == ["#plays", "#later"]
+    assert rec.get("catalog_at")
+    assert "researched_at" not in rec
+    assert calls["n"] == 1
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [r for r in logged if r.get("outcome") == "search_fail"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["measurements"]["#plays"]["play_count"] == 1.0
+    assert "researched_at" not in rec2
+    assert rec2.get("remaining") == ["#later"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec3 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec3["measurements"]["#plays"]["play_count"] == 1.0
+    assert rec3["measurements"]["#later"]["play_count"] == 90.0
+    assert rec3.get("researched_at")
+    assert rec3["lock"] == ["#plays", "#later"]
+
+
+def test_lock_ready_measure_fail_resumes_across_ticks(tmp_path, monkeypatch):
+    """measure_fail through lock_ready_sources stores play_count on the next tick, then stamps."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _lock_ready_ledger(tmp_path, monkeypatch)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")]},
+                media_by_tag={"#plays": [_Media(1, "", play_count=9)]},
+            )
+            self._broke = False
+
+        def hashtag_medias_top(self, name, amount=9):
+            if not self._broke:
+                self._broke = True
+                raise RuntimeError("measure down")
+            return super().hashtag_medias_top(name, amount)
+
+    client = _Client()
+
+    def opener(_cfg, user=None, **_k):
+        return client
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("pile") == ["#plays"]
+    assert rec.get("remaining")[0] == "#plays"
+    assert rec.get("catalog") == ["#plays"]
+    assert rec.get("catalog_at")
+    assert "researched_at" not in rec
+    assert "play_count" not in (rec.get("measurements") or {}).get("#plays", {})
+    assert calls["n"] == 1
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [r for r in logged if r.get("outcome") == "measure_fail"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["measurements"]["#plays"]["play_count"] == 9.0
+    assert rec2["lock"] == ["#plays"]
+    assert rec2.get("researched_at")
+
+
 def test_lock_ready_sources_at_most_one(tmp_path):
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
