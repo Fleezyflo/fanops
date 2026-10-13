@@ -574,8 +574,8 @@ def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch):
     led.save(); _run()
     assert len(Ledger.load(cfg).posts) == 1 and pid in Ledger.load(cfg).posts
 
-def test_recrosspost_rebirths_rejected_and_failed_posts(tmp_path, monkeypatch):
-    # MOL-326: rejected/failed at content-addressed pid -> pop + fresh awaiting_approval rebirth.
+def test_recrosspost_keeps_rejected_and_failed_posts(tmp_path, monkeypatch):
+    # Unattended mint must not pop a rejected/failed row and birth a new create under the same pid.
     from fanops.models import Post, PostState
     from fanops.ids import child_id, surface_key
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
@@ -592,21 +592,25 @@ def test_recrosspost_rebirths_rejected_and_failed_posts(tmp_path, monkeypatch):
     led.add_clip(clip); led.save()
     pid = child_id("post", "clip_1", surface_key("a", "instagram"))
     token = f"fanops_{_hash('idemp', pid)}"
+    old_at = "2020-01-01T00:00:00Z"
     for terminal in (PostState.rejected, PostState.failed):
         led = Ledger.load(cfg)
         led.set_clip_state("clip_1", ClipState.captioned)
-        old_at = "2020-01-01T00:00:00Z"
         led.posts[pid] = Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                                caption="old", state=terminal, created_at=old_at, submission_id=token)
         led.save()
         led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
         led.save()
-        p = Ledger.load(cfg).posts[pid]
-        assert p.state is PostState.awaiting_approval
-        assert p.created_at != old_at and p.created_at.endswith("Z")
+        loaded = Ledger.load(cfg)
+        p = loaded.posts[pid]
+        assert len(loaded.posts) == 1
+        assert p.state is terminal
+        assert p.created_at == old_at
+        assert p.caption == "old"
         assert p.submission_id == token
     led = Ledger.load(cfg)
     queued_at = "2021-06-01T12:00:00Z"
+    led.set_clip_state("clip_1", ClipState.captioned)
     led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.queued, "created_at": queued_at})
     led.save()
     crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T19:00:00Z")
