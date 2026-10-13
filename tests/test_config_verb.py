@@ -1,6 +1,6 @@
 """MOL-294: fanops config introspection verb."""
 from fanops.config import Config
-from fanops.config_introspect import config_rows, format_config_report
+from fanops.config_introspect import _display_value, config_rows, format_config_report
 from fanops.settings import Settings
 from tests.keyring_fake import install_mem_keyring
 
@@ -123,3 +123,4 @@ def test_format_config_report_masks_ig_scrape_password(tmp_path, monkeypatch):
     report = format_config_report(cfg)
     assert marker not in report
     assert "visible-scrape-user" in report
+    assert _display_value("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", marker) == "(set)"

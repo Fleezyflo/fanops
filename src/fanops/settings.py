@@ -497,7 +497,8 @@ def _strict_field(name: str, fn, v: object) -> str:
 
 
 def _is_resolved_secret_key(key: str) -> bool:
-    return key in _BASE_SECRET_KEYS or key.startswith("META_GRAPH_TOKEN__")
+    return (key in _BASE_SECRET_KEYS or key.startswith("META_GRAPH_TOKEN__")
+            or key.startswith("FANOPS_IG_SCRAPE_PASSWORD_"))
 
 
 _BASE_SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "FANOPS_IG_SCRAPE_PASSWORD"})

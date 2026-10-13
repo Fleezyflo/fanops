@@ -10,11 +10,14 @@ _backend_warned = False   # broken-keyring breadcrumb fires ONCE per process (fa
 _SERVICE = "fanops"
 _SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "FANOPS_IG_SCRAPE_PASSWORD"})
 _PER_HANDLE_TOKEN_PREFIX = "META_GRAPH_TOKEN__"
+_PER_USER_SCRAPE_PASSWORD_PREFIX = "FANOPS_IG_SCRAPE_PASSWORD_"
 
 
 def is_secret_env_key(key: str) -> bool:
-    """True for operator-secret env keys (+ per-handle META_GRAPH_TOKEN__<slug>)."""
-    return key in _SECRET_KEYS or key.startswith(_PER_HANDLE_TOKEN_PREFIX)
+    """True for operator-secret env keys (+ per-handle META_GRAPH_TOKEN__<slug> and per-user
+    FANOPS_IG_SCRAPE_PASSWORD_<user>)."""
+    return (key in _SECRET_KEYS or key.startswith(_PER_HANDLE_TOKEN_PREFIX)
+            or key.startswith(_PER_USER_SCRAPE_PASSWORD_PREFIX))
 
 
 def _keyring_get_password(service: str, username: str) -> str | None:

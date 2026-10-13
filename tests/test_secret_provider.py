@@ -199,3 +199,6 @@ def test_ig_scrape_password_in_secret_key_sets():
     assert "FANOPS_IG_SCRAPE_PASSWORD" in _BASE_SECRET_KEYS
     assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD")
     assert _is_resolved_secret_key("FANOPS_IG_SCRAPE_PASSWORD")
+    assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE")
+    assert _is_resolved_secret_key("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE")
+    assert not secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_USER")
