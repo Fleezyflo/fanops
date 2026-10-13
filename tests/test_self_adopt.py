@@ -6,6 +6,7 @@ disk and kickstarts the PUMP when they drift.
 These tests drive `daemon.ensure(cfg)` with only the launchctl/ps/git process edge stubbed. Decision
 inputs are real: heartbeat lines on disk, real `_version_signal` via git pass-through, real run flock."""
 from __future__ import annotations
+import fcntl
 import json
 import os
 import pathlib
@@ -13,7 +14,7 @@ import subprocess
 import sys
 
 from fanops.config import Config
-from fanops import daemon
+from fanops import daemon, doctor
 from fanops.pipeline_run import _lock_path
 import fanops
 
@@ -100,14 +101,69 @@ def test_no_kickstart_when_shas_match(tmp_path, monkeypatch):
     assert res["action"] == "none"
 
 
-def test_no_kickstart_when_running_sha_absent(tmp_path, monkeypatch):
-    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+def test_missing_sha_fails_deploy_check_and_ensure_adopts(tmp_path, monkeypatch):
+    """Loaded pump, either SHA missing: the deploy check fails and ensure adopts disk code."""
+    cfg, calls, uid = _fake_ensure_run(
+        monkeypatch, tmp_path,
+        list_out='\t"PID" = 4321;\n',
+        ps_etime="27:46:39\n")
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+
+    def loaded(_cfg, _interval):
+        return {"loaded": True}
+
+    row = doctor._deploy_code_check(cfg, daemon_status=loaded)
+    assert row is not None and row["ok"] is False
+    assert "heartbeat SHA" in row["hint"]
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) in calls
+    assert res["action"] == "kickstart_stale_code"
+
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: (None, "unavailable"))
+    _loop_hb(cfg, "abc123")
+    calls.clear()
+    row = doctor._deploy_code_check(cfg, daemon_status=loaded)
+    assert row is not None and row["ok"] is False
+    assert "disk SHA" in row["hint"]
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) in calls
+    assert res["action"] == "kickstart_stale_code"
+
+
+def test_missing_sha_adopt_uses_settle_and_run_held(tmp_path, monkeypatch):
+    """A missing SHA still waits out a young PID and a held run flock before kickstart."""
+    cfg, calls, uid = _fake_ensure_run(
+        monkeypatch, tmp_path,
+        list_out='\t"PID" = 4321;\n',
+        ps_etime="00:10\n")
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+
+    row = doctor._deploy_code_check(cfg, daemon_status=lambda _c, _iv: {"loaded": True})
+    assert row is not None and row["ok"] is False
 
     res = daemon.ensure(cfg)
 
     assert _kickstart_argv(uid) not in calls
     assert res["action"] == "none"
+
+    monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (4321, 10**9))
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        res = daemon.ensure(cfg)
+        assert _kickstart_argv(uid) not in calls
+        assert res["action"] == "none"
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def test_storm_guard_holds(tmp_path, monkeypatch):

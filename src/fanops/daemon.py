@@ -358,7 +358,9 @@ def ensure(cfg: Config) -> dict:
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
+        was_loaded = True
     else:
+        was_loaded = False
         pp = plist_path()
         loaded = _load_plist(pp, LABEL) if pp.exists() else False
         action = "bootstrap" if pp.exists() else "none"
@@ -378,9 +380,10 @@ def ensure(cfg: Config) -> dict:
             if action == "none":
                 action = "rewrite_plist"
     # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
-    # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
-    # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
-    # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
+    # the EXTERNAL keeper adopts disk code. Kickstart the PUMP (not the keeper) when the heartbeat SHA
+    # differs from the SHA on disk, and when the pump is already loaded and either SHA is missing.
+    # Kill switch default-on (matches cli). Fail-open with one breadcrumb — a git/launchctl hiccup
+    # leaves the pump alone.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
     if cfg.auto_adopt:
@@ -388,7 +391,11 @@ def ensure(cfg: Config) -> dict:
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            if running is not None and deployed is not None and running != deployed:
+            # Already-loaded + either SHA missing adopts disk code. A pump this call just
+            # bootstrapped is not that case: it has not had a pass to stamp a heartbeat.
+            missing = was_loaded and (running is None or deployed is None)
+            mismatch = running is not None and deployed is not None and running != deployed
+            if missing or mismatch:
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -595,8 +602,9 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
     """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
     Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
     `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
-    _heartbeat_age_s). None is load-bearing: the keeper's drift branch treats it as 'don't kickstart'
-    (disarm), so a pre-upgrade pump missing the `code` key is never stormed."""
+    _heartbeat_age_s). None is not current code: a loaded pump missing this SHA fails
+    doctor._deploy_code_check, and daemon.ensure adopts disk code through the same settle and
+    run_held guards as a SHA mismatch."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -701,8 +709,9 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
     `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
     per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
     per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
-    BOTH are absent so the caller DISARMS self-adopt and logs a DEGRADED line rather than appear
-    armed but never fire. NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
+    BOTH are absent. A loaded pump missing this disk SHA fails doctor._deploy_code_check, and
+    daemon.ensure adopts disk code through the same settle and run_held guards as a mismatch.
+    NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
     workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
     a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open
