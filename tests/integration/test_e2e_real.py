@@ -11,7 +11,7 @@ from fanops.transcribe import real_transcript_signal
 pytestmark = [pytest.mark.integration, pytest.mark.asr]
 
 # Whisper model this test pins itself to (see _make_spoken_sample / the monkeypatch below).
-# `tiny` is the smallest checkpoint and the one cached in the dev/CI image; pinning it in-test
+# `tiny` is the smallest checkpoint (nightly fetches it from the HF Hub at run time); pinning it in-test
 # means the golden path no longer depends on the operator remembering `FANOPS_WHISPER_MODEL=tiny`
 # on the command line — forgetting it would let the default `turbo` try a >1GB download that
 # fails on offline / air-gapped / TLS-proxied hosts, silently erroring the source and failing

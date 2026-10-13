@@ -31,36 +31,6 @@ def _load_model(model: str):
     return WhisperModel(model, device="cpu", compute_type="int8")
 
 
-def _install_pyav19_open_compat(av_module=None) -> None:
-    """faster-whisper 1.2.1 always passes metadata_errors= to av.open. PyAV 19 removed that
-    keyword (upstream master omits it when av major >= 19; that commit is not on PyPI). The
-    TypeError exits the runner before any JSON is written, so the source never becomes a moment.
-    av is an optional [asr] extra — missing av is a no-op so unit tests can call transcribe_to_json
-    without the extra. Installed once, before decode."""
-    if av_module is None:
-        try:
-            import av
-        except ImportError:
-            return
-        av_module = av
-    current = av_module.open
-    if getattr(current, "_fanops_pyav_open", False):
-        return
-    try:
-        major = int(str(getattr(av_module, "__version__", "0")).split(".", 1)[0])
-    except ValueError:
-        major = 0
-    drop = major >= 19
-
-    def open_compat(*args, **kwargs):
-        if drop:
-            kwargs.pop("metadata_errors", None)
-        return current(*args, **kwargs)
-
-    open_compat._fanops_pyav_open = True
-    av_module.open = open_compat
-
-
 def _seg_quality(s) -> dict:
     """Optional faster-whisper quality fields — preserved at the JSON boundary for speech-trust filtering."""
     out = {}
@@ -90,7 +60,6 @@ def transcribe_to_json(audio: str, out_dir: str, model: str, language: str | Non
     anti-hallucination controls (2026-07-13 incident: repetition loops + a CJK mash on song
     playback) — VAD drops non-speech windows, conditioning-off stops one bad segment from cascading."""
     wm = _load_model(model)
-    _install_pyav19_open_compat()  # PyAV 19 rejects metadata_errors; must run before decode
     langs = [x for x in (language or "").replace(",", " ").split() if x]
     multi = len(langs) > 1                                # >1 candidate -> per-segment language detection
     segments, info = wm.transcribe(audio, language=(None if multi else (langs[0] if langs else None)),

@@ -63,9 +63,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg espeak
       - name: Install (dev + transcribe + asr = demucs/faster-whisper/torch + studio)
+        # av<19: faster-whisper 1.2.1 decode_audio passes av.open(metadata_errors=...), which PyAV 19
+        # removed — whisper exits 1 before writing JSON. Production runs av 18.1.0.
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,transcribe,asr,studio]'
+          pip install -e '.[dev,transcribe,asr,studio]' 'av<19'
       - name: Cache demucs model checkpoints
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
