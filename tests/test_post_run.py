@@ -326,27 +326,55 @@ def test_publish_one_bad_upload_does_not_block_others(tmp_path, monkeypatch, moc
     assert led.posts["pb"].state is PostState.published
 
 
-def test_publish_due_connection_error_trips_provider_circuit(tmp_path, monkeypatch, mocker):
-    # Never-sent ConnectionError trips (provider, "*"): first stays queued; second is never claimed.
+def test_publish_due_connection_error_attempts_every_drainable_post(tmp_path, monkeypatch, mocker):
+    # A connection error on the first post is not proof the provider is down. The next drainable
+    # row (queued, past due, can_promote, active account) still gets _publish_one via publish_due.
     import requests as _rq
     _live(monkeypatch)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "active")])
     _queued(led, cfg, pid="pa", cid="c_a", when="2020-01-01T00:00:00Z")
     _queued(led, cfg, pid="pb", cid="c_b", when="2020-01-01T00:00:00Z")
+    calls = {"n": 0}
     def boom(url, **kw):
+        calls["n"] += 1
         raise _rq.exceptions.ConnectionError("connection refused")
     _wire_vendor(mocker, on_upload=boom)
     publish_due(cfg, now="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.posts["pa"].state is PostState.queued
-    assert led.posts["pa"].error_kind is None
-    assert not led.posts["pa"].submission_id
-    assert led.posts["pa"].daemon_transient_retry == 0
-    assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
-    assert led.posts["pb"].state is PostState.queued
-    assert led.posts["pb"].error_reason is None
+    assert calls["n"] == 6                                 # transient retries × both posts, not a skip
+    for pid in ("pa", "pb"):
+        p = led.posts[pid]
+        assert p.state is PostState.queued
+        assert p.error_kind is None
+        assert not p.submission_id
+        assert p.daemon_transient_retry == 0
+        assert (p.error_reason or "").startswith("publish deferred:")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
-    assert "skip_rate_limited_circuit" in log
+    assert "skip_rate_limited_circuit" not in log
+
+
+def test_publish_due_read_timeout_does_not_skip_the_other_post(tmp_path, monkeypatch, mocker):
+    # ReadTimeout on one post is not a provider-down circuit. The other drainable post is attempted.
+    import requests as _rq
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, [_acct_row("@a", "active")])
+    _queued(led, cfg, pid="pa", cid="c_a", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="pb", cid="c_b", when="2020-01-01T00:00:01Z")
+    calls = {"n": 0}
+    def on_upload(url, **kw):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise _rq.exceptions.ReadTimeout("read timed out (read timeout=30)")
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    _wire_live(mocker, on_upload=on_upload)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    led = Ledger.load(cfg)
+    assert calls["n"] >= 4
+    assert led.posts["pa"].state is PostState.queued
+    assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
+    assert led.posts["pb"].state is PostState.published
 
 def test_publish_needs_reconcile_does_not_halt_loop(tmp_path, monkeypatch, mocker):
     # AUDIT C1: a 5xx park is not an exception — the rest of the due queue still runs. Leftover

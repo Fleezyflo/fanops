@@ -157,19 +157,19 @@
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 192
+        "line": 191
       },
       {
         "call": "Ledger.transaction",
-        "line": 238
+        "line": 237
       },
       {
         "call": "Ledger.transaction",
-        "line": 379
+        "line": 376
       },
       {
         "call": "Ledger.transaction",
-        "line": 421
+        "line": 418
       }
     ],
     "fanops.recaption": [
@@ -719,11 +719,11 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.check_output",
-        "line": 187
+        "line": 184
       },
       {
         "call": "subprocess.check_output",
-        "line": 229
+        "line": 226
       }
     ],
     "fanops.ingest": [
