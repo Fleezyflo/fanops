@@ -61,22 +61,25 @@ def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
     return DepHealth("postiz", False, "unreachable")
 
 
-def _http_reachable(url: str | None, name: str) -> DepHealth:
+def _http_reachable(url: str | None, name: str, *, require_2xx: bool = False) -> DepHealth:
+    """Default is host-alive (the Postiz fallback): the host answered at all. require_2xx: only a 2xx is up."""
     import requests
     url = (url or "").rstrip("/")
     if not url:
         return DepHealth(name, False, "not configured")
     try:
-        requests.get(url, timeout=3)
-        return DepHealth(name, True, "reachable")
+        resp = requests.get(url, timeout=3)
     except requests.exceptions.RequestException:
         return DepHealth(name, False, "unreachable")
+    if require_2xx and not 200 <= resp.status_code < 300:
+        return DepHealth(name, False, f"HTTP {resp.status_code}")
+    return DepHealth(name, True, "reachable")
 
 
 def zernio_dep_health(cfg: Config) -> DepHealth:
     if not cfg.backend_has_creds("zernio"):
         return DepHealth("zernio", True, "skipped (not configured)")
-    return _http_reachable(cfg.zernio_url, "zernio")
+    return _http_reachable(cfg.zernio_url, "zernio", require_2xx=True)
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
