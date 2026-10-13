@@ -272,7 +272,7 @@ def test_recast_after_caption_skips_uncaptioned_surface(tmp_path, monkeypatch, m
     assert skipped == {"a/instagram", "a/youtube", "b/instagram", "b/youtube"}
 
 
-def _refresh_fixture(tmp_path, *, clip_state, meta_captions):
+def _refresh_fixture(tmp_path, *, clip_state, meta_captions, posts=(), lock=("#alpha",), write_lock=True):
     from fanops.pipeline import _stage_refresh_caption_requests
     from fanops.source_tags import source_tag_locks_path
     cfg = Config(root=tmp_path)
@@ -287,11 +287,14 @@ def _refresh_fixture(tmp_path, *, clip_state, meta_captions):
                               state=MomentState.clipped, affinities=["a"]))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(clip_path),
                           aspect=Fmt.r9x16, state=clip_state, meta_captions=meta_captions))
-    lock_p = source_tag_locks_path(cfg)
-    lock_p.parent.mkdir(parents=True, exist_ok=True)
-    lock_p.write_text(json.dumps({
-        "src_1": {"pile": ["#alpha"], "lock": ["#alpha"], "researched_at": "2026-08-17T00:00:00Z"},
-    }))
+        for post in posts:
+            led.add_post(post)
+    if write_lock:
+        lock_p = source_tag_locks_path(cfg)
+        lock_p.parent.mkdir(parents=True, exist_ok=True)
+        lock_p.write_text(json.dumps({
+            "src_1": {"pile": list(lock), "lock": list(lock), "researched_at": "2026-08-17T00:00:00Z"},
+        }))
     logs = []
     with Ledger.transaction(cfg) as led:
         _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg),
@@ -356,3 +359,179 @@ def test_refresh_opens_caption_gate_for_rendered_clip(tmp_path):
                                         lambda *a, **k: logs.append((a, k)))
     assert latest_request_id(cfg, "captions", "clip_1")
     assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+
+
+_OFF_LOCK_META = {"a/instagram": {"caption": "cap #beatmaking", "hashtags": ["#offlock"]},
+                  "a/youtube": {"caption": "cap #beatmaking", "hashtags": ["#alpha"]}}
+_BORN = "2020-01-01T00:00:00Z"
+
+
+def _surface_post(pid, *, state, error_kind=None):
+    from fanops.models import Platform, Post
+    return Post(id=pid, parent_id="clip_1", account="a", account_id="1",
+                platform=Platform.instagram, caption="cap #beatmaking", hashtags=["#offlock"],
+                state=state, created_at=_BORN, error_kind=error_kind,
+                submission_id="fanops_deadbeef")
+
+
+def test_refresh_does_not_redrive_failed_unknown_into_a_new_create(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import ErrorKind, PostState
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post(pid, state=PostState.failed, error_kind=ErrorKind.unknown)])
+    led = Ledger.load(cfg)
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert led.clips["clip_1"].state is ClipState.queued
+    assert not logs
+    post = led.posts[pid]
+    assert post.state is PostState.failed
+    assert post.error_kind is ErrorKind.unknown
+    assert post.created_at == _BORN
+    with Ledger.transaction(cfg) as led2:
+        crosspost_clips(led2, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    again = Ledger.load(cfg)
+    assert len(again.posts) == 1
+    assert again.posts[pid].state is PostState.failed
+    assert again.posts[pid].created_at == _BORN
+    assert again.posts[pid].error_kind is ErrorKind.unknown
+
+
+def test_refresh_does_not_redrive_rejected_into_a_new_create(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import PostState
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post(pid, state=PostState.rejected)])
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.queued
+    assert not logs
+    with Ledger.transaction(cfg) as led2:
+        crosspost_clips(led2, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    again = Ledger.load(cfg)
+    assert len(again.posts) == 1
+    assert again.posts[pid].state is PostState.rejected
+    assert again.posts[pid].created_at == _BORN
+
+
+def test_refresh_parks_inflight_request_so_failed_post_is_not_reminted(tmp_path, mocker):
+    from fanops.agentstep import latest_request_id, request_path, response_path
+    from fanops.crosspost import crosspost_clips
+    from fanops.ids import child_id, surface_key
+    from fanops.models import CaptionItem, CaptionSet, ErrorKind, PostState
+    from fanops.pipeline import _stage_ingest_captions, _stage_refresh_caption_requests
+    _fake_ffmpeg(mocker)
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META)
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    rid = latest_request_id(cfg, "captions", "clip_1")
+    req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    items = [CaptionItem(surface=s["surface"], caption="impact.", hashtags=["#alpha"], language="en")
+             for s in req["surfaces"]]
+    response_path(cfg, "captions", "clip_1").write_text(
+        CaptionSet(request_id=rid, items=items).model_dump_json())
+    pid = child_id("post", "clip_1", surface_key("a", "instagram"))
+    with Ledger.transaction(cfg) as led:
+        led.add_post(_surface_post(pid, state=PostState.failed, error_kind=ErrorKind.unknown))
+        _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg), lambda *_a, **_k: None)
+        _stage_ingest_captions(led, cfg, lambda *_a, **_k: None)
+        crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
+    out = Ledger.load(cfg)
+    assert out.clips["clip_1"].state is ClipState.queued
+    assert len(out.posts) == 1
+    assert out.posts[pid].state is PostState.failed
+    assert out.posts[pid].created_at == _BORN
+    assert out.posts[pid].error_kind is ErrorKind.unknown
+
+
+def test_refresh_still_reopens_off_lock_awaiting_post(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.models import PostState
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=_OFF_LOCK_META,
+        posts=[_surface_post("p_wait", state=PostState.awaiting_approval)])
+    assert latest_request_id(cfg, "captions", "clip_1")
+    assert Ledger.load(cfg).clips["clip_1"].state is ClipState.captions_requested
+    assert logs
+    assert Ledger.load(cfg).posts["p_wait"].state is PostState.awaiting_approval
+    assert Ledger.load(cfg).posts["p_wait"].created_at == _BORN
+
+
+_TAG_LINE = "#beatmaking #songwriting #music #musicblog"
+
+
+def _platform_posts(sentence, hashtags):
+    from fanops.models import Platform, Post, PostState
+    return [
+        Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=plat,
+             caption=sentence, hashtags=list(hashtags), state=PostState.awaiting_approval,
+             created_at=_BORN)
+        for plat, pid in (
+            (Platform.instagram, "p_ig"),
+            (Platform.tiktok, "p_tt"),
+            (Platform.youtube, "p_yt"),
+        )
+    ]
+
+
+def test_refresh_strips_empty_intersection_on_ig_tiktok_and_youtube(tmp_path):
+    from fanops.agentstep import latest_request_id
+    from fanops.models import PostState
+    meta = {f"a/{name}": {"caption": _TAG_LINE, "hashtags": []}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta, lock=(),
+        posts=_platform_posts(_TAG_LINE, []))
+    led = Ledger.load(cfg)
+    assert led.clips["clip_1"].state is ClipState.queued
+    assert latest_request_id(cfg, "captions", "clip_1") is None
+    assert not logs
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        post = led.posts[pid]
+        assert post.state is PostState.awaiting_approval
+        assert post.created_at == _BORN
+        assert "#" not in post.caption
+        assert post.hashtags == []
+    for name in ("instagram", "tiktok", "youtube"):
+        entry = led.clips["clip_1"].meta_captions[f"a/{name}"]
+        assert "#" not in entry["caption"]
+        assert entry["hashtags"] == []
+
+
+def test_refresh_missing_lock_file_keeps_stored_caption(tmp_path):
+    from fanops.source_tags import source_tag_locks_path
+    meta = {f"a/{name}": {"caption": _TAG_LINE, "hashtags": ["#beatmaking"]}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta, write_lock=False,
+        posts=_platform_posts(_TAG_LINE, ["#beatmaking"]))
+    assert not source_tag_locks_path(cfg).exists()
+    led = Ledger.load(cfg)
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        assert led.posts[pid].caption == _TAG_LINE
+        assert led.posts[pid].hashtags == ["#beatmaking"]
+        assert led.posts[pid].created_at == _BORN
+
+
+def test_refresh_lock_change_replaces_stored_caption_without_remint(tmp_path):
+    from fanops.models import PostState
+    sentence = "hello #offlock #alpha"
+    meta = {f"a/{name}": {"caption": sentence, "hashtags": ["#offlock", "#alpha"]}
+            for name in ("instagram", "tiktok", "youtube")}
+    cfg, _logs = _refresh_fixture(
+        tmp_path, clip_state=ClipState.queued, meta_captions=meta,
+        posts=_platform_posts(sentence, ["#offlock", "#alpha"]))
+    led = Ledger.load(cfg)
+    for pid in ("p_ig", "p_tt", "p_yt"):
+        post = led.posts[pid]
+        assert post.state is PostState.awaiting_approval
+        assert post.created_at == _BORN
+        assert post.caption == "hello"
+        assert post.hashtags == ["#alpha"]
+        assert "#offlock" not in post.caption

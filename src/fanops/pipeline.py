@@ -21,7 +21,8 @@ from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
-from fanops.caption_compose import _source_lock_completed, _source_lock_tags, _tags_off_lock
+from fanops.caption_compose import (_source_lock_completed, _source_lock_tags, _tags_off_lock,
+                                    replace_locked_captions)
 from fanops.crosspost import crosspost_clips, owner_caption_surfaces
 from fanops.post.run import publish_due
 from fanops.reconcile import reconcile_due
@@ -268,10 +269,27 @@ def _stage_structural_hooks(led: Ledger, cfg: Config, log) -> Ledger:
     return led
 
 
+def _caption_refresh_blocked(led: Ledger, clip) -> bool:
+    """True when this moment already has a rejected or failed post.
+
+    Re-opening the caption gate moves the clip to captions_requested; ingest then makes it
+    captioned and the seed mints again under the same clip id. This stage does not pop and
+    does not change post state, so operator remint stays repost_post and ErrorKind.unknown
+    is not daemon-retried."""
+    moment_id = clip.parent_id
+    ids = {x.id for x in led.clips.values() if x.parent_id == moment_id}
+    ids.add(clip.id)
+    return any(
+        p.parent_id in ids and p.state in (PostState.rejected, PostState.failed)
+        for p in led.posts.values()
+    )
+
+
 def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, log) -> Ledger:
     """Re-open caption gates whose on-disk request is missing/stale OR whose clip is missing captions
     for casting-admitted surfaces (a TikTok-only ingest that already advanced to queued/captioned).
-    Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost."""
+    Runs BEFORE ingest so incomplete caption coverage never silently blocks IG crosspost.
+    A moment with a rejected or failed post is not re-opened: that path mints a new create."""
     for c in list(led.clips.values()):
         if c.state not in (ClipState.rendered, ClipState.captions_requested, ClipState.captioned, ClipState.queued):
             continue
@@ -282,8 +300,6 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
         need = {f"{a}/{p.value}" for a, p in want}
         have = set(c.meta_captions or {})
         if not need:
-            continue
-        if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
             continue
         src = led.sources.get(m.parent_id)
         off_lock = _source_lock_completed(cfg, src) and any(
@@ -298,6 +314,16 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
             if tags:
                 stored_empty = False
                 break
+        # Decide the re-open from the pre-replacement tags. Replacement then writes Post.caption
+        # for a completed lock; a missing lock file is not completed and is left stored.
+        if _source_lock_completed(cfg, src):
+            replace_locked_captions(led, cfg, c, src)
+        if _caption_refresh_blocked(led, c):
+            if c.state in (ClipState.captions_requested, ClipState.captioned):
+                led.set_clip_state(c.id, ClipState.queued)
+            continue
+        if c.state is ClipState.captions_requested and not caption_request_stale(cfg, c.id, want):
+            continue
         if c.state in (ClipState.captioned, ClipState.queued) and need <= have and not off_lock:
             if not (lock_now and stored_empty):
                 continue
