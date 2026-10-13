@@ -109,7 +109,7 @@
     "fanops.ledger_wipe": [
       {
         "call": "Ledger.transaction",
-        "line": 384
+        "line": 387
       }
     ],
     "fanops.overlay_reburn": [
