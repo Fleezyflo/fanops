@@ -16,6 +16,8 @@ from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
 from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
+from fanops.health_projectors import sending_backend_label
+from fanops.health_types import DepHealth
 
 
 def _check(label: str, ok: bool = True, hint: str = "", *, severity: str | None = None) -> dict:
@@ -253,10 +255,10 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     return _check(lbl, True, "")
 
 
-def _doctor_notes(cfg: Config) -> list[str]:
+def _doctor_notes(cfg: Config, deps: list[DepHealth]) -> list[str]:
     lv = learning_validated(cfg)
     notes: list[str] = []
-    notes.append(f"poster backend: {cfg.poster_backend}"
+    notes.append(f"poster backend: {sending_backend_label(cfg, deps)}"
                  + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
     if lv:
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
