@@ -10,21 +10,23 @@ fixture and the gate caught it (`selftest`), or it is a live product gate whose 
 captured.
 
 ## Merge gates — the only things that block a PR to `main`
-- **Required status context `unit (fast, no toolchain)`** — `.github/workflows/ci.yml`. The sole
-  blocking check on push/PR (live branch protection; reconciled by the DC-3 probe below).
+- **Required status contexts** — `.github/ci-control-registry.yml` `required_contexts`. Each entry
+  is a workflow job `name:` that emits a check on `pull_request`, classified `required`, with no
+  job-level `continue-on-error`. DC-3 requires live branch protection to equal that list when the
+  protection read succeeds. `strict` is a GitHub setting, not a registry field.
 - **`merge_approved` single-operator ruleset** — the operator's merge *is* the authorization; the only
   route to protected `main`.
 
 ## Unit-lane validators — run inside the required `unit` job; each has a firing negative control
 - **`tools/arch`** — architecture governance. The RULES run here: `test_no_blocking_policy_findings`,
   the `derived/` drift byte-compare, and `test_every_rule_is_reachable` are all in the unit lane.
-  **The proof that those rules FIRE is not** — `test_negative_control_is_detected` carries
-  `@pytest.mark.slow` and the unit lane runs `-m "not integration and not slow"`, so no
-  merge-blocking run of the negative controls exists. This paragraph used to claim otherwise. That
-  matters because the blocking check is "no blocking findings", which goes GREENER when a rule
-  silently stops firing — the IMPL-007 failure this repo already had. The `negative controls` job
-  below is the only PR-visible run and it is ADVISORY: it reports, it does not gate. That gap is
-  disclosed here, not closed — say advisory and mean it.
+  **The proof that those rules FIRE is not in the unit lane** — `test_negative_control_is_detected`
+  carries `@pytest.mark.slow` and the unit lane runs `-m "not integration and not slow"`. This
+  paragraph used to claim the unit lane was that proof. That matters because the unit lane's
+  blocking check is "no blocking findings", which goes GREENER when a rule silently stops firing —
+  the IMPL-007 failure this repo already had. The `negative controls` job is a required context, so
+  a suite that runs and fails blocks the merge. The suite is selection-gated: a deselected PR does
+  not execute it, and the job summary says so.
   - `tools/arch/policy.py`: ARCH-001, ARCH-002, ARCH-003, ARCH-004, ARCH-006, ARCH-007, ARCH-008,
     ARCH-009, ARCH-010; IMPL-006, IMPL-007, IMPL-009, IMPL-010.
   - `tools/arch/drift.py` (artifacts under `derived/` byte-identical to regeneration) ·
@@ -82,13 +84,15 @@ OWN error: one unreadable plane must never report another as clean, which is how
 - **DC-9: a declared repository security setting disabled** (MOL-722) — `required_security_settings`
   vs the repo object's `security_and_analysis`. **Stated cost:** that field is admin-only, admin is
   not a grantable `GITHUB_TOKEN` scope, so in CI this reports an explicit `[SKIP]` — never a pass —
-  until the operator supplies the same fine-grained PAT DC-3 waits on. It is authoritative today on
+  until an admin-scoped read is available. It is authoritative today on
   an operator terminal. `--require-live` deliberately does NOT escalate its probe failure:
   escalating a probe that structurally cannot succeed manufactures a red nobody can clear, which
   this repo has shipped once already (`impact --strict`, unclearable on deletions). A divergence it
   CAN see still blocks.
-- **DC-3: live branch protection vs the registry context list** — same job; `--require-live` turns
-  an unreadable branch-protection probe into a failure.
+- **DC-3: live branch protection vs the registry context list** — same job. An unreadable
+  protection probe stays `[SKIP]` under `--require-live`: a workflow token cannot read branch
+  protection, and escalating that 403 is a red nobody can clear. A protection document that
+  authenticates and disagrees with `required_contexts` still fails.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on
@@ -98,36 +102,27 @@ OWN error: one unreadable plane must never report another as clean, which is how
   is now on a schedule. The operator run remains useful immediately after a protection change —
   it is just no longer the only thing standing between a drift and nobody noticing.
 
-## Advisory automation — runs and REPORTS; carries `continue-on-error: true` so it cannot paint red
-Advisory now means advisory. Until 2026-07-26 these jobs hard-failed while nothing could block on
-them — red that had to be merged past, which is decoration by this file's own first rule and trains
-merge-past-red on the whole board. **DC-7 keeps it that way** — an advisory job without
-`continue-on-error` is now a blocking validator finding. The required set stays FINAL at the single
-`unit` context, so every job here takes the same shape: report, do not gate. The first three are the
-ONLY signal for what they check; that cost is stated on each line rather than hidden.
-
-**And each of them now WRITES that report.** `continue-on-error` makes a failed job report success,
-so on its own it is a mute button, not a report — until 2026-07-26 `controls` and `base-install`
-produced no artefact whatsoever when they failed, and only `impact` was legible, by the accident of
-teeing its verdict to the run summary. All three now emit a job summary. `controls` additionally
-prints its SELECTION VERDICT, because its suite is selection-gated and this repo has already shipped
-a green `negative controls` context whose step never ran: a summary that cannot distinguish "skipped"
-from "passed silently" would rebuild the blind spot it exists to close.
+## Required pull-request checks — fail the workflow; listed in `required_contexts`
+A job that emits a check on `pull_request` is classified `required`. DC-7's `continue-on-error`
+rule applies to advisory jobs only, so these do not set it. `controls` prints its selection verdict:
+the suite is selection-gated, and a summary that cannot distinguish "skipped" from "passed silently"
+would hide a step that never ran.
 - `architecture.yml` `impact` job — `tools.arch impact --strict`, the only breaking-change detection
   in the repo. It exits non-zero and prints each UNDECLARED reason verbatim; `9c5f71e` made those
   reasons clearable by pasting the printed line into `approved_breaking_changes` in
-  `governance/baselines.json`. Nothing gates on the verdict — read the log.
-- `architecture.yml` `controls` job — `tools.arch selftest`, the only PR-visible proof the arch
+  `governance/baselines.json`.
+- `architecture.yml` `controls` job — `tools.arch selftest`, the PR-visible proof the arch
   validators fire on an injected defect. The pytest twin is `@pytest.mark.slow` and the unit lane
-  deselects `slow`. Nothing gates on it, while the unit lane's own blocking check is "no blocking
-  findings" — a check that goes GREENER when a rule silently stops firing.
+  deselects `slow`.
 - ci.yml `base-install` job — `scripts/ci/base_install_smoke.py`, the only exercise of a clean
   no-extras install and the loud cv2 refusal; the unit lane installs `[framing]`, so it is
   structurally incapable of covering this.
 - `.github/workflows/lane-guard.yml` — `scripts/lane_guard.py` (file-ownership) +
-  `scripts/pr_collision_guard.py` (cross-PR collision). Coordination advice resting on a best-effort
-  Linear lookup, not a claim about the diff.
-- ci.yml `ci-timing` job — post-hoc timing telemetry on main; nothing reads its result.
+  `scripts/pr_collision_guard.py` (cross-PR collision).
+
+## Advisory and scheduled — do not emit a required pull-request check
+DC-7: an advisory job without `continue-on-error` is a blocking validator finding.
+- ci.yml `ci-timing` job — post-hoc timing telemetry on main (`continue-on-error: true`); nothing reads its result.
 - `architecture.yml` `reconcile` job — the scheduled `derived/` AUTO-REGEN leg (regenerates the
   machine artifacts and FAILS on drift with a reviewable diff; deleting it silently rots `derived/`)
   AND the sole execution of the **deployed-state probes** (`tools.ci deployed --require-live`:

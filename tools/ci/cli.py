@@ -3,8 +3,10 @@
   static     registry <-> workflow implementation (DC-1/2/4/6/7). No network. Local + PR.
   deployed   registry <-> live GitHub settings (DC-3 branch protection, DC-8 workflow enablement,
              DC-9 repository security settings). Explicit read-only probes; nothing here mutates.
-             --require-live => a failure of a probe this job CAN authenticate FAILS (DC-3, DC-8).
-             Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
+             --require-live => a failure of a probe this job CAN authenticate FAILS (DC-8).
+             An unreadable DC-3 or DC-9 stays a non-authoritative SKIP. A protection read that
+             succeeds and disagrees with required_contexts still fails. Otherwise a probe failure
+             is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
   reconcile  all three planes together (static + deployed).
   selftest   run the negative controls (each blocking condition fires on an injected defect).
   regen      rewrite the GENERATED schema from tools/ci/schema.py. The unit lane byte-compares it,
@@ -50,18 +52,17 @@ def cmd_deployed(require_live: bool) -> int:
                                    workflow_error=wf_err, security_settings=settings,
                                    security_error=sec_err)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
-    # --require-live escalates an unreadable probe to a FAILURE — but ONLY for the probes this job
-    # can actually authenticate. DC-3 needs `administration: read` and DC-9 needs admin on the repo
-    # object; neither is a grantable GITHUB_TOKEN scope, so both wait on an operator-supplied PAT.
-    # DC-8 needs `actions: read`, which the job HAS — so an unreadable workflow list there is a real
-    # regression and fails.
+    # --require-live escalates an unreadable probe to a FAILURE only for a probe this job can
+    # authenticate. DC-8 needs `actions: read`, which the job HAS — an unreadable workflow list is a
+    # real regression and fails.
     #
-    # DC-9 is deliberately NOT escalated. Escalating a probe that structurally cannot succeed would
-    # manufacture a red no one can clear (this repo has shipped that defect before: `impact
-    # --strict` was unclearable on deletions), and it would fail for a reason that has nothing to do
-    # with the setting being measured. Its SKIP is non-authoritative, never a pass — the Finding
-    # renders `[SKIP]` and says so — and it becomes authoritative the moment DC-3's PAT lands.
-    hard = [("DC-3", err), ("DC-8", wf_err)]
+    # DC-3 (branch protection) and DC-9 (`security_and_analysis`) are not escalated. A workflow
+    # GITHUB_TOKEN cannot read either, and treating that 403 as a failure manufactures a red this
+    # job cannot clear (this repo has shipped that defect before: `impact --strict` was unclearable
+    # on deletions). Both stay non-authoritative SKIPs — the Finding renders `[SKIP]` and says so.
+    # A protection read that succeeds and disagrees with `required_contexts` still fails: that is
+    # the DC-3 finding emitted above, a measured divergence, not an unread plane.
+    hard = [("DC-8", wf_err)]
     failed = [(dc, e) for dc, e in hard if e]
     if failed and require_live:
         for dc, e in failed:

@@ -113,10 +113,9 @@ jobs:
       # and only runs nightly / on dispatch, so on its own NOTHING establishes that a green audit
       # means anything — a pip-audit that silently exited 0 reads exactly like a clean closure.
       #
-      # It lives HERE, in the required lane, and not in `negative controls (validator
-      # effectiveness)`: that job is `continue-on-error: true` at the JOB level (DC-7 requires it —
-      # it is classified advisory), so a control placed there could never turn a check red, it is
-      # selection-gated so it does not run on every PR, and it is stdlib-only by design with no pip.
+      # It lives HERE, in the unit job, and not in `negative controls (validator
+      # effectiveness)`: that job is selection-gated so it does not run on every PR, and it is
+      # stdlib-only by design with no pip.
       # A control that cannot fail is exactly the decoration a negative control exists to catch.
       #
       # LAST in the job on purpose: installing pip-audit resolves its own dependency tree into this
@@ -159,9 +158,8 @@ jobs:
     # separate F3 off-switch decision). A dedicated clean-venv job so the base packaging contract cannot
     # rot unnoticed. Seconds; base deps only (pydantic/requests/yt-dlp), no toolchain, no lock.
     name: base install (no extras) refuses smart-framing
-    # ADVISORY (DC-7 requires the flag). The unit lane installs [framing], so nothing else exercises
-    # a clean no-extras install or the loud cv2 refusal.
-    continue-on-error: true
+    # Required. The unit lane installs [framing], so nothing else exercises a clean no-extras
+    # install or the loud cv2 refusal.
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
@@ -190,7 +188,7 @@ jobs:
         if: always()
         run: |
           {
-            echo '## base install (no extras) — ADVISORY, does not gate'
+            echo '## base install (no extras)'
             echo '```'
             cat base-install.log 2>/dev/null || echo "(the base-install steps produced no output)"
             echo '```'
