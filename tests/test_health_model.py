@@ -165,7 +165,8 @@ def test_zernio_dep_health_status(tmp_path, monkeypatch):
         assert url == "http://zernio.test/v1" and timeout == 3
         return type("R", (), {"status_code": code})()
 
-    for code, ok, detail in ((200, True, "reachable"), (401, False, "HTTP 401"), (503, False, "HTTP 503")):
+    for code, ok, detail in ((200, True, "reachable"), (401, False, "HTTP 401"), (500, False, "HTTP 500"),
+                             (503, False, "HTTP 503")):
         monkeypatch.setattr(requests, "get", lambda url, timeout=3, code=code: fake_get(url, timeout, code=code))
         h = zernio_dep_health(cfg)
         assert h.name == "zernio" and h.ok is ok and h.detail == detail
