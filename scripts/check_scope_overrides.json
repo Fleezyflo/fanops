@@ -91,7 +91,8 @@
     "tests/test_daemon_sibling_readiness.py",
     "tests/test_self_adopt.py",
     "tests/test_daemon_readiness.py",
-    "tests/test_daemon_studio.py"
+    "tests/test_daemon_studio.py",
+    "tests/test_daemon_log_rotate.py"
   ],
   "src/fanops/daemon_siblings.py": [
     "tests/test_daemon_keeper.py",
