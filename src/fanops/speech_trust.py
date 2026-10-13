@@ -148,15 +148,26 @@ def window_has_trusted_speech(src, start: float, end: float) -> bool:
     return words >= _SPEECH_MIN_WORDS
 
 
-def excerpt_for_window(src, start: float, end: float, *, max_chars: int = 240) -> str:
-    """Join full-trust segment text overlapping [start,end); truncate to max_chars."""
+def excerpt_for_window(src, start: float, end: float, *, max_chars: int = 240,
+                       spans: list[tuple[float, float]] | None = None) -> str:
+    """Join full-trust segment text overlapping [start,end); truncate to max_chars.
+
+    Two or more `spans` are a rendered supercut: keep text that overlaps those
+    intervals and drop speech that sits only in the gaps between them. One span
+    or none keeps the [start, end) window.
+    """
     lang = getattr(src, "language", None)
     parts: list[str] = []
+    rendered = list(spans) if spans and len(spans) >= 2 else None
     for seg in trusted_segments(getattr(src, "transcript", None) or [], src_lang=lang):
         try:
             s, e = seg.get("start"), seg.get("end")
             if not isinstance(s, (int, float)) or not isinstance(e, (int, float)): continue
-            if e <= start or s >= end: continue
+            if rendered is not None:
+                if not any(e > a and s < b for a, b in rendered):
+                    continue
+            elif e <= start or s >= end:
+                continue
             text = (seg.get("text") or "").strip()
             if text: parts.append(text)
         except (AttributeError, TypeError):
