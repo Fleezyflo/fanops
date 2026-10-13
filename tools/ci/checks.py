@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+from . import live
 from .common import DEFAULT_REPO, Finding, workflow_basename
 
 _SHA40 = re.compile(r"[0-9a-f]{40}$")
@@ -95,21 +96,31 @@ def dc2_registry_jobs_bijection(reg: dict, jobs: list[dict]) -> list[Finding]:
     return out
 
 
-def dc3_deployed_state(reg: dict, live_contexts, live_error: str | None = None) -> list[Finding]:
-    """Registry `required_contexts` vs live GitHub required contexts.
+def dc3_deployed_state(reg: dict, protection, live_error: str | None = None) -> list[Finding]:
+    """Registry `required_contexts` vs the live branch-protection payload `probe_protection` read.
 
-    A live-probe failure is an explicit non-authoritative SKIP, never a pass — the caller decides
-    whether that is tolerable (local) or a hard failure (--require-live, the authenticated job)."""
+    A read payload FAILS when its required contexts differ from the declared set, and when its
+    `required_status_checks.strict` is not true: without strict, a PR whose checks passed against a
+    stale base merges unverified against the current `main`. A live-probe failure is an explicit
+    non-authoritative SKIP, never a pass — nothing was measured."""
     if live_error is not None:
         return [Finding("DC-3", "-",
             f"NON-AUTHORITATIVE: live protection unreadable ({live_error}) — deployed-state not verified",
             blocking=False, skipped=True)]
+    protection = protection or {}
     declared = set(reg.get("required_contexts") or [])
-    live = set(live_contexts or [])
-    if live == declared:
-        return []
-    return [Finding("DC-3", "-",
-        f"live required != declared — missing={sorted(declared - live)} unexpected={sorted(live - declared)}", True)]
+    live_set = set(live.required_contexts(protection))
+    out: list[Finding] = []
+    if live_set != declared:
+        out.append(Finding("DC-3", "-",
+            f"live required != declared — missing={sorted(declared - live_set)} "
+            f"unexpected={sorted(live_set - declared)}", True))
+    strict = (protection.get("required_status_checks") or {}).get("strict")
+    if strict is not True:
+        out.append(Finding("DC-3", "-",
+            f"live required_status_checks.strict is {strict!r}, not true — a PR behind main can merge "
+            "on checks run against a stale base", True))
+    return out
 
 
 def dc4_prose_matches_classification(reg: dict, prose_docs) -> list[Finding]:
@@ -283,12 +294,12 @@ def run_static(reg: dict, jobs: list[dict], prose_docs) -> list[Finding]:
             + dc7_advisory_must_not_hard_fail(reg, jobs))
 
 
-def run_deployed(reg: dict, live_contexts, live_error: str | None = None,
+def run_deployed(reg: dict, protection, live_error: str | None = None,
                  workflow_states=None, workflow_error: str | None = None,
                  security_settings=None, security_error: str | None = None) -> list[Finding]:
     """Deployed-state plane: registry <-> live GitHub. DC-3 (protection), DC-8 (workflow
     enablement), DC-9 (repository security settings). Each probe carries its OWN error so one
     unreadable plane never masks another as clean."""
-    return (dc3_deployed_state(reg, live_contexts, live_error)
+    return (dc3_deployed_state(reg, protection, live_error)
             + dc8_declared_workflow_disabled(reg, workflow_states, workflow_error)
             + dc9_repo_security_settings(reg, security_settings, security_error))

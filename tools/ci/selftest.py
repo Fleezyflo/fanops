@@ -28,6 +28,7 @@ CONTROLS = [
     Control("NC-DC2-phantom", "DC-2", "add a control pointing at a non-existent job"),
     Control("NC-DC2-unknown", "DC-2", "drop a control so its job becomes unregistered"),
     Control("NC-DC3-drift", "DC-3", "live required set diverges from declared current"),
+    Control("NC-DC3-strict", "DC-3", "live protection has matching contexts but strict false"),
     Control("NC-DC4-prose", "DC-4", "a doc calls a required context advisory"),
     Control("NC-DC6-timeout", "DC-6", "a job loses its timeout"),
     Control("NC-DC6-float", "DC-6", "a job uses a floating action tag"),
@@ -88,11 +89,23 @@ def _detect_nc_dc2_unknown(reg, jobs):
     return bool(new), "; ".join(sorted(new)) or "no new DC-2 finding"
 
 
+def _protection(contexts, strict=True):
+    return {"required_status_checks": {"strict": strict, "contexts": list(contexts)}}
+
+
 def _detect_nc_dc3_drift(reg, jobs):
-    current = list(reg.get("required_contexts", []))
-    before = checks.dc3_deployed_state(reg, current)
-    new = _blocking(checks.dc3_deployed_state(reg, ["only-one-context"])) - _blocking(before)
+    before = checks.dc3_deployed_state(reg, _protection(reg.get("required_contexts", [])))
+    after = checks.dc3_deployed_state(reg, _protection(["only-one-context"]))
+    new = _blocking(after) - _blocking(before)
     return bool(new), "; ".join(sorted(new)) or "no new DC-3 blocking finding"
+
+
+def _detect_nc_dc3_strict(reg, jobs):
+    current = reg.get("required_contexts", [])
+    before = checks.dc3_deployed_state(reg, _protection(current))
+    after = checks.dc3_deployed_state(reg, _protection(current, strict=False))
+    new = _blocking(after) - _blocking(before)
+    return bool(new), "; ".join(sorted(new)) or "no new DC-3 strict finding"
 
 
 def _detect_nc_dc4_prose(reg, jobs):
@@ -229,6 +242,7 @@ _DETECT_HANDLERS = {
     "NC-DC2-phantom": _detect_nc_dc2_phantom,
     "NC-DC2-unknown": _detect_nc_dc2_unknown,
     "NC-DC3-drift": _detect_nc_dc3_drift,
+    "NC-DC3-strict": _detect_nc_dc3_strict,
     "NC-DC4-prose": _detect_nc_dc4_prose,
     "NC-DC6-timeout": _detect_nc_dc6_timeout,
     "NC-DC6-float": _detect_nc_dc6_float,
