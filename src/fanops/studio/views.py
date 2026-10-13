@@ -10,6 +10,8 @@ from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.errors import ControlFileError, fail_open
 from fanops.ledger import Ledger
+from fanops.health_probes import deps_from_snapshot
+from fanops.health_projectors import sending_backend_label
 # Facade re-exports: the names consumers reach via `fanops.studio.views` / `views.X` (templates / app.py /
 # tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
@@ -324,7 +326,7 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = _postiz_down_on_helper_raise(cfg)
-    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
+    return {"is_live": cfg.is_live, "mode": sending_backend_label(cfg, deps_from_snapshot(cfg)), "blocked_gates": blocked,
             "strip_metrics_unknown": strip_metrics_unknown,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
             "errored_sources": errored, "errored_first_id": errored_first_id,
