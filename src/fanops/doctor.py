@@ -246,20 +246,10 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
             pass
     if not st or not st.get("loaded"):
         return None                                              # N/A — pump not loaded
-    running = daemon._last_heartbeat_code(cfg)
-    deployed = daemon._version_signal(cfg)[0]
-    if running is None or deployed is None:
-        missing = []
-        if running is None:
-            missing.append("heartbeat SHA")
-        if deployed is None:
-            missing.append("disk SHA")
-        return _check(lbl, False,
-                      f"missing {' and '.join(missing)} — a loaded pump is not on current code")
-    if running != deployed:
-        return _check(lbl, False,
-                      f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
-                      f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
+    reason = daemon.stale_code_reason(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg)[0])
+    if reason:
+        return _check(lbl, False, f"{reason} — release = merge → `git pull --ff-only` → `fanops up`; "
+                                  f"verify this check is green")
     return _check(lbl, True, "")
 
 

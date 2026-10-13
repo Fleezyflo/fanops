@@ -391,11 +391,8 @@ def ensure(cfg: Config) -> dict:
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            # Already-loaded + either SHA missing adopts disk code. A pump this call just
-            # bootstrapped is not that case: it has not had a pass to stamp a heartbeat.
-            missing = was_loaded and (running is None or deployed is None)
-            mismatch = running is not None and deployed is not None and running != deployed
-            if missing or mismatch:
+            # A pump this call just bootstrapped already runs disk code and has not stamped a heartbeat.
+            if was_loaded and stale_code_reason(running, deployed):
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -596,6 +593,17 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def stale_code_reason(running: str | None, deployed: str | None) -> str | None:
+    """Why a loaded pump is not on disk code, or None when it is: the heartbeat SHA is missing, the
+    disk SHA is missing, or the two differ. doctor._deploy_code_check fails on it; ensure adopts on it."""
+    missing = [n for n, v in (("heartbeat SHA", running), ("disk SHA", deployed)) if v is None]
+    if missing:
+        return f"missing {' and '.join(missing)} — a loaded pump is not on current code"
+    if running != deployed:
+        return f"pump reports code {running[:12]} but disk is {deployed[:12]}"
+    return None
 
 
 def _last_heartbeat_code(cfg: Config) -> str | None:
