@@ -4,6 +4,7 @@
 Sites that still swallow must LOG before falling back. Sites whose leftover G-suite pin is
 fail-closed (_account_arg, lineage_stats) assert the exception propagates — no silent success.
 """
+import json
 import logging
 
 import pytest
@@ -15,16 +16,17 @@ def _cfg(tmp_path):
     return Config(root=tmp_path)
 
 
-# ── 1. ledger_wipe.snapshot_is_restorable — except -> return False (cfg-less: module logger) ──
-def test_snapshot_is_restorable_logs_and_returns_false(tmp_path, caplog):
+# ── 1. ledger_wipe.snapshot_is_restorable — except -> return False (surfaced via get_logger) ──
+def test_snapshot_is_restorable_logs_and_returns_false(tmp_path):
     from fanops import ledger_wipe
-    # A directory path: exists() True, read_text() raises IsADirectoryError -> caught.
+    cfg = _cfg(tmp_path)
+    # A directory path: exists() True, SQLite open raises -> caught.
     d = tmp_path / "snap_dir"
     d.mkdir()
-    with caplog.at_level(logging.WARNING, logger="fanops.ledger_wipe"):
-        result = ledger_wipe.snapshot_is_restorable(str(d))
+    result = ledger_wipe.snapshot_is_restorable(str(d), cfg)
     assert result is False                                        # fallback unchanged
-    assert any(r.name == "fanops.ledger_wipe" for r in caplog.records)   # logged before swallow
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert any(r.get("stage") == "wipe" and r.get("outcome") == "snapshot_unrestorable" for r in recs)
 
 
 # ── 2. vocals._demucs_env — except -> pass (cfg-less: module logger) + narrowed to ImportError ──

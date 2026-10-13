@@ -63,7 +63,7 @@ def confirm_wipe(cfg: Config, *, typed: str, token: str = "") -> ActionResult:
     except Exception as exc:
         get_logger(cfg)("ledger_wipe", "-", "wipe_refused_snapshot_failed", err=str(exc)[:160])
         return ActionResult(ok=False, error=f"could not take the mandatory pre-wipe snapshot: {str(exc)[:160]}")
-    if not ledger_wipe.snapshot_is_restorable(snap):
+    if not ledger_wipe.snapshot_is_restorable(snap, cfg):
         log("ledger_wipe", "-", "wipe_refused_snapshot_unverified")
         return ActionResult(ok=False, error="the pre-wipe snapshot did not verify restorable — refused.")
     try:
