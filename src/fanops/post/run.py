@@ -207,7 +207,17 @@ def _non_active_row(accounts: Accounts | None, handle: str) -> Account | None:
     for a in accounts.accounts:
         if a.handle == want:
             return None if a.status is AccountStatus.active else a
-    return None
+        return None
+
+
+def _note_queued_skip(cfg: Config, post: Post, reason: str) -> None:
+    """A due row publish leaves queued records why: error_reason only, state stays queued."""
+    if post.error_reason == reason:
+        return
+    with Ledger.transaction(cfg) as led:
+        p = led.posts.get(post.id)
+        if p is not None and p.state is PostState.queued:
+            led.set_post_state(post.id, PostState.queued, error_reason=reason)
 
 
 def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts | None" = None,
@@ -229,6 +239,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
         _unclaim_no_integration(cfg, post_id, pre, unclaim=False)
+        _note_queued_skip(cfg, pre, f"publish skipped: no {backend} integration id for this channel")
         if _tally is not None:
             _tally["no_integration_id"] = _tally.get("no_integration_id", 0) + 1
         return None
@@ -260,6 +271,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         # two production producers — publish_due, publish_post — always pass it.)
         if accounts is not None and accounts.channel_provider_if_ready(post.account, post.platform) is None:
             get_logger(cfg)("publish", post_id, "skip_not_live_ready", account=post.account, platform=post.platform.value)
+            led.set_post_state(post_id, PostState.queued, error_reason=(
+                f"publish skipped: {backend} channel not live-ready (provider credentials missing)"))
             if _tally is not None:
                 _tally["not_live_ready"] = _tally.get("not_live_ready", 0) + 1
             return None                                # leave it `queued` — reconcile is not available for this channel
@@ -272,6 +285,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         # skipped count, WITHOUT a republish action.)
         if is_real_submission_id(post.submission_id):
             get_logger(cfg)("publish", post_id, "skip_resubmit_existing_id", sub=post.submission_id)
+            led.set_post_state(post_id, PostState.queued, error_reason=(
+                f"publish skipped: already submitted as {post.submission_id} — never re-sent; "
+                "reconcile resolves it"))
             if _tally is not None:
                 _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
             return None                                # leave it `queued` — never claimed, never stranded
@@ -477,16 +493,21 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
+            _note_queued_skip(cfg, post, "publish skipped: live, but this channel has no provider")
             continue
         if provider == "dryrun":                       # dryrun-boundary (Finding #1): NOT live -> no real backend to
             not_distributed += 1                       # distribute to — preview sidecar only, post stays `queued`
             _handle_dryrun_boundary(cfg, post)
+            _note_queued_skip(cfg, post, "publish skipped: dryrun (not live) — preview written, nothing sent")
             continue
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         key = (provider, (acct_id or post.account_id or "").strip() or "_")
         if key in tripped or (provider, "*") in tripped:
             log("publish", post.id, "skip_rate_limited_circuit",
                 account=post.account, platform=post.platform.value)
+            _note_queued_skip(cfg, post, f"publish skipped: {provider} " + (
+                "rate-limited (429) this integration" if key in tripped else "unreachable")
+                + " earlier this pass — retried next pass")
             continue
         tally: dict = {}
         if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,

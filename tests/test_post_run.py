@@ -1,4 +1,5 @@
 import json
+import pytest
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, Clip, Moment, PostState, ClipState, MomentState, Platform
@@ -344,7 +345,8 @@ def test_publish_due_connection_error_trips_provider_circuit(tmp_path, monkeypat
     assert led.posts["pa"].daemon_transient_retry == 0
     assert (led.posts["pa"].error_reason or "").startswith("publish deferred:")
     assert led.posts["pb"].state is PostState.queued
-    assert led.posts["pb"].error_reason is None
+    assert led.posts["pb"].error_reason == (
+        "publish skipped: postiz unreachable earlier this pass — retried next pass")
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "skip_rate_limited_circuit" in log
 
@@ -737,6 +739,70 @@ def test_publish_due_stops_claiming_an_integration_after_429(tmp_path, monkeypat
     assert after[failed[0]].error_kind is ErrorKind.rate_limit
     assert after[queued[0]].error_kind is None
     assert after["b1"].state is PostState.published
+
+
+_NO_PROVIDER_ROW = {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}
+
+
+@pytest.mark.parametrize("live,postiz_key,rows,reason", [
+    (False, False, [_acct_row("@a", "active")],
+     "publish skipped: dryrun (not live) — preview written, nothing sent"),
+    (True, True, [_NO_PROVIDER_ROW], "publish skipped: live, but this channel has no provider"),
+    (True, False, [_acct_row("@a", "active")],
+     "publish skipped: postiz channel not live-ready (provider credentials missing)"),
+])
+def test_publish_due_drainable_skip_persists_error_reason(tmp_path, monkeypatch, mocker, live, postiz_key, rows, reason):
+    """A drainable row (queued, past due, live lineage, active account) that publish_due leaves queued
+    carries the skip cause on the ledger row; state and error_kind are unchanged."""
+    for k in ("FANOPS_LIVE", "FANOPS_POSTER", "POSTIZ_API_KEY", "ZERNIO_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    if live:
+        monkeypatch.setenv("FANOPS_LIVE", "1")
+    if postiz_key:
+        monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _write_accounts(cfg, rows)
+    _queued(led, cfg, pid="d1", cid="c_d1", when="2020-01-01T00:00:00Z")
+    log = _wire_live(mocker)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    p = Ledger.load(cfg).posts["d1"]
+    assert p.state is PostState.queued and p.error_kind is None
+    assert p.error_reason == reason
+    assert _posted(log) == []
+
+
+def test_publish_due_rate_limit_circuit_persists_error_reason(tmp_path, monkeypatch, mocker):
+    """The row the 429 circuit holds back says so; the 429'd row keeps its own failure."""
+    _live(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="a1", cid="c_a1", when="2020-01-01T00:00:00Z")
+    _queued(led, cfg, pid="a2", cid="c_a2", when="2020-01-01T00:00:01Z")
+    _http_media(led, "a1", "a2")
+    _wire_live(mocker, on_post=lambda url, **kw: _R(429, {}, text="rate"))
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    after = Ledger.load(cfg).posts
+    assert after["a1"].state is PostState.failed and after["a1"].error_kind is ErrorKind.rate_limit
+    assert after["a2"].state is PostState.queued and after["a2"].error_kind is None
+    assert after["a2"].error_reason == (
+        "publish skipped: postiz rate-limited (429) this integration earlier this pass — retried next pass")
+
+
+def test_publish_due_existing_submission_id_persists_error_reason(tmp_path, monkeypatch, mocker):
+    """A queued row already holding a real vendor id is refused at the claim and says why."""
+    _live(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="s1", cid="c_s1", when="2020-01-01T00:00:00Z")
+    led.posts["s1"].submission_id = "cmsqdnb8w000dm8830i89gla4"
+    led.save()
+    log = _wire_live(mocker)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    p = Ledger.load(cfg).posts["s1"]
+    assert p.state is PostState.queued and p.submission_id == "cmsqdnb8w000dm8830i89gla4"
+    assert p.error_reason == ("publish skipped: already submitted as cmsqdnb8w000dm8830i89gla4 — "
+                              "never re-sent; reconcile resolves it")
+    assert _posted(log) == []
 
 
 def test_ensure_media_reuploads_foreign_https(tmp_path, monkeypatch, mocker):
