@@ -268,6 +268,8 @@ def test_daemon_ensure_signature_and_behavior_unchanged(tmp_path, monkeypatch):
     main_print = f"gui/{uid}/{daemon.LABEL}"
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(**{main_print: (0, "")}))
     cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("same", "git-head"))
     res = daemon.ensure(cfg)
     assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
 

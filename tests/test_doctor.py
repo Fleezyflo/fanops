@@ -356,6 +356,23 @@ def test_deploy_code_check_passes_when_shas_match(tmp_path, monkeypatch):
     assert row is not None and row["ok"] is True
 
 
+def test_deploy_code_check_fails_when_either_sha_missing(tmp_path, monkeypatch):
+    """A loaded pump with a missing heartbeat SHA or a missing disk SHA fails the deploy gate."""
+    from fanops import daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: None)
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: ("bbb222cafef00d", "git-head"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "heartbeat SHA" in row["hint"]
+
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: "aaa111deadbeef")
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: (None, "unavailable"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "disk SHA" in row["hint"]
+
+
 def test_deploy_code_check_omitted_when_daemon_not_loaded(tmp_path):
     def _unloaded(_cfg, _interval):
         return {"installed": True, "loaded": False, "verdict": "not loaded"}
