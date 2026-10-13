@@ -207,7 +207,7 @@ def _non_active_row(accounts: Accounts | None, handle: str) -> Account | None:
     for a in accounts.accounts:
         if a.handle == want:
             return None if a.status is AccountStatus.active else a
-        return None
+    return None
 
 
 def _note_queued_skip(cfg: Config, post: Post, reason: str) -> None:
