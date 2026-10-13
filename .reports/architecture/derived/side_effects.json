@@ -402,6 +402,12 @@
     ]
   },
   "locks": {
+    "fanops.autopilot": [
+      {
+        "call": "_file_lock",
+        "line": 22
+      }
+    ],
     "fanops.controlio": [
       {
         "call": "_file_lock",
@@ -675,23 +681,23 @@
       },
       {
         "call": "subprocess.run",
-        "line": 713
+        "line": 730
       },
       {
         "call": "subprocess.run",
-        "line": 739
+        "line": 756
       },
       {
         "call": "subprocess.run",
-        "line": 744
+        "line": 761
       },
       {
         "call": "subprocess.run",
-        "line": 772
+        "line": 789
       },
       {
         "call": "subprocess.run",
-        "line": 845
+        "line": 862
       }
     ],
     "fanops.discover": [
@@ -844,7 +850,7 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 84,
-    "lock_sites": 22,
+    "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
