@@ -83,12 +83,15 @@ OWN error: one unreadable plane must never report another as clean, which is how
   vs the repo object's `security_and_analysis`. **Stated cost:** that field is admin-only, admin is
   not a grantable `GITHUB_TOKEN` scope, so in CI this reports an explicit `[SKIP]` — never a pass —
   until the operator supplies the same fine-grained PAT DC-3 waits on. It is authoritative today on
-  an operator terminal. `--require-live` deliberately does NOT escalate its probe failure:
-  escalating a probe that structurally cannot succeed manufactures a red nobody can clear, which
-  this repo has shipped once already (`impact --strict`, unclearable on deletions). A divergence it
-  CAN see still blocks.
-- **DC-3: live branch protection vs the registry context list** — same job; `--require-live` turns
-  an unreadable branch-protection probe into a failure.
+  an operator terminal. `--require-live` deliberately does NOT escalate its probe failure: a read
+  the token is never granted measures the token, not the setting, so it is a SKIP rather than a
+  verdict. A divergence it CAN see still blocks.
+- **DC-3: live branch protection vs the registry context list** — same job. An unreadable
+  protection probe is `[SKIP]` under `--require-live`: a workflow token is never granted read on
+  branch protection, so the failed read measures the token, not the setting — non-authoritative,
+  never a pass. A protection payload that WAS read fails when its required contexts differ from
+  `required_contexts`, or when `required_status_checks.strict` is not true (without strict, a PR
+  merges on checks that ran against a stale base). Negative controls: `NC-DC3-drift`, `NC-DC3-strict`.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on
