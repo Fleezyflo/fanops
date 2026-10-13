@@ -3,6 +3,8 @@ import json
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from fanops.config import Config
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, measure_and_harvest_scrape, search_hashtags_scrape
 from fanops.ig_safari_shell import (
@@ -20,6 +22,13 @@ from fanops.ig_safari_shell import (
 )
 from fanops.ig_web_scrape import IgWebSession, _collect_medias, _looks_like_media, open_web_session
 from fanops.source_tags import _iter_lock_clients
+
+
+@pytest.fixture(autouse=True)
+def _safari_plist_is_temp(tmp_path, monkeypatch):
+    """Scrape tests must not write the operator's Safari plist."""
+    import fanops.ig_hashtag_scrape as igs
+    monkeypatch.setattr(igs, "_safari_prefs_path", lambda: tmp_path / "com.apple.Safari.plist")
 
 
 def test_web_search_exact_name():
