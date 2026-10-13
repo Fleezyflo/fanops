@@ -1,7 +1,9 @@
+import socket
 import sys
 
 import pytest
 import secrets
+import fanops.daemon_studio as studio_mod
 from fanops.config import Config
 from fanops import daemon
 
@@ -17,69 +19,66 @@ from fanops import daemon
 #     reason instead of a RuntimeError traceback out of daemon.py.
 # CONSEQUENCE, stated rather than buried: the `launchd-e2e` job in `.github/workflows/ci-e2e.yml`
 # runs this test on `macos-latest` (`python -m pytest -q tests/test_studio_lifecycle_e2e.py -m macos_only`).
+def _free_loopback_port() -> int:
+    """An unused loopback port. bind(0) can theoretically hand back the production port."""
+    host = daemon.STUDIO_DEFAULT_HOST
+    banned = daemon.STUDIO_DEFAULT_PORT
+    for _ in range(8):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, 0))
+            port = int(sock.getsockname()[1])
+        if port != banned:
+            return port
+    raise RuntimeError(f"loopback offered only the production Studio port {banned}")
+
+
+def test_free_loopback_port_is_not_the_production_studio_port():
+    assert _free_loopback_port() != daemon.STUDIO_DEFAULT_PORT
+
+
 @pytest.mark.integration
 @pytest.mark.macos_only
 @pytest.mark.skipif(sys.platform != "darwin", reason="MOL-830: fanops daemon is launchd/macOS-only")
-def test_studio_real_lifecycle_replacement(tmp_path):
-    # MOL-728: Real lifecycle integration test on macOS.
-    # This test uses a temporary launchd label and port to verify actual process replacement.
-    
-    # 1. Setup temporary root and label
+@pytest.mark.timeout(300)  # two port budgets are 60 × 2s each; the 60s default cuts the poll short
+def test_studio_real_lifecycle_replacement(tmp_path, monkeypatch):
+    # Cold start: install_studio(wait=True) polls _studio_port_answers_within until the
+    # expected generation answers. A free port and a temporary label keep this off the
+    # production Studio job. install/stop/render read daemon_studio.STUDIO_LABEL.
     root = tmp_path / "fanops_root"
     root.mkdir()
     (root / ".env").write_text("")
     cfg = Config(root=root)
     cfg.reports.mkdir(parents=True, exist_ok=True)
-    
-    # Use a unique label and a free port (found 9000 is free)
+
     temp_label = f"com.fanops.studio.test.{secrets.token_hex(4)}"
-    temp_port = 9000
-    
-    # Monkeypatch the label in daemon module so it uses our test label
-    import fanops.daemon
-    original_label = fanops.daemon.STUDIO_LABEL
-    fanops.daemon.STUDIO_LABEL = temp_label
-    
+    temp_port = _free_loopback_port()
+    host = daemon.STUDIO_DEFAULT_HOST
+    assert temp_label != "com.fanops.studio"
+    assert temp_port != daemon.STUDIO_DEFAULT_PORT
+    monkeypatch.setattr(studio_mod, "STUDIO_LABEL", temp_label)
+    monkeypatch.setattr(daemon, "STUDIO_LABEL", temp_label)
+
     try:
-        # 2. Install Generation A (let daemon generate it)
-        print("\n[E2E] Installing Generation A")
-        res_a = daemon.install_studio(cfg, port=temp_port)
-        
+        res_a = daemon.install_studio(cfg, host=host, port=temp_port, wait=True)
         if not res_a.get("studio_loaded"):
-            pytest.fail(f"Failed to load Studio Generation A: {res_a.get('error')}")
-            
+            pytest.fail(f"Generation A did not answer within the Studio port budget: {res_a.get('error')}")
         gen_a = res_a["generation"]
         assert len(gen_a) == 32
-        
-        # Capture PID A and verify generation A
-        fp_a = daemon._studio_get_fingerprint(port=temp_port)
-        assert fp_a is not None, "Generation A failed to answer"
+        assert daemon._studio_port_answers_within(host, temp_port, expect_gen=gen_a) is True
+        fp_a = daemon._studio_get_fingerprint(host=host, port=temp_port)
+        assert fp_a is not None and fp_a.get("generation") == gen_a
         pid_a = fp_a["pid"]
-        assert fp_a["generation"] == gen_a, f"Expected generation {gen_a}, got {fp_a['generation']}"
-        print(f"[E2E] Generation A ({gen_a}) serving on PID {pid_a}")
-        
-        # 3. Install Generation B (Replacement, let daemon generate it)
-        print("[E2E] Installing Generation B")
-        res_b = daemon.install_studio(cfg, port=temp_port)
-        
+
+        res_b = daemon.install_studio(cfg, host=host, port=temp_port, wait=True)
         if not res_b.get("studio_loaded"):
-            pytest.fail(f"Failed to load Studio Generation B: {res_b.get('error')}")
-            
+            pytest.fail(f"Generation B did not answer within the Studio port budget: {res_b.get('error')}")
         gen_b = res_b["generation"]
         assert len(gen_b) == 32
-        
-        # 4. Verify PID changed and generation changed
-        fp_b = daemon._studio_get_fingerprint(port=temp_port)
-        assert fp_b is not None, "Generation B failed to answer"
-        pid_b = fp_b["pid"]
-        assert fp_b["generation"] == gen_b, f"Expected generation {gen_b}, got {fp_b['generation']}"
-        assert pid_b != pid_a, f"PID should have changed (old: {pid_a}, new: {pid_b})"
+        assert daemon._studio_port_answers_within(host, temp_port, expect_gen=gen_b) is True
+        fp_b = daemon._studio_get_fingerprint(host=host, port=temp_port)
+        assert fp_b is not None and fp_b.get("generation") == gen_b
+        assert fp_b["pid"] != pid_a
         assert gen_b != gen_a
-        print(f"[E2E] Generation B ({gen_b}) serving on PID {pid_b}")
-        
+        assert studio_mod.studio_plist_path().name == f"{temp_label}.plist"
     finally:
-        # 5. Cleanup
-        print(f"[E2E] Cleaning up temporary service {temp_label}")
         daemon.stop_studio(cfg, remove=True)
-        # Restore the original label
-        fanops.daemon.STUDIO_LABEL = original_label

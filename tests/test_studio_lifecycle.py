@@ -119,8 +119,10 @@ def test_install_studio_owns_generation(cfg, monkeypatch):
 
 
 def test_install_studio_verifies_pid_and_generation(cfg, monkeypatch):
-    # MOL-728: wait=True confirms NEW PID + expected generation via the real port/fingerprint edges
+    # MOL-728: wait=True confirms NEW PID + expected generation via the real port/fingerprint edges.
+    # A mismatch keeps polling for the whole try budget; the sleep is the wall clock, not the verdict.
     _darwin_home(cfg, monkeypatch)
+    monkeypatch.setattr(daemon.time, "sleep", lambda *_a, **_k: None)
     _stub_launchctl(monkeypatch, pid=1234)
     _stub_port(monkeypatch, up=True)
     fp = {"pid": 5678, "generation": "gen-B", "sha": "sha-X"}
@@ -163,10 +165,64 @@ def test_redeploy_poll_rejection_cases(cfg, monkeypatch):
     _stub_fingerprint(monkeypatch, {"pid": 5678, "sha": "sha-X"})
     assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is False
 
-    _stub_fingerprint(monkeypatch, None)
-    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is True
+    probes = {"n": 0}
+
+    class _Absent:
+        def __init__(self, *a, **k):
+            probes["n"] += 1
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            class _Resp:
+                status = 500
+
+                def read(self):
+                    return b""
+
+            return _Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPConnection", _Absent)
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=3, step=0) is False
+    assert probes["n"] == 3
+
+    _stub_fingerprint(monkeypatch, {"pid": 9, "generation": "gen-B", "sha": "sha-X"})
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=3, step=0) is True
+
+    seen = {"n": 0}
+
+    class _Late:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            seen["n"] += 1
+
+        def getresponse(self):
+            ready = seen["n"] >= 3
+
+            class _Resp:
+                status = 200 if ready else 500
+                _body = json.dumps({"pid": 9, "generation": "gen-B", "sha": "sha-X"}).encode()
+
+                def read(self):
+                    return self._body
+
+            return _Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPConnection", _Late)
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=4, step=0) is True
+    assert seen["n"] == 3
 
     _stub_port(monkeypatch, up=False)
+    _stub_fingerprint(monkeypatch, None)
     assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is False
 
 
