@@ -6,6 +6,7 @@ tab (MUST preserve other keys/secrets); its tests stay here. os.environ mutation
 from __future__ import annotations
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -147,20 +148,19 @@ def test_env_rewrite_writes_via_write_text_atomic_inside_lock(tmp_path, monkeypa
     env = tmp_path / ".env"
     env.write_text("KEEP=1\n")
     lock_path = env.with_name(env.name + ".lock")
-    real = controlio.write_text_atomic
-    calls: list[tuple] = []
+    calls: list[Path] = []
 
-    def spy(p, text, *, mode=None):
+    def spy(p, text, **kw):
         with pytest.raises(LockBusyError):
             with _file_lock(lock_path, timeout=0):
                 pass
-        calls.append((p, mode))
-        real(p, text, mode=mode)
+        calls.append(p)
+        controlio.write_text_atomic(p, text, **kw)
 
-    monkeypatch.setattr(controlio, "write_text_atomic", spy)
+    monkeypatch.setattr(autopilot, "write_text_atomic", spy)
     autopilot.set_env_var(env, "OTHER", "2")
     autopilot.unset_env_var(env, "OTHER")
-    assert calls == [(env, 0o600), (env, 0o600)]
+    assert calls == [env, env]
     assert env.read_text() == "KEEP=1\n"
     assert (env.stat().st_mode & 0o777) == 0o600
     assert list(tmp_path.glob("*.tmp")) == []

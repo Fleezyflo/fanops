@@ -225,7 +225,6 @@
     },
     "fanops.autopilot": {
       "compile": [
-        "fanops",
         "fanops.config",
         "fanops.controlio",
         "fanops.ledger"
@@ -2986,7 +2985,7 @@
     ]
   },
   "fan_in_compile": {
-    "fanops": 18,
+    "fanops": 17,
     "fanops._fwrun": 0,
     "fanops.accounts": 21,
     "fanops.adjust": 3,
@@ -3193,7 +3192,7 @@
     "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
     "fanops.audit": 2,
-    "fanops.autopilot": 4,
+    "fanops.autopilot": 3,
     "fanops.bands": 0,
     "fanops.batches": 2,
     "fanops.canary": 10,
@@ -5207,7 +5206,7 @@
     "G2_largest_scc_size": 100,
     "G2_module_sccs_total": 82,
     "G2_non_trivial_sccs": 5,
-    "compile_edges_G1": 830,
+    "compile_edges_G1": 829,
     "lazy_edges": 460,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 113,

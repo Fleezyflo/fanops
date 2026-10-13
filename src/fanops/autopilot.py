@@ -12,8 +12,8 @@ SEPARATE, deliberate step via Postiz (self-hosted) or the manual publish-queue �
 This module wires autonomy of the per-clip WORK; it never publishes and never edits the ledger."""
 from __future__ import annotations
 from pathlib import Path
-from fanops import controlio
 from fanops.config import Config
+from fanops.controlio import write_text_atomic
 from fanops.ledger import _file_lock
 
 
@@ -29,7 +29,7 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
     appends if absent; creates the file if missing. NB: line endings are normalized to `\\n`.
     A value containing a newline is REJECTED (ValueError) — it would inject an arbitrary KEY=VALUE
     line and could silently overwrite an adjacent secret. The write is ATOMIC (controlio.write_text_atomic:
-    unique same-dir temp + os.replace, 0600) so a crash mid-write never truncates the secrets-bearing .env.
+    unique same-dir mkstemp temp, created 0600, + os.replace) so a crash mid-write never truncates the .env.
     The read through the write holds `<name>.lock` so a second caller cannot replace a stale read."""
     if "\n" in value or "\r" in value:
         raise ValueError(f"set_env_var: value for {key!r} contains a newline — rejected (would corrupt .env)")
@@ -48,7 +48,8 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
                 out.append(ln)
         if not found:
             out.append(f"{key}={value}")
-        controlio.write_text_atomic(env_path, "\n".join(out) + "\n", mode=0o600)   # owner-only at rest: .env may hold secrets
+        # No mode=: mkstemp already creates the temp 0600, and a chmod that fails on a non-POSIX FS must not block the write.
+        write_text_atomic(env_path, "\n".join(out) + "\n")
 
 
 def unset_env_var(env_path: Path, key: str) -> None:
@@ -68,7 +69,7 @@ def unset_env_var(env_path: Path, key: str) -> None:
             if stripped and not stripped.startswith("#") and bare_key == key:
                 continue
             out.append(ln)
-        controlio.write_text_atomic(env_path, "\n".join(out) + ("\n" if out else ""), mode=0o600)
+        write_text_atomic(env_path, "\n".join(out) + ("\n" if out else ""))
 
 
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:
