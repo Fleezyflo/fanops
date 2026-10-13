@@ -226,6 +226,7 @@
     "fanops.autopilot": {
       "compile": [
         "fanops.config",
+        "fanops.controlio",
         "fanops.ledger"
       ],
       "lazy": [
@@ -1121,6 +1122,7 @@
       "compile": [
         "fanops.config",
         "fanops.ledger",
+        "fanops.log",
         "fanops.models"
       ],
       "lazy": [],
@@ -3012,7 +3014,7 @@
     "fanops.config": 122,
     "fanops.config_introspect": 0,
     "fanops.control": 4,
-    "fanops.controlio": 14,
+    "fanops.controlio": 15,
     "fanops.crosspost": 1,
     "fanops.cutover": 1,
     "fanops.cutover_postiz": 0,
@@ -3060,7 +3062,7 @@
     "fanops.llm": 1,
     "fanops.llm_errors": 1,
     "fanops.llm_json": 1,
-    "fanops.log": 60,
+    "fanops.log": 61,
     "fanops.media_probe": 6,
     "fanops.meta_graph": 2,
     "fanops.metrics_schedule": 1,
@@ -3190,7 +3192,7 @@
     "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
     "fanops.audit": 2,
-    "fanops.autopilot": 2,
+    "fanops.autopilot": 3,
     "fanops.bands": 0,
     "fanops.batches": 2,
     "fanops.canary": 10,
@@ -3253,7 +3255,7 @@
     "fanops.ledger": 6,
     "fanops.ledger_bridge": 5,
     "fanops.ledger_sqlite": 2,
-    "fanops.ledger_wipe": 3,
+    "fanops.ledger_wipe": 4,
     "fanops.lever_docs": 5,
     "fanops.llm": 3,
     "fanops.llm_errors": 0,
@@ -5204,7 +5206,7 @@
     "G2_largest_scc_size": 100,
     "G2_module_sccs_total": 82,
     "G2_non_trivial_sccs": 5,
-    "compile_edges_G1": 827,
+    "compile_edges_G1": 829,
     "lazy_edges": 460,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 113,
