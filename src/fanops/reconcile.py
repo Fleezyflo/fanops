@@ -16,7 +16,9 @@ only, MOL-784) and written only when the token CHANGED. What an observation may 
                                                     media_id <- releaseId, published_at, publish
                                                     buckets), behind the IG/TikTok liveness gates
   ERROR, on a pending post                       -> the failed branch (incl. the candidate hold)
-  ERROR, on a held `queued` post                 -> leave queued (sid kept; never reopen failed)
+  ERROR, on a held `queued` post                 -> by the stored cause (_route_held_vendor_error):
+                                                    transient -> sid cleared, queued (resubmit);
+                                                    other -> failed with that kind; none -> left
   QUEUE, on a held `failed` post                 -> queued, sid kept, errors cleared (vendor recovered)
   absent, on a held `failed` post                -> rejected (vendor row gone; Studio discard)
   QUEUE / absent / anything else on pending      -> nothing but the postiz_state mirror
@@ -695,6 +697,29 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
                 "healed_submitting": healed}
 
 
+def _route_held_vendor_error(led: Ledger, post, info: dict, log) -> None:
+    """A `queued` row whose real sid the vendor reports ERROR. publish_due refuses a real sid on every
+    tick, so the row moves only where the stored vendor cause sends it. Postiz `ERROR` with no release
+    proves nothing published; without that proof, or without a classified cause, the row stays put.
+
+      transient (media fetch / vendor 5xx) -> sid cleared, stays queued: publish_due resubmits
+      any other classified cause           -> failed with that kind, sid kept (Studio retry clears it)"""
+    kind, why = info.get("errorKind"), info.get("errorMessage")
+    if info.get("postiz_state") != "ERROR" or info.get("released") or kind is None or not why:
+        log("reconcile", post.id, "left: queued holds real sid on vendor ERROR")
+        return
+    sid = post.submission_id
+    if kind is ErrorKind.transient:
+        led.posts[post.id] = post.model_copy(update={"submission_id": None, "postiz_state": None})
+        led.set_post_state(post.id, PostState.queued, error_kind=ErrorKind.transient,
+                           error_reason=f"vendor ERROR on {sid}: {why} — dead submission cleared, resubmitting")
+        log("reconcile", post.id, "requeued: vendor ERROR transient, dead sid cleared", sid=sid)
+        return
+    led.set_post_state(post.id, PostState.failed, error_kind=kind,
+                       error_reason=f"reconciled: poster reports failed ({why})")
+    log("reconcile", post.id, "failed: queued held real sid on vendor ERROR", kind=kind.value)
+
+
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
                     now: Optional[datetime] = None,
                     polled_as: dict[str, str] | None = None,
@@ -859,8 +884,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             log("reconcile", post.id, "published")
         elif status == "failed":
             if post.state is PostState.queued:
-                # A real sid already at the vendor: ERROR must not reopen `failed` (daemon remint).
-                log("reconcile", post.id, "left: queued holds real sid on vendor ERROR")
+                _route_held_vendor_error(led, post, info, log)
                 continue
             if post.state in (PostState.failed, PostState.error):
                 log("reconcile", post.id, "left: still failed")

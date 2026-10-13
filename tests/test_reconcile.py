@@ -1141,6 +1141,94 @@ def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, 
     assert p.submission_id == "postiz_1"
 
 
+def _ig_fetch_failure(code_and_text: str) -> str:
+    """The stored Postiz envelope shape observed live on queued IG rows (ids and trace ids redacted)."""
+    inner = ('{\\"error\\":{\\"message\\":\\"Fatal\\",\\"type\\":\\"OAuthException\\",\\"code\\":-1,'
+             '\\"error_subcode\\":2207077,\\"is_transient\\":false,\\"error_user_msg\\":\\"An internal '
+             f'server error has occurred. Video download failed with: HTTP error code {code_and_text}\\",'
+             '\\"fbtrace_id\\":\\"REDACTED\\"}}')
+    return ('{"cause":{"failure":{"applicationFailureInfo":{"type":"bad_body","nonRetryable":true}}},'
+            f'"type":"bad_body","nonRetryable":true,"details":[{{"identifier":"","json":"{inner}"}}],'
+            '"failure":{"message":"Activity task failed"}}')
+
+
+def _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, stored_error, *, row_extra=None):
+    """A queued IG row holding real sid postiz_1; the window says ERROR and Postgres holds `stored_error`
+    (None = the DB read is unavailable). Runs one reconcile_due pass and returns the reloaded row."""
+    import base64
+    from types import SimpleNamespace
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "qe", PostState.queued, "postiz_1", postiz_state="ERROR")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None,
+                            **(row_extra or {})}])
+    if stored_error is None:
+        mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
+    else:
+        blob = base64.b64encode(stored_error.encode()).decode()
+        mocker.patch("fanops.post.postiz_errors.subprocess.run",
+                     return_value=SimpleNamespace(returncode=0, stdout=f"postiz_1|{blob}\n", stderr=""))
+        d = cfg.root / "bin"; d.mkdir(exist_ok=True)
+        docker = d / "docker"; docker.write_text("#!/bin/sh\nexit 0\n"); docker.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{d}:{cfg.root}")
+    reconcile_due(cfg)
+    return Ledger.load(cfg).posts["qe"]
+
+
+@pytest.mark.parametrize("observed,code", [
+    ("503. Service Unavailable", "503"),                 # cisumwolfhom post_507a879b8b49
+    ("500. Fwdproxy failed to fetch headers", "500"),    # cisumwolfhom post_613357845954
+    ("502. Bad Gateway", "502"),                         # markmakmouly post_10e9099dc150
+])
+def test_queued_real_sid_on_ig_media_fetch_error_clears_sid_for_resubmit(tmp_path, monkeypatch, mocker,
+                                                                          observed, code):
+    # The three live rows: IG could not download the media, ERROR with no release. Nothing published, so
+    # the dead sid is cleared and the row stays queued — publish_due's real-sid refusal no longer applies.
+    p = _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, _ig_fetch_failure(observed))
+    assert p.state is PostState.queued
+    assert p.submission_id is None
+    assert p.postiz_state is None
+    assert p.error_kind is ErrorKind.transient
+    assert f"HTTP {code}" in p.error_reason and "postiz_1" in p.error_reason
+
+
+def test_queued_real_sid_on_refresh_channel_needed_fails_auth_keeping_sid(tmp_path, monkeypatch, mocker):
+    # A dead channel credential: resubmitting re-fails until the operator reconnects, so the row goes to
+    # failed/auth (Studio: "Reconnect account"); the sid stays so the MOL-991 mirror still watches it.
+    p = _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, "Refresh channel needed")
+    assert p.state is PostState.failed
+    assert p.submission_id == "postiz_1"
+    assert p.error_kind is ErrorKind.auth
+    assert "reconnect" in p.error_reason.lower()
+
+
+def test_queued_real_sid_on_platform_content_rejection_fails_with_vendor_reason(tmp_path, monkeypatch, mocker):
+    # A platform refusal of the post itself: the operator edits, then Studio retry (which clears the sid).
+    stored = '{"error":{"message":"Invalid parameter","error_user_msg":"The video aspect ratio is not supported."}}'
+    p = _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, stored)
+    assert p.state is PostState.failed
+    assert p.submission_id == "postiz_1"
+    assert p.error_kind is ErrorKind.unknown
+    assert "aspect ratio is not supported" in p.error_reason
+
+
+def test_queued_real_sid_on_error_without_stored_cause_is_left(tmp_path, monkeypatch, mocker):
+    # No cause read (no docker): the path cannot be chosen, so nothing moves and the sid is kept.
+    p = _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, None)
+    assert p.state is PostState.queued
+    assert p.submission_id == "postiz_1"
+    assert p.error_kind is None
+
+
+def test_queued_real_sid_on_error_row_naming_a_release_is_left(tmp_path, monkeypatch, mocker):
+    # An ERROR row that still carries a release is not proof of no-publish: never clear that sid.
+    p = _held_queued_on_vendor_error(tmp_path, monkeypatch, mocker, _ig_fetch_failure("503. Service Unavailable"),
+                                     row_extra={"releaseURL": _IG_URL, "releaseId": _IG_RID})
+    assert p.state is PostState.queued
+    assert p.submission_id == "postiz_1"
+    assert p.error_kind is None
+
+
 def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
     # THE ZERO-BYTE PROPERTY. The mirror runs on every daemon tick over the whole corpus; if an identical
     # row counted as a write, every published post in the ledger would be rewritten forever, and every
