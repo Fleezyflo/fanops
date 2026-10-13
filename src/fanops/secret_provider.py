@@ -1,6 +1,6 @@
 # src/fanops/secret_provider.py — keyring read/write for operator secrets (MOL-359 read, MOL-360 write)
 """Consult the OS keyring FIRST for operator secrets; fail-open to Settings/.env on READ when the
-keyring extra is absent, the backend is unavailable, or no entry exists. WRITES for the three
+keyring extra is absent, the backend is unavailable, or no entry exists. WRITES for the
 secret env keys route ONLY to keyring (never plaintext .env) via golive._dual_write."""
 from __future__ import annotations
 import logging
@@ -8,12 +8,12 @@ import logging
 _log = logging.getLogger("fanops.secret_provider")
 _backend_warned = False   # broken-keyring breadcrumb fires ONCE per process (fail-open house norm)
 _SERVICE = "fanops"
-_SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN"})
+_SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "FANOPS_IG_SCRAPE_PASSWORD"})
 _PER_HANDLE_TOKEN_PREFIX = "META_GRAPH_TOKEN__"
 
 
 def is_secret_env_key(key: str) -> bool:
-    """True for the three operator-secret env keys (+ per-handle META_GRAPH_TOKEN__<slug>)."""
+    """True for operator-secret env keys (+ per-handle META_GRAPH_TOKEN__<slug>)."""
     return key in _SECRET_KEYS or key.startswith(_PER_HANDLE_TOKEN_PREFIX)
 
 

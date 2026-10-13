@@ -14,7 +14,7 @@ from fanops.settings import DEPRECATED, EnvVar, STUDIO_SETTABLE, Settings, _enri
 # hand-kept frozenset of fourteen names beside the fourteen Settings fields it named; STUDIO_SETTABLE is
 # the same set PROJECTED from those fields' `EnvVar(studio=True)` markers, so the column cannot claim a
 # var is operator-settable that the registration never marked (or miss one that it did).
-_SECRET_SUFFIX = ("_API_KEY", "_SECRET", "_TOKEN", "_ACCESS_KEY", "_SECRET_ACCESS_KEY")
+_SECRET_SUFFIX = ("_API_KEY", "_SECRET", "_TOKEN", "_ACCESS_KEY", "_SECRET_ACCESS_KEY", "_PASSWORD")
 
 
 def _is_secret(name: str) -> bool:

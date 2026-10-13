@@ -7,6 +7,7 @@ import pytest
 
 from fanops.config import Config
 from fanops import secret_provider
+from fanops.settings import _BASE_SECRET_KEYS, _is_resolved_secret_key
 
 
 def _reload_secret_provider(monkeypatch, keyring_mod):
@@ -191,3 +192,10 @@ def test_broken_backend_quiet_never_warns(monkeypatch, caplog):
         assert sp.get_secret("POSTIZ_API_KEY", quiet=True) is None
         assert sp.get_secret("META_GRAPH_TOKEN", quiet=True) is None
     assert not [r for r in caplog.records if "keyring read unavailable" in r.getMessage()]
+
+
+def test_ig_scrape_password_in_secret_key_sets():
+    assert "FANOPS_IG_SCRAPE_PASSWORD" in secret_provider._SECRET_KEYS
+    assert "FANOPS_IG_SCRAPE_PASSWORD" in _BASE_SECRET_KEYS
+    assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD")
+    assert _is_resolved_secret_key("FANOPS_IG_SCRAPE_PASSWORD")

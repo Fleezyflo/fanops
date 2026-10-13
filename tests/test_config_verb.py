@@ -106,3 +106,20 @@ def test_config_row_infra_keys_non_studio_with_kind(tmp_path, monkeypatch):
     assert rows["FANOPS_STUDIO_GENERATION"]["kind"] == "process" and rows["FANOPS_STUDIO_GENERATION"]["studio"] is False
     assert rows["META_GRAPH_TOKEN"]["dynamic"] is True
     assert rows["FANOPS_IG_SCRAPE_PASSWORD"]["dynamic"] is True
+
+
+def test_format_config_report_masks_ig_scrape_password(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.config_introspect.get_secret", lambda *_a, **_k: None)
+    marker = "marker-ig-scrape-absent-from-report"
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", marker)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "visible-scrape-user")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_IG_SCRAPE_PASSWORD")
+    assert row["effective"] == "(set)"
+    assert marker not in row["effective"]
+    assert marker not in row["default"]
+    report = format_config_report(cfg)
+    assert marker not in report
+    assert "visible-scrape-user" in report
