@@ -119,21 +119,21 @@ callbacks). Outcome:
   - `timeutil.is_past_due` (C8) — live sibling remains `is_due_or_past`
   - `views_review.group_review_by_account_surface` (C10)
 - **Plausible-but-unconfirmed** (likely template-only Jinja consumers, not verified against
-  `templates/` line-by-line in this pass): `views.py:run_next_step`, `zero_post_clips`,
-  `metrics_stale_hint`; `views_common.py:accounts_in`, `term_def`; `views_results.py:operator_error`,
-  `bar_pct`; `views_review.py:provenance_chips`, `group_review_by_batch` (all C10). Of these,
-  `zero_post_clips` is separately confirmed as a **real bug** below (referenced by a template but
-  never passed by the view), not merely unreferenced. `provenance_chips` / `group_review_by_batch`
+  `templates/` line-by-line in this pass): `views.run_next_step`,
+  `views.metrics_stale_hint`; `views_common.accounts_in`, `views_common.term_def`; `views_results.operator_error`,
+  `views_results.bar_pct`; `views_review.provenance_chips`, `views_review.group_review_by_batch` (all C10).
+  `views.zero_post_clips` is not in that set: `app_routes_home.index` passes
+  `zero_post_clips=views.zero_post_clips(cfg)` to `render_template` for `home.html`.
+  `views_review.provenance_chips` / `views_review.group_review_by_batch`
   are registered on the Jinja env in `studio/app.py` (live).
 
 Full per-candidate detail with file:line citations lives in each cluster's own trace document.
 
 ## Real bugs found (not just anomalies — confirmed logic defects)
 
-1. **`views.zero_post_clips` is dead-on-arrival wiring** (C10/C9 boundary) — the function exists
-   and `home.html` references `{% if zero_post_clips %}`, but `app.py`'s `render_template` call for
-   the Home route never passes it as a kwarg. The conditional block silently never renders. This is
-   the one place the trace found a genuine template/view wiring defect, not merely an anomaly.
+1. ~~**`views.zero_post_clips` dead-on-arrival wiring**~~ — **closed.** `home.html` references
+   `{% if zero_post_clips %}`, and `app_routes_home.index` passes
+   `zero_post_clips=views.zero_post_clips(cfg)` to `render_template`. The Home route supplies the kwarg.
 2. **CLAUDE.md documentation drift on the Go-Live mechanism** — the project notes describe
    `FANOPS_POSTER=postiz` as being set through the Go-Live confirm path; current code
    (`studio/golive.py:go_live`, comment "D12: go_live NEVER writes FANOPS_POSTER") never writes that
