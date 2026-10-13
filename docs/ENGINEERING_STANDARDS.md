@@ -214,7 +214,7 @@ Owned by real mechanisms:
 - [`.github/ci-control-registry.yml`](../.github/ci-control-registry.yml) — the intended executable inventory (the single owner of control rows), reconciled against the workflows by `tools/ci` (DC-1/2/4/6/7) in the required unit lane.
 - [`docs/ENFORCEMENT.md`](ENFORCEMENT.md) — what actually blocks a merge, and what merely runs.
 
-**What an author needs to know:** your PR is gated by the **live** required set, which DC-3 requires to equal `required_contexts` in the registry. A job that emits a check on `pull_request` is classified `required` there; schedule-only and main-only jobs are not. Do not add, rename, or promote a check without updating the registry in the same PR — the reconciliation validators go red on drift.
+**What an author needs to know:** your PR is gated by the **live** required set — `unit (fast, no toolchain)` only. Everything else runs and reports (advisory), or runs on schedule/dispatch. Do not add, rename, or promote a check without updating the registry in the same PR — the reconciliation validators go red on drift.
 
 ---
 

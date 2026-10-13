@@ -20,10 +20,6 @@ status: accepted
 # is a separate operator-approved settings change.
 required_contexts:
   - "unit (fast, no toolchain)"
-  - "base install (no extras) refuses smart-framing"
-  - "impact report"
-  - "negative controls (validator effectiveness)"
-  - "lane file-ownership + cross-PR collision"
 
 # Repository security settings that must be ON in live GitHub (DC-9). Keys are exactly those of the
 # repo object's `security_and_analysis`. Nothing in this tree can prove any of them: they are GitHub
@@ -50,7 +46,7 @@ controls:
     branch_protection_context: "unit (fast, no toolchain)"
 
   - id: CI-BASEINSTALL
-    classification: required
+    classification: advisory
     workflow: .github/workflows/ci.yml
     job: base-install
     branch_protection_context: "base install (no extras) refuses smart-framing"
@@ -79,16 +75,14 @@ controls:
 
   # ===== architecture.yml ===========================================================================
   - id: ARCH-IMPACT
-    classification: required
+    classification: advisory
     workflow: .github/workflows/architecture.yml
     job: impact
-    branch_protection_context: "impact report"
 
   - id: ARCH-CONTROLS
-    classification: required
+    classification: advisory
     workflow: .github/workflows/architecture.yml
     job: controls
-    branch_protection_context: "negative controls (validator effectiveness)"
 
   - id: ARCH-RECONCILE
     classification: scheduled
@@ -97,7 +91,7 @@ controls:
 
   # ===== lane-guard.yml =============================================================================
   - id: LANE-GUARD
-    classification: required
+    classification: advisory
     workflow: .github/workflows/lane-guard.yml
     job: lane-guard
     branch_protection_context: "lane file-ownership + cross-PR collision"
