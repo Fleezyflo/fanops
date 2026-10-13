@@ -7,9 +7,12 @@ from __future__ import annotations
 import subprocess
 import threading
 
+import pytest
+
 from fanops.config import Config
+from fanops.errors import LockBusyError
 from fanops.ledger import _file_lock
-from fanops import autopilot, daemon
+from fanops import autopilot, controlio, daemon
 
 
 def _fake_launchctl(**spec):
@@ -136,6 +139,31 @@ def test_env_rewrite_keeps_keys_written_while_lock_held(tmp_path):
     body = env.read_text()
     assert "OTHER" not in body
     assert "KEEP=1" in body and "THIRD=3" in body
+
+
+def test_env_rewrite_writes_via_write_text_atomic_inside_lock(tmp_path, monkeypatch):
+    # A fixed `.env.tmp` shared by every writer is replaced by controlio's unique temp, and the
+    # write happens while `<name>.lock` is still held (a probe on a second fd must find it busy).
+    env = tmp_path / ".env"
+    env.write_text("KEEP=1\n")
+    lock_path = env.with_name(env.name + ".lock")
+    real = controlio.write_text_atomic
+    calls: list[tuple] = []
+
+    def spy(p, text, *, mode=None):
+        with pytest.raises(LockBusyError):
+            with _file_lock(lock_path, timeout=0):
+                pass
+        calls.append((p, mode))
+        real(p, text, mode=mode)
+
+    monkeypatch.setattr(controlio, "write_text_atomic", spy)
+    autopilot.set_env_var(env, "OTHER", "2")
+    autopilot.unset_env_var(env, "OTHER")
+    assert calls == [(env, 0o600), (env, 0o600)]
+    assert env.read_text() == "KEEP=1\n"
+    assert (env.stat().st_mode & 0o777) == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 # ── autopilot — installs the daemon + reports readiness; NEVER writes FANOPS_RESPONDER ──────────
