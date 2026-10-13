@@ -1,13 +1,21 @@
 """MOL-965 WP2: strip / Go-Live / daemon / metrics project from one HealthReport."""
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+
+import pytest
+
 from fanops.config import Config
 from fanops.doctor import _check
+from fanops.studio import views
+from fanops.timeutil import iso_z
 from fanops.health_model import (
     HALF_LIVE_CHECK_LABEL,
     DepHealth,
     HealthReport,
     Severity,
+    build_health_report,
     half_live_state,
     project_daemon_slice,
     project_daemon_strip,
@@ -209,4 +217,42 @@ def test_observe_build_health_report_skips_live_postiz_and_daemon_status(tmp_pat
     strip = project_strip_health(rep)
     assert http == []
     assert "half_live" in strip
+
+
+def test_doctor_note_and_strip_render_the_same_sending_backend(tmp_path, monkeypatch):
+    """Live with FANOPS_POSTER unset: the doctor dict note and the Studio system strip both name the
+    routed backend and its DepHealth detail from the same deps_health.json rows — never 'dryrun'."""
+    pytest.importorskip("flask")
+    from flask import render_template                 # studio extra: imported only after importorskip
+    from fanops.studio.app import create_app
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+
+    def fake_get(*a, **k):
+        raise AssertionError("observe/strip must not HTTP")
+
+    monkeypatch.setattr("requests.get", fake_get)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "backends": {"instagram": "postiz"}, "integrations": {"instagram": "1"}}]}))
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.deps_health_path.write_text(json.dumps({
+        "checked_at": iso_z(datetime.now(timezone.utc)),
+        "deps": [{"name": "docker", "ok": True, "detail": "up", "status_code": None},
+                 {"name": "postiz", "ok": False, "detail": "unreachable", "status_code": None},
+                 {"name": "zernio", "ok": True, "detail": "skipped (not configured)", "status_code": None}]}))
+    assert cfg.poster_backend == "dryrun"
+    note = build_health_report(cfg, probe_policy="observe").as_dict()["notes"][0]
+    assert note == "poster backend: postiz (unreachable) (LIVE)"
+    strip = views.build_system_strip(cfg)
+    assert strip["mode"] == "postiz (unreachable)"
+    app = create_app(cfg); app.config.update(TESTING=True)
+    with app.test_request_context():
+        html = render_template("_system_strip.html", system_strip=strip)
+    assert "● LIVE" in html and "· postiz (unreachable)" in html
+    assert "dryrun" not in html.lower()
 
