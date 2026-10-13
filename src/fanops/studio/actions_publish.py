@@ -5,7 +5,7 @@ from typing import Optional
 from fanops.config import Config
 from fanops.errors import AuthError, fail_open
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, PostState
+from fanops.models import ErrorKind, PostState, is_real_submission_id
 from fanops.audit import write_audit
 from fanops.log import get_logger
 from fanops.studio.actions_common import ActionResult
@@ -28,7 +28,11 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
     operator has a permalink they can paste — refusing the action without one closes the third door
     onto the ghost-row class (alongside D1: DryRunPoster, D2: _publish_one). Without this check the
     same operator-driven path produced Post(state=published, public_url='') — a row that says
-    SHIPPED but the Posted tub can't render."""
+    SHIPPED but the Posted tub can't render.
+
+    A `fanops_` birth token is not a backend id. `is_real_submission_id` must hold on every
+    platform or the post stays unpublished — the same refusal `reconcile.apply_published_resolve`
+    applies to TikTok."""
     if not (url or "").strip():
         return ActionResult(ok=False, error=(
             "mark_published requires a non-empty url — you said you posted by hand, paste the "
@@ -39,6 +43,14 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
         p = led.posts[post_id]
         if p.state not in _POSTABLE:
             return ActionResult(ok=False, error=f"post {post_id} is {p.state.value} — only an unpublished post can be marked posted")
+        sid = (p.submission_id or "").strip() or None
+        if sid and not is_real_submission_id(sid):
+            return ActionResult(ok=False, error=(
+                "submission_id must be a real backend id, not a fanops_ birth token"))
+        if not is_real_submission_id(sid):
+            return ActionResult(ok=False, error=(
+                "cannot mark published without a trackable backend id — "
+                "reconcile auto-bind will retry when the duplicate candidate verifies"))
         # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
         # the next ledger save (Pydantic re-validates the modified instance on serialization).
         p.public_url = url.strip()

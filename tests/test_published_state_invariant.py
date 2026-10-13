@@ -411,6 +411,7 @@ def test_mark_published_accepts_real_url(tmp_path):
     led.add_post(Post(
         id="post_mp3", parent_id=clip.id, account="a", account_id="ig_a",
         platform=Platform.instagram, caption="c", state=PostState.queued,
+        submission_id="zernio-real-99",
     ))
     led.save()
 
