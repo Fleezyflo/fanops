@@ -458,19 +458,20 @@ def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch,
     assert led.posts["p1"].submission_id == "postiz_existing"
     assert calls["n"] == 2
 
-def test_publish_429_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
-    # One 429. No matching row: park needs_reconcile. failed/rate_limit is re-queueable.
+def test_publish_429_fails_once_as_rate_limit(tmp_path, monkeypatch, mocker):
+    # One 429. No matching row: failed + rate_limit, so the publish_due circuit skips the next
+    # post on this integration. The requeue writer does not send that row back to queued.
     cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
     _capture(mocker)
     posted = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(429, {}, text="rate"))
     led = PostizPoster(cfg).publish(led, "p1")
     assert posted.call_count == 1
     p = led.posts["p1"]
-    assert p.state is PostState.needs_reconcile
-    assert p.error_kind is not ErrorKind.rate_limit
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.rate_limit
     assert not is_real_submission_id(p.submission_id)
     assert not p.submission_id
-    assert p.error_reason == "postiz 429, may be live (reconcile by hand) — body withheld"
+    assert p.error_reason == "postiz 429 (body withheld)"
 
 def test_publish_429_does_not_create_again(tmp_path, monkeypatch, mocker):
     # A following 2xx must not be reached. Sleep-and-continue would build a second Postiz post.
@@ -481,11 +482,11 @@ def test_publish_429_does_not_create_again(tmp_path, monkeypatch, mocker):
     led = PostizPoster(cfg).publish(led, "p1")
     assert posted.call_count == 1
     p = led.posts["p1"]
-    assert p.state is PostState.needs_reconcile
-    assert p.error_kind is not ErrorKind.rate_limit
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.rate_limit
     assert p.submission_id != "postiz_9"
     assert not p.submission_id
-    assert p.error_reason == "postiz 429, may be live (reconcile by hand) — body withheld"
+    assert p.error_reason == "postiz 429 (body withheld)"
 
 def test_publish_429_adopts_matching_row(tmp_path, monkeypatch, mocker):
     # Same adopt lookup as the transport-error path. A matching row is this post; do not POST again.
