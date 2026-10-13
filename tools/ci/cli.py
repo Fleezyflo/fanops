@@ -3,8 +3,11 @@
   static     registry <-> workflow implementation (DC-1/2/4/6/7). No network. Local + PR.
   deployed   registry <-> live GitHub settings (DC-3 branch protection, DC-8 workflow enablement,
              DC-9 repository security settings). Explicit read-only probes; nothing here mutates.
-             --require-live => a failure of a probe this job CAN authenticate FAILS (DC-3, DC-8).
-             Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never a false pass.
+             --require-live => a failure of a probe this job CAN authenticate FAILS (DC-8).
+             An unreadable DC-3 or DC-9 stays a non-authoritative SKIP. A protection payload that
+             was read and whose contexts differ from required_contexts, or whose strict is not
+             true, fails. Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never
+             a false pass.
   reconcile  all three planes together (static + deployed).
   selftest   run the negative controls (each blocking condition fires on an injected defect).
   regen      rewrite the GENERATED schema from tools/ci/schema.py. The unit lane byte-compares it,
@@ -18,7 +21,7 @@ import sys
 
 from . import checks, schema, selftest
 from .common import PROSE_DOCS, SCHEMA
-from .live import probe_protection, probe_security, probe_workflows, required_contexts
+from .live import probe_protection, probe_security, probe_workflows
 from .registry import load_registry, shape_findings
 from .workflows import discover_jobs
 
@@ -43,25 +46,22 @@ def cmd_static() -> int:
 def cmd_deployed(require_live: bool) -> int:
     reg = load_registry()
     data, err = probe_protection()
-    live = required_contexts(data) if data else []
     states, wf_err = probe_workflows()
     settings, sec_err = probe_security()
-    findings = checks.run_deployed(reg, live, live_error=err, workflow_states=states,
+    findings = checks.run_deployed(reg, data, live_error=err, workflow_states=states,
                                    workflow_error=wf_err, security_settings=settings,
                                    security_error=sec_err)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
-    # --require-live escalates an unreadable probe to a FAILURE — but ONLY for the probes this job
-    # can actually authenticate. DC-3 needs `administration: read` and DC-9 needs admin on the repo
-    # object; neither is a grantable GITHUB_TOKEN scope, so both wait on an operator-supplied PAT.
-    # DC-8 needs `actions: read`, which the job HAS — so an unreadable workflow list there is a real
-    # regression and fails.
+    # --require-live escalates an unreadable probe to a FAILURE only where the read failing is
+    # itself the defect. DC-8 needs `actions: read`, which the job's token is granted — an
+    # unreadable workflow list means that grant broke, and fails.
     #
-    # DC-9 is deliberately NOT escalated. Escalating a probe that structurally cannot succeed would
-    # manufacture a red no one can clear (this repo has shipped that defect before: `impact
-    # --strict` was unclearable on deletions), and it would fail for a reason that has nothing to do
-    # with the setting being measured. Its SKIP is non-authoritative, never a pass — the Finding
-    # renders `[SKIP]` and says so — and it becomes authoritative the moment DC-3's PAT lands.
-    hard = [("DC-3", err), ("DC-8", wf_err)]
+    # DC-3 (branch protection) and DC-9 (`security_and_analysis`) are not escalated. A workflow
+    # GITHUB_TOKEN is never granted read on either, so their read failing measures the token, not
+    # the setting: it is a SKIP — non-authoritative, never a pass. What DC-3 judges is a payload it
+    # actually read — contexts that differ from `required_contexts`, or `strict` not true, fail in
+    # the findings emitted above.
+    hard = [("DC-8", wf_err)]
     failed = [(dc, e) for dc, e in hard if e]
     if failed and require_live:
         for dc, e in failed:

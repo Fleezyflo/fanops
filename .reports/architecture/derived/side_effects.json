@@ -109,7 +109,7 @@
     "fanops.ledger_wipe": [
       {
         "call": "Ledger.transaction",
-        "line": 384
+        "line": 387
       }
     ],
     "fanops.overlay_reburn": [
@@ -161,15 +161,19 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 236
+        "line": 217
       },
       {
         "call": "Ledger.transaction",
-        "line": 377
+        "line": 247
       },
       {
         "call": "Ledger.transaction",
-        "line": 417
+        "line": 393
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 433
       }
     ],
     "fanops.recaption": [
@@ -537,7 +541,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 70
+        "line": 71
       }
     ],
     "fanops.post.metrics.postiz_read": [
@@ -681,23 +685,27 @@
       },
       {
         "call": "subprocess.run",
-        "line": 730
+        "line": 736
       },
       {
         "call": "subprocess.run",
-        "line": 756
+        "line": 763
       },
       {
         "call": "subprocess.run",
-        "line": 761
+        "line": 768
       },
       {
         "call": "subprocess.run",
-        "line": 789
+        "line": 796
       },
       {
         "call": "subprocess.run",
-        "line": 862
+        "line": 869
+      },
+      {
+        "call": "subprocess.run",
+        "line": 885
       }
     ],
     "fanops.discover": [
@@ -849,11 +857,11 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 84,
+    "ledger_transaction_sites": 85,
     "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 41
   }
 }

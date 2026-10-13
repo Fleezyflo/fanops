@@ -31,27 +31,27 @@ argparse `type=` callbacks. Every cluster trace below cross-checked its cluster'
 
 ## The 10 clusters — zero-gap coverage
 
-Every module under `src/fanops/` present WHEN THIS WAS GENERATED is assigned to exactly one cluster below
-(verified programmatically at that time: `structural_index.json` paths − cluster union = ∅, cluster union −
-`structural_index.json` paths = ∅, zero paths assigned twice). The partition is not re-verified on edit, so a
-module added since is in no cluster; re-run the extractor rather than trusting this to still be exhaustive.
+Every tracked module under `src/fanops/` is assigned to exactly one cluster below. The map is
+[partition.json](partition.json), built from `git ls-files 'src/fanops/*.py' 'src/fanops/**/*.py'`;
+`tests/test_codemaps_partition.py` fails CI when a tracked module is in no cluster, in two, or when this
+table disagrees with the map. A new module lands with its cluster assignment in both places.
 
 | # | Cluster | Files | Trace doc | Lines |
 |---|---|---|---|---|
-| C1 | Core data model & persistence | models, ledger, ledger_wipe, ids, config, controlio, control, errors, log, stage_lock (10) | [C1_data_model.md](subsystem-traces/C1_data_model.md) | 386 |
-| C2 | Ingest & source acquisition | ingest, discover, adjust, bands, frames, audio_energy, vocals, intro_match, transcribe (9) | [C2_ingest.md](subsystem-traces/C2_ingest.md) | 180 |
-| C3 | Clip production & framing | clip, framing, keyframes, stitch_render, overlay, impact_cut, compose, produce (8) | [C3_clip_production_framing.md](subsystem-traces/C3_clip_production_framing.md) | 434 |
-| C4 | Moments, casting & personas | moments, casting, personas, persona_directives, persona_levers, persona_research, persona_store, accounts, batches (9) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
-| C5 | Caption, hooks & hashtags | caption, caption_compose, caption_ingest, hashtags, tagging, hookcheck, hookscore, text, prompts, prompts_caption, llm, llm_errors, llm_json (13 caption); scrape half (SA-A1–A4): fanops_hashtags (facade), hashtag_refresh, hashtag_scrape_policy, ig_safari_shell, ig_web_scrape, ig_hashtag_scrape (6) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
-| C6 | Crosspost, publish & post | crosspost, pipeline, router, responder, signals, agentstep, autopilot, postiz_lifecycle, post/{__init__,compress,dryrun,media,metrics,postiz,providers,run,zernio} (17) | [C6_crosspost_publish_post.md](subsystem-traces/C6_crosspost_publish_post.md) | 417 |
-| C7 | Metrics, reconcile & learning | reconcile, track, meta_graph, metrics_schedule, validation_gate, learn_doctor, moment_hook_learning, variant_learning, variant_amplify, variant_transfer, p4_dim_bias, timing_bias (12) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
-| C8 | Ops, CLI & daemon | cli, daemon, doctor, cutover, cutover_postiz, health, digest, audit, timeutil, _fwrun, __init__ (11) | [C8_ops_cli_daemon.md](subsystem-traces/C8_ops_cli_daemon.md) | 320 |
-| C9 | Studio backend (Flask routes + actions) | studio/{__init__,app,app_routes_golive,app_routes_live,app_routes_personas,app_routes_review,app_routes_run,app_routes_schedule,actions,actions_approve,actions_casting,actions_common,actions_run,actions_wipe,golive,personas,preview_media} (17) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
-| C10 | Studio views (read-only projections) | studio/{views,views_common,views_home,views_golive,views_run,views_schedule,views_posted,views_results,views_live,views_review,views_library,views_hashtags} (12; `views_results` is a backward-compat shim) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
+| C1 | Core data model & persistence | config, config_introspect, control, controlio, errors, ids, ledger, ledger_bridge, ledger_sqlite, ledger_wipe, log, models, secret_provider, settings, stage_lock (15) | [C1_data_model.md](subsystem-traces/C1_data_model.md) | 386 |
+| C2 | Ingest & source acquisition | adjust, artifacts, audio_energy, bands, discover, frames, ingest, ingest_shard, intro_match, media_probe, speech_trust, transcribe, transcribe_engine, vocals (14) | [C2_ingest.md](subsystem-traces/C2_ingest.md) | 180 |
+| C3 | Clip production & framing | apply_common, clip, clip_ffmpeg, compose, framing, framing_outcomes, impact_cut, keyframes, overlay, overlay_reburn, produce, reframe, reframe_apply, reframe_vf, render_fingerprint, stitch_render, visual_start, window_math (18) | [C3_clip_production_framing.md](subsystem-traces/C3_clip_production_framing.md) | 434 |
+| C4 | Moments, casting & personas | accounts, batches, casting, lever_docs, moments, persona_directives, persona_levers, persona_research, persona_store, personas (10) | [C4_moments_casting_personas.md](subsystem-traces/C4_moments_casting_personas.md) | 235 |
+| C5 | Caption, hooks & hashtags | caption, caption_compose, caption_ingest, fanops_hashtags, hashtag_refresh, hashtag_scrape_policy, hashtags, hookcheck, hookscore, ig_hashtag_scrape, ig_safari_shell, ig_web_scrape, llm, llm_errors, llm_json, prompts, prompts_caption, recaption, source_tags, source_tags_scrape, source_tags_shortlist, source_tags_sidecar, source_tags_walk, tagging, text (25) | [C5_caption_hooks_hashtags.md](subsystem-traces/C5_caption_hooks_hashtags.md) | 277 |
+| C6 | Crosspost, publish & post | agentstep, autopilot, crosspost, escalation, gate_keys, pipeline, pipeline_run, pipeline_status, post/__init__, post/compress, post/dryrun, post/media, post/metrics/__init__, post/metrics/common, post/metrics/postiz_read, post/metrics/zernio_read, post/postiz, post/postiz_errors, post/providers, post/publish_archive, post/publish_dryrun, post/publish_errors, post/publish_requeue, post/run, post/zernio, post/zernio_outcome, postiz_lifecycle, responder, responder_policy, router, signals, stranded_posts (32) | [C6_crosspost_publish_post.md](subsystem-traces/C6_crosspost_publish_post.md) | 417 |
+| C7 | Metrics, reconcile & learning | fanops_account_stats, field_shape, learn_doctor, meta_graph, metrics_schedule, moment_hook_learning, p4_dim_bias, reach_ranking, reconcile, reconcile_mirror, timing_bias, track, validation_gate, variant_amplify, variant_learning, variant_transfer (16) | [C7_metrics_learning.md](subsystem-traces/C7_metrics_learning.md) | 203 |
+| C8 | Ops, CLI & daemon | __init__, _fwrun, audit, canary, canary_baseline, canary_identity, cli, cli_dispatch, cli_parser, cli_run, cutover, cutover_postiz, daemon, daemon_siblings, daemon_studio, digest, doctor, health, health_model, health_probes, health_projectors, health_types, init_flow, paths_rebase, timeutil (25) | [C8_ops_cli_daemon.md](subsystem-traces/C8_ops_cli_daemon.md) | 320 |
+| C9 | Studio backend (Flask routes + actions) | studio/__init__, studio/actions, studio/actions_approve, studio/actions_casting, studio/actions_common, studio/actions_crosspost, studio/actions_edit, studio/actions_publish, studio/actions_recover, studio/actions_run, studio/actions_schedule, studio/actions_segments, studio/actions_wipe, studio/app, studio/app_request, studio/app_routes_golive, studio/app_routes_hashtags, studio/app_routes_home, studio/app_routes_live, studio/app_routes_media, studio/app_routes_personas, studio/app_routes_review, studio/app_routes_run, studio/app_routes_schedule, studio/golive, studio/personas, studio/preview_media, studio/thumb_media, studio_desktop (29) | [C9_studio_backend.md](subsystem-traces/C9_studio_backend.md) | 892 |
+| C10 | Studio views (read-only projections) | studio/views, studio/views_common, studio/views_golive, studio/views_hashtags, studio/views_home, studio/views_library, studio/views_live, studio/views_posted, studio/views_results, studio/views_review, studio/views_run, studio/views_schedule (12) | [C10_studio_views.md](subsystem-traces/C10_studio_views.md) | 302 |
 
-**Every module present at generation time is covered; 3,646 total lines of per-function trace documentation.**
-The tree has grown since — `git ls-files 'src/fanops/**/*.py'` is the live count, and any module added after
-generation has no row above. Do not restate a frozen total here: it reads as current truth and silently rots.
+**Every tracked module is in a cluster; `live_py_count` in partition.json is the total.** The per-function
+trace documents (Lines column) are frozen at 2026-07-11 and predate the modules added since; a module's row
+membership here does not mean its trace doc covers it.
 
 ## Data-flow spine (cluster → cluster)
 
@@ -119,21 +119,21 @@ callbacks). Outcome:
   - `timeutil.is_past_due` (C8) — live sibling remains `is_due_or_past`
   - `views_review.group_review_by_account_surface` (C10)
 - **Plausible-but-unconfirmed** (likely template-only Jinja consumers, not verified against
-  `templates/` line-by-line in this pass): `views.py:run_next_step`, `zero_post_clips`,
-  `metrics_stale_hint`; `views_common.py:accounts_in`, `term_def`; `views_results.py:operator_error`,
-  `bar_pct`; `views_review.py:provenance_chips`, `group_review_by_batch` (all C10). Of these,
-  `zero_post_clips` is separately confirmed as a **real bug** below (referenced by a template but
-  never passed by the view), not merely unreferenced. `provenance_chips` / `group_review_by_batch`
+  `templates/` line-by-line in this pass): `views.run_next_step`,
+  `views.metrics_stale_hint`; `views_common.accounts_in`, `views_common.term_def`; `views_results.operator_error`,
+  `views_results.bar_pct`; `views_review.provenance_chips`, `views_review.group_review_by_batch` (all C10).
+  `views.zero_post_clips` is not in that set: `app_routes_home.index` passes
+  `zero_post_clips=views.zero_post_clips(cfg)` to `render_template` for `home.html`.
+  `views_review.provenance_chips` / `views_review.group_review_by_batch`
   are registered on the Jinja env in `studio/app.py` (live).
 
 Full per-candidate detail with file:line citations lives in each cluster's own trace document.
 
 ## Real bugs found (not just anomalies — confirmed logic defects)
 
-1. **`views.zero_post_clips` is dead-on-arrival wiring** (C10/C9 boundary) — the function exists
-   and `home.html` references `{% if zero_post_clips %}`, but `app.py`'s `render_template` call for
-   the Home route never passes it as a kwarg. The conditional block silently never renders. This is
-   the one place the trace found a genuine template/view wiring defect, not merely an anomaly.
+1. ~~**`views.zero_post_clips` dead-on-arrival wiring**~~ — **closed.** `home.html` references
+   `{% if zero_post_clips %}`, and `app_routes_home.index` passes
+   `zero_post_clips=views.zero_post_clips(cfg)` to `render_template`. The Home route supplies the kwarg.
 2. **CLAUDE.md documentation drift on the Go-Live mechanism** — the project notes describe
    `FANOPS_POSTER=postiz` as being set through the Go-Live confirm path; current code
    (`studio/golive.py:go_live`, comment "D12: go_live NEVER writes FANOPS_POSTER") never writes that

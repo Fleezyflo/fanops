@@ -110,7 +110,7 @@
         "swallow": "baseline 5 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 49,
+      "function_count": 51,
       "is_partitioned": false,
       "missing": false,
       "owners": [
@@ -260,7 +260,7 @@
         "swallow": "baseline 4 — MUST NOT EXCEED."
       },
       "exists": true,
-      "function_count": 15,
+      "function_count": 16,
       "is_partitioned": false,
       "missing": false,
       "owners": [

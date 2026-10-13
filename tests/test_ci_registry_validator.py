@@ -23,6 +23,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.ci import checks, schema, selftest  # noqa: E402
+from tools.ci.cli import cmd_deployed  # noqa: E402
 from tools.ci.common import PROSE_DOCS, SCHEMA  # noqa: E402
 from tools.ci.registry import load_registry, shape_findings  # noqa: E402
 from tools.ci.workflows import discover_jobs  # noqa: E402
@@ -99,7 +100,8 @@ def test_deployed_plane_wires_every_deployed_check():
     assert "dependabot_security_updates" in settings, "registry stopped declaring Dependabot"
     settings["dependabot_security_updates"] = "disabled"
 
-    findings = checks.run_deployed(reg, list(reg["required_contexts"]), workflow_states=states,
+    protection = {"required_status_checks": {"strict": True, "contexts": list(reg["required_contexts"])}}
+    findings = checks.run_deployed(reg, protection, workflow_states=states,
                                    security_settings=settings)
     blocking = {f.dc: f.render() for f in findings if f.blocking and not f.skipped}
     assert "DC-8" in blocking, f"run_deployed dropped DC-8; got {sorted(blocking)}"
@@ -119,12 +121,82 @@ def test_deployed_probe_failures_do_not_mask_each_other():
     reg = load_registry()
     states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
     states[sorted(states)[0]] = "disabled_manually"
-    findings = checks.run_deployed(reg, [], live_error="HTTP 403", workflow_states=states,
+    findings = checks.run_deployed(reg, None, live_error="HTTP 403", workflow_states=states,
                                    security_error="needs admin")
     by_dc = {f.dc: f for f in findings}
     assert by_dc["DC-3"].skipped and by_dc["DC-9"].skipped, "unreadable planes must SKIP, not pass"
     assert by_dc["DC-8"].blocking and not by_dc["DC-8"].skipped, (
         "DC-8 was readable and diverged — it must FAIL, not inherit another probe's SKIP")
+
+
+def test_require_live_skips_unreadable_dc3_and_fails_context_drift(monkeypatch, capsys):
+    """`cmd_deployed(True)` does not fail an unreadable protection probe.
+
+    A workflow token's HTTP 403 on branch protection stays a non-authoritative SKIP, and so does
+    an unreadable DC-9. A protection document that loads and disagrees with `required_contexts`
+    still fails. DC-8 is stubbed readable and active so this test is about DC-3, not workflow state.
+    """
+    reg = load_registry()
+    states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
+    monkeypatch.setattr("tools.ci.cli.probe_workflows", lambda *_a, **_k: (states, None))
+    monkeypatch.setattr(
+        "tools.ci.cli.probe_security",
+        lambda *_a, **_k: (None, "repo object carries no `security_and_analysis` (needs admin permission)"),
+    )
+
+    monkeypatch.setattr("tools.ci.cli.probe_protection", lambda *_a, **_k: (None, "HTTP 403"))
+    assert cmd_deployed(True) == 0
+    skipped = capsys.readouterr().out
+    assert "[SKIP] DC-3" in skipped and "HTTP 403" in skipped
+    assert "[FAIL] DC-3" not in skipped
+    assert "--require-live set but the live probe failed" not in skipped
+    assert "[SKIP] DC-9" in skipped
+
+    monkeypatch.setattr(
+        "tools.ci.cli.probe_protection",
+        lambda *_a, **_k: (
+            {"required_status_checks": {"strict": True, "contexts": ["not-the-declared-set"]}}, None),
+    )
+    assert cmd_deployed(True) == 1
+    drifted = capsys.readouterr().out
+    assert "[FAIL] DC-3" in drifted and "not-the-declared-set" in drifted
+    assert "required_status_checks.strict" not in drifted
+    assert "[SKIP] DC-9" in drifted
+
+
+def test_dc3_fails_read_protection_that_is_not_strict():
+    """A read payload with the declared contexts still fails DC-3 unless `strict` is true.
+
+    Without strict, a PR whose required check passed against an old base merges without that check
+    ever running against the current `main`. Missing `strict` is the same failure as `false`.
+    """
+    reg = load_registry()
+    contexts = list(reg["required_contexts"])
+
+    def dc3(rsc):
+        return [f for f in checks.dc3_deployed_state(reg, {"required_status_checks": rsc})
+                if f.blocking and not f.skipped]
+
+    assert dc3({"strict": True, "contexts": contexts}) == []
+    for rsc in ({"strict": False, "contexts": contexts}, {"contexts": contexts}):
+        failed = dc3(rsc)
+        assert len(failed) == 1 and "strict" in failed[0].render(), [f.render() for f in failed]
+
+
+def test_required_contexts_are_exactly_the_required_controls():
+    """`required_contexts` is the `branch_protection_context` of every `required` control, nothing else.
+
+    DC-3 compares live protection to `required_contexts`, so a context listed there without a
+    `required` control (or a `required` control missing from it) makes the protection reconcile
+    against a set the classification does not declare.
+    """
+    reg = load_registry()
+    required = {c["branch_protection_context"] for c in reg["controls"]
+                if c.get("classification") == "required"}
+    listed = reg["required_contexts"]
+    assert len(listed) == len(set(listed)), f"duplicate required_contexts entries: {listed}"
+    assert set(listed) == required, (
+        f"required_contexts={sorted(listed)} != required controls' contexts={sorted(required)}")
 
 
 @pytest.mark.parametrize("control", selftest.CONTROLS, ids=lambda c: c.id)
