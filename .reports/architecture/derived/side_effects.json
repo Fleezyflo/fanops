@@ -681,23 +681,27 @@
       },
       {
         "call": "subprocess.run",
-        "line": 730
+        "line": 736
       },
       {
         "call": "subprocess.run",
-        "line": 756
+        "line": 763
       },
       {
         "call": "subprocess.run",
-        "line": 761
+        "line": 768
       },
       {
         "call": "subprocess.run",
-        "line": 789
+        "line": 796
       },
       {
         "call": "subprocess.run",
-        "line": 862
+        "line": 869
+      },
+      {
+        "call": "subprocess.run",
+        "line": 885
       }
     ],
     "fanops.discover": [
@@ -854,6 +858,6 @@
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 41
   }
 }
