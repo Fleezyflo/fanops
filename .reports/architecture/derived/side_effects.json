@@ -537,11 +537,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 70
-      },
-      {
-        "call": "requests.get",
-        "line": 84
+        "line": 71
       }
     ],
     "fanops.post.metrics.postiz_read": [
@@ -856,7 +852,7 @@
     "ledger_transaction_sites": 84,
     "lock_sites": 23,
     "mkdtemp_sites": 2,
-    "network_sites_literal_requests": 16,
+    "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
     "subprocess_sites": 40
   }
