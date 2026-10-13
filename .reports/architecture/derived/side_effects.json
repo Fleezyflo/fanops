@@ -402,6 +402,12 @@
     ]
   },
   "locks": {
+    "fanops.autopilot": [
+      {
+        "call": "_file_lock",
+        "line": 22
+      }
+    ],
     "fanops.controlio": [
       {
         "call": "_file_lock",
@@ -719,11 +725,11 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.check_output",
-        "line": 187
+        "line": 184
       },
       {
         "call": "subprocess.check_output",
-        "line": 229
+        "line": 226
       }
     ],
     "fanops.ingest": [
@@ -844,7 +850,7 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 84,
-    "lock_sites": 22,
+    "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
