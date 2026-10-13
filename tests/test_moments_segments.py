@@ -3,11 +3,13 @@ import json
 from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import (Source, Moment, MomentState, MomentPick)
+from fanops.models import (Source, SourceState, Moment, MomentState, MomentPick, Clip, ClipState, Platform)
 from fanops.agentstep import request_path
+from fanops.caption import request_captions
 from fanops.moments import (_drop_overlaps, _token, _content_token, _window_frames, request_moment_hooks)
 from fanops.prompts import moment_pick_prompt
 from fanops.studio import actions
+from tests.fixtures.speech_segments import talk_seg
 from tests.test_moments import _ingest_picks, _src, request_moments
 
 def _mp(s, e, reason="r", **kw):
@@ -114,3 +116,52 @@ def test_operator_set_segments_rejects_foreign_moment(tmp_path):
     cfg = Config(root=tmp_path); _seed_moment(cfg)
     assert actions.set_segments(cfg, "other", "m0", [(10, 15)]).ok is False
     assert actions.set_segments(cfg, "s", "nope", [(10, 15)]).ok is False
+
+def test_hook_and_caption_excerpt_omits_supercut_gap(tmp_path):
+    """Hook and caption read speech inside the rendered spans, not the envelope gap."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [
+        _mp(14, 54, "supercut", segments=[(14, 18), (40, 54)])])
+    born = led.moments_of("src_1")[0]
+    assert "second wave" in born.transcript_excerpt
+    led = request_moment_hooks(led, cfg, "src_1", accounts=None)
+    m = led.moments_of("src_1")[0]
+    req = json.loads(request_path(cfg, "moment_hooks", f"src_1.{m.content_token}").read_text())
+    assert "slept on me" in req["transcript_excerpt"]
+    assert "another bar" in req["transcript_excerpt"]
+    assert "second wave" not in req["transcript_excerpt"]
+    assert "second wave" not in m.transcript_excerpt
+    led.add_clip(Clip(id="clip_1", parent_id=m.id, path="/c.mp4", state=ClipState.rendered))
+    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    cap = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert cap["transcript_excerpt"] == m.transcript_excerpt
+    assert "second wave" not in cap["transcript_excerpt"]
+
+def test_single_span_hook_excerpt_keeps_window_speech(tmp_path):
+    """A pick with no segments still excerpts the whole fitted window."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
+    led = request_moments(led, cfg, "src_1")
+    led = _ingest_picks(led, cfg, "src_1", [_mp(14, 54, "one window")])
+    led = request_moment_hooks(led, cfg, "src_1")
+    m = led.moments_of("src_1")[0]
+    assert m.segments == []
+    req = json.loads(request_path(cfg, "moment_hooks", f"src_1.{m.content_token}").read_text())
+    assert "second wave" in req["transcript_excerpt"]
+    assert req["transcript_excerpt"] == m.transcript_excerpt
+
+def test_supercut_does_not_fall_back_to_gap_excerpt(tmp_path):
+    """Gap-only speech must not ride a stale envelope excerpt into the hook."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
+                          state=SourceState.signalled, duration=60.0, language="en",
+                          transcript=[talk_seg("gap bridge nobody rendered", start=20, end=34)],
+                          meta={"transcribed": True}))
+    led.add_moment(Moment(id="m1", parent_id="src_1", content_token="14.00-54.00",
+                          start=14, end=54, reason="sc", state=MomentState.picked,
+                          segments=[(14, 18), (40, 54)],
+                          transcript_excerpt="gap bridge nobody rendered"))
+    led = request_moment_hooks(led, cfg, "src_1")
+    req = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-54.00").read_text())
+    assert req["transcript_excerpt"] == ""
+    assert led.moments["m1"].transcript_excerpt == ""
