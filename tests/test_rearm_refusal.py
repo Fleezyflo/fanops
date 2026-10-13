@@ -94,14 +94,28 @@ def test_recover_posts_discard_still_works_on_retired_lineage(tmp_path):
     assert Ledger.load(cfg).posts["dead"].state is PostState.rejected
 
 
+def test_retry_rate_limited_failures_does_not_queue_a_row_with_no_real_id(tmp_path):
+    """The rate-limit verb is the daemon writer. No real submission id must not become a second create."""
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _chain(led, "live")
+    _chain(led, "dead", retire="clip")
+    led.save()
+    res = actions.retry_rate_limited_failures(cfg)
+    assert res.ok, res
+    assert res.detail["retried"] == 0 and res.detail["skipped_retired"] == 1
+    after = Ledger.load(cfg).posts
+    assert after["live"].state is PostState.failed and after["live"].error_reason == _RATE_LIMIT
+    assert after["dead"].state is PostState.failed and after["dead"].error_reason == _RATE_LIMIT
+
+
 @pytest.mark.parametrize("verb,reason_text,kind,retire", [
-    ("retry_rate_limited_failures", _RATE_LIMIT, ErrorKind.rate_limit, "clip"),
     ("retry_oversize_failures", _OVERSIZE, ErrorKind.oversize, "moment"),
     ("retry_transient_failures", _TRANSIENT, ErrorKind.transient, "clip"),
 ])
 def test_each_retry_verb_refuses_retired_lineage(tmp_path, verb, reason_text, kind, retire):
-    """All three sweep-the-whole-ledger retry verbs carry the same guard. Each run has one retired-lineage
-    and one live-lineage candidate, so a verb that refused everything would fail on `retried == 1`."""
+    """Oversize and transient sweep verbs still re-arm live lineage and refuse retired lineage.
+    Rate-limit is pinned separately: that writer must not queue a row with no real submission id."""
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _chain(led, "live", error_reason=reason_text, error_kind=kind)

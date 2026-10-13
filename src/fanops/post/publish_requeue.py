@@ -1,9 +1,13 @@
-"""Daemon prep: re-queue failed transient and rate-limited posts before publish_due."""
+"""Daemon prep: re-queue failed transient posts before publish_due.
+
+A rate_limit row is not sent back to queued. Postiz has no idempotency key, and a 429 may
+already have created the post — re-queueing a row with no real submission id is a second create.
+"""
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, PostState, is_real_submission_id
+from fanops.models import ErrorKind, PostState, is_real_submission_id
 from fanops.timeutil import iso_z
 from fanops.log import get_logger
 
@@ -44,52 +48,13 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
 
 
 def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
-    """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle."""
-    requeued = 0
-    led = Ledger.load(cfg)
-    by_acct: dict[str, Post] = {}
-    for p in led.posts_in_state(PostState.failed):
-        if is_real_submission_id(p.submission_id):
-            continue
-        if getattr(p, "error_kind", None) is not ErrorKind.rate_limit:
-            continue
-        if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
-            continue
-        if not led.can_promote(p):
-            continue
-        aid = (p.account_id or p.account or "").strip() or "_"
-        prev = by_acct.get(aid)
-        if prev is None or (p.scheduled_time or "") < (prev.scheduled_time or ""):
-            by_acct[aid] = p
-    if not by_acct:
-        return 0
-    now = datetime.now(timezone.utc)
-    per_min = cfg.postiz_publish_per_min
-    gap = timedelta(seconds=(60.0 / per_min) if per_min > 0 else 0)
-    try:
-        with Ledger.transaction(cfg) as lg:
-            for p in by_acct.values():
-                cur = lg.posts.get(p.id)
-                if cur is None or cur.state is not PostState.failed:
-                    continue
-                if is_real_submission_id(cur.submission_id):
-                    continue
-                if getattr(cur, "error_kind", None) is not ErrorKind.rate_limit:
-                    continue
-                if not lg.can_promote(cur):
-                    continue
-                n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
-                if n > _DAEMON_TRANSIENT_MAX:
-                    continue
-                cur.submission_id = None
-                cur.scheduled_time = iso_z(now + gap)
-                lg.set_post_state(cur.id, PostState.queued, error_kind=None, error_reason=None,
-                                  daemon_transient_retry=n)
-                requeued += 1
-    except Exception as exc:
-        get_logger(cfg)("publish", "-", "requeue_rate_limited_failed", err=str(exc)[:120], requeued=requeued)
-        return requeued
-    return requeued
+    """Do not send a rate_limit row back to queued.
+
+    A row with a real submission id is already a live create. A row with no real id may still
+    be one: whether Postiz applied the body before HTTP 429 is unproven, and there is no
+    idempotency key. Either way this writer must not construct a second create.
+    """
+    return 0
 
 
 def _heal_obsolete_failed_for_daemon(cfg: Config) -> int:
@@ -135,7 +100,11 @@ def _heal_obsolete_failed_for_daemon(cfg: Config) -> int:
 
 
 def _requeue_failed_posts(cfg: Config) -> None:
-    """Daemon prep before publish_due: bounded re-queue for transient and rate-limited failures."""
+    """Daemon prep before publish_due: bounded re-queue for transient failures.
+
+    Rate-limited rows stay where they are — `_requeue_rate_limited_for_daemon` does not
+    promote them to queued.
+    """
     _requeue_transient_failed_for_daemon(cfg)
     _heal_obsolete_failed_for_daemon(cfg)
     _requeue_rate_limited_for_daemon(cfg)
