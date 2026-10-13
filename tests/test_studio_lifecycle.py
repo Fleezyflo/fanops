@@ -119,8 +119,10 @@ def test_install_studio_owns_generation(cfg, monkeypatch):
 
 
 def test_install_studio_verifies_pid_and_generation(cfg, monkeypatch):
-    # MOL-728: wait=True confirms NEW PID + expected generation via the real port/fingerprint edges
+    # MOL-728: wait=True confirms NEW PID + expected generation via the real port/fingerprint edges.
+    # A mismatch polls the whole try budget, so sleep is stubbed out.
     _darwin_home(cfg, monkeypatch)
+    monkeypatch.setattr(daemon.time, "sleep", lambda *_a, **_k: None)
     _stub_launchctl(monkeypatch, pid=1234)
     _stub_port(monkeypatch, up=True)
     fp = {"pid": 5678, "generation": "gen-B", "sha": "sha-X"}
@@ -164,7 +166,7 @@ def test_redeploy_poll_rejection_cases(cfg, monkeypatch):
     assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is False
 
     _stub_fingerprint(monkeypatch, None)
-    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is True
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is False
 
     _stub_port(monkeypatch, up=False)
     assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=1, step=0) is False
