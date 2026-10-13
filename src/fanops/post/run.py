@@ -233,8 +233,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
       per-post failure marks THIS post failed (FIX F54); a needs_reconcile park is NOT downgraded to
       failed (AUDIT C1/#17 — failed is re-queueable => double-post); a FATAL AuthError RE-RAISES (H8).
     FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
-      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). Returns the
-      final post-state value (or None if not claimable)."""
+      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). The post fields
+      land only while that row is still 'submitting'. Returns the final post-state value (or None if
+      not claimable)."""
     # Pre-claim guard (CULM-1): same gate as publish_due — never claim a post we can't address.
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
@@ -394,12 +395,15 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
-        upd = {f: v for f, v in net.items()
-               if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
-        if upd:
-            led.posts[post_id] = p.model_copy(update=upd)
-            p = led.posts[post_id]
+        # Only while this attempt still owns the row: a concurrent mark_published / reconcile promotion
+        # (and the public_url it landed) must not be overwritten by the stale network snapshot.
+        if p.state is PostState.submitting:
+            # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
+            upd = {f: v for f, v in net.items()
+                   if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
+            if upd:
+                led.posts[post_id] = p.model_copy(update=upd)
+                p = led.posts[post_id]
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and _media_cache_hit(clip_media, backend):
             if not c.media_url or not _media_cache_hit(c.media_url, backend):
