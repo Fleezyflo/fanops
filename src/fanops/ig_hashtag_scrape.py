@@ -1,7 +1,6 @@
 """Hashtag Layer A network via instagrapi (Graph hashtag path deferred)."""
 from __future__ import annotations
 import json
-import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,8 +8,6 @@ from typing import Optional
 from fanops.config import Config
 from fanops.hashtags import CAPTION_TAG_RE, HARVEST_CAP, TOP_SAMPLE_N, _norm, _num
 from fanops.log import get_logger
-
-_log = logging.getLogger(__name__)
 
 _REEL_TREND_DAYS = 7            # a Reel older than this is history, not "currently trending"
 _REEL_PRODUCT_TYPE = "clips"    # Instagram's own product_type for a Reel
@@ -628,19 +625,13 @@ def measure_and_harvest_scrape(client, tag: str, *, now=None) -> tuple[Optional[
 def search_hashtags_scrape(client, name) -> list[dict]:
     """One instagrapi search_hashtags page. Incomplete hits stay; never invent play_count.
 
-    Fail-open: generic client error → []. Session-dead and ScrapeUnavailable raise so the
-    lock walk stops. Nameless hits are skipped. Cap is the search page.
+    A generic client error raises; session-dead and ScrapeUnavailable raise; a real empty
+    page still returns []. Nameless hits are skipped. Cap is the search page.
     """
     query = _norm(name).lstrip("#") if isinstance(name, str) else ""
     if not query:
         return []
-    try:
-        hits = client.search_hashtags(query)
-    except Exception as exc:
-        if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
-            raise
-        _log.warning("search_hashtags_scrape fail-open: %s: %s", type(exc).__name__, str(exc)[:200])
-        return []
+    hits = client.search_hashtags(query)
     out: list[dict] = []
     for h in hits or []:
         raw = getattr(h, "name", None)

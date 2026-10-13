@@ -271,12 +271,19 @@ def test_search_hashtags_scrape_maps_incomplete_hits():
     assert all("play_count" not in r for r in rows)
 
 
-def test_search_hashtags_scrape_fail_open_on_client_error():
+def test_search_hashtags_scrape_client_error_raises():
+    """RuntimeError from search_hashtags propagates.
+    Was test_search_hashtags_scrape_fail_open_on_client_error."""
     class _Boom:
         def search_hashtags(self, query):
             raise RuntimeError("network")
 
-    assert search_hashtags_scrape(_Boom(), "music") == []
+    try:
+        search_hashtags_scrape(_Boom(), "music")
+    except RuntimeError as exc:
+        assert str(exc) == "network"
+        return
+    raise AssertionError("RuntimeError must propagate out of search_hashtags_scrape")
 
 
 def test_open_client_unattended_envelope_probes_without_dump(tmp_path, monkeypatch):
