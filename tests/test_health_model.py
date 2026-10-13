@@ -1,6 +1,6 @@
 """MOL-298: unified health model — one owner, thin views."""
 from fanops.config import Config
-from fanops.health_model import HealthReport, build_health_report, dep_health_list, postiz_dep_health
+from fanops.health_model import HealthReport, build_health_report, dep_health_list, postiz_dep_health, zernio_dep_health
 from fanops import health
 
 
@@ -146,3 +146,46 @@ def test_heartbeat_stale_shape_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_heartbeat_age_s", lambda c: 350.0)
     age2, stale2, iv2 = heartbeat_stale(cfg, interval=100)
     assert stale2 is True and iv2 == 100
+
+
+def _zernio_cfg(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk_test")
+    monkeypatch.setenv("ZERNIO_API_URL", "http://zernio.test/v1")
+    return Config(root=tmp_path)
+
+
+def test_zernio_dep_health_status(tmp_path, monkeypatch):
+    """2xx is up (HTTP 200 included). 401 and 5xx are down. A connection error stays unreachable."""
+    import requests
+    cfg = _zernio_cfg(tmp_path, monkeypatch)
+
+    def fake_get(url, timeout=3, *, code):
+        assert url == "http://zernio.test/v1" and timeout == 3
+        return type("R", (), {"status_code": code})()
+
+    for code, ok, detail in ((200, True, "reachable"), (401, False, "HTTP 401"), (503, False, "HTTP 503")):
+        monkeypatch.setattr(requests, "get", lambda url, timeout=3, code=code: fake_get(url, timeout, code=code))
+        h = zernio_dep_health(cfg)
+        assert h.name == "zernio" and h.ok is ok and h.detail == detail
+
+    def boom(*_a, **_k):
+        raise requests.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr(requests, "get", boom)
+    h = zernio_dep_health(cfg)
+    assert h.ok is False and h.detail == "unreachable"
+
+
+def test_zernio_dep_health_skipped_when_not_configured(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ZERNIO_API_KEY", raising=False)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+
+    def boom(*_a, **_k):
+        raise AssertionError("network")
+
+    monkeypatch.setattr("requests.get", boom)
+    h = zernio_dep_health(Config(root=tmp_path))
+    assert h.ok is True and h.detail == "skipped (not configured)"

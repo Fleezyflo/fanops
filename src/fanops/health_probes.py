@@ -76,7 +76,18 @@ def _http_reachable(url: str | None, name: str) -> DepHealth:
 def zernio_dep_health(cfg: Config) -> DepHealth:
     if not cfg.backend_has_creds("zernio"):
         return DepHealth("zernio", True, "skipped (not configured)")
-    return _http_reachable(cfg.zernio_url, "zernio")
+    import requests
+    url = (cfg.zernio_url or "").rstrip("/")
+    if not url:
+        return DepHealth("zernio", False, "not configured")
+    try:
+        resp = requests.get(url, timeout=3)
+    except requests.exceptions.RequestException:
+        return DepHealth("zernio", False, "unreachable")
+    code = resp.status_code
+    if 200 <= code < 300:
+        return DepHealth("zernio", True, "reachable")
+    return DepHealth("zernio", False, f"HTTP {code}")
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
