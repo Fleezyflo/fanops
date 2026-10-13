@@ -25,6 +25,15 @@ def _listen_studio():
     return srv
 
 
+def _stub_answering_fingerprint(monkeypatch, cfg):
+    """A raw accept is not a fresh resident. The wait poll asks for the running sha."""
+    sha, _src = daemon._version_signal(cfg)
+    monkeypatch.setattr(
+        daemon, "_studio_get_fingerprint",
+        lambda *a, **k: {"sha": sha, "pid": 4242, "generation": "brought-up"},
+    )
+
+
 # ── mock helpers (mirror tests/test_daemon_keeper.py::_fake_launchctl) ────────────────────────
 
 def _fake_launchctl(**spec):
@@ -312,9 +321,11 @@ def test_studio_plane_kickstarts_when_plist_present(tmp_path, monkeypatch):
     pp.write_text("<plist/>")
     fake = _fake_launchctl(kickstart=(0, ""))
     monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    _stub_answering_fingerprint(monkeypatch, cfg)
     srv = _listen_studio()
     try:
-        plane = daemon._plane_studio(Config(root=tmp_path))
+        plane = daemon._plane_studio(cfg)
         assert plane["ok"] is True and plane["report_only"] is True
         assert "cycled onto current code" in plane["detail"]
         assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
@@ -329,6 +340,8 @@ def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monk
     pp.parent.mkdir(parents=True, exist_ok=True)
     pp.write_text("<plist/>")
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
+    cfg = Config(root=tmp_path)
+    _stub_answering_fingerprint(monkeypatch, cfg)
     srv = {"s": None}
     n = {"i": 0}
 
@@ -339,7 +352,7 @@ def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monk
 
     monkeypatch.setattr(daemon.time, "sleep", sleep)
     try:
-        plane = daemon._plane_studio(Config(root=tmp_path))
+        plane = daemon._plane_studio(cfg)
         assert plane["ok"] is True and plane["report_only"] is True
         assert "cycled onto current code" in plane["detail"]
         assert n["i"] >= 2
