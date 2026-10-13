@@ -225,7 +225,8 @@
     },
     "fanops.autopilot": {
       "compile": [
-        "fanops.config"
+        "fanops.config",
+        "fanops.ledger"
       ],
       "lazy": [
         "fanops",
@@ -3051,7 +3052,7 @@
     "fanops.intro_match": 1,
     "fanops.keyframes": 2,
     "fanops.learn_doctor": 0,
-    "fanops.ledger": 71,
+    "fanops.ledger": 72,
     "fanops.ledger_bridge": 0,
     "fanops.ledger_sqlite": 1,
     "fanops.ledger_wipe": 1,
@@ -3189,7 +3190,7 @@
     "fanops.artifacts": 5,
     "fanops.audio_energy": 0,
     "fanops.audit": 2,
-    "fanops.autopilot": 1,
+    "fanops.autopilot": 2,
     "fanops.bands": 0,
     "fanops.batches": 2,
     "fanops.canary": 10,
@@ -3380,7 +3381,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 287,
+  "lazy_downward_count": 288,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -4073,14 +4074,6 @@
       "to_level": 9
     },
     {
-      "from": "fanops.autopilot",
-      "from_level": 1,
-      "jump": 3,
-      "same_scc": false,
-      "to": "fanops.doctor",
-      "to_level": 4
-    },
-    {
       "from": "fanops.caption_compose",
       "from_level": 3,
       "jump": 3,
@@ -4426,11 +4419,11 @@
     },
     {
       "from": "fanops.autopilot",
-      "from_level": 1,
+      "from_level": 3,
       "jump": 1,
       "same_scc": false,
-      "to": "fanops.daemon",
-      "to_level": 2
+      "to": "fanops.doctor",
+      "to_level": 4
     },
     {
       "from": "fanops.cli_run",
@@ -4779,7 +4772,7 @@
     "fanops.artifacts": 3,
     "fanops.audio_energy": 0,
     "fanops.audit": 1,
-    "fanops.autopilot": 1,
+    "fanops.autopilot": 3,
     "fanops.bands": 0,
     "fanops.batches": 2,
     "fanops.canary": 4,
@@ -5006,7 +4999,6 @@
     "1": [
       "fanops._fwrun",
       "fanops.audit",
-      "fanops.autopilot",
       "fanops.cli_dispatch",
       "fanops.control",
       "fanops.controlio",
@@ -5086,6 +5078,7 @@
     ],
     "3": [
       "fanops.artifacts",
+      "fanops.autopilot",
       "fanops.canary_baseline",
       "fanops.caption_compose",
       "fanops.caption_ingest",
@@ -5211,11 +5204,11 @@
     "G2_largest_scc_size": 100,
     "G2_module_sccs_total": 82,
     "G2_non_trivial_sccs": 5,
-    "compile_edges_G1": 826,
+    "compile_edges_G1": 827,
     "lazy_edges": 460,
     "lazy_edges_lateral": 59,
-    "lazy_edges_strictly_upward": 114,
-    "lazy_edges_to_equal_or_higher_level": 173,
+    "lazy_edges_strictly_upward": 113,
+    "lazy_edges_to_equal_or_higher_level": 172,
     "modules": 196,
     "optional_edges": 0,
     "typing_only_edges": 9

@@ -705,8 +705,18 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         else:
             peaks = env_peaks
         segs = list(m.segments) if m.segments else None
-        excerpt = excerpt_for_window(src, cs, ce)
-        if excerpt and excerpt != (m.transcript_excerpt or ""):
+        # The envelope [start, end] covers the gaps. A supercut renders the spans.
+        rendered = segs if segs and len(segs) >= 2 else None
+        if rendered:
+            excerpt = excerpt_for_window(src, cs, ce, spans=rendered)
+        else:
+            excerpt = excerpt_for_window(src, cs, ce)
+        stored = m.transcript_excerpt or ""
+        if rendered:
+            if excerpt != stored:
+                led.moments[m.id] = m.model_copy(update={"transcript_excerpt": excerpt})
+                m = led.moments[m.id]
+        elif excerpt and excerpt != stored:
             led.moments[m.id] = m.model_copy(update={"transcript_excerpt": excerpt})
             m = led.moments[m.id]
         if not excerpt and retry:
@@ -715,7 +725,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         personas = _hook_personas_for_moment(m, accounts)
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
-                                    transcript_excerpt=excerpt or m.transcript_excerpt,
+                                    transcript_excerpt=excerpt if rendered else (excerpt or m.transcript_excerpt),
                                     signal_score=m.signal_score,
                                     language=src.language, guidance=guidance,
                                     clip_profile=cfg.clip_profile,
