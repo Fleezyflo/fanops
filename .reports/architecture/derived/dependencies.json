@@ -829,7 +829,6 @@
         "fanops.controlio"
       ],
       "lazy": [
-        "fanops.errors",
         "fanops.ig_hashtag_scrape"
       ],
       "optional": [],
@@ -3381,7 +3380,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 288,
+  "lazy_downward_count": 287,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -5205,7 +5204,7 @@
     "G2_module_sccs_total": 82,
     "G2_non_trivial_sccs": 5,
     "compile_edges_G1": 827,
-    "lazy_edges": 460,
+    "lazy_edges": 459,
     "lazy_edges_lateral": 59,
     "lazy_edges_strictly_upward": 113,
     "lazy_edges_to_equal_or_higher_level": 172,

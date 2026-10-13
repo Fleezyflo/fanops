@@ -2,6 +2,7 @@
 """Instagram hashtag scrape policy: cooldown ladder, UTC day budget, freeze/auth-death, peer selection."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fanops.config import Config, _SCRAPE_COTAG_ENQUEUE_DEFAULT, _SCRAPE_TRY_CAP_DEFAULT
@@ -40,20 +41,31 @@ def _cooldown_delay_s(streak: int) -> int:
     return _COOLDOWN_DELAYS_S[i]
 
 
+class _UnreadableCooldown(dict):
+    """In-memory freeze for a cooldown file this process could not read. Never written back."""
+
+
+def _unreadable_cooldown() -> _UnreadableCooldown:
+    return _UnreadableCooldown({
+        "reason": _AUTH_DEATH_REASON,
+        "until": "9999-12-31T00:00:00+00:00",
+        "streak": 1,
+    })
+
+
 def _load_cooldown_blob(cfg: Config) -> dict:
-    """Raw cooldown JSON. Missing → {} (no freeze yet). Corrupt / non-object → ControlFileError."""
+    """Cooldown JSON, {} when the file is absent, or an in-memory freeze when it cannot be read."""
     p = _cooldown_path(cfg)
-    if not p.exists():
-        return {}
-    from fanops.errors import ControlFileError, reason as _reason
     try:
-        import json
+        if not p.exists():
+            return {}
         raw = json.loads(p.read_text())
-    except (OSError, ValueError, TypeError) as e:
-        raise ControlFileError(f"{p.name} invalid: {_reason(e)}") from e
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, TypeError):
+        return _unreadable_cooldown()
     if not isinstance(raw, dict):
-        raise ControlFileError(
-            f"{p.name} invalid: top-level must be an object, got {type(raw).__name__}")
+        return _unreadable_cooldown()
     return raw
 
 
@@ -152,7 +164,7 @@ def _is_frozen(rec: dict, now: datetime) -> bool:
 
 
 def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> bool:
-    """True when frozen, auth-held, or day-budget-exhausted (`_day_room` ≤ 0). Fail-open."""
+    """True when frozen, auth-held, day-budget-exhausted, or the cooldown file cannot be read."""
     now = now or datetime.now(timezone.utc)
     return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
 
@@ -252,7 +264,7 @@ def _read_active_cooldown(cfg: Config, now: datetime) -> dict | None:
     Per-account freeze lives under accounts[user]={until,streak,reason,day,used}. A single
     dead account must not idle the tick while a peer can still scrape. used is an XHR
     counter, not a skip gate. With no scrape-user list, fall back to the top-level until
-    freeze. Corrupt / unreadable raises ControlFileError (refresh refuses). Never sleeps."""
+    freeze. An unreadable file is a freeze and is not rewritten. Never sleeps."""
     raw = _load_cooldown_blob(cfg)
     if not raw:
         return None
@@ -297,6 +309,8 @@ def _persist_cooldown(cfg: Config, now: datetime, *, reason: str = "throttle",
     p = _cooldown_path(cfg)
     today = _utc_day(now)
     prev = _load_cooldown_blob(cfg)
+    if isinstance(prev, _UnreadableCooldown):
+        return dict(prev)
     accounts: dict = dict(prev["accounts"]) if isinstance(prev.get("accounts"), dict) else {}
     # Drop non-dict junk entries so a corrupt accounts value cannot poison the write.
     accounts = {k: dict(v) for k, v in accounts.items() if isinstance(k, str) and isinstance(v, dict)}
@@ -337,6 +351,8 @@ def _clear_cooldown(cfg: Config, *, now: datetime | None = None, used_delta: int
     request-units are charged to today's budget before the streak fields drop."""
     p = _cooldown_path(cfg)
     prev = _load_cooldown_blob(cfg)
+    if isinstance(prev, _UnreadableCooldown):
+        return
     accounts: dict = dict(prev["accounts"]) if isinstance(prev.get("accounts"), dict) else {}
     accounts = {k: dict(v) for k, v in accounts.items() if isinstance(k, str) and isinstance(v, dict)}
     if user:
