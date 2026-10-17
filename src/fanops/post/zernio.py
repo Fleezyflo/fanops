@@ -488,9 +488,11 @@ class ZernioPoster:
             return bad                                   # ZERO network calls (I-10) — never fabricate an id
         rid = _request_id(post)
         from fanops.caption_compose import posted_text_for
+        content = posted_text_for(self.cfg, led, post)
         payload = build_zernio_payload(account_id=post.account_id, platform=post.platform.value,
-                                       content=posted_text_for(self.cfg, led, post),
+                                       content=content,
                                        media_urls=post.media_urls, scheduled_time=post.scheduled_time)
+        post.sent_content = content
         headers = dict(self.headers); headers["x-request-id"] = rid
         started = time.monotonic()
         delay, sent_any = 1.0, False

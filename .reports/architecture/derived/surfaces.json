@@ -508,7 +508,7 @@
     {
       "decorator": "app.post",
       "handler": "do_caption",
-      "line": 270,
+      "line": 276,
       "methods": [
         "POST"
       ],
@@ -519,7 +519,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_add",
-      "line": 214,
+      "line": 220,
       "methods": [
         "POST"
       ],
@@ -530,7 +530,7 @@
     {
       "decorator": "app.post",
       "handler": "do_cast_remove",
-      "line": 221,
+      "line": 227,
       "methods": [
         "POST"
       ],
@@ -541,7 +541,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear",
-      "line": 265,
+      "line": 271,
       "methods": [
         "POST"
       ],
@@ -1311,7 +1311,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_posts",
-      "line": 163,
+      "line": 168,
       "methods": [
         "POST"
       ],
@@ -1322,7 +1322,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_account",
-      "line": 197,
+      "line": 203,
       "methods": [
         "POST"
       ],
@@ -1333,7 +1333,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_as_is",
-      "line": 185,
+      "line": 191,
       "methods": [
         "POST"
       ],
@@ -1344,7 +1344,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_batch",
-      "line": 189,
+      "line": 195,
       "methods": [
         "POST"
       ],
@@ -1355,7 +1355,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_channel",
-      "line": 205,
+      "line": 211,
       "methods": [
         "POST"
       ],
@@ -1366,7 +1366,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_clip",
-      "line": 193,
+      "line": 199,
       "methods": [
         "POST"
       ],
@@ -1377,7 +1377,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_moment",
-      "line": 201,
+      "line": 207,
       "methods": [
         "POST"
       ],
@@ -1388,7 +1388,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_edits",
-      "line": 176,
+      "line": 181,
       "methods": [
         "POST"
       ],
@@ -1399,7 +1399,7 @@
     {
       "decorator": "app.post",
       "handler": "do_approve_with_hook",
-      "line": 181,
+      "line": 187,
       "methods": [
         "POST"
       ],
@@ -1443,7 +1443,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reject_posts",
-      "line": 168,
+      "line": 173,
       "methods": [
         "POST"
       ],
@@ -1487,7 +1487,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unapprove_post",
-      "line": 172,
+      "line": 177,
       "methods": [
         "POST"
       ],
@@ -1531,7 +1531,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reburn_hook",
-      "line": 287,
+      "line": 343,
       "methods": [
         "POST"
       ],
@@ -1552,8 +1552,19 @@
     },
     {
       "decorator": "app.post",
+      "handler": "do_regenerate_hook",
+      "line": 353,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/regenerate-hook/<post_id>"
+    },
+    {
+      "decorator": "app.post",
       "handler": "do_regenerate",
-      "line": 277,
+      "line": 333,
       "methods": [
         "POST"
       ],
@@ -1564,7 +1575,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule_surface",
-      "line": 260,
+      "line": 266,
       "methods": [
         "POST"
       ],
@@ -1575,7 +1586,7 @@
     {
       "decorator": "app.post",
       "handler": "do_reschedule",
-      "line": 255,
+      "line": 261,
       "methods": [
         "POST"
       ],
@@ -1586,7 +1597,7 @@
     {
       "decorator": "app.post",
       "handler": "do_restore_persona_hook",
-      "line": 282,
+      "line": 338,
       "methods": [
         "POST"
       ],
@@ -1597,7 +1608,7 @@
     {
       "decorator": "app.get",
       "handler": "review",
-      "line": 104,
+      "line": 107,
       "methods": [
         "GET"
       ],
@@ -1619,7 +1630,7 @@
     {
       "decorator": "app.get",
       "handler": "review_feed_slice",
-      "line": 112,
+      "line": 116,
       "methods": [
         "GET"
       ],
@@ -1630,7 +1641,7 @@
     {
       "decorator": "app.get",
       "handler": "review_live",
-      "line": 141,
+      "line": 146,
       "methods": [
         "GET"
       ],
@@ -1641,7 +1652,7 @@
     {
       "decorator": "app.get",
       "handler": "review_panel_refresh",
-      "line": 159,
+      "line": 164,
       "methods": [
         "GET"
       ],
@@ -1949,7 +1960,7 @@
     {
       "decorator": "app.post",
       "handler": "do_clear_segments",
-      "line": 245,
+      "line": 251,
       "methods": [
         "POST"
       ],
@@ -1960,7 +1971,7 @@
     {
       "decorator": "app.post",
       "handler": "do_set_segments",
-      "line": 228,
+      "line": 234,
       "methods": [
         "POST"
       ],
@@ -1971,7 +1982,7 @@
     {
       "decorator": "app.post",
       "handler": "do_snooze",
-      "line": 292,
+      "line": 363,
       "methods": [
         "POST"
       ],
@@ -2035,6 +2046,17 @@
       "path": "/stitches/release"
     },
     {
+      "decorator": "app.post",
+      "handler": "do_swap_tag",
+      "line": 321,
+      "methods": [
+        "POST"
+      ],
+      "module": "fanops.studio.app_routes_review",
+      "mutating": true,
+      "path": "/swap-tag/<post_id>"
+    },
+    {
       "decorator": "app.get",
       "handler": "thumb_clip",
       "line": 89,
@@ -2059,7 +2081,7 @@
     {
       "decorator": "app.post",
       "handler": "do_unhold",
-      "line": 297,
+      "line": 368,
       "methods": [
         "POST"
       ],
@@ -2074,8 +2096,8 @@
   "totals": {
     "cli_add_parser_sites": 75,
     "cli_verbs_unique": 70,
-    "route_endpoints": 146,
-    "route_endpoints_mutating": 104,
-    "route_unique_paths": 145
+    "route_endpoints": 148,
+    "route_endpoints_mutating": 106,
+    "route_unique_paths": 147
   }
 }

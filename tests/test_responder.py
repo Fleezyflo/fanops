@@ -233,6 +233,41 @@ def test_llm_responder_rate_limit_leaves_gate_pending_without_burning_attempts(t
     assert "rate_limit" in capsys.readouterr().err
 
 # --- M1b: the moment_hooks gate (pass 2 — the frame-seeing hook AUTHOR) -----------------------------
+def test_moment_hooks_model_passes_window_frames_as_images(mocker):
+    # The whole point of the split: the HOOK pass is a vision call grounded in the PICKED WINDOW's
+    # frames. The responder must attach moment_hooks `frames` as images (same plumbing as the pick pass).
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, None, False))
+    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
+                                           "start": 1.0, "end": 5.0, "frames": ["/k/w0.jpg", "/k/w1.jpg"]})
+    assert spy.call_args.kwargs.get("images") == ["/k/w0.jpg", "/k/w1.jpg"]
+
+
+def test_captions_model_passes_window_frames_as_images(mocker, tmp_path):
+    # Captions is a vision gate: this clip's frames go to claude_json_meta as images, with the same
+    # keyframe read_root the hook gate uses. An empty frame list stays text-only.
+    cfg = Config(root=tmp_path)
+    from fanops.responder import _default_claude_model
+    spy = mocker.patch("fanops.responder.claude_json_meta", return_value=({"items": []}, None, False))
+    frames = ["/k/w0.jpg", "/k/w1.jpg"]
+    _default_claude_model("captions", {"clip_id": "c", "start": 1.0, "end": 5.0, "frames": frames}, cfg=cfg)
+    assert spy.call_args.kwargs.get("images") == frames
+    assert spy.call_args.kwargs.get("read_root") == str(cfg.agent_io / "keyframes")
+    _default_claude_model("moment_hooks", {"source_id": "s", "start": 1.0, "end": 5.0, "frames": frames}, cfg=cfg)
+    assert spy.call_args.kwargs.get("read_root") == str(cfg.agent_io / "keyframes")
+    _default_claude_model("captions", {"clip_id": "c", "frames": []}, cfg=cfg)
+    assert not spy.call_args.kwargs.get("images")
+
+def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
+    # The hook author is the CREATIVE vision gate -> opus (the watch-through driver), like the old
+    # single-pass moments gate. (The pick pass also stays opus; the cost is owned, see plan D5.)
+    cfg = Config(root=tmp_path)
+    meta = mocker.patch("fanops.responder.claude_json_meta", return_value=({"hook": "x"}, "claude-opus-4-x", False))
+    from fanops.responder import _default_claude_model
+    _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
+                                           "start": 1.0, "end": 5.0}, cfg=cfg)
+    assert meta.call_args.kwargs["model"] == "grok-4.6"
+
 def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     # End-to-end gate round-trip: a moment_hooks request is answered into a schema-valid
     # MomentHookDecision. Correlation is by the gate KEY (source.token), so NO source_id injection.
@@ -270,6 +305,23 @@ def test_moment_hooks_frames_unread_leaves_gate_pending(tmp_path, monkeypatch):
     n = LlmResponder(cfg, model=boom).answer_pending(cfg)
     assert n == 0
     assert not response_path(cfg, "moment_hooks", key).exists()
+
+
+def test_captions_frames_unread_leaves_gate_pending(tmp_path, monkeypatch):
+    # Same as the hook path: unread frames raise and the caption gate stays pending.
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    cfg = Config(root=tmp_path)
+    from fanops.agentstep import write_request, response_path
+    from fanops.responder import LlmResponder
+    from fanops.llm import LlmFramesUnreadError
+    write_request(cfg, kind="captions", key="clip_1",
+                  payload={"clip_id": "clip_1", "frames": ["/k/w0.jpg"],
+                           "surfaces": [{"surface": "a/instagram", "platform": "instagram"}]})
+    def boom(kind, payload):
+        raise LlmFramesUnreadError("attached frames unread")
+    n = LlmResponder(cfg, model=boom).answer_pending(cfg)
+    assert n == 0
+    assert not response_path(cfg, "captions", "clip_1").exists()
 
 
 # ---- AGENT-2: a context-limit failure becomes a LABELLED degraded source, never an infinite-pending wedge ----

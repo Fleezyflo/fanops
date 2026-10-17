@@ -8,13 +8,16 @@ from collections import Counter
 from datetime import datetime, timezone
 from flask import render_template, request
 from fanops.accounts import Accounts
+from fanops.ledger import Ledger
 from fanops.studio import actions, views
+from fanops.studio.actions_edit import text_for_caption_edit
 from fanops.studio.views_common import REVIEW_FEED_SLICE
+from fanops.studio.views_review import card_for_post, feed_surface_for_post
 from fanops.studio.app_request import _account_all_arg, _account_arg, _batch_arg, _card_chips, _compact_arg, _focus_arg, _offset_arg, _source_arg, _state_arg, _time_arg, _ultra_arg, _view_arg
 
 
 def register_review_routes(app, cfg):
-    def _review_context(*, result=None, regen_note=None, reburn_note=None):
+    def _review_context(*, result=None, regen_note=None, reburn_note=None, regen_hook_note=None):
         led = views.led_for_request(cfg); accounts = Accounts.load(cfg); now = datetime.now(timezone.utc)
         account = _account_arg(); batch = _batch_arg(); source = _source_arg(); state = _state_arg()
         account_all = _account_all_arg()
@@ -96,7 +99,7 @@ def register_review_routes(app, cfg):
                    pending_accounts=pending_full, bare_entry=bare_entry, show_feed=show_feed,
                    feed_account=feed_account, feed=(feed_page.items if feed_page else None),
                    feed_page=feed_page, feed_rows_full=feed_rows_full,
-                   regen_note=regen_note, reburn_note=reburn_note,
+                   regen_note=regen_note, reburn_note=reburn_note, regen_hook_note=regen_hook_note,
                    **_card_chips(cards_full or [], account if not show_feed else feed_account))
         return ctx
 
@@ -105,8 +108,9 @@ def register_review_routes(app, cfg):
         ctx = _review_context()
         return render_template("review.html", shown=ctx["counts"]["awaiting"], **ctx)
 
-    def _review_panel(result=None, *, regen_note=None, reburn_note=None):
-        return render_template("_review_body.html", **_review_context(result=result, regen_note=regen_note, reburn_note=reburn_note))
+    def _review_panel(result=None, *, regen_note=None, reburn_note=None, regen_hook_note=None):
+        return render_template("_review_body.html", **_review_context(
+            result=result, regen_note=regen_note, reburn_note=reburn_note, regen_hook_note=regen_hook_note))
 
     @app.get("/review/feed-slice")
     def review_feed_slice():
@@ -122,9 +126,10 @@ def register_review_routes(app, cfg):
                                feed_account=feed_account, active=feed_account, active_batch=batch,
                                active_source=source, active_state=state)
 
-    def _focus_mutation_response(result, *, regen_note=None, reburn_note=None, post_id=None):
+    def _focus_mutation_response(result, *, regen_note=None, reburn_note=None, regen_hook_note=None, post_id=None):
         if _focus_arg():
-            return _review_panel(result=result, regen_note=regen_note, reburn_note=reburn_note)
+            return _review_panel(result=result, regen_note=regen_note, reburn_note=reburn_note,
+                                 regen_hook_note=regen_hook_note)
         if not result.ok:
             return render_template("_result.html", result=result)
         if post_id is None:
@@ -174,8 +179,9 @@ def register_review_routes(app, cfg):
 
     @app.post("/posts/approve-with-edits/<post_id>")
     def do_approve_with_edits(post_id):
+        hook = request.form.get("hook") if "hook" in request.form else None
         return _review_panel(actions.approve_with_edits(cfg, post_id,
-                          caption=request.form.get("caption", ""), hook=request.form.get("hook") or ""))
+                          caption=request.form.get("caption", ""), hook=hook))
 
     @app.post("/posts/approve-with-hook/<clip_id>")
     def do_approve_with_hook(clip_id):
@@ -268,10 +274,60 @@ def register_review_routes(app, cfg):
 
     @app.post("/caption/<post_id>")
     def do_caption(post_id):
-        result = actions.edit_caption(cfg, post_id, request.form.get("caption", ""))
+        raw = request.form.get("caption", "")
+        led = Ledger.load(cfg)
+        post = led.posts.get(post_id)
+        if post is not None:
+            raw = text_for_caption_edit(cfg, led, post, raw)
+        result = actions.edit_caption(cfg, post_id, raw)
         if _focus_arg():
             return _review_panel(result=result)
         return render_template("_result.html", result=result)
+
+    def _render_tag_swap(post_id, swap, *, reburn_note=None, regen_hook_note=None, mutation_error=None):
+        led = Ledger.load(cfg)
+        accounts = Accounts.load(cfg)
+        now = datetime.now(timezone.utc)
+        compact = _compact_arg()
+        ultra = _ultra_arg()
+        compact_param = "ultra" if ultra else (1 if compact else None)
+        page = views.paginate([], _offset_arg())
+        active = _account_arg()
+        if swap == "feed":
+            s = feed_surface_for_post(led, accounts, post_id, now=now, cfg=cfg)
+            if s is None:
+                return render_template("_result.html", result=actions.ActionResult(
+                    ok=False, error=f"post vanished: {post_id}"))
+            return render_template("_review_feed_card.html", s=s, feed_account=s.account,
+                                   active=active or s.account, feed_page=None,
+                                   compact_param=compact_param, page=page, reburn_note=reburn_note,
+                                   regen_hook_note=regen_hook_note, mutation_error=mutation_error)
+        card = card_for_post(led, accounts, cfg, post_id, now=now)
+        if card is None:
+            return render_template("_result.html", result=actions.ActionResult(
+                ok=False, error=f"post vanished: {post_id}"))
+        return render_template("_card.html", card=card, active=active, page=page,
+                               compact=compact, compact_param=compact_param, reburn_note=reburn_note,
+                               regen_hook_note=regen_hook_note, mutation_error=mutation_error)
+
+    def _render_swap_target(post_id, result, swap, **notes):
+        if swap in ("card", "feed") and not _focus_arg():
+            if result.ok:
+                return _render_tag_swap(post_id, swap, **notes)
+            return _render_tag_swap(post_id, swap, mutation_error=result.error or "")
+        return None
+
+    @app.post("/swap-tag/<post_id>")
+    def do_swap_tag(post_id):
+        result = actions.swap_shipped_tag(
+            cfg, post_id, request.form.get("old_tag", ""), request.form.get("new_tag", ""))
+        swap = (request.form.get("swap") or "card").strip()
+        rendered = _render_swap_target(post_id, result, swap)
+        if rendered is not None:
+            return rendered
+        if not result.ok:
+            return render_template("_result.html", result=result)
+        return _render_tag_swap(post_id, swap)
 
     @app.post("/regenerate/<post_id>")
     def do_regenerate(post_id):
@@ -286,7 +342,22 @@ def register_review_routes(app, cfg):
     @app.post("/reburn-hook/<post_id>")
     def do_reburn_hook(post_id):
         result = actions.reburn_hook(cfg, post_id, request.form.get("hook") or "")
+        swap = (request.form.get("swap") or "").strip()
+        rendered = _render_swap_target(
+            post_id, result, swap, reburn_note=result.detail if result.ok else None)
+        if rendered is not None:
+            return rendered
         return _focus_mutation_response(result, reburn_note=result.detail if result.ok else None, post_id=post_id)
+
+    @app.post("/regenerate-hook/<post_id>")
+    def do_regenerate_hook(post_id):
+        result = actions.regenerate_hook(cfg, post_id, request.form.get("guidance") or "")
+        swap = (request.form.get("swap") or "").strip()
+        note = result.detail if result.ok else None
+        rendered = _render_swap_target(post_id, result, swap, reburn_note=note, regen_hook_note=note)
+        if rendered is not None:
+            return rendered
+        return _focus_mutation_response(result, reburn_note=note, regen_hook_note=note, post_id=post_id)
 
     @app.post("/snooze/<clip_id>")
     def do_snooze(clip_id):

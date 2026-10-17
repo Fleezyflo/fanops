@@ -101,7 +101,8 @@ def ffmpeg_supercut_cmd(src: str, dst: str, spans: list[tuple[float, float]], as
                         content_type: str | None = None, sub_token: str | None = None) -> list[str]:
     """S3 supercut: one ABSOLUTE seeked input per span (`-ss s -t (e-s) -i src`), each span its own
     crop chain, joined by the concat-filter STRING `_segments_filter_complex` builds. NET-NEW seek loop;
-    only the concat string reuses."""
+    only the concat string reuses. `-fps_mode cfr` is the same output option as `ffmpeg_segments_cmd`:
+    concat leaves a 1-frame PTS gap per join."""
     cmd = ["ffmpeg", "-y"]
     for s, e in spans:
         cmd += ["-ss", f"{float(s):.3f}", "-t", f"{float(e) - float(s):.3f}", "-i", src]
@@ -109,23 +110,36 @@ def ffmpeg_supercut_cmd(src: str, dst: str, spans: list[tuple[float, float]], as
         span_entries = [(0.0, float(e) - float(s), 0.5, 0.5, None, None) for s, e in spans]
     fc = _segments_filter_complex(span_entries, src_w, src_h, aspect_value, content_type, sub_token=sub_token)
     cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
+            "-fps_mode", "cfr",
             "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", dst]
     return cmd
+
+
+def _finish_publish(r, tmp: str, dst: str):
+    """Publish `tmp` onto `dst` only when this ffmpeg exited 0 and left a non-empty file.
+
+    rc 0 with an empty or missing temp is not a publish. Return rc 1 so a pre-existing `dst`
+    (a re-render whose new mux wrote nothing) is not adopted as this call's output."""
+    if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
+        os.replace(tmp, dst)
+        return r
+    if r.returncode == 0:
+        r.returncode = 1
+    return r
 
 
 def render_supercut_reframed(src_path: str, dst: str, spans: list[tuple[float, float]], aspect_value: str, *,
                              src_w: int, src_h: int, span_entries: list | None = None,
                              content_type: str | None = None, extra_vf: str | None = None,
                              timeout: float = _FFMPEG_TIMEOUT):
-    """Atomic supercut render (MOL-178). Returns subprocess result; fail-open caller falls back."""
+    """Atomic supercut render (MOL-178). Returns subprocess result; fail-open caller falls back.
+    An empty rc-0 mux is returned as rc 1 and does not replace `dst`."""
     tmp = str(dst) + ".part.mp4"
     try:
         cmd = ffmpeg_supercut_cmd(src_path, tmp, spans, aspect_value, src_w=src_w, src_h=src_h,
                                   span_entries=span_entries, content_type=content_type, sub_token=extra_vf)
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-            os.replace(tmp, dst)
-        return r
+        return _finish_publish(r, tmp, dst)
     finally:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
@@ -174,8 +188,8 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
     output is `os.replace`d onto `dst` ONLY after success (rc==0 + temp exists + size>0). So `dst` is never
     a torn file mid-write — a concurrent reader (preview fallback, ffprobe, upload) sees the OLD `dst` or
     nothing, never a half-muxed byte stream; on failure/timeout `dst` is left untouched (absent, or its
-    prior good file), so the caller's rc/exists/size checks on `dst` still hold verbatim (an unreplaced
-    failure leaves `dst` missing, matching the existing `not dst.exists()` error branch). The temp MUST keep
+    prior good file). A rc-0 mux that wrote nothing is returned as rc 1 (`_finish_publish`): the caller's
+    rc/exists/size checks would otherwise adopt that prior file and stamp it as this render. The temp MUST keep
     a muxer-inferable `.mp4` suffix: `ffmpeg_clip_cmd`/`ffmpeg_segments_cmd` pass no `-f mp4`, so ffmpeg
     picks the container from the OUTPUT EXTENSION alone — a bare `.part` temp fails "Error initializing the
     muxer" and produces NO file (rc!=0), so os.replace would never run and `dst` would never be created
@@ -209,10 +223,8 @@ def render_reframed(src_path: str, dst: str, cs: float, ce: float, aspect_value:
         cmd = ffmpeg_clip_cmd(src_path, tmp, cs, ce, aspect_value, src_w=src_w, src_h=src_h, extra_vf=extra_vf,
                               top_bias=top_bias, focus=focus, track=track, content_type=content_type)
         r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
-        if r.returncode == 0 and Path(tmp).exists() and Path(tmp).stat().st_size > 0:
-            os.replace(tmp, dst)                              # atomic publish (single-pass)
-        # rc!=0 / empty / missing temp -> leave dst UNTOUCHED; the caller's rc+exists+size checks on dst fire.
-        return r
+        # rc!=0 / empty / missing temp -> leave dst UNTOUCHED and do not report rc 0.
+        return _finish_publish(r, tmp, dst)
     finally:
         # sweep the .part on EVERY exit path (success os.replace consumes it; failure/timeout/exception leave
         # it). suppress(OSError) so a sweep hiccup never MASKS a propagating TimeoutExpired/OSError from above.

@@ -32,6 +32,21 @@ they had **no axis for fail-silently-and-forever** (a gate that fails determinis
 re-requests every tick with no operator-visible terminal). That class is now named below under C6.
 `logging ≠ surfacing`.
 
+## Re-verification 2026-09-12
+
+`views.zero_post_clips` is wired. `app_routes_home.index` passes it into `home.html`.
+The 2026-07-11 dead-on-arrival sentence for that function is stale.
+`ingest.stage_inbox_candidates` skips a child `.pull` and still catalogues a scan whose inbox is that stage.
+`moments._hook_script_mismatch` keeps a Latin hook when the source language is outside English and Arabic.
+An unknown source language still nulls the hook.
+`clip_ffmpeg._finish_publish` does not publish an empty rc-0 temp over the previous mp4.
+`actions_wipe.confirm_wipe` refuses a missing or stale preview token.
+`doctor._deploy_code_check` fails when a loaded pump is missing a SHA.
+`source_tags_scrape.ensure_source_lock` writes a pass that is only exact misses.
+`ledger_wipe.snapshot_is_restorable` logs outcome `snapshot_unrestorable`.
+`hashtags.ship_from_lock` is picks intersect the lock, with no floors and no backfill.
+`health_probes.zernio_dep_health` treats a non-2xx response as down.
+
 ## C1 — Core data model & persistence
 
 > **Re-verified against live source 2026-07-14.** 4 of the 6 original entries were stale: 1 docstring genuinely fixed (`ledger.py:2`), 1 flatly false (`RenderState` is live at `views_results.py:112`), 1 anchor moved + only PARTIALLY fixed (`ledger_wipe` — silent→logged but mis-surfaced / wrong-level / over-broad catch; see its entry), 2 unchanged-and-correct. Re-verification judged not just whether a swallow now logs, but whether it logs to the SURFACED channel (`get_logger`→`run.log`, not stdlib logging), at a level alerting sees, catching only the real failure — **"it logs now" ≠ "fixed the least-defective way."** Corrections + evidence inline.
@@ -54,7 +69,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 - No genuinely dead functions found — every zero-caller flag in this cluster (`compose.py:_moviepy_prepend_render`, `_moviepy_render`, `_probe`) is a default-parameter-value false positive, confirmed real via the call sites that pass them as `render=`/`probe_duration=` defaults.
 - No unlogged silent swallow found — all ~15 `except Exception` fail-open sites across `clip.py`, `framing.py`, `stitch_render.py`, `compose.py`, `produce.py` log before continuing (contrast with C2's `vocals.py` and C4's `persona_directives.py`, which don't).
-- Cost note (not a bug): every real 2-shot (multi-speaker) clip pays for two independent ffmpeg grid-extraction passes over the same window (`framing._compute_track`, different fps needs) — acknowledged in-docstring as deliberate and bounded.
+- Grid extract for one `(source, window)` is one ffmpeg pass. `detect_window`, `_compute_track`, and `motion_saliency` share `framing._FRAMING_GRID_FPS` (`_ASD_FPS`, 9.0) at `_KF_WIDTH`. `tests/test_framing_grid_fusion.py`.
 
 ## C4 — Moments, casting & personas
 
@@ -67,7 +82,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 - `persona_levers.py:87` `is_exempt` — dead code, zero callers (confirmed by sweep).
 - `persona_levers.py:107` `channels` — dead code, zero callers; own docstring claim ("the M4 manifest reads it") is inaccurate — `manifest` actually calls `channels_of`.
 - `casting.py:40` `_record_fact` — `except Exception: pass`. Deliberate best-effort audit-trail write ("must never lose the casting"), documented.
-- `persona_directives.py:287` `persona_facts` — `except Exception: store = None`. **Silently swallows any hashtag-store load error with no logging** — the one unlogged handler in this cluster; every sibling fail-open path logs via `get_logger` first.
+- `persona_directives.persona_facts` returns `persona_terms` (`niche` bodies) and does not catch. `length_band` is `""`, `lead_tags` is `[]`, `framing` comes from `resolved_cut_spec`. The 2026-07-11 note of `except Exception: store = None` does not match this tree. Caption hashtags are `hashtags.ship_from_lock`.
 - `persona_research.py:56` `discover_corpus` — `except Exception: cands = []`. Documented fail-open.
 - `accounts.py:250` `_hydrate_from_personas` — `except Exception: return`. Documented fail-open, leaves inline values untouched.
 - Retired-field documentation trap: `persona_directives.py`/`persona_levers.py` still reference 6 fields deliberately removed from `Persona`/`Account` in M3/M3e (`tag_lean`, per-persona `clip_profile`/`framing` pins, 3 freeform directive overrides). A reader grepping "casting_directive" alone could conflate the retired field override with the live compiler function.
@@ -149,7 +164,7 @@ after an alias-and-lazy-import sweep — see the note below the table).
 
 **C1 re-verification deltas (2026-07-14), not yet propagated into the whole-doc totals above (C2–C10 unverified):** the "Unlogged silent exception swallows: 9" total counted `ledger_wipe.py:188` — it now logs (`:234`), but via **stdlib `logging`, not the surfaced `get_logger`/`run.log` stream**, so by this file's own `logging ≠ surfacing` axis it is not truly "0" — reclassify as **logged-but-mis-surfaced**, not resolved. The "dead code" and "documentation staleness" rows each counted a C1 entry that is now false/fixed (`RenderState.queued/published/analyzed` are live at `views_results.py:112`; `ledger.py:2` docstring is accurate). Treat the table as a 2026-07-11 snapshot; only C1 has been re-verified.
 
-**Cross-cluster fix-QUALITY spot-check (2026-07-14) — separate from staleness: does a "now logs" fix log the LEAST-DEFECTIVE way?** Four previously-flagged silent sites were re-read against a 3-part bar (surfaced channel? catch only the real failure? level alerting sees?). Result is uneven, and inversely to risk: **`build_system_strip` (C10 `views.py:733`) — well-fixed** (all 5 sub-reads log via `get_logger`, documented MOL-123). **`meta_graph._read_queries` (C7 `:485`) — best** (surfaced + NARROW catch `(OSError, JSONDecodeError, ValueError, TypeError)`). **`persona_directives.persona_facts` (C4 `:309`) — adequate** (surfaced; broad catch, low stakes). **`ledger_wipe.snapshot_is_restorable` (C1 `:234`) — WEAKEST, on the most dangerous path** (stdlib not surfaced; bare `except Exception`; `warning` on a wipe-guard). The pattern: cosmetic paths got the cleanest fixes, the destructive-wipe path got the sloppiest. C2/C3/C5/C6/C8/C9 fix-quality NOT yet audited.
+**Cross-cluster fix-QUALITY spot-check (2026-07-14) — separate from staleness: does a "now logs" fix log the LEAST-DEFECTIVE way?** Four previously-flagged silent sites were re-read against a 3-part bar (surfaced channel? catch only the real failure? level alerting sees?). Result is uneven, and inversely to risk: **`build_system_strip` (C10 `views.py:733`) — well-fixed** (all 5 sub-reads log via `get_logger`, documented MOL-123). **`meta_graph._read_queries` (C7 `:485`) — best** (surfaced + NARROW catch `(OSError, JSONDecodeError, ValueError, TypeError)`). **`persona_directives.persona_facts` — the catch is gone** (returns `persona_terms`, does not catch). **`ledger_wipe.snapshot_is_restorable` (C1 `:234`) — WEAKEST, on the most dangerous path** (stdlib not surfaced; bare `except Exception`; `warning` on a wipe-guard). The pattern: cosmetic paths got the cleanest fixes, the destructive-wipe path got the sloppiest. C2/C3/C5/C6/C8/C9 fix-quality NOT yet audited.
 
 **Validation correction (2026-07-03):** the deterministic call graph is name-based and cannot
 resolve aliased imports (`from x import f as _y` then `_y(...)`) or lazy in-function imports. The

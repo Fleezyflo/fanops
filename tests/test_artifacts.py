@@ -2,7 +2,9 @@
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import Source, SourceState
+from fanops.pipeline import reconcile_source_progress
 from fanops import artifacts
 from fanops.transcribe import purge_source_artifacts
 from tests.fixtures.speech_segments import talk_seg
@@ -40,7 +42,7 @@ def test_infer_resume_stage_from_warm_transcript(tmp_path):
     cfg = _cfg(tmp_path)
     out = cfg.agent_io / "transcripts"
     out.mkdir(parents=True)
-    (out / "vid.json").write_text(json.dumps({"language": "en", "segments": [{"start": 0, "end": 1, "text": "hi"}]}))
+    (out / "vid.json").write_text(json.dumps({"language": "en", "segments": [talk_seg("hi", start=0, end=1)]}))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="src_1", source_path=str(cfg.sources / "vid.mp4"), state=SourceState.error,
                               error_reason="TimeoutExpired: whisper hung"))
@@ -52,7 +54,7 @@ def test_infer_resume_stage_signalled_when_signals_sidecar_warm(tmp_path):
     stem = "vid"
     (cfg.agent_io / "transcripts").mkdir(parents=True)
     (cfg.agent_io / "transcripts" / f"{stem}.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "hi"}]}))
+        {"language": "en", "segments": [talk_seg("hi", start=0, end=1)]}))
     (cfg.agent_io / "signals").mkdir(parents=True)
     (cfg.agent_io / "signals" / "src_1.json").write_text(json.dumps({"v": 3, "peaks": [{"t": 1.0}], "duration": 10.0}))
     with Ledger.transaction(cfg) as led:
@@ -75,6 +77,31 @@ def test_adopt_warm_artifacts_loads_transcript_json(tmp_path):
     assert s.transcript[0]["text"] == "warm"
     assert s.transcript[0]["trust_tier"] == "full" and s.transcript[0]["trusted"] is True
     assert s.meta["transcribed"] is True
+
+
+def test_unadoptable_transcript_does_not_resume(tmp_path):
+    # Legacy segments lack ASR quality keys, so adoption refuses them. Counting that file —
+    # or a signals sidecar beside it — as warm promotes the source and the next pass never
+    # re-runs ASR, leaving SourceState.transcribed with an empty transcript.
+    cfg = _cfg(tmp_path)
+    path = str(cfg.sources / "vid.mp4")
+    (cfg.agent_io / "transcripts").mkdir(parents=True)
+    (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
+        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "legacy"}]}))
+    (cfg.agent_io / "signals").mkdir(parents=True)
+    (cfg.agent_io / "signals" / "src_1.json").write_text(json.dumps(
+        {"v": 3, "peaks": [{"t": 1.0}], "duration": 10.0}))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path=path, state=SourceState.error,
+                              error_reason="TimeoutExpired: whisper hung", transcript=None,
+                              meta={"transcribed": False}))
+    assert artifacts.infer_resume_stage(cfg, Ledger.load(cfg), "src_1") is None
+    with Ledger.transaction(cfg) as led:
+        reconcile_source_progress(led, cfg, get_logger(cfg))
+    s = Ledger.load(cfg).sources["src_1"]
+    assert s.state is SourceState.catalogued
+    assert not s.transcript
+    assert s.meta.get("transcribed") is not True
 
 
 def test_artifact_summary_joins_stages(tmp_path):

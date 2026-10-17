@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fanops.controlio import control_file_txn, write_json_atomic
 from fanops.errors import ControlFileError, fail_open, reason
-from fanops.hashtags import _norm, _num
+from fanops.hashtags import _norm, _num, lock_from_pile
 from fanops.timeutil import iso_z
 
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
@@ -286,6 +286,10 @@ def _union_lock_meters(table: dict, measurements: dict) -> None:
 
 
 def _stamp_source(cfg, table, sid, pile, lock, measurements=None, *, catalog, catalog_at) -> None:
+    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    # Positive play_count, play_rank_key, cap _LOCK_N. A miss has no play_count, so it stays out.
+    if catalog and isinstance(measurements, dict):
+        lock = lock_from_pile(catalog, measurements, _LOCK_N)
     row = {
         "pile": list(pile),
         "lock": list(lock),
@@ -293,8 +297,18 @@ def _stamp_source(cfg, table, sid, pile, lock, measurements=None, *, catalog, ca
         "catalog": list(catalog),
         "catalog_at": catalog_at,
     }
+    raw_miss = prior.get("exact_miss")
+    misses: list[str] = []
+    if isinstance(raw_miss, list):
+        for item in raw_miss:
+            n = _norm(item) if isinstance(item, str) else ""
+            if n and n not in misses:
+                misses.append(n)
+    if misses:
+        row["exact_miss"] = misses
     if isinstance(measurements, dict):
-        snap = _snapshot_meters(measurements, list(lock) or list(pile))
+        names = list(catalog) if catalog else (list(lock) or list(pile))
+        snap = _snapshot_meters(measurements, names)
         if snap:
             row["measurements"] = snap
     table[sid] = row

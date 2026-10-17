@@ -177,6 +177,46 @@ def test_caption_request_stale_when_lock_menu_changes(tmp_path):
     assert caption_request_stale(cfg, "clip_1", want) is True
 
 
+def test_caption_request_stale_when_completed_lock_has_no_frames_list(tmp_path):
+    # A completed lock whose on-disk request has no frames list, while the source file exists, is
+    # stale so refresh rewrites it. An empty frames list is the honest probe. No file → not this stale.
+    from fanops.models import Platform, Source, Moment, Clip, ClipState, MomentState, Fmt
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.caption_compose import _lock_fingerprint
+    from fanops.agentstep import write_request
+    cfg = Config(root=tmp_path)
+    want = [("a", Platform.instagram)]
+    lock = ["#alpha"]
+    media = tmp_path / "real.mp4"
+    media.write_bytes(b"x")
+    lock_p = source_tag_locks_path(cfg)
+    lock_p.parent.mkdir(parents=True, exist_ok=True)
+    lock_p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path=str(media), width=1920, height=1080,
+                              language="en", duration=30.0))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+        led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.rendered))
+    body = {
+        "clip_id": "clip_1",
+        "lock_fingerprint": _lock_fingerprint(lock),
+        "surfaces": [{"surface": "a/instagram", "platform": "instagram", "hashtag_store": lock}],
+    }
+    write_request(cfg, kind="captions", key="clip_1", payload=dict(body))
+    assert caption_request_stale(cfg, "clip_1", want) is True
+    write_request(cfg, kind="captions", key="clip_1", payload={**body, "frames": []})
+    assert caption_request_stale(cfg, "clip_1", want) is False
+    with Ledger.transaction(cfg) as led:
+        src = led.sources["src_1"]
+        led.sources["src_1"] = src.model_copy(update={"source_path": "/missing.mp4"})
+    write_request(cfg, kind="captions", key="clip_1", payload=dict(body))
+    assert caption_request_stale(cfg, "clip_1", want) is False
+
+
 # ---- Task 1: affinity_admits — the shared gate (provably == the negation of the crosspost gate) ----
 def test_affinity_admits_off_ignores_affinities(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")

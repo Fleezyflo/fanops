@@ -153,11 +153,13 @@ def _load_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}                                             # corrupt sidecar -> recompute (overwrites)
 
-# ---- Single detection pass (T2): ONE grid of frames per (source,window), every face's normalized box +
-# eye-line, persisted so classify_window / subject_focus / speaker_track / motion_saliency all read the SAME
-# stats — not four ffmpeg passes. The grid sidecar is versioned independently of the focus/track sidecar. ----
-_DETECT_V = 3               # bump to invalidate cached grid stats when the detection SHAPE changes (v3: + face WIDTH)
-_DETECT_FPS = 4.0           # grid sampling rate: 4 frames/s is fine for ~1s active-speaker decisions, cheap in one pass
+# ---- Single detection pass (T2): ONE grid of frames per (source, window) at _FRAMING_GRID_FPS.
+# classify_window / subject_focus read the persisted face stats. _compute_track and motion_saliency
+# read those same jpegs (mouth pixels and motion). The detect sidecar is versioned independently
+# of the focus/track sidecar. ----
+_DETECT_V = 4               # v4: stats sampled on the shared 9fps grid (v3 was the 4fps shape + face WIDTH)
+_ASD_FPS = 9.0              # active-speaker frame rate; mouth motion needs ~0.1s samples
+_FRAMING_GRID_FPS = _ASD_FPS  # detect_window, _compute_track, and motion_saliency share this extract rate
 
 def _detect_faces(cv2, det, img_path: str) -> list[tuple[float, float, float, float, float, float]]:
     """Every face in one frame as (cx, cy, fh, ey, score, fw) normalized to [0,1]: center x/y, face-box
@@ -204,9 +206,9 @@ def _load_detect_cache(path: Path) -> dict:
         return {}
 
 def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) -> dict | None:
-    """ONE grid pass over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
-    cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
-    feeds classify_window + subject_focus + speaker_track + motion_saliency. Returns None on every fail-open
+    """ONE grid pass at _FRAMING_GRID_FPS over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
+    cached per (source, window) in a `<source_id>.detect.json` sidecar. _compute_track and motion_saliency
+    reuse that extract (same fps, width, source_id, cfg). Returns None on every fail-open
     path (no [framing] extra, no detector, no frames, any error) -> callers fall back to the centered crop.
     NEVER raises.
 
@@ -257,17 +259,15 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) 
             return cache[key]
         from fanops import keyframes
         tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_grid_{key}"
-        # M2: thread source_id+cfg so the grid pass hits the content-addressed cache. detect_window,
-        # speaker_track, and motion_saliency all call this on the same source — without the cache
-        # they re-extract the same window 3× per pass; with it, the second + third callers find
-        # the frames on disk and short-circuit.
+        # One grid per (source_id, window) at _FRAMING_GRID_FPS. _compute_track and motion_saliency
+        # pass the same fps, width, source_id, and cfg, so they hit this cache.
         frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                               fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                               fps=_FRAMING_GRID_FPS, out_dir=tmp, width=_KF_WIDTH,
                                                source_id=source_id, cfg=cfg, _trace=_trace)
         stats = None
         try:
             if frames:
-                stats = {"fps": _DETECT_FPS,
+                stats = {"fps": _FRAMING_GRID_FPS,
                          "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
         except Exception as exc:
             _log.warning("detect_window: detection pass failed (%s: %s); centering", type(exc).__name__, str(exc)[:120])
@@ -275,7 +275,7 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) 
             stats = None                                      # fail-open by contract
         if stats is None:
             return None                                       # frames==[] -> keyframes ALREADY recorded which one
-        _rec(_trace, _FE.FACES_DETECTED, frames=len(frames), fps=_DETECT_FPS,
+        _rec(_trace, _FE.FACES_DETECTED, frames=len(frames), fps=_FRAMING_GRID_FPS,
              faces=sum(len(fr) for fr in stats["frames"]))
         cache[key] = stats
         try:
@@ -389,8 +389,6 @@ def classify_window(cfg, src, *, start: float, end: float, stats: dict | None, _
     vocals = bool((getattr(src, "meta", None) or {}).get("vocals_isolated"))
     return CT_MUSIC if vocals else CT_SILENT
 
-_ASD_FPS = 9.0             # per-FRAME active-speaker sampling rate (one grid pass): 9fps resolves who's talking to
-                           # ~0.1s and gives mouth-motion enough samples — the 4fps grid was the "slow to recognise" lag
 _ASD_HOLD_S = 0.35         # min DWELL before the committed speaker switches — anti-flicker hysteresis. 0.35s (was 0.8s,
                            # and ~4s before that) lands the cut within ~0.45s of the real turn — responsive, not laggy
 _ASD_RATIO = 1.2           # the talker's mouth must out-move the other by this factor to be the instantaneous speaker
@@ -612,17 +610,16 @@ def speaker_track(cfg, src, *, start: float, end: float, src_w: int, src_h: int,
     return result
 
 def _compute_track(cv2, det, cfg, src, start: float, end: float, _trace=None):
-    """speaker_track's detection body: ONE grid pass (extract_frames_grid) -> per-frame _track_observe ->
-    pure _assemble_track. The active-speaker decision needs PIXELS (mouth motion), which the JSON detect
-    stats can't carry, so this runs its own grid pass; only multi-speaker windows pay it. The first/last
-    segment snap to [0, dur] so the render's time-expression covers the whole clip."""
+    """speaker_track's detection body: the shared grid (extract_frames_grid at _FRAMING_GRID_FPS) ->
+    per-frame _track_observe -> pure _assemble_track. Mouth motion needs PIXELS, which the JSON detect
+    stats can't carry, so this reads the jpegs detect_window already extracted for this window.
+    The first/last segment snap to [0, dur] so the render's time-expression covers the whole clip."""
     from fanops import keyframes
     source_id = getattr(src, "id", "nosrc")
     tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_asd_{_wkey(start, end)}"
-    # M2: source_id+cfg threaded so the grid pass shares the content-addressed cache with
-    # detect_window and motion_saliency on the same window — one ffmpeg, not three.
+    # Same fps, width, source_id, and cfg as detect_window — cache hit, not a second ffmpeg.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                           fps=_FRAMING_GRID_FPS, out_dir=tmp, width=_KF_WIDTH,
                                            source_id=source_id, cfg=cfg, _trace=_trace)
     track = _assemble_track(_track_observe(cv2, det, frames), _ASD_FPS)
     if not track:
@@ -737,10 +734,9 @@ def motion_saliency(cfg, src, *, start: float, end: float, _rt=None, _trace=None
     from fanops import keyframes
     source_id = getattr(src, "id", "nosrc")
     tmp = cfg.agent_io / "framing" / "tmp" / f"{source_id}_sal_{key}"
-    # M2: source_id+cfg threaded so the grid pass shares the content-addressed cache with
-    # detect_window and speaker_track on the same window.
+    # Same fps, width, source_id, and cfg as detect_window and _compute_track.
     frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                           fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                           fps=_FRAMING_GRID_FPS, out_dir=tmp, width=_KF_WIDTH,
                                            source_id=source_id, cfg=cfg, _trace=_trace)
     hard = False                                              # a blowup, or a real "no motion here"?
     try:

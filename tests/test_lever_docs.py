@@ -46,12 +46,23 @@ def test_archetype_crosswalk_matches_personas():
     assert "ARCHETYPE CROSSWALK" in md
     for row in archetype_crosswalk_rows():
         assert row["id"] in md
-        for foc in row["content_focus"]:
-            assert foc in md
         assert row["hook_angle"] in md
         assert row["selection_scope"] in md or row["selection_scope"] == "open"
     ids = {r["id"] for r in archetype_crosswalk_rows()}
     assert ids == {p.id for p in baked}
+
+
+def test_crosswalk_content_focus_keeps_free_text_intact():
+    """content_focus is one free-text string. list(str) splits it into characters."""
+    from fanops.lever_docs import archetype_crosswalk_rows, render_levers
+    baked = {p.id: p for p in baked_personas()}
+    md = render_levers(_cfg())
+    assert "| m, o, m, e, n, t, s," not in md
+    for row in archetype_crosswalk_rows():
+        expected = (baked[row["id"]].content_focus or "").strip()
+        assert ", ".join(row["content_focus"]) == expected
+        if expected:
+            assert expected in md
 
 
 def test_threshold_docs_matches_committed():

@@ -1,8 +1,9 @@
 """The explicit, read-only GitHub probes (the DEPLOYED-STATE plane).
 
 Invoked on purpose by the deployed-state mode — never implicitly. Any failure returns an error
-string, never a silent empty pass: the caller decides whether that is an explicit non-authoritative
-SKIP (local/PR) or a hard FAIL (the designated authenticated job, via --require-live).
+string, never a silent empty pass. An unreadable DC-3 or DC-9 probe is an explicit
+non-authoritative SKIP in every mode, including --require-live. Only an unreadable DC-8 probe
+hard-fails on the designated authenticated job, via --require-live.
 
 Every call here is a GET. Nothing in this module mutates repository state, and nothing should ever
 be added that does — a reconciler that can change what it measures is not a reconciler.
@@ -66,10 +67,10 @@ def probe_security(repo: str = DEFAULT_REPO, timeout: int = 30):
 
     `security_and_analysis` is returned by the repo object ONLY to a caller with admin permission.
     A workflow GITHUB_TOKEN never has it and no `permissions:` block can grant it (same wall DC-3
-    hits on branch protection), so in CI this probe reports an explicit SKIP until the operator
-    supplies an admin-scoped PAT. It is authoritative on an operator terminal today. The absence of
-    the key is treated as an error, not an empty dict: a missing field must never read as "nothing
-    is enabled" — that would be a fabricated finding — nor as a pass.
+    hits on branch protection), so an unreadable probe is an explicit SKIP in every mode, including
+    --require-live. The absence of the key is treated as an error, not an empty dict: a missing
+    field must never read as "nothing is enabled" — that would be a fabricated finding — nor as a
+    pass.
     """
     data, err = _gh_json(f"repos/{repo}", timeout)
     if err is not None:

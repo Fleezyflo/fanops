@@ -17,15 +17,20 @@ post or break the reconcile handshake.
 
 Two facts, not one missing sentence. Neither is a reconcile / reauth / 400-parser job.
 
-**Caption — the string on `Post.caption` is the caption.** Live queued TikToks store the hashtag line there
-(`#beatmaking #songwriting …`). Lock tags, if any, append. Call sites (symbols, re-find):
+**Caption — `send_caption` is the one send decision.** `Post.caption` stores the sentence. IG/TT
+vendor `content` is `posted_text_for` (the string half of `_posted_ship`: sentence plus at most four
+lock tags). YouTube vendor `content` is `Post.caption` raw; `settings.tags` labels come from
+`_youtube_tags` in `caption_compose` (`build_postiz_payload` calls that shaper). Studio review,
+schedule, the publish queue, and dryrun read `send_caption`. A posted row and reconcile's caption
+search show `Post.sent_content` when set, else that send text. Call sites (symbols, re-find):
 
 | Backend | Vendor field | Source |
 |---|---|---|
-| Postiz YouTube | `content` / description | `post.caption` raw |
+| Postiz YouTube | `content` / description | `Post.caption` raw |
+| Postiz YouTube | `settings.tags` | `_youtube_tags` labels |
 | Postiz IG / TikTok | `content` | `posted_text_for` |
 | Zernio | `content` | `posted_text_for` |
-| dryrun / Studio review | preview text | `posted_text_for` |
+| dryrun | preview `text` | `send_caption` text (YouTube also writes the tag labels) |
 
 `posted_text_for` → `compose_posted_caption(post.caption, ship_from_lock(picks, source lock))`. When lock
 tags are present, compose strips `#` tokens then appends the intersection. Empty lock returns the original
@@ -35,7 +40,7 @@ compose.
 Measured (live ledger `/Users/molhamhomsi/FanOps`, pre-fix): 443/443 queued TikToks stored `Post.caption`
 as the hashtag line; 410 had no lock row. That is why the empty-lock return keeps the stored string.
 
-No new function. No recaption from `moment.hook`. No HOLD of already-minted rows (`ingest_captions`
+No recaption from `moment.hook`. No HOLD of already-minted rows (`ingest_captions`
 tags-only HOLD is ingest, not send).
 
 **Media — Zernio `mediaItems`.** `build_zernio_payload` raises `ValueError` matching `no media` when

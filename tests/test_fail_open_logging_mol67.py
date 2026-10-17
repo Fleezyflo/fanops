@@ -26,7 +26,7 @@ def test_snapshot_is_restorable_logs_and_returns_false(tmp_path):
     result = ledger_wipe.snapshot_is_restorable(str(d), cfg)
     assert result is False                                        # fallback unchanged
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
-    assert any(r.get("stage") == "wipe" and r.get("outcome") == "snapshot_unrestorable" for r in recs)
+    assert any(r.get("stage") == "ledger_wipe" and r.get("outcome") == "snapshot_unrestorable" for r in recs)
 
 
 # ── 2. vocals._demucs_env — except -> pass (cfg-less: module logger) + narrowed to ImportError ──

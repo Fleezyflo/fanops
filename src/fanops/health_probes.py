@@ -10,6 +10,7 @@ from fanops.health_types import (
     DepHealth,
     Severity,
 )
+from fanops.postiz_lifecycle import _backend_is_postiz
 
 _log = logging.getLogger("fanops.health")
 
@@ -17,20 +18,13 @@ _STAGE_HANG_CEILING_S = 3600
 
 
 def _docker_dep() -> DepHealth:
-    import os, shutil, signal, subprocess
+    import shutil, subprocess
     _DOCKER_INFO_TIMEOUT = 8
     if not shutil.which("docker"):
         return DepHealth("docker", False, "docker CLI not installed")
     try:
-        p = subprocess.Popen(["docker", "info"], start_new_session=True,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            p.communicate(timeout=_DOCKER_INFO_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
-            p.wait()
-            raise
-        return DepHealth("docker", p.returncode == 0, "daemon up" if p.returncode == 0 else "daemon down")
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=_DOCKER_INFO_TIMEOUT)
+        return DepHealth("docker", r.returncode == 0, "daemon up" if r.returncode == 0 else "daemon down")
     except Exception as exc:
         _log.warning("_docker_dep: docker info failed (%s)", exc)
         return DepHealth("docker", False, f"{type(exc).__name__}")
@@ -47,6 +41,8 @@ def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
     """Map the unified Postiz probe to a DepHealth row (system_health / Studio strip)."""
     if not cfg.backend_has_creds("postiz"):
         return DepHealth("postiz", True, "skipped (not configured)")
+    if not _backend_is_postiz(cfg):
+        return DepHealth("postiz", True, "skipped (not routed live)")
     if not (cfg.postiz_url or "").strip():
         return DepHealth("postiz", False, "not configured")
     try:
@@ -83,10 +79,15 @@ def zernio_dep_health(cfg: Config) -> DepHealth:
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
-    """Runtime dependency rows — docker via health._docker_health when available (test patch compat)."""
+    """Runtime dependency rows — docker via health._docker_health when available (test patch compat).
+
+    Docker is the local Postiz stack's engine. No live Postiz-routed channel → skip it (a
+    Zernio-only deployment must not FAIL doctor because Docker Desktop is stopped)."""
     from fanops import health as health_mod
     from fanops.health import _postiz_compose_dir
-    if _postiz_compose_dir(cfg) is not None:
+    if not _backend_is_postiz(cfg):
+        docker = DepHealth("docker", True, "skipped (not routed live)")
+    elif _postiz_compose_dir(cfg) is not None:
         docker = health_mod._docker_health() if hasattr(health_mod, "_docker_health") else _docker_dep()
     else:
         docker = DepHealth("docker", True, "skipped (not configured)")
@@ -96,6 +97,8 @@ def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
 def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
     """Doctor-shaped check from the SAME Postiz probe (replaces doctor._postiz_reach_check duplicate)."""
     if not cfg.backend_has_creds("postiz"):
+        return None
+    if not _backend_is_postiz(cfg):
         return None
     try:
         h = _postiz_probe(cfg, probe=probe)
@@ -133,14 +136,13 @@ def daemon_progress(cfg: Config) -> tuple[bool, str | None, dict | None]:
     narrow "PID alive but stage silently hung" case, at the cost of up to _STAGE_HANG_CEILING_S (1h)
     detection lag (the ceiling MUST exceed the longest legitimate silent gap, or it false-flags a
     working pass). Returns the (alive_mid, line, snap) triple both callers destructure."""
+    from fanops.errors import fail_open
     from fanops import daemon
     snap = None; act = None
-    try:
+    with fail_open("daemon_progress"):
         from fanops.pipeline_run import run_stage_snapshot
         snap = run_stage_snapshot(cfg)
         act = daemon._newest_activity_ts(cfg)
-    except Exception as exc:
-        _log.debug("daemon_progress fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
     silent_s = (datetime.now(timezone.utc) - act).total_seconds() if act else None
     # ALIVE: the log is fresh (still emitting) — working, however long the current stage runs.
     if silent_s is not None and silent_s < _STAGE_HANG_CEILING_S:

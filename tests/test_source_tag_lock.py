@@ -111,15 +111,38 @@ def test_ship_from_lock_invented_and_off_lock_die():
     assert ship_from_lock(["#invented", "#keep", "#offlock"], lock) == ["#keep"]
 
 
-def test_ship_from_lock_order_is_picks_not_lock():
+def test_ship_from_lock_order_is_play_rank_not_picks():
     lock = ["#a", "#b", "#c", "#d"]
-    assert ship_from_lock(["#c", "#a", "#d"], lock) == ["#c", "#a", "#d"]
+    measurements = {
+        "#c": {"play_count": 1, "current_top_reel_play_max_7d": 1},
+        "#a": {"play_count": 50, "current_top_reel_play_max_7d": 1},
+        "#d": {"play_count": 9, "current_top_reel_play_max_7d": 1},
+    }
+    assert ship_from_lock(["#c", "#a", "#d"], lock, measurements=measurements) == ["#a", "#d", "#c"]
 
 
 def test_ship_from_lock_cap_four():
     lock = [f"#t{i}" for i in range(10)]
     picks = [f"#t{i}" for i in range(10)]
-    assert ship_from_lock(picks, lock) == picks[:4]
+    measurements = {f"#t{i}": {"play_count": i + 1} for i in range(10)}
+    # Cap walks pick order (t0..t3), then play_rank_key reverses those four.
+    assert ship_from_lock(picks, lock, measurements=measurements) == ["#t3", "#t2", "#t1", "#t0"]
+
+
+def test_ship_from_lock_drops_artist_name_and_handle():
+    from fanops.hashtags import artist_tag_norms, norm_tag
+    assert norm_tag("Moh Flow") != "#mohflow"
+    assert artist_tag_norms("Moh Flow") == frozenset({"#mohflow", "#mohflowmusic"})
+    lock = ["#mohflow", "#mohflowmusic", "#rap", "#hiphop"]
+    picks = ["#hiphop", "#mohflow", "#rap", "#mohflowmusic"]
+    measurements = {
+        "#mohflow": {"play_count": 9000},
+        "#mohflowmusic": {"play_count": 8000},
+        "#hiphop": {"play_count": 40},
+        "#rap": {"play_count": 10},
+    }
+    assert ship_from_lock(
+        picks, lock, artist_name="Moh Flow", measurements=measurements) == ["#hiphop", "#rap"]
 
 
 def test_ship_from_lock_empty_lock_is_empty():
@@ -132,6 +155,51 @@ def test_ship_from_lock_no_arabic_floor():
     ar = ["#arabicmusic", "#arabtiktok", "#arabicmusiclovers"]
     assert ship_from_lock(["#keep"] + ar, lock) == ["#keep"]
     assert "#arabicmusic" not in ship_from_lock(ar + ["#keep"], lock)
+
+
+def test_caption_menu_drops_artist_norms_and_orders_by_play(tmp_path):
+    """Menu and the metrics on the row are the lock record, not the global cache."""
+    import json
+    from fanops.agentstep import request_path
+    from fanops.caption import request_captions
+    from fanops.config import Config
+    from fanops.ledger import Ledger
+    from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
+    from fanops.source_tags import source_tag_locks_path
+
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    raw = ["#mohflow", "#low", "#mohflowmusic", "#high"]
+    measurements = {
+        "#mohflow": {"play_count": 100000.0, "media_count": 10.0},
+        "#mohflowmusic": {"play_count": 90000.0},
+        "#low": {"play_count": 5.0, "current_top_reel_play_max_7d": 1.0},
+        "#high": {"play_count": 5.0, "current_top_reel_play_max_7d": 40.0},
+    }
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": raw, "lock": raw, "researched_at": "2026-08-17T00:00:00Z",
+                  "measurements": measurements},
+    }))
+    cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.hashtags_path.write_text(json.dumps({
+        "#low": {"graph_id": "1", "measured_at": "t", "play_count": 99999.0},
+        "#high": {"graph_id": "2", "measured_at": "t", "play_count": 1.0},
+    }))
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    menu = payload["surfaces"][0]["hashtag_store"]
+    assert menu == ["#high", "#low"]
+    assert payload["hashtag_metrics"]["#high"]["play_count"] == 5.0
+    assert payload["hashtag_metrics"]["#high"]["current_top_reel_play_max_7d"] == 40.0
+    assert payload["hashtag_metrics"]["#low"]["play_count"] == 5.0
+    assert "#mohflow" not in payload["hashtag_metrics"]
+    assert "#mohflowmusic" not in menu
 
 
 def test_caption_request_hashtag_store_equals_lock(tmp_path):

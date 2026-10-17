@@ -25,6 +25,7 @@ import json
 from datetime import datetime, timezone
 from fanops.accounts import Accounts
 from fanops.caption import ingest_captions, request_captions
+from fanops.caption_compose import _caption_clip
 from fanops.config import Config
 from fanops.controlio import write_json_atomic
 from fanops.ledger import Ledger
@@ -58,28 +59,27 @@ def _save_journal(cfg: Config, j: dict) -> None:
 
 
 def _seed_clip_id(led: Ledger, post) -> str | None:
-    """The clip the pipeline captions for this post's moment: posts hang off per-aspect render clips
-    (crosspost mints post.parent_id = target_clip.id) while meta_captions live on the SEED clip the
-    caption cycle ran for. Prefer the sibling clip with the richest meta_captions; fall back to the
-    post's own parent."""
+    """The clip whose account/platform entry was minted onto this post.
+
+    Posts hang off the aspect render (`post.parent_id`); captions live on the seed
+    `_seed_clips` minted from. The parent wins when it holds that entry.
+    """
     clip = led.clips.get(post.parent_id)
     if clip is None:
         return None
-    best = None
-    for c in led.clips.values():
-        if c.parent_id == clip.parent_id and c.meta_captions:
-            if best is None or len(c.meta_captions) > len(best.meta_captions):
-                best = c
-    return (best or clip).id
+    bound = _caption_clip(led, post, clip)
+    return (bound or clip).id
 
 
-def _targets(led: Ledger, account: str | None = None) -> list[tuple[str, list[str]]]:
+def _targets(led: Ledger, account: str | None = None,
+             states: tuple | None = None) -> list[tuple[str, list[str]]]:
     """[(seed_clip_id, [post_id, ...])] in schedule order (earliest linked post first); posts within
-    a clip likewise schedule-ordered. Targets = awaiting_approval + queued only. `account` is an
-    exact handle filter applied BEFORE grouping; None keeps every handle."""
+    a clip likewise schedule-ordered. Targets = awaiting_approval + queued only, unless `states`
+    narrows that set. `account` is an exact handle filter applied BEFORE grouping; None keeps every handle."""
+    wanted = _TARGET_STATES if states is None else states
     groups: dict[str, list] = {}
     for p in led.posts.values():
-        if p.state in _TARGET_STATES and (account is None or p.account == account):
+        if p.state in wanted and (account is None or p.account == account):
             cid = _seed_clip_id(led, p)
             if cid is not None:
                 groups.setdefault(cid, []).append(p)
@@ -118,7 +118,8 @@ def _sync_posts(led: Ledger, cfg: Config, clip, post_ids: list[str], now: dateti
 
 
 def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: datetime | None = None,
-                  limit: int | None = None, account: str | None = None) -> dict:
+                  limit: int | None = None, account: str | None = None,
+                  states: tuple | None = None) -> dict:
     """Drive the original caption pipeline over the backlog. Dry-run (default) is a pure read.
 
     Apply is THREE phases (not one-clip-at-a-time LLM):
@@ -127,13 +128,14 @@ def run_recaption(cfg: Config, *, apply: bool = False, responder=None, now: date
       3) ingest+sync+restore in schedule order (serial per clip)
 
     `responder` is injectable for tests (default: configured llm responder).
-    `account` filters posts by exact handle before grouping. `limit` is max seed clips
+    `account` filters posts by exact handle before grouping. `states` narrows `_TARGET_STATES`
+    (None keeps awaiting_approval + queued). `limit` is max seed clips
     processed after that filter (and after the journal skip on apply). None keeps today's set."""
     if limit is not None and limit <= 0:
         raise ValueError("limit must be a positive integer")
     now = now or datetime.now(timezone.utc)
     led = Ledger.load(cfg)
-    targets = _targets(led, account=account)
+    targets = _targets(led, account=account, states=states)
     listed = targets if apply or limit is None else targets[:limit]
     summary = {"clips": len(listed), "posts": sum(len(ps) for _, ps in listed),
                "done": 0, "synced": 0, "skipped_imminent": 0, "held": 0, "pending": 0, "rows": []}

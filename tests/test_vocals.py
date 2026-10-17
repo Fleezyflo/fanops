@@ -32,7 +32,7 @@ def test_isolate_vocals_returns_vocals_path_on_success(tmp_path, mocker):
     assert captured["cmd"][-1] == str(src)
     assert got.endswith("htdemucs/src_1/vocals.mp3") and Path(got).exists()
 
-def test_isolate_vocals_failopen_when_demucs_absent(tmp_path, mocker):
+def test_isolate_vocals_fail_closed_when_demucs_absent(tmp_path, mocker):
     # demucs not installed -> subprocess.run raises FileNotFoundError BEFORE the process starts.
     # isolate_vocals must raise ToolchainMissingError (never decode the mix).
     src = tmp_path / "src_1.mp4"; src.write_bytes(b"VID")
@@ -41,7 +41,7 @@ def test_isolate_vocals_failopen_when_demucs_absent(tmp_path, mocker):
     with pytest.raises(ToolchainMissingError):
         isolate_vocals(str(src), str(tmp_path / "w"))
 
-def test_isolate_vocals_failopen_on_nonzero_and_timeout(tmp_path, mocker):
+def test_isolate_vocals_fail_closed_on_nonzero_and_timeout(tmp_path, mocker):
     src = tmp_path / "src_1.mp4"; src.write_bytes(b"VID")
     # nonzero rc (e.g. model download blocked) -> ToolchainMissingError
     class R: returncode = 1; stderr = "boom"; stdout = ""
@@ -54,7 +54,7 @@ def test_isolate_vocals_failopen_on_nonzero_and_timeout(tmp_path, mocker):
     with pytest.raises(ToolchainMissingError):
         isolate_vocals(str(src), str(tmp_path / "w2"))
 
-def test_isolate_vocals_failopen_when_stem_missing(tmp_path, mocker):
+def test_isolate_vocals_fail_closed_when_stem_missing(tmp_path, mocker):
     # rc 0 but no vocals.mp3 written (schema drift) -> ToolchainMissingError
     src = tmp_path / "src_1.mp4"; src.write_bytes(b"VID")
     class R: returncode = 0; stderr = ""; stdout = ""
@@ -62,7 +62,7 @@ def test_isolate_vocals_failopen_when_stem_missing(tmp_path, mocker):
     with pytest.raises(ToolchainMissingError):
         isolate_vocals(str(src), str(tmp_path / "w"))
 
-def test_isolate_vocals_failopen_logs_breadcrumb(tmp_path, mocker, caplog):
+def test_isolate_vocals_fail_closed_logs_breadcrumb(tmp_path, mocker, caplog):
     # Every isolation-failure branch must leave a WARNING breadcrumb (house norm): a silent isolation
     # skip left the 2026-07-12 subtitle-garbage incident undiagnosable — nothing recorded WHY the raw
     # mix was transcribed. One test, all three branches; caplog cleared between phases.
@@ -74,7 +74,7 @@ def test_isolate_vocals_failopen_logs_breadcrumb(tmp_path, mocker, caplog):
                      side_effect=FileNotFoundError(2, "No such file", "demucs"))
         with pytest.raises(ToolchainMissingError):
             isolate_vocals(str(src), str(tmp_path / "w1"))
-        assert any("fail-open" in r.message and "FileNotFoundError" in r.message for r in caplog.records)
+        assert any("fail-closed" in r.message and "FileNotFoundError" in r.message for r in caplog.records)
         caplog.clear()
         # (2) nonzero rc -> the stderr tail is the diagnosis; it must survive into the log
         class R: returncode = 1; stderr = "model fetch blocked"; stdout = ""

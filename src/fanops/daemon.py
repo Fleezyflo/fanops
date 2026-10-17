@@ -264,6 +264,7 @@ from fanops.daemon_siblings import (  # noqa: E402
     KEEPER_LABEL,
     KEEPER_POLL_INTERVAL_S,
     _install_keeper,
+    _install_postiz_reaper,
     ensure_keeper_loaded,
     keeper_plist_path,
 )
@@ -348,8 +349,12 @@ def install(cfg: Config, *, interval: int) -> dict:
     write_text_atomic(pp, render_plist(cfg, interval=interval))
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
-    return {"plist": str(pp), "interval": interval, "loaded": loaded,
-            "responder": resolved, **keeper}
+    out = {"plist": str(pp), "interval": interval, "loaded": loaded,
+           "responder": resolved, **keeper}
+    reaper = _install_postiz_reaper(cfg)
+    if reaper:
+        out.update(reaper)
+    return out
 
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
@@ -530,6 +535,7 @@ from fanops.daemon_siblings import (  # noqa: E402, F401
     SIBLING_POLL_INTERVAL_S,
     SIBLING_POLL_TIMERS_RATIONALE,
     render_keeper_plist,
+    render_postiz_reaper_plist,
     sibling_agent_status,
     sibling_agents_status,
     sibling_plist_path,
@@ -654,10 +660,9 @@ _KICKSTART_HEARTBEAT_STEP = 2.0
 
 
 def _ondemand_script() -> Path:
-    """Path to the self-hosted Postiz on-demand script. FANOPS_POSTIZ_ONDEMAND overrides; else the
-    conventional $HOME/postiz-selfhost/postiz-ondemand.sh (mirrors postiz_lifecycle._SCRIPT)."""
-    v = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
-    return Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-ondemand.sh")
+    """Path to the self-hosted Postiz on-demand script. Single resolver: postiz_lifecycle._ondemand_script."""
+    from fanops.postiz_lifecycle import _ondemand_script as resolve
+    return resolve()
 
 
 def _tail(text: str, n: int = 6) -> str:
@@ -787,7 +792,13 @@ def _plane_postiz(cfg: Config) -> dict:
     """Docker + Postiz plane: shell out to `postiz-ondemand.sh ensure` (which starts Docker, brings
     the stack up idempotently, self-heals the Mastra crash-loop, and runs the honest 200/401-past-nginx
     probe — all reused verbatim). Gate: exit 0 = Postiz ready; non-zero surfaces the script's stderr
-    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash."""
+    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash.
+    No live Postiz-routed channel → skipped (ok, not a gate): Zernio-only bring-up does not start
+    Docker or Postiz."""
+    from fanops.postiz_lifecycle import _backend_is_postiz
+    if not _backend_is_postiz(cfg):
+        return {"plane": "postiz", "ok": True, "skipped": True,
+                "detail": "deferred (no live Postiz-routed channel; Zernio/other backends unaffected)"}
     script = _ondemand_script()
     if not script.exists():
         return {"plane": "postiz", "ok": False,
@@ -1110,6 +1121,6 @@ def format_up_report(result: dict) -> list[str]:
         p = result.get(name)
         if p is None:
             return f"  [ -- ] {name}: (not reached)"
-        mark = "ok  " if p["ok"] else ("skip" if p.get("skipped") else "DOWN")
+        mark = "skip" if p.get("skipped") else ("ok  " if p["ok"] else "DOWN")
         return f"  [{mark}] {name}: {p.get('detail', '')}"
     return [line("git"), line("postiz"), line("daemon"), line("studio"), result["verdict"]]

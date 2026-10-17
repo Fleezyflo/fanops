@@ -9,6 +9,14 @@ writes both `.env` and `os.environ`) or **`.env`/shell-ONLY** (no UI). `Set` col
 (never operator), **deprecated** = vestigial (not Studio-settable). Defaults are the CODE defaults. (Absolute var counts are intentionally omitted — a
 hardcoded total rots; the `FANOPS_*` name-set here is instead enforced against the code by `ARCH-003`.)
 
+## Install extras and failure posture
+
+| Extra | When required | Absent / misconfigured behavior | Evidence |
+|-------|----------------|----------------------------------|----------|
+| [asr] | Transcribe (clip path) | Per-source `SourceState.error`; `ToolchainMissingError`; doctor fails faster-whisper | `transcribe.py:21`, `_fw_available`; `doctor.py:408-410` |
+| [framing] | `cfg.smart_framing` ON | `_framing_runtime_or_raise` fails loud; OFF → centered crop fail-open | `framing.py:6-8,90-131`; `pyproject.toml` `[framing]` |
+| [studio] | `fanops studio` server | `studio.app` imports Flask; `cmd_studio` → `create_app`; missing → `ImportError` | `pyproject.toml:21-22`; `cli.py:1268,1314` |
+
 ## Bootstrap (process environment only)
 | Var | Default | Effect | Set |
 |---|---|---|---|
@@ -142,6 +150,8 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 | `FANOPS_AUTO_ADOPT` | on | Daemon code-drift self-heal: the keeper kickstarts the pump when the SHA it reports in its heartbeat differs from the SHA on disk (`daemon.ensure`). A registered `BoolEnv` — off-words disable, a typo keeps the default ON (was a raw `!= "0"` read where `false`/`off` stayed ON) | .env |
 
 When `FANOPS_POSTIZ_ONDEMAND` is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a `fanops up` bring-up concern, not a publish gate).
+
+Resting state is Docker and the local Postiz stack **down** after the reaper's idle stop. `postiz_lifecycle.ensure_up` (a due Postiz publish or reconcile) and `fanops up` start them by running `postiz-ondemand.sh ensure` — that script starts Docker; FanOps does not bring Docker up itself. A Zernio-only live deployment (Postiz credentials may exist, but no channel routes to Postiz) skips the Postiz plane and does not start Docker or Postiz. `fanops daemon install` installs the `com.fanops.postiz-reaper` launchd poll-timer (idle stop) when that on-demand script exists and `POSTIZ_URL` is local.
 
 **Machine health:** primary operator channel is `fanops doctor` over `build_health_report`. Studio Home /
 Go-Live / `/metrics` are projections of that report. `/healthz` is process liveness only; `fanops up`

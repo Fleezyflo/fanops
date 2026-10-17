@@ -145,6 +145,8 @@ def main():
         raw = sys.stdin.read()
         if raw.strip():
             data = json.loads(raw)
+            if data.get("cursor_version"):
+                sys.exit(0)  # Cursor sessions are guarded by ~/.cursor/contract
             user_prompt = str(
                 data.get("prompt") or data.get("message") or data.get("content") or ""
             )

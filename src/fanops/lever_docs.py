@@ -58,8 +58,10 @@ def archetype_crosswalk_rows() -> list[dict]:
     """One row per shipped baked archetype persona — the crosswalk the operator reads."""
     rows: list[dict] = []
     for p in baked_personas():
+        focus = (p.content_focus or "").strip()
+        # One item. content_focus is free text; list(str) iterates characters.
         rows.append({"id": p.id, "name": p.name or p.id,
-                       "content_focus": list(p.content_focus or []),
+                       "content_focus": [focus] if focus else [],
                        "hook_angle": (p.hook_angle or "").strip(),
                        "selection_scope": (p.selection_scope or "open").strip(),
                        "intensity": (getattr(p, "intensity", None) or "medium"),

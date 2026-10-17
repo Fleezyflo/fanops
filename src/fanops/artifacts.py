@@ -14,6 +14,7 @@ from fanops.controlio import write_json_atomic
 from fanops.errors import fail_open
 from fanops.ledger import Ledger
 from fanops.models import SourceState
+from fanops.speech_trust import _cache_is_quality_complete, _finalize_segments
 
 _MANIFEST_V = 1
 _STAGE_ORDER = ("transcribe", "signals", "framing", "keyframes", "clip")
@@ -86,13 +87,23 @@ def _signals_sidecar(cfg: Config, source_id: str) -> Path:
 
 
 def _valid_transcript_json(path: Path) -> bool:
+    """True when the sidecar is adoptable. A segments list without ASR quality keys is not:
+    _adopt_cached_transcript refuses it, so it must not count as a finished transcribe stage."""
     if not path.exists():
         return False
     try:
         d = json.loads(path.read_text())
-        return isinstance(d.get("segments"), list)
     except (OSError, json.JSONDecodeError):
         return False
+    if not isinstance(d, dict) or not isinstance(d.get("segments"), list):
+        return False
+    try:
+        if not _cache_is_quality_complete(d):
+            return False
+        _finalize_segments(d.get("segments") or [], d.get("language"))
+    except (AttributeError, KeyError, TypeError):
+        return False
+    return True
 
 
 def _valid_signals_sidecar(path: Path) -> bool:
@@ -107,10 +118,15 @@ def _valid_signals_sidecar(path: Path) -> bool:
 
 
 def _disk_stages(cfg: Config, source_id: str, source_path: str) -> list[str]:
-    """Derive completed stages from on-disk artifacts (authoritative over manifest)."""
+    """Derive completed stages from on-disk artifacts (authoritative over manifest).
+
+    Later stages do not count unless the transcript sidecar is adoptable. A signals or
+    framing file beside a legacy transcript would otherwise resume past transcribe while
+    the ledger transcript stays empty."""
     done: list[str] = []
-    if _valid_transcript_json(_transcript_cache(cfg, source_path)):
-        done.append("transcribe")
+    if not _valid_transcript_json(_transcript_cache(cfg, source_path)):
+        return done
+    done.append("transcribe")
     if _valid_signals_sidecar(_signals_sidecar(cfg, source_id)):
         done.append("signals")
     if (cfg.agent_io / "framing" / f"{source_id}.detect.json").exists():

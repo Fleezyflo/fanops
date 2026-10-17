@@ -1,7 +1,7 @@
-{# src/fanops/studio/templates/_surface_edit.html — the editable controls for ONE queued surface:
-   edit anything the system wrote, OR tell it what to change and regenerate, OR reschedule. Rendered
-   inline by _card.html and re-rendered STANDALONE by /regenerate (htmx outerHTML swap of #edit-<id>)
-   so the regenerated caption lands straight back in the box. The per-surface result sink
+{# src/fanops/studio/templates/_surface_edit.html — caption save, regenerate, and reschedule for ONE
+   surface. The on-screen hook and the tag row live on the column (_hook_edit.html, _tag_selects.html).
+   Rendered inline by _card.html and re-rendered STANDALONE by /regenerate (htmx outerHTML swap of
+   #edit-<id>) so the regenerated caption lands straight back in the box. The per-surface result sink
    (#res-<id>) lives in _card.html, OUTSIDE this block, so it survives the regenerate swap. #}
 {% if focus_edit %}
 {% set _hx_target = '#review-body' %}
@@ -17,30 +17,11 @@
     <textarea id="caption-{{ s.post_id }}" name="caption" rows="3">{{ s.caption }}</textarea>
     <button type="submit">Save caption</button>
   </form>
-  {% if s.tag_sources %}
-  {# why each hashtag shipped — proves every tag traces to a real signal (no decorative/theatre tags). #}
-  <p class="meta tag-prov">Why these tags:
-    {% for tag, src in s.tag_sources.items() %}<span class="chip tag-src tag-src-{{ src }}">{{ tag }} · {{ src }}</span>{% endfor %}
-  </p>
-  {% endif %}
   <form hx-post="{{ url_for('do_regenerate', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
     <label for="guidance-{{ s.post_id }}">Not right? Tell the system what to change, then regenerate</label>
     <input id="guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. punchier · mention the beat drop · less hype">
     <button type="submit" class="primary">Regenerate caption</button>
   </form>
-  {# Face 4: the editable on-screen HOOK (owner-moment, burned into the video). "Re-burn text" re-burns the
-     literal typed text via ffmpeg (no LLM) onto the same /media path; a fail-open burn (no libass) warns
-     but still saves the text. #}
-  {% if s.variant_hook is not none %}
-  {% if reburn_note is defined and reburn_note and not reburn_note.hook_burned %}
-    <div class="result err">Hook saved, but ffmpeg couldn't burn it on screen (no libass / nothing burnable) — this surface ships CLEAN. Install libass to burn the text.</div>
-  {% endif %}
-  <form hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">
-    <label for="hook-{{ s.post_id }}">On-screen hook <span class="muted">(burned into the video — keep it short)</span></label>
-    <textarea id="hook-{{ s.post_id }}" name="hook" rows="2">{{ s.variant_hook }}</textarea>
-    <button type="submit">Re-burn text</button>
-  </form>
-  {% endif %}
   {# Reschedule + suggest/clear post to /reschedule-surface & /clear, which re-render THIS editor (outerHTML
      swap of #edit-<id>) so the time input always reflects the fresh value — not the stale /reschedule result. #}
   <form hx-post="{{ url_for('do_reschedule_surface', post_id=s.post_id, **(_scope if focus_edit else {})) }}" hx-target="{{ _hx_target if focus_edit else '#edit-' ~ s.post_id }}" hx-swap="{{ _hx_swap if focus_edit else 'outerHTML' }}">

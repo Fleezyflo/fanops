@@ -72,6 +72,9 @@ def main():
         print(f"block-hedge-on-stop: bad stdin: {exc}", file=sys.stderr)
         sys.exit(0)
 
+    if data.get("cursor_version"):
+        sys.exit(0)  # Cursor sessions are guarded by ~/.cursor/contract
+
     if data.get("stop_hook_active"):  # already continuing from a prior block — do not loop
         sys.exit(0)
 

@@ -355,7 +355,7 @@ def snapshot_is_restorable(snapshot_path: "Path | str", cfg: Config) -> bool:
         finally:
             conn.close()
     except Exception as exc:
-        get_logger(cfg)("wipe", "-", "snapshot_unrestorable", level="error",
+        get_logger(cfg)("ledger_wipe", "-", "snapshot_unrestorable", level="error",
                         err=f"{type(exc).__name__}: {exc}"[:160])
         return False
 

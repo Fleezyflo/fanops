@@ -447,6 +447,9 @@ class Post(BaseModel):
     platform: Platform
     caption: str
     hashtags: list[str] = Field(default_factory=list)
+    sent_content: Optional[str] = None          # exact vendor `content` from the last send, stamped
+                                                # before the request. None until a publish attempt.
+                                                # Old ledgers load as None (no migration).
     media_urls: list[str] = Field(default_factory=list)
     aspect: Fmt = Fmt.r9x16
     scheduled_time: Optional[str] = None

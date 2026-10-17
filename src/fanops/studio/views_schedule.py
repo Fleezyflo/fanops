@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+from fanops.caption_compose import send_caption
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
@@ -21,14 +22,18 @@ from fanops.studio.views_posted import _EXPOSURE_STATES, classify_post_delivery
 logger = logging.getLogger(__name__)
 
 
-def tag_exposure(led: Ledger) -> dict[str, list[tuple[str, int]]]:
-    """Per-account hashtag exposure counts across in-flight + shipped posts (excludes rejected/failed/retired)."""
+def tag_exposure(led: Ledger, cfg: Config) -> dict[str, list[tuple[str, int]]]:
+    """Per-account exposure of the tags `send_caption` will send (excludes rejected/failed/retired).
+
+    An off-lock tag left on `Post.hashtags` is not counted.
+    """
     counts: dict[str, dict[str, int]] = {}
     for p in led.posts.values():
         if p.state not in _EXPOSURE_STATES:
             continue
         bucket = counts.setdefault(p.account, {})
-        for t in (p.hashtags or []):
+        _text, tags, _entry = send_caption(cfg, led, p)
+        for t in tags:
             bucket[t] = bucket.get(t, 0) + 1
     return {h: sorted(tags.items(), key=lambda x: (-x[1], x[0])) for h, tags in counts.items()}
 
@@ -170,7 +175,7 @@ def schedule_rows(led: Ledger, cfg: Config, *, now: datetime,
             backend=backend, error_reason=(p.error_reason or "")[:120] or None,
             suggested_time=suggest_time(cfg, p, now=now) if editable else None,
             batch_id=p.batch_id, batch_title=_batch_title(led, p.batch_id),
-            caption=p.caption, variant_hook=_hook_for_post(led, p) or None,
+            caption=send_caption(cfg, led, p)[0], variant_hook=_hook_for_post(led, p) or None,
             bad_schedule=bool((p.scheduled_time or "").strip()) and schedule_utc(p.scheduled_time) is None,
             inflight_headline=inflight_headline(p) if lane == "inflight" else "")
         if editable:

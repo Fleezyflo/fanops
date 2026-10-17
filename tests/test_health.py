@@ -102,6 +102,7 @@ def test_docker_health_missing_cli(tmp_path, monkeypatch):
 def _mock_probe(monkeypatch, *, status=None, refused=False):
     from fanops.post import postiz as pz
     monkeypatch.setenv("POSTIZ_API_KEY", "test-key")     # so the probe reaches the (mocked) network, not a pre-auth raise
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")        # routed live — creds alone no longer probes
     def _get(*a, **k):
         if refused:
             raise pz.requests.exceptions.ConnectionError("refused")
@@ -136,6 +137,26 @@ def test_postiz_health_unreachable_on_refused(tmp_path, monkeypatch):
     _mock_probe(monkeypatch, refused=True)               # connection refused / network down
     h = health.postiz_health(cfg)
     assert h.ok is False and h.detail == "unreachable"   # no HTTP answer -> unreachable (existing path)
+
+
+def test_postiz_and_docker_skipped_when_creds_but_not_routed(tmp_path, monkeypatch):
+    """POSTIZ_API_KEY set, nothing routed to Postiz: dep rows skip. Do not probe Docker or Postiz."""
+    compose = tmp_path / "compose"
+    compose.mkdir()
+    cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api", POSTIZ_API_KEY="k",
+               FANOPS_POSTIZ_COMPOSE_DIR=str(compose))
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+
+    def boom(*a, **k):
+        raise AssertionError("docker/postiz must not be probed when nothing routes to Postiz")
+
+    monkeypatch.setattr(health, "_docker_health", boom)
+    from fanops.post import postiz as pz
+    monkeypatch.setattr(pz, "postiz_health_probe", boom)
+    rows = {d.name: d for d in health.system_health(cfg)}
+    assert rows["postiz"].ok is True and rows["postiz"].detail == "skipped (not routed live)"
+    assert rows["docker"].ok is True and rows["docker"].detail == "skipped (not routed live)"
 
 
 def test_postiz_health_not_configured(tmp_path, monkeypatch):

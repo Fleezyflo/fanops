@@ -119,11 +119,8 @@ def hook_directive(p) -> Directive:
 
 
 def hook_author_slot(p) -> str:
-    """The per-account hook-authoring brief for moment_hooks — ALWAYS non-empty for an active account so the
-    frame-seeing author writes ONE owner hook (P6); not only accounts whose levers compile a (not only accounts whose levers compile a
-    hook_directive). Falls back: hook_directive -> inline persona voice -> tag_lean hint -> handle floor."""
-    instr = hook_directive(p)
-    if instr: return str(instr)
+    """Voice that moment_hook_prompt fences as data. hook_angle stays on hook_directive for Studio.
+    Falls back: voice -> tag_lean hint -> handle floor."""
     voice = _base_voice(p)
     if voice: return voice
     lean = (getattr(p, "tag_lean", None) or "").strip()
