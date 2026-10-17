@@ -20,7 +20,7 @@ def test_deploy_code_check_fails_when_running_sha_missing(tmp_path, monkeypatch)
     monkeypatch.setattr(daemon, "_version_signal", lambda c: (disk, "git-head"))
     row = doctor._deploy_code_check(cfg, daemon_status=_loaded)
     assert row is not None and row["ok"] is False
-    assert "running SHA" in row["hint"] and "missing" in row["hint"]
+    assert "heartbeat SHA" in row["hint"] and "missing" in row["hint"]
     assert disk not in row["hint"]
 
 

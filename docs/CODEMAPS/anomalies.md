@@ -32,6 +32,21 @@ they had **no axis for fail-silently-and-forever** (a gate that fails determinis
 re-requests every tick with no operator-visible terminal). That class is now named below under C6.
 `logging ≠ surfacing`.
 
+## Re-verification 2026-09-12
+
+`views.zero_post_clips` is wired. `app_routes_home.index` passes it into `home.html`.
+The 2026-07-11 dead-on-arrival sentence for that function is stale.
+`ingest.stage_inbox_candidates` skips a child `.pull` and still catalogues a scan whose inbox is that stage.
+`moments._hook_script_mismatch` keeps a Latin hook when the source language is outside English and Arabic.
+An unknown source language still nulls the hook.
+`clip_ffmpeg._finish_publish` does not publish an empty rc-0 temp over the previous mp4.
+`actions_wipe.confirm_wipe` refuses a missing or stale preview token.
+`doctor._deploy_code_check` fails when a loaded pump is missing a SHA.
+`source_tags_scrape.ensure_source_lock` writes a pass that is only exact misses.
+`ledger_wipe.snapshot_is_restorable` logs outcome `snapshot_unrestorable`.
+`hashtags.ship_from_lock` is picks intersect the lock, with no floors and no backfill.
+`health_probes.zernio_dep_health` treats a non-2xx response as down.
+
 ## C1 — Core data model & persistence
 
 > **Re-verified against live source 2026-07-14.** 4 of the 6 original entries were stale: 1 docstring genuinely fixed (`ledger.py:2`), 1 flatly false (`RenderState` is live at `views_results.py:112`), 1 anchor moved + only PARTIALLY fixed (`ledger_wipe` — silent→logged but mis-surfaced / wrong-level / over-broad catch; see its entry), 2 unchanged-and-correct. Re-verification judged not just whether a swallow now logs, but whether it logs to the SURFACED channel (`get_logger`→`run.log`, not stdlib logging), at a level alerting sees, catching only the real failure — **"it logs now" ≠ "fixed the least-defective way."** Corrections + evidence inline.

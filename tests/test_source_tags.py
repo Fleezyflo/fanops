@@ -631,7 +631,7 @@ def test_search_runtime_error_leaves_name_for_later_play_count(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     rec2 = load_source_tag_locks(cfg)["src_1"]
     assert calls["n"] == 1
-    assert rec2["lock"] == ["#plays", "#later"]
+    assert rec2["lock"] == ["#later", "#plays"]
     assert rec2["measurements"]["#plays"]["play_count"] == 1.0
     assert rec2["measurements"]["#later"]["play_count"] == 90.0
     assert rec2.get("researched_at")
@@ -1095,7 +1095,7 @@ def test_lock_ready_search_fail_resumes_across_ticks(tmp_path, monkeypatch):
     assert rec3["measurements"]["#plays"]["play_count"] == 1.0
     assert rec3["measurements"]["#later"]["play_count"] == 90.0
     assert rec3.get("researched_at")
-    assert rec3["lock"] == ["#plays", "#later"]
+    assert rec3["lock"] == ["#later", "#plays"]
 
 
 def test_lock_ready_measure_fail_resumes_across_ticks(tmp_path, monkeypatch):

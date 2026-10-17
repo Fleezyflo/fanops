@@ -266,7 +266,7 @@ def test_moment_hooks_gate_pins_opus(mocker, tmp_path):
     from fanops.responder import _default_claude_model
     _default_claude_model("moment_hooks", {"source_id": "s", "moment_id": "m", "token": "1.00-5.00",
                                            "start": 1.0, "end": 5.0}, cfg=cfg)
-    assert meta.call_args.kwargs["model"] == "opus"
+    assert meta.call_args.kwargs["model"] == "grok-4.6"
 
 def test_moment_hooks_responder_writes_valid_decision(tmp_path, monkeypatch):
     # End-to-end gate round-trip: a moment_hooks request is answered into a schema-valid

@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
-from fanops.caption_compose import send_caption
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
@@ -91,7 +90,7 @@ def _store_status(cfg: Config) -> StoreStatus:
 
 def rotation_health(led: Ledger, cfg: Config, *, n: int = 5) -> list:
     """Tag-line diversity observatory: per account, last `n` in-flight/shipped posts (created_at desc).
-    Lines are the tags `send_caption` will send. An off-lock tag left on `Post.hashtags` is not counted.
+    Lines are the stored tag lists, in stored order. A reordered line is not a duplicate.
     Warn when two adjacent posts shipped an identical full tag line (agent shipped duplicate lines).
     Name is historical (`rotation` in templates); there is no ingest rotation — only a read-model
     duplicate-line warning. Pure read."""
@@ -104,7 +103,7 @@ def rotation_health(led: Ledger, cfg: Config, *, n: int = 5) -> list:
     for account in sorted(by_account):
         # created_at desc; None sorts last (a hand-built row without a birth stamp), stable by post id.
         posts = sorted(by_account[account], key=lambda p: (p.created_at or "", p.id), reverse=True)[:n]
-        lines = [list(send_caption(cfg, led, p)[1]) for p in posts]
+        lines = [[t for t in (p.hashtags or [])] for p in posts]
         norm_lines = [tuple(_norm(t) for t in ln) for ln in lines]
         warn = any(norm_lines[i] and norm_lines[i] == norm_lines[i + 1] for i in range(len(norm_lines) - 1))
         out.append(RotationAccount(account=account, warn=warn, lines=lines))

@@ -7,7 +7,7 @@
     {% if s.source_name or s.source_key %}<button type="button" class="chip feed-source-tag" data-review-action="select-source"
       data-source-key="{{ s.source_key or '' }}" title="select every clip from {{ s.source_name or s.source_key }}">{{ s.source_name or s.source_key }}</button>{% endif %}
   </div>
-  {% set _preview_src = s.preview_media_url if s.editable and s.preview_media_url else s.media_url %}
+  {% set _preview_src = s.media_url or (s.preview_media_url if s.editable else '') %}
   {% with preview_class='feed-preview clip-frame thumb', preview_held=false, preview_poster=url_for('clip_thumb', clip_id=s.clip_id), preview_src=_preview_src, preview_label='preview ' ~ s.account, preview_hook_preburn=s.hook_preburn, preview_hook=s.variant_hook %}{% include "_hook_preview.html" %}{% endwith %}
   {% if s.reason %}<p class="meta feed-reason">{{ s.reason }}</p>{% endif %}
   {% with hook_target='#feed-' ~ s.post_id, hook_scope='feed' %}{% include "_hook_edit.html" %}{% endwith %}

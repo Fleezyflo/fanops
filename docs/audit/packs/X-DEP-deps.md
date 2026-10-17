@@ -10,7 +10,7 @@
 
 ## Audit
 
-`zernio_dep_health` called `_http_reachable`, which treats any completed GET as up, including 401 and 5xx. With Zernio creds it now lazy-imports `doctor._zernio_reach_check` and maps that dict: ok True is up (`reachable`); ok False is down with the doctor hint; None is skipped. No creds stays `DepHealth("zernio", True, "skipped (not configured)")`. `_http_reachable` is unchanged (Postiz fallback still uses it). `postiz_doctor_check` was not copied. `doctor.py` and `post/zernio.py` were not edited.
+`zernio_dep_health` uses `_http_reachable(..., require_2xx=True)`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped.
 
 OPS-POSTIZ and OPS-QUEUE stay operator-owned. `command -v fanops` printed nothing. `uv` is `/Users/molhamhomsi/.local/bin/uv`. 2026-10-17 `uv run fanops doctor` exited 1. Ledger was not drained.
 

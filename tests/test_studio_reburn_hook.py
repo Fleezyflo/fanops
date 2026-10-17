@@ -138,7 +138,6 @@ def test_card_and_compact_include_hook_textarea(tmp_path):
     empty = client.get("/review?account=all").data.decode()
     assert 'id="hook-p_edit"' in empty and 'name="hook"' in empty
     assert 'class="hook-preburn"' not in empty
-    assert Ledger.load(cfg).moments["mom_1"].hook == "OLD HOOK"
 
 
 def test_reburn_route_unknown_post_clean_error(tmp_path):

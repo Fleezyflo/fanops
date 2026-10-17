@@ -413,7 +413,7 @@
     "fanops.autopilot": [
       {
         "call": "_file_lock",
-        "line": 22
+        "line": 32
       }
     ],
     "fanops.controlio": [
@@ -545,7 +545,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 63
+        "line": 64
       }
     ],
     "fanops.post.metrics.postiz_read": [

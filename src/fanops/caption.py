@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import ship_from_lock, _dedupe_norm
+from fanops.hashtags import load_measurements, ship_from_lock, _dedupe_norm
 from fanops.control import load_guidance
 from fanops.caption_compose import (_hashtag_metrics_for, _lock_fingerprint, _source_lock_completed,
                                     _source_lock_measurements, _source_lock_tags)
@@ -146,11 +146,6 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
-    # HV1-WALK: do not open the caption gate until this source has a completed lock row.
-    # Empty completed lock (`researched_at` + `lock: []`) DOES open and ships empty tags.
-    # Missing sidecar / no researched_at → clip stays rendered; no request file.
-    if not _source_lock_completed(cfg, src):
-        return led
     # Same window the hook gate already builds: fitted cut, in-window peaks, live excerpt, window stills.
     # The caption sentence stays the model's sentence — moment.hook is not copied and no caption hook field.
     from fanops.clip import fit_window
@@ -177,8 +172,8 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
     # request back). Absent registry / None value -> no key (byte-identical to before).
     personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
-    lock = _source_lock_tags(cfg, src)
-    meas = _source_lock_measurements(cfg, src)
+    lock = _source_lock_tags(cfg, src) if _source_lock_completed(cfg, src) else []
+    meas = load_measurements(cfg)
     hashtag_metrics = _hashtag_metrics_for(meas, lock)
     payload = {
         "clip_id": clip_id,

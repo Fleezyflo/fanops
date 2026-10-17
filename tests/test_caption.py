@@ -248,7 +248,6 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert mc["caption"] == sentence
     assert mc["hashtags"] == ship_from_lock(picks, lock)
-    assert mc["hashtags"] == lock[:4]
     assert len(mc["hashtags"]) == 4
     assert "#inventedslogan" not in mc["hashtags"]
 
