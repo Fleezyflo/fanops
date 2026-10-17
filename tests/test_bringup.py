@@ -255,6 +255,10 @@ def test_daemon_plane_ensures_then_loads_when_not_running(tmp_path, monkeypatch)
     run.calls = []
     monkeypatch.setattr(daemon.subprocess, "run", run)
     monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+    # In-sync SHAs: this test is the bootstrap path. A missing SHA on the loaded pump
+    # is a separate kickstart (tests/test_deploy_code_check.py).
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
 
     plane = daemon._plane_daemon(cfg, kickstart=True)
 
@@ -271,6 +275,8 @@ def test_daemon_ensure_signature_and_behavior_unchanged(tmp_path, monkeypatch):
     uid = os.getuid()
     main_print = f"gui/{uid}/{daemon.LABEL}"
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(**{main_print: (0, "")}))
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
     cfg = Config(root=tmp_path)
     res = daemon.ensure(cfg)
     assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
@@ -579,6 +585,8 @@ def test_daemon_plane_dep_drift_syncs_before_kickstart(tmp_path, monkeypatch):
     fake = _fake_launchctl(**{main_print: (0, '\t"PID" = 4321;\n')})
     monkeypatch.setattr(daemon.subprocess, "run", fake)
     monkeypatch.setattr(daemon, "_heartbeat_fresh_since", lambda cfg, since, **k: True)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
     calls: list[int] = []
     def sync():
         calls.append(1)

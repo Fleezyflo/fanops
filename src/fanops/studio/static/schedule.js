@@ -1,15 +1,9 @@
-/* U7 Schedule — dialog scheduling + calendar drag (same /schedule/move/<post_id> route). */
+/* U7 Schedule — dialog scheduling + calendar drag (same /schedule/move/<post_id> route).
+   Listeners stay on document: htmx replaces #schedule-body (outerHTML) and drops
+   listeners that were bound to that node. */
 (function () {
-  const body = document.getElementById('schedule-body');
-  if (!body) return;
-  const dialog = document.getElementById('schedule-dialog');
-  const form = document.getElementById('schedule-dialog-form');
-  const postInput = document.getElementById('schedule-dialog-post');
-  const dateInput = document.getElementById('schedule-dialog-date');
-  const timeInput = document.getElementById('schedule-dialog-time');
-  const clipLabel = document.getElementById('schedule-dialog-clip');
-  const cancelBtn = document.getElementById('schedule-dialog-cancel');
-  let dragChip = null;
+  function panel() { return document.getElementById('schedule-body'); }
+  function byId(id) { return document.getElementById(id); }
 
   function movePost(postId, localDt) {
     if (!postId || !localDt) return;
@@ -26,7 +20,12 @@
   }
 
   function openDialog(opts) {
+    const dialog = byId('schedule-dialog');
     if (!dialog) return;
+    const postInput = byId('schedule-dialog-post');
+    const dateInput = byId('schedule-dialog-date');
+    const timeInput = byId('schedule-dialog-time');
+    const clipLabel = byId('schedule-dialog-clip');
     postInput.value = opts.postId || '';
     clipLabel.textContent = opts.caption || '';
     if (opts.date) dateInput.value = opts.date;
@@ -34,7 +33,14 @@
     dialog.showModal();
   }
 
-  body.addEventListener('click', function (e) {
+  document.addEventListener('click', function (e) {
+    const body = panel();
+    if (!body || !e.target || typeof e.target.closest !== 'function' || !body.contains(e.target)) return;
+    if (e.target.closest('#schedule-dialog-cancel')) {
+      const dialog = byId('schedule-dialog');
+      if (dialog) dialog.close();
+      return;
+    }
     const btn = e.target.closest('.schedule-dialog-open');
     if (btn) {
       openDialog({postId: btn.dataset.postId, caption: btn.dataset.caption, time: '12:00'});
@@ -50,35 +56,43 @@
     }
   });
 
-  if (cancelBtn) cancelBtn.addEventListener('click', function () { dialog.close(); });
-  if (form) form.addEventListener('submit', function (e) {
+  document.addEventListener('submit', function (e) {
+    const form = byId('schedule-dialog-form');
+    if (!form || e.target !== form) return;
     e.preventDefault();
-    const dt = dateInput.value + 'T' + timeInput.value;
-    movePost(postInput.value, dt);
-    dialog.close();
+    const dt = byId('schedule-dialog-date').value + 'T' + byId('schedule-dialog-time').value;
+    movePost(byId('schedule-dialog-post').value, dt);
+    const dialog = byId('schedule-dialog');
+    if (dialog) dialog.close();
   });
 
-  body.addEventListener('dragstart', function (e) {
+  let dragChip = null;
+  document.addEventListener('dragstart', function (e) {
+    const body = panel();
+    if (!body || !e.target || typeof e.target.closest !== 'function' || !body.contains(e.target)) return;
     const chip = e.target.closest('.schedule-cal-chip--drag');
     if (!chip) return;
     dragChip = chip;
     e.dataTransfer.setData('text/plain', chip.dataset.postId || '');
     e.dataTransfer.effectAllowed = 'move';
   });
-  body.addEventListener('dragover', function (e) {
+  document.addEventListener('dragover', function (e) {
+    const body = panel();
+    if (!body || !dragChip || !e.target || typeof e.target.closest !== 'function') return;
     const day = e.target.closest('.schedule-cal-day[data-date]:not([data-past])');
-    if (!day || !dragChip) return;
+    if (!day || !body.contains(day)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
   });
-  body.addEventListener('drop', function (e) {
+  document.addEventListener('drop', function (e) {
+    const body = panel();
+    if (!body || !dragChip || !e.target || typeof e.target.closest !== 'function') return;
     const day = e.target.closest('.schedule-cal-day[data-date]:not([data-past])');
-    if (!day || !dragChip) return;
+    if (!day || !body.contains(day)) return;
     e.preventDefault();
     const hm = dragChip.dataset.timeHm || '12:00';
-    const localDt = day.dataset.date + 'T' + hm;
-    movePost(dragChip.dataset.postId, localDt);
+    movePost(dragChip.dataset.postId, day.dataset.date + 'T' + hm);
     dragChip = null;
   });
-  body.addEventListener('dragend', function () { dragChip = null; });
+  document.addEventListener('dragend', function () { dragChip = null; });
 })();

@@ -27,7 +27,7 @@ def _pick_and_request_hook(cfg, led):
     """Pick a moment and submit the hook request gate so ingest_moment_hooks can run."""
     request_moments(led, cfg, "src_ar")
     rid = latest_request_id(cfg, "moments", "src_ar")
-    pick = MomentPick(start=10, end=28, reason="r")
+    pick = MomentPick(start=10, end=28, reason="replay this part")
     response_path(cfg, "moments", "src_ar").write_text(
         MomentDecision(source_id="src_ar", request_id=rid, picks=[pick]).model_dump_json())
     led = ingest_moments(led, cfg, "src_ar")
@@ -103,6 +103,34 @@ def test_english_source_english_hook_kept(tmp_path):
     m = led.moments_of("src_ar")[0]
     assert m.state is MomentState.decided
     assert m.hook == "the part you will replay"
+
+
+def test_non_en_ar_source_keeps_latin_hook(tmp_path):
+    """Whisper's language set is not only en/ar. A Latin hook must not be nulled because the
+    detector labels every non-Arabic script as en (en != fr)."""
+    cfg = Config(root=tmp_path)
+    led = _seed_led(cfg, language="fr")
+    led = _pick_and_request_hook(cfg, led)
+    _submit_hook(cfg, hook_text="the part you will replay")
+    led = ingest_moment_hooks(led, cfg, "src_ar")
+    m = led.moments_of("src_ar")[0]
+    assert m.state is MomentState.decided
+    assert m.hook == "the part you will replay"
+    assert m.hook_removed is None
+
+
+def test_non_arabic_source_strips_arabic_script_hook(tmp_path):
+    """A source code outside {en, ar} still rejects an Arabic-script hook. The detector can see that."""
+    cfg = Config(root=tmp_path)
+    led = _seed_led(cfg, language="fr")
+    led = _pick_and_request_hook(cfg, led)
+    arabic_hook = "الجزء اللي هتعيده"
+    _submit_hook(cfg, hook_text=arabic_hook)
+    led = ingest_moment_hooks(led, cfg, "src_ar")
+    m = led.moments_of("src_ar")[0]
+    assert m.state is MomentState.decided
+    assert m.hook is None
+    assert m.hook_removed == arabic_hook
 
 
 def test_source_no_language_hook_kept(tmp_path):

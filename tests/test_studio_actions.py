@@ -214,6 +214,46 @@ def test_edit_caption_persists(tmp_path):
     assert res.ok is True
     assert Ledger.load(cfg).posts["p_edit"].caption == "BRAND NEW CAPTION"
 
+
+def test_swap_shipped_tag_keeps_sentence_and_state(tmp_path):
+    import json
+    from fanops.hashtags import ship_from_lock
+    from fanops.source_tags import source_tag_locks_path
+    from fanops.studio.actions import swap_shipped_tag
+    cfg = Config(root=tmp_path)
+    led = _seed(cfg)
+    sentence = "The pocket stays."
+    led.posts["p_edit"].state = PostState.awaiting_approval
+    led.posts["p_edit"].caption = sentence
+    led.posts["p_edit"].hashtags = ["#keep", "#low"]
+    led.add_post(Post(id="p_sib", parent_id="clip_1", account="b", account_id="2",
+                      platform=Platform.instagram, caption="Sibling line.",
+                      hashtags=["#keep"], state=PostState.awaiting_approval))
+    led.save()
+    meas = {
+        "#keep": {"play_count": 10.0, "current_top_reel_play_max_7d": 1.0},
+        "#also": {"play_count": 50.5, "current_top_reel_play_max_7d": 2.0},
+        "#low": {"play_count": 3.0, "current_top_reel_play_max_7d": 1.0},
+    }
+    lock = ["#keep", "#also", "#low"]
+    path = source_tag_locks_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"src_1": {
+        "pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z",
+        "measurements": meas,
+    }}))
+    res = swap_shipped_tag(cfg, "p_edit", "#low", "#also", now=NOW)
+    assert res.ok is True
+    saved = Ledger.load(cfg)
+    p = saved.posts["p_edit"]
+    sib = saved.posts["p_sib"]
+    want = ship_from_lock(["#keep", "#also"], lock, artist_name=cfg.artist_name, measurements=meas)
+    assert p.caption == sentence
+    assert p.hashtags == want
+    assert p.state is PostState.awaiting_approval
+    assert sib.caption == "Sibling line." and sib.hashtags == ["#keep"]
+    assert sib.state is PostState.awaiting_approval
+
 def test_edit_caption_imminent_rejected(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.posts["p_edit"].scheduled_time = _z(NOW - timedelta(minutes=1)); led.save()  # already due

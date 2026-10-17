@@ -1,20 +1,27 @@
 # src/fanops/secret_provider.py — keyring read/write for operator secrets (MOL-359 read, MOL-360 write)
 """Consult the OS keyring FIRST for operator secrets; fail-open to Settings/.env on READ when the
-keyring extra is absent, the backend is unavailable, or no entry exists. WRITES for the three
-secret env keys route ONLY to keyring (never plaintext .env) via golive._dual_write."""
+keyring extra is absent, the backend is unavailable, or no entry exists. WRITES for the operator
+secret env keys (API keys, the Graph token, and FANOPS_IG_SCRAPE_PASSWORD plus its per-user
+FANOPS_IG_SCRAPE_PASSWORD_<slug> family) route ONLY to keyring (never plaintext .env) via
+golive._dual_write. FANOPS_IG_SCRAPE_USER is not a secret."""
 from __future__ import annotations
 import logging
 
 _log = logging.getLogger("fanops.secret_provider")
 _backend_warned = False   # broken-keyring breadcrumb fires ONCE per process (fail-open house norm)
 _SERVICE = "fanops"
-_SECRET_KEYS = frozenset({"POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN"})
+_SECRET_KEYS = frozenset({
+    "POSTIZ_API_KEY", "ZERNIO_API_KEY", "META_GRAPH_TOKEN", "FANOPS_IG_SCRAPE_PASSWORD",
+})
 _PER_HANDLE_TOKEN_PREFIX = "META_GRAPH_TOKEN__"
+_SCRAPE_PASSWORD_PREFIX = "FANOPS_IG_SCRAPE_PASSWORD_"
 
 
 def is_secret_env_key(key: str) -> bool:
-    """True for the three operator-secret env keys (+ per-handle META_GRAPH_TOKEN__<slug>)."""
-    return key in _SECRET_KEYS or key.startswith(_PER_HANDLE_TOKEN_PREFIX)
+    """True for operator-secret env keys, per-handle META_GRAPH_TOKEN__<slug>, and
+    FANOPS_IG_SCRAPE_PASSWORD_<slug>. FANOPS_IG_SCRAPE_USER is not a secret."""
+    return (key in _SECRET_KEYS or key.startswith(_PER_HANDLE_TOKEN_PREFIX)
+            or key.startswith(_SCRAPE_PASSWORD_PREFIX))
 
 
 def _keyring_get_password(service: str, username: str) -> str | None:

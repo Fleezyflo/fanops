@@ -122,7 +122,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 ## C10 — Studio views
 
-- `views.py:173` `run_next_step`, `:528` `zero_post_clips`, `:547` `metrics_stale_hint` — zero-caller flags. `zero_post_clips` confirmed as a **real bug** (see full-trace-index.md "Real bugs found" — referenced by `home.html` but never passed by the view). The other two likely template-only, not separately confirmed.
+- `views.py:173` `run_next_step`, `:528` `zero_post_clips`, `:547` `metrics_stale_hint` — zero-caller flags. `zero_post_clips` is wired: `studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)`. The 2026-07-11 unwired / real-bug sentence (referenced by `home.html` but never passed by the view) is stale. The other two likely template-only, not separately confirmed.
 - `views_common.py:74` `accounts_in`, `:68` `term_def` — zero-caller flags; `term_def` explicitly documented as a Jinja-macro-only consumer.
 - `views_results.py:422` `operator_error`, `:621` `bar_pct` — zero-caller flags; plausibly template-only (`bar_pct` almost certainly is), `operator_error` possibly superseded by `failure_label`.
 - `views_review.py` `provenance_chips`, `group_review_by_batch` — zero-caller AST flags; both are live Jinja consumers (`app.jinja_env.globals` / `.filters`). `group_review_by_account_surface` — **REMOVED** (no longer in `src/`).
@@ -142,7 +142,7 @@ after an alias-and-lazy-import sweep — see the note below the table).
 | Confirmed false-positive dead-code flags (dispatch-table / default-param / Jinja-filter / **aliased-or-lazy-import** blind spots) | 16 |
 | Plausible-but-unconfirmed (likely template-only) | 10 |
 | Unlogged silent exception swallows | 9 |
-| Real logic/wiring bugs | 1 (`views.zero_post_clips`) |
+| Real logic/wiring bugs | 0 open for `views.zero_post_clips` — `studio/app_routes_home.py` passes the kwarg; the 2026-07-11 count of 1 is a stale unwired claim |
 | Documentation staleness items | 1 (Go-Live `FANOPS_POSTER` claim in CLAUDE.md) |
 | Design notes flagged for visibility (not bugs) | 3 (hashtag cap-window floor logic, `_JITTER_MAX` comment-only invariant, `_postiz_permalink` two-phase-commit dependency) |
 | Safety-critical invariants checked | 10 — **"all HOLD" as of 2026-07-11; SUPERSEDED** — wipe-confirmation did *not* hold (RC-4/RC-5 restore race, fixed #653/#654). See the correction above; current verdict lives in `tools/arch` + `INVARIANT_AUDIT.md` |

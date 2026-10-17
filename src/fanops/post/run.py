@@ -45,8 +45,13 @@ _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload tran
 # Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
 # network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
 # loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
+# sent_content rides for the same reason: the poster stamps the exact vendor `content` on that throwaway
+# post. Without this field, finalize drops the stamp and the committed ledger never records what was sent.
+# publish_hour / publish_dow are stamped on that same throwaway post at the submitted->published
+# promotion. Omit them and a permalink-on-create publish stays unranked by timing_bias.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "daemon_transient_retry",
-                    "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id")
+                    "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id",
+                    "sent_content", "publish_hour", "publish_dow")
 
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
 _publish_throttle_last: dict[tuple[str, str], float] = {}

@@ -39,6 +39,7 @@ from typing import Optional
 
 from fanops.config import Config
 from fanops.ledger import Ledger
+from fanops.log import get_logger
 from fanops.models import MomentOrigin
 
 logger = logging.getLogger(__name__)
@@ -337,10 +338,11 @@ def _wipe_file_manifest(led: Ledger, plan: WipePlan) -> list[str]:
     return sorted(paths)
 
 
-def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
+def snapshot_is_restorable(snapshot_path: "Path | str", *, cfg: Optional[Config] = None) -> bool:
     """Verify a snapshot file is a LOADABLE SQLite ledger image (MOL-32 'verified restorable'): it parses as
     the on-disk ledger doc. A corrupt / non-SQLite / legacy-JSON file returns False (the wipe must not proceed
-    on an unrestorable snapshot). Read-only, never raises."""
+    on an unrestorable snapshot). Read-only, never raises. `execute_wipe` passes `cfg` so a failed check
+    surfaces through `get_logger`; a cfg-less call warns on the module logger and still returns False."""
     try:
         src = Path(snapshot_path)
         if not src.exists() or src.suffix == ".json":
@@ -352,8 +354,11 @@ def snapshot_is_restorable(snapshot_path: "Path | str") -> bool:
             return row is not None
         finally:
             conn.close()
-    except Exception:
-        logger.warning("snapshot restorability check failed (fail-open, treated as unrestorable)", exc_info=True)
+    except Exception as exc:
+        if cfg is not None:
+            get_logger(cfg)("ledger_wipe", "-", "snapshot_unrestorable", err=str(exc)[:160])
+        else:
+            logger.warning("snapshot restorability check failed (fail-open, treated as unrestorable)", exc_info=True)
         return False
 
 
@@ -374,7 +379,7 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
     `led._deferred_unlinks` and drain post-commit (a rolled-back transaction unlinks nothing)."""
     if not confirmed:
         raise WipeNotConfirmed("the wipe requires an explicit operator confirm")
-    if not snapshot_path or not snapshot_is_restorable(snapshot_path):
+    if not snapshot_path or not snapshot_is_restorable(snapshot_path, cfg=cfg):
         raise SnapshotRequired("a verified-restorable pre-wipe snapshot is mandatory before the wipe runs")
     removed = {}
     removed_post_ids: list[str] = []
@@ -389,8 +394,8 @@ def execute_wipe(cfg: Config, *, confirmed: bool, snapshot_path: "Optional[Path 
         manifest_paths = _wipe_file_manifest(led, plan)
         try:
             manifest.write_text("\n".join(manifest_paths) + ("\n" if manifest_paths else ""))
-        except Exception:
-            logger.warning("wipe file manifest write failed (fail-open, wipe proceeds)", exc_info=True)
+        except Exception as exc:
+            get_logger(cfg)("ledger_wipe", "-", "wipe_manifest_unwritten", err=str(exc)[:160])
         for pid in plan.post_ids: led.posts.pop(pid, None)
         for cid in plan.clip_ids: led.clips.pop(cid, None)
         for mid in plan.moment_ids: led.moments.pop(mid, None)

@@ -76,8 +76,7 @@ def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
     if allowed:
         prompt = (
             "You judge Instagram hashtags for THIS video for a fan account that reposts it.\n"
-            "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip "
-            "(artist/subject that actually appear, genre, format, topic).\n"
+            "Choose ONLY from the catalog. keep = names a real person would search to find THIS clip.\n"
             "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding.\n"
             "Do not invent a name that is not in the catalog.\n"
             f"{title_line}"
@@ -89,8 +88,7 @@ def shortlist_source_tags(source, excerpt, catalog) -> list[str]:
     else:
         prompt = (
             "You name Instagram hashtags for THIS video for a fan account that reposts it.\n"
-            "keep = real hashtag names a person would search to find THIS clip "
-            "(artist/subject that actually appear, genre, format, topic).\n"
+            "keep = real hashtag names a person would search to find THIS clip.\n"
             "reject = slogans, glued theses, unique compounds, sibling tracks, wallpaper padding, #fyp.\n"
             "Do not invent a glued slogan. Names must be plausible Instagram hashtags.\n"
             f"{title_line}"

@@ -733,6 +733,21 @@ def _hook_lang_base(text: str) -> str | None:
     ar = sum(1 for c in text if '\u0600' <= c <= '\u06ff')
     return 'ar' if ar / alpha > 0.4 else 'en'
 
+def _hook_script_mismatch(hook: str, src_lang: str) -> bool:
+    """True when the hook script contradicts a source language this detector can name.
+
+    `_hook_lang_base` only splits Arabic vs everything else, and labels the rest `en`.
+    Comparing that label with `!=` to a whisper code (`fr`, `es`, `zh`, …) nulls a Latin
+    hook on every file that is not exactly `en`. `en` and `ar` stay exact. Any other
+    source code: an Arabic-script hook is still a mismatch; a non-Arabic hook is not
+    evidence of English and is kept."""
+    hook_lang = _hook_lang_base(hook)
+    if hook_lang is None:
+        return False
+    if src_lang in ("ar", "en"):
+        return hook_lang != src_lang
+    return hook_lang == "ar"
+
 def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 ingest — apply the window-grounded hooks to a source's `picked` moments and promote them
     to `decided`. ATOMIC PER SOURCE (review fix): we wait until EVERY pick's gate has a valid answer, then
@@ -768,8 +783,9 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
         h = (dec.hook or "").strip()
         hook = h or None
         hook_removed = None
-        # Reject only MECHANICAL slop (is_weak_hook: exact cross/within-source dup, opening-template cluster)
-        # OR an off-BRAND hook (brand_risk_flag). RF5: the post-generation PERSPECTIVE strip is REMOVED — the
+        # Reject MECHANICAL slop (is_weak_hook), an off-BRAND hook (brand_risk_flag), or a language
+        # mismatch. Each of those nulls the
+        # hook and keeps the text on hook_removed. RF5: the post-generation PERSPECTIVE strip is REMOVED — the
         # generator owns perspective now (viewer-POV demos/echoes/voice/learned styles), so a third-person hook
         # is NOT nulled here; any stray one is caught in Studio Review, never stripped at ingest. The stripped
         # (mechanical/brand) hook is still PRESERVED so Review can restore it.
@@ -777,11 +793,9 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
-        if hook and src_lang:                       # language gate: hook script must match source language (fail-open when src_lang unknown)
-            hook_lang = _hook_lang_base(hook)
-            if hook_lang is not None and hook_lang != src_lang:
-                hook_removed = hook
-                hook = None                         # wrong language → ships CLEAN; Review can restore
+        if hook and src_lang and _hook_script_mismatch(hook, src_lang):
+            hook_removed = hook
+            hook = None                             # wrong script → ships CLEAN; Review can restore
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))

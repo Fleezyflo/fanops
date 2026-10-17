@@ -46,21 +46,44 @@ def test_config_install_extras_section() -> None:
     assert "| [asr] |" in text and "| [framing] |" in text and "| [studio] |" in text
 
 
+REQUIRED_PACKS = frozenset({
+    "U0-structural-delta.md",
+    "C1-data-model.md",
+    "C2-ingest.md",
+    "C3-clip-production.md",
+    "C4-moments-personas.md",
+    "C5-caption-hashtags.md",
+    "C6-crosspost-publish.md",
+    "C7-metrics-learning.md",
+    "C8-ops-cli.md",
+    "C9-studio-backend.md",
+    "C10-studio-views.md",
+    "H-CI-gates.md",
+    "H-DOCS-drift.md",
+    "H-INT-invariants.md",
+    "X-SEC-secrets.md",
+    "X-DEP-deps.md",
+    "X-REL-release.md",
+    "X-DATA-ledger.md",
+})
+_FINDING_ID = re.compile(r"^\| ([A-Z][A-Z0-9-]*) \|", re.M)
+
+
 def test_register_covers_pack_findings() -> None:
     packs = sorted((REPO / "docs/audit/packs").glob("*.md"))
-    assert len(packs) == 14
+    assert {p.name for p in packs} == REQUIRED_PACKS
     reg = (REPO / "docs/audit/WEAKNESS_REGISTER.md").read_text(encoding="utf-8")
     for pack in packs:
         body = pack.read_text(encoding="utf-8")
-        ids = re.findall(r"^\| ([A-Z0-9][A-Z0-9-]*-F\d+) \|", body, re.M)
+        ids = [i for i in _FINDING_ID.findall(body) if i != "ID"]
         assert ids, pack.name
         for fid in ids:
             assert fid in reg, f"{fid} from {pack.name} missing in register"
 
 
-def test_pack_file_count_is_14() -> None:
+def test_pack_set_is_the_audit_modules() -> None:
     packs = list((REPO / "docs/audit/packs").glob("*.md"))
-    assert len(packs) == 14
+    assert {p.name for p in packs} == REQUIRED_PACKS
 
 
 def test_anomalies_reverification_has_substance() -> None:

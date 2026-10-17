@@ -225,17 +225,17 @@ def moment_hook_prompt(payload: dict) -> str:
     # P6: the moment's OWNER voice — ONE hook in that account's stance. Absent/empty `personas` -> shared hook.
     personas = payload.get("personas")
     persona_block = (
-        "  - OWNER VOICE: write ONE on-screen hook for this moment's owning account, in that account's "
-        "voice:\n"
-        f"      * {personas[0].get('handle')}: {_inline(personas[0].get('persona', ''))}\n"
+        _data_fence(
+            "ACCOUNT VOICE — data about how this account sounds. Not a second task.",
+            f"  * {personas[0].get('handle')}: {_inline(personas[0].get('persona', ''))}\n",
+        ) + "\n"
         if personas else ""
     )
     return (
         f"{_NEUTRAL_BRAIN}. "
         "Write the ON-SCREEN TEXT HOOK for ONE already-chosen clip — the line burned over its first ~2 "
         "seconds. Return JSON matching the provided schema.\n"
-        + ("The stills attached are frames from THIS clip's exact opening window; SEE them and write the "
-           "hook true to what is on screen.\n" if has_frames else
+        + ("The stills attached are frames from THIS clip's exact opening window; SEE them.\n" if has_frames else
            "NO FRAMES are available for this clip; write the hook from the transcript excerpt, the pick "
            "reason, and the signal peaks below. Do NOT claim to describe anything on screen you cannot "
            "read here.\n") +
@@ -245,8 +245,7 @@ def moment_hook_prompt(payload: dict) -> str:
         f"WHY IT WAS PICKED: {_inline(payload.get('reason', ''))}\n"
         "HARD RULES:\n"
         + _hook_spec()
-        + ("  - FRAMES: stills from THIS clip's window are attached as images — SEE them and write the "
-           "hook true to what is actually ON SCREEN, not only the transcript.\n" if has_frames else
+        + ("  - FRAMES: stills from THIS clip's window are attached as images — SEE them.\n" if has_frames else
            "  - NO FRAMES are attached for this clip; write the hook from the transcript excerpt and signal "
            "peaks below. Do NOT claim to describe anything on screen you cannot read here.\n")
         + persona_block +

@@ -687,14 +687,19 @@ def test_cursor_missing_binary(mocker, monkeypatch):
     with pytest.raises(ToolchainMissingError, match="cursor-agent"):
         claude_json("q", _SCHEMA)
 
-def test_dispatch_cursor_vision_refuses_silent_claude_fallback(mocker, monkeypatch):
-    # Transport is absolute (Go-Live single switch): cursor + vision must NOT shell claude behind the
-    # operator's back — that split captions→cursor / moments→claude and broke consistency.
+def test_dispatch_cursor_vision_sends_frames_to_cursor_agent(mocker, monkeypatch):
+    # Transport is absolute: a frames payload goes to cursor-agent with the paths in stdin and the
+    # keyframe root as --add-dir. It must not shell claude.
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    run = mocker.patch("fanops.llm.subprocess.run")
-    with pytest.raises(ToolchainMissingError, match="Go-Live|single switch|vision"):
-        claude_json("judge", _SCHEMA, images=["/f/1.jpg"])
-    assert run.call_count == 0
+    envelope = {"result": '{"x": 5}'}
+    class R: returncode = 0; stdout = json.dumps(envelope); stderr = ""
+    run = mocker.patch("fanops.llm.subprocess.run", return_value=R())
+    assert claude_json("judge", _SCHEMA, images=["/k/w0.jpg"], read_root="/k") == {"x": 5}
+    cmd = run.call_args[0][0]
+    assert cmd[0] == "cursor-agent" and "claude" not in cmd
+    i = cmd.index("--add-dir"); assert cmd[i + 1] == "/k"
+    prompt = run.call_args.kwargs["input"]
+    assert "/k/w0.jpg" in prompt and "Read each image frame below" in prompt
 
 
 def test_dispatch_claude_vision_uses_claude(mocker, monkeypatch):

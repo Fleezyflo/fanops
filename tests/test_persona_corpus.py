@@ -232,8 +232,8 @@ def test_ingest_uses_request_hashtag_store_not_global_cache(tmp_path):
 
 
 def test_ingest_stores_agent_picks_intersect_lock(tmp_path):
-    """Agent picks off-lock are trimmed; shipped order follows pick order, not lock order."""
-    from fanops.hashtags import ship_from_lock
+    """Agent picks off-lock are trimmed; survivors are play_rank_key, not pick order."""
+    from fanops.hashtags import play_rank_key, ship_from_lock
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg=cfg)
     lock = ["#alpha", "#beta", "#gamma", "#delta"]
     _write_lock(cfg, "src_1", lock)
@@ -245,8 +245,8 @@ def test_ingest_stores_agent_picks_intersect_lock(tmp_path):
     ]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     shipped = led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"]
-    assert shipped == ship_from_lock(picks, lock)
-    assert shipped == ["#gamma", "#alpha", "#beta"]
+    assert shipped == ship_from_lock(picks, lock, artist_name=cfg.artist_name, measurements={})
+    assert shipped == sorted(["#gamma", "#alpha", "#beta"], key=lambda t: play_rank_key(t, None))
 
 
 # --- MOL-512 (C-2): persona_facts lead_tags use this persona's aligned pool --------------------

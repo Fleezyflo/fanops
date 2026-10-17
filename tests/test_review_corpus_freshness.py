@@ -1,4 +1,5 @@
-# Review off-lock badge — True only when a completed source lock exists and the post carries a tag not on it.
+# Review off-lock badge — True only when a completed source lock exists and a tag send_caption
+# will send is not on it. An off-lock tag left on Post.hashtags is not stale unless it is sent.
 import json
 
 from fanops.config import Config
@@ -35,12 +36,16 @@ def _lock(cfg, lock, *, researched=True):
 
 
 def test_off_lock_tag_is_stale(tmp_path):
+    # Stale means a tag send_caption will send is off the lock. IG drops #nope before send.
+    # YouTube settings.tags still carry the stored label.
     cfg = Config(root=tmp_path)
     led = _led(cfg)
     _lock(cfg, ["#lock"])
-    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is True
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#nope"])) is False
     assert _caption_corpus_stale(cfg, led, _post(hashtags=["#lock"])) is False
     assert _caption_corpus_stale(cfg, led, _post(hashtags=[])) is False
+    assert _caption_corpus_stale(cfg, led, _post(platform=Platform.youtube, hashtags=["#nope"])) is True
+    assert _caption_corpus_stale(cfg, led, _post(platform=Platform.youtube, hashtags=["#lock"])) is False
 
 
 def test_no_completed_lock_is_not_stale(tmp_path):
@@ -52,8 +57,10 @@ def test_no_completed_lock_is_not_stale(tmp_path):
 
 
 def test_empty_completed_lock_flags_any_tag(tmp_path):
+    # An empty lock sends no IG tags, so a stored tag is not stale. YouTube still sends the label.
     cfg = Config(root=tmp_path)
     led = _led(cfg)
     _lock(cfg, [])
-    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#x"])) is True
+    assert _caption_corpus_stale(cfg, led, _post(hashtags=["#x"])) is False
+    assert _caption_corpus_stale(cfg, led, _post(platform=Platform.youtube, hashtags=["#x"])) is True
     assert _caption_corpus_stale(cfg, led, _post(hashtags=[])) is False

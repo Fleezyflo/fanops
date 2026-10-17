@@ -377,8 +377,9 @@ def ensure(cfg: Config) -> dict:
             if action == "none":
                 action = "rewrite_plist"
     # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
-    # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
-    # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
+    # the EXTERNAL keeper adopts new code. A loaded pump is stale when its heartbeat SHA is missing,
+    # the disk SHA is missing, or the two differ — the same miss-or-mismatch rule as
+    # doctor._deploy_code_check. Kickstart the PUMP (not the keeper). Kill switch default-on (matches
     # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
@@ -387,7 +388,9 @@ def ensure(cfg: Config) -> dict:
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            if running is not None and deployed is not None and running != deployed:
+            # Loaded + (either SHA missing or the two differ). Both present and equal stays quiet.
+            # Unloaded is not this branch. Bootstrap above loads a pump that is not running.
+            if loaded and (running is None or deployed is None or running != deployed):
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -592,8 +595,8 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
     """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
     Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
     `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
-    _heartbeat_age_s). None is load-bearing: the keeper's drift branch treats it as 'don't kickstart'
-    (disarm), so a pre-upgrade pump missing the `code` key is never stormed."""
+    _heartbeat_age_s). None means the running SHA is missing. On a loaded pump, daemon.ensure
+    treats that miss as a mismatch and kickstarts (storm guard, run flock, and dep sync still apply)."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -700,8 +703,9 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
     `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
     per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
     per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
-    BOTH are absent so the caller DISARMS self-adopt and logs a DEGRADED line rather than appear
-    armed but never fire. NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
+    both are absent. A loaded daemon.ensure treats that None as a mismatch (same rule as
+    doctor._deploy_code_check), not a skip. NB: the signal follows the CODE tree, NOT cfg.root —
+    cfg.root is the DATA
     workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
     a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open

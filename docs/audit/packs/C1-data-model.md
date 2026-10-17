@@ -4,7 +4,7 @@
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C1-F01 | medium | mis-surfacing | Wipe restorability gate logs via stdlib `logging` | Surfaced `get_logger` on wipe path | `ledger_wipe.snapshot_is_restorable`; `anomalies.md` C1 note |
+| C1-F01 | closed | mis-surfacing | Wipe restorability gate logs via stdlib `logging` | Surfaced `get_logger` on wipe path | `get_logger` on the wipe path |
 
 ## Evidence commands run
 

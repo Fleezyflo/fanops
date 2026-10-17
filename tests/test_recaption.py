@@ -170,7 +170,7 @@ def _write_accounts(cfg, handles):
          "hashtag_corpus": ["#alpha", "#beta", "#gamma"]} for h in handles]}))
 
 
-def _add_clip_post(led, *, i, account="a"):
+def _add_clip_post(led, *, i, account="a", state=PostState.awaiting_approval):
     mid, cid, pid = f"mom_{i}", f"clip_{i}", f"p_{i}"
     led.add_moment(Moment(id=mid, parent_id="src_1", content_token=str(i), start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
@@ -178,7 +178,7 @@ def _add_clip_post(led, *, i, account="a"):
                       meta_captions={f"{account}/instagram": dict(_OLD_ENTRY)}))
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id="1",
                       platform=Platform.instagram, caption="#old", hashtags=["#old"],
-                      state=PostState.awaiting_approval, scheduled_time=f"2099-01-01T00:{i:02d}:00Z",
+                      state=state, scheduled_time=f"2099-01-01T00:{i:02d}:00Z",
                       created_at="2026-07-01T12:00:00+00:00"))
     return cid, pid
 
@@ -209,6 +209,24 @@ def test_limit_caps_seed_clips_at_20(tmp_path):
     s2 = run_recaption(cfg, apply=True, responder=again, now=NOW, limit=20)
     assert again.calls == 5 and s2["done"] == 5                     # remaining pending, not a re-walk of 0..19
     assert Ledger.load(cfg).posts["p_24"].caption != "#old"
+
+
+def test_states_filter_leaves_queued_seeds_out(tmp_path):
+    # awaiting_approval only: the queued seed is not listed, not requested, and not journaled done.
+    cfg = Config(root=tmp_path); _write_accounts(cfg, ["a"])
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    _add_clip_post(led, i=0, account="a", state=PostState.awaiting_approval)
+    _add_clip_post(led, i=1, account="a", state=PostState.queued)
+    led.save()
+    _completed_lock(cfg)
+    fake = _FakeResponder()
+    s = run_recaption(cfg, apply=True, responder=fake, now=NOW, states=(PostState.awaiting_approval,))
+    assert s["clips"] == 1 and fake.calls == 1 and s["done"] == 1
+    assert not request_path(cfg, "captions", "clip_1").exists()
+    j = json.loads(_journal_path(cfg).read_text())
+    assert "clip_0" in j["done"] and "clip_1" not in j["done"]
+    assert Ledger.load(cfg).posts["p_1"].caption == "#old"
 
 
 def test_account_filter_does_not_walk_other_handles(tmp_path):

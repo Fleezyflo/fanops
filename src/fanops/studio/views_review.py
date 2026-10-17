@@ -16,6 +16,11 @@ from fanops.models import PostState, MomentState, display_origin  # MOL-808: per
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
+from fanops.caption_compose import (send_caption, split_posted_caption, _hashtag_metrics_for,
+                                   _source_lock_measurements, _source_lock_tags)
+from fanops.hashtags import norm_tag
+from fanops.post.media import resolve_media_path
+from fanops.studio.preview_media import media_path_for_post
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, REVIEW_FEED_SLICE, GridPage, _imminent, paginate, suggest_time
 from fanops.studio.actions_common import RENDER_PENDING_REASON
 
@@ -41,6 +46,32 @@ def _display_handles(handles: list[str], by_norm: dict[str, str]) -> list[str]:
     return sorted({_display_handle(h, by_norm) for h in handles})
 
 
+def _count_text(n) -> Optional[str]:
+    """Print a lock measurement without truncating a fraction (`5730.5`, `118.5`)."""
+    if n is None:
+        return None
+    f = float(n)
+    if f.is_integer():
+        return str(int(f))
+    return format(f, ".10f").rstrip("0").rstrip(".")
+
+
+@dataclass(frozen=True)
+class TagMetric:
+    """One review-menu tag plus the lock-row plays `play_rank_key` sorts by."""
+    tag: str
+    play_count: Optional[float] = None
+    current_top_reel_play_max_7d: Optional[float] = None
+
+    @property
+    def play_text(self) -> Optional[str]:
+        return _count_text(self.play_count)
+
+    @property
+    def trend_text(self) -> Optional[str]:
+        return _count_text(self.current_top_reel_play_max_7d)
+
+
 @dataclass
 class SurfacePost:
     post_id: str
@@ -56,7 +87,8 @@ class SurfacePost:
     editable: bool
     suggested_time: Optional[str] = None   # P1: ONE deterministic strictly-future suggestion (surface_time
                                            # index=0), set ONLY for editable surfaces; read-only rows carry None.
-    hook_preburn: bool = False             # variant_hook set but not yet burned (preview is the base clip)
+    hook_preburn: bool = False             # operator hook set, shared clip preview has no successful burn
+    preview_media_url: Optional[str] = None  # awaiting feed player: /clips/{id}?v=… (shared moment clip)
     persona_hook_removed: Optional[str] = None  # Moment.hook_removed — guard killed the moment hook
     variant_hook: Optional[str] = None     # persona-differentiation: the per-account on-screen hook burned into
                                            # this surface's media (crosspost burn_hook_only).
@@ -80,9 +112,9 @@ class SurfacePost:
     day: Optional[str] = None              # Phase 4 pivot: the owning card's day LABEL (ReviewCard.day — see
                                            # _card_day), set only on the account-pivot flat rows for the running
                                            # day header. None elsewhere.
-    tag_sources: dict = field(default_factory=dict)   # per-tag provenance {tag: source} from the clip's meta_captions
-                                           # (content|corpus|region|graph-reach). {} when absent
-                                           # (legacy entry / no caption yet) -> the chip row simply doesn't render.
+    tag_sources: dict = field(default_factory=dict)   # {tag: source} for the tags this surface will send.
+                                           # Ingest writes "lock". {} when the entry has none
+                                           # -> the chip row does not render.
     thumb_url: Optional[str] = None        # lazy preview poster for the account-pivot row (/clip-thumb/{clip_id})
     ready: Optional[bool] = None           # publish_readiness advisory (editable surfaces only)
     ready_reason: Optional[str] = None   # WHY not ready (oversize cap, hook drift, …)
@@ -94,6 +126,9 @@ class SurfacePost:
     batch_created: Optional[str] = None
     clip_id: Optional[str] = None
     corpus_stale: bool = False             # off-lock tags vs the source lock (ship drops them)
+    shipped_tags: list = field(default_factory=list)   # TagMetric rows for the tags send_caption will send
+    lock_menu: list = field(default_factory=list)      # TagMetric rows for _source_lock_tags (play_rank_key)
+    approve_caption: str = ""         # send_caption wire Approve compares; caption is the sentence
 
 
 @dataclass
@@ -137,6 +172,10 @@ class ReviewCard:
     origin: Optional[str] = None         # MOL-756: Moment.origin in operator wording — WHO asked for this moment.
                                          # An unlabelled row READS `unlabelled` instead of staying invisible:
                                          # missing provenance is a fact about the row. None == broken moment lineage.
+    moment_hook: Optional[str] = None    # non-empty Moment.hook; None when the moment has no operator hook
+    hook_burn_failed: bool = False       # Clip.hook_burn_failed — the shared file has no burned hook pixels
+    preview_cache_key: str = ""          # clip id + revision, appended to preview_url as ?v=
+    hook_preburn: bool = False           # master player draws the hook over hookless footage
 
 
 def _personas(accounts: Accounts) -> dict:
@@ -225,8 +264,58 @@ def _post_source_id(led: Ledger, post) -> str:
     return str(getattr(mom, "parent_id", "") or "") if mom is not None else ""
 
 
+def _metric_key(tag: str, meas: dict) -> str:
+    """Lock measurements are keyed `#…`. A bare YouTube label resolves to that key."""
+    key = norm_tag(tag) if isinstance(tag, str) else ""
+    if key and key in meas:
+        return key
+    if isinstance(tag, str) and tag in meas:
+        return tag
+    return key or (tag if isinstance(tag, str) else "")
+
+
+def _tag_metric_rows(meas: dict, tags: list[str]) -> list[TagMetric]:
+    """Play counts from the lock row (`_hashtag_metrics_for`), one entry per tag, input order."""
+    table = meas if isinstance(meas, dict) else {}
+    keys = [_metric_key(t, table) for t in tags]
+    found = _hashtag_metrics_for(table, [k for k in keys if k])
+    rows: list[TagMetric] = []
+    for tag, key in zip(tags, keys):
+        if not isinstance(tag, str) or not tag:
+            continue
+        rec = found.get(key) or {}
+        rows.append(TagMetric(
+            tag=tag,
+            play_count=rec.get("play_count"),
+            current_top_reel_play_max_7d=rec.get("current_top_reel_play_max_7d"),
+        ))
+    return rows
+
+
+def _send_tag_sources(tags, entry, *, youtube: bool) -> dict:
+    """Sources for the chips `send_caption` will send. Keys are those tags; each value is `lock`.
+
+    Use the entry's stored source when it is already `lock` (including a `#tag` key for a bare
+    YouTube label). Do not invent a source for an IG/TT tag the entry does not carry. YouTube
+    labels are the chips, so each label that will be sent is `lock` and the row matches the tags.
+    """
+    raw = entry.get("tag_sources") if isinstance(entry, dict) else None
+    if not isinstance(raw, dict):
+        raw = {}
+    out = {}
+    for t in tags:
+        hashed = f"#{t}" if isinstance(t, str) and not t.startswith("#") else t
+        if raw.get(t) == "lock" or raw.get(hashed) == "lock":
+            out[t] = "lock"
+        elif youtube:
+            out[t] = "lock"
+        elif t in raw:
+            out[t] = "lock"
+    return out
+
+
 def _caption_corpus_stale(cfg: Config, led: Ledger, post, locks=None) -> bool:
-    """True when a completed source lock exists and this post carries a tag not on it. No lock → False."""
+    """True when a completed source lock exists and a tag `send_caption` will send is not on it. No lock → False."""
     from fanops.hashtags import _dedupe_norm
     from fanops.source_tags import load_source_tag_locks
     sid = _post_source_id(led, post)
@@ -240,7 +329,89 @@ def _caption_corpus_stale(cfg: Config, led: Ledger, post, locks=None) -> bool:
     if not (isinstance(at, str) and at.strip()):
         return False
     allowed = set(_dedupe_norm(rec.get("lock") or []))
-    return any(t not in allowed for t in _dedupe_norm(getattr(post, "hashtags", None) or []))
+    _text, tags, _entry = send_caption(cfg, led, post)
+    return any(t not in allowed for t in _dedupe_norm(tags))
+
+
+def _operator_hook(mom) -> Optional[str]:
+    if mom is None:
+        return None
+    text = (mom.hook or "").strip()
+    return text or None
+
+
+def _resolved_clip_path(cfg: Config, clip) -> Optional[str]:
+    if clip is None or not clip.path:
+        return None
+    resolved = resolve_media_path(cfg, clip.path, "clip")
+    return str(resolved) if resolved else None
+
+
+def _same_path(left: Optional[str], right: Optional[str]) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return left == right
+
+
+def _served_preview_is_hookless_base(cfg: Config, led: Ledger, post, clip) -> bool:
+    """True when `/clips/` is still the unburned base.
+
+    `preview_media.media_path_for_post` falls through to `clip.path` when the post
+    has no render and no local media_urls, and that fall-through is the hookless
+    base. A successful burn is written into that same file and clears
+    `hook_burn_failed`, so the fall-through is the burned mp4. Missing file, or
+    the resolver sitting on that base while the burn flag is set, is hookless.
+    """
+    if clip is None:
+        return True
+    base = _resolved_clip_path(cfg, clip)
+    if base is None:
+        return True
+    if post is None:
+        return bool(clip.hook_burn_failed)
+    served = media_path_for_post(cfg, led, post.id)
+    on_base = served is None or _same_path(served, base)
+    if not on_base:
+        return False
+    return bool(clip.hook_burn_failed)
+
+
+def _hook_preburn(cfg: Config, led: Ledger, post, clip, hook: Optional[str]) -> bool:
+    """Draw the operator hook when it is non-empty and the shared clip has no successful burn."""
+    if not (hook or "").strip():
+        return False
+    if clip is None or clip.hook_burn_failed:
+        return True
+    return _served_preview_is_hookless_base(cfg, led, post, clip)
+
+
+def _preview_cache_key(cfg: Config, led: Ledger, clip) -> str:
+    """Clip id plus a revision: clip-path mtime, else the newest awaiting `edited_at` on that clip."""
+    mtime = None
+    path = _resolved_clip_path(cfg, clip)
+    if path:
+        try:
+            mtime = Path(path).stat().st_mtime_ns
+        except OSError:
+            mtime = None
+    edited = None
+    for p in led.posts.values():
+        if p.parent_id != clip.id or p.state is not PostState.awaiting_approval or not p.edited_at:
+            continue
+        if edited is None or p.edited_at > edited:
+            edited = p.edited_at
+    if mtime is not None:
+        rev = str(mtime) if not edited else f"{mtime}-{edited}"
+    else:
+        rev = edited or "0"
+    return f"{clip.id}-{rev}"
+
+
+def _clip_preview_url(cfg: Config, led: Ledger, clip) -> str:
+    return f"/clips/{clip.id}?v={_preview_cache_key(cfg, led, clip)}"
 
 
 def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=None, affinities=(),
@@ -263,30 +434,38 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     else: length_cause = None
     framing_cause = f"{post.account} {acct.framing}" if getattr(acct, "framing", None) else None
     cast_cause = _cast_cause(led, post, affinities)
-    # per-tag provenance for the surface-edit chip row: read the clip's stored caption entry (fail-open to
-    # {} for a legacy entry / no caption yet -> the chip row simply doesn't render).
     _clip = led.clips.get(post.parent_id)
     _mom = led.moments.get(_clip.parent_id) if _clip is not None else None
     _phr = (_mom.hook_removed if _mom is not None else None)
-    tag_sources = (_clip.meta_captions.get(f"{post.account}/{post.platform.value}", {}).get("tag_sources", {})
-                   if _clip is not None else {})
+    # Chips, hashtags, and approve_caption are what send_caption will send.
+    # The operator caption is the sentence (_lineage_bits / Post.caption, or the
+    # seed sentence when the post line is tags-only) — not the composed wire.
+    _text, _tags, _entry = send_caption(cfg, led, post)
+    if post.platform.value == "youtube" or not _tags:
+        _display = _text
+    else:
+        _display = split_posted_caption(_text)[0]
+    tag_sources = _send_tag_sources(_tags, _entry, youtube=post.platform.value == "youtube")
+    _src = led.sources.get(_mom.parent_id) if _mom is not None else None
+    _meas = _source_lock_measurements(cfg, _src)
+    shipped_tags = _tag_metric_rows(_meas, list(_tags))
+    lock_menu = _tag_metric_rows(_meas, _source_lock_tags(cfg, _src))
     ready, ready_reason = (None, None)
     if editable:
         from fanops.studio.views_results import publish_readiness
         ready, ready_reason = publish_readiness(led, post, cfg)
-    _mom_hook = None
-    if _mom is not None:
-        _mom_hook = (_mom.hook or "").strip() or None
-    from fanops.caption_compose import posted_text_for
+    _mom_hook = _operator_hook(_mom)
+    _preview_media = _clip_preview_url(cfg, led, _clip) if (awaiting and _clip is not None) else None
     return SurfacePost(
         post_id=post.id, account=post.account, platform=post.platform.value, persona=persona,
-        caption=posted_text_for(cfg, led, post), hashtags=list(post.hashtags or []),
+        caption=_display, hashtags=list(_tags),
         scheduled_time=post.scheduled_time, media_url=f"/media/{post.id}",
         state=state, imminent=imm, editable=editable,
         suggested_time=suggest_time(cfg, post, now=now) if editable else None,
         variant_hook=_mom_hook,
         persona_hook_removed=_phr,
-        hook_preburn=False,
+        hook_preburn=_hook_preburn(cfg, led, post, _clip, _mom_hook),
+        preview_media_url=_preview_media,
         length_label=_length_label(post.clip_profile),
         is_account_cut=bool(r and r.is_account_cut),
         framing=(getattr(acct, "framing", None) or None),
@@ -297,7 +476,9 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
         length_cause=length_cause, framing_cause=framing_cause, cast_cause=cast_cause,
         tag_sources=tag_sources, thumb_url=f"/clip-thumb/{post.parent_id}",
         ready=ready, ready_reason=ready_reason,
-        corpus_stale=_caption_corpus_stale(cfg, led, post, locks) if editable else False)
+        corpus_stale=_caption_corpus_stale(cfg, led, post, locks) if editable else False,
+        clip_id=post.parent_id, shipped_tags=shipped_tags, lock_menu=lock_menu,
+        approve_caption=_text)
 
 def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, now: datetime,
           active_handles: frozenset = frozenset(), acct_by_handle: Optional[dict] = None) -> ReviewCard:
@@ -321,8 +502,10 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
     # S4: also NAME them (sorted, deterministic) — the count alone never told the operator WHO got dropped.
     excluded_names = sorted(h for h in active_handles if h not in tgts) if tgts else []
     excluded = len(excluded_names)
+    hook_text = _operator_hook(mom)
+    cache_key = _preview_cache_key(cfg, led, clip)
     return ReviewCard(
-        clip_id=clip.id, preview_url=f"/clips/{clip.id}", source_name=source_name, label=label,
+        clip_id=clip.id, preview_url=f"/clips/{clip.id}?v={cache_key}", source_name=source_name, label=label,
         moment_window=window, reason=reason, language=language,
         held=bool(clip.held), held_reason=clip.held_reason, transcript_excerpt=excerpt,
         surfaces=surfaces, bucket=bucket, clip_state=clip.state.value,
@@ -332,7 +515,10 @@ def _card(led: Ledger, clip, posts, bucket: str, cfg: Config, personas: dict, no
         batch_created=(b.created_at if b is not None else None), batch_excluded=excluded,
         batch_excluded_names=excluded_names,
         affinities=_affs, source_key=src_key,   # MOM-3: derived view, not the stored tag
-        origin=(display_origin(mom.origin) if mom is not None else None))   # MOL-756
+        origin=(display_origin(mom.origin) if mom is not None else None),   # MOL-756
+        moment_hook=hook_text, hook_burn_failed=bool(clip.hook_burn_failed),
+        preview_cache_key=cache_key,
+        hook_preburn=_hook_preburn(cfg, led, posts[0] if posts else None, clip, hook_text))
 
 SOURCE_DAY_SUFFIX = " (source day)"   # the VISIBLE marker on a day the card did not mint itself (see _card_day)
 
@@ -902,6 +1088,48 @@ def group_review_by_source(rows: list) -> list:
         if sk not in labels:
             labels[sk] = getattr(r, "source_name", None) or sk
     return [(labels[sk], rs) for sk, rs in groups.items()]
+
+
+def card_for_post(led: Ledger, accounts: Accounts, cfg: Config, post_id: str, *, now: datetime) -> Optional[ReviewCard]:
+    """The moment card that holds this post, so a tag swap can re-render `#card-<clip_id>`."""
+    p = led.posts.get(post_id)
+    if p is None:
+        return None
+    clip = led.clips.get(p.parent_id)
+    if clip is None:
+        return None
+    posts = [x for x in led.posts.values()
+             if x.parent_id == clip.id and x.state is PostState.awaiting_approval and led.can_promote(x)]
+    if all(x.id != p.id for x in posts):
+        posts.append(p)
+    personas = _personas(accounts)
+    acct_by_handle = {a.handle: a for a in accounts.accounts}
+    active_handles = frozenset(a.handle for a in accounts.active())
+    return _card(led, clip, posts, "editable", cfg, personas, now, active_handles, acct_by_handle)
+
+
+def feed_surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime,
+                          cfg: Config) -> Optional[SurfacePost]:
+    """One feed card's surface, with the lineage stamps `_review_feed_card.html` reads."""
+    s = surface_for_post(led, accounts, post_id, now=now, cfg=cfg)
+    if s is None:
+        return None
+    p = led.posts[post_id]
+    clip = led.clips.get(p.parent_id)
+    mom = led.moments.get(clip.parent_id) if clip is not None else None
+    src = led.sources.get(mom.parent_id) if mom is not None else None
+    source_name = Path(src.source_path).name if (src and src.source_path) else "—"
+    reason = mom.reason if (mom is not None and mom.reason) else None
+    bid = getattr(p, "batch_id", None)
+    b = led.get_batch(bid) if bid else None
+    preview = s.preview_media_url
+    if p.state is PostState.awaiting_approval and clip is not None:
+        preview = _clip_preview_url(cfg, led, clip)
+    return replace(s, clip_id=p.parent_id, reason=reason,
+                   source_key=(mom.parent_id if mom is not None else None),
+                   source_name=source_name, batch_id=bid,
+                   batch_created=(b.created_at if b is not None else None),
+                   preview_media_url=preview)
 
 
 def surface_for_post(led: Ledger, accounts: Accounts, post_id: str, *, now: datetime, cfg: Config) -> Optional[SurfacePost]:

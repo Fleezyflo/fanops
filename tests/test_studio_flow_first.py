@@ -79,4 +79,5 @@ def test_feed_shows_hook_in_edit_form(tmp_path):
     led.moments["m1"] = led.moments["m1"].model_copy(update={"hook": "Wait for it"})
     led.save()
     html = _client(cfg).get("/review?account=@a").data.decode()
-    assert "feed-hook" in html and 'value="Wait for it"' in html
+    assert 'name="hook"' in html and "Wait for it" in html and "/reburn-hook/" in html
+    assert html.count('name="hook"') == 1

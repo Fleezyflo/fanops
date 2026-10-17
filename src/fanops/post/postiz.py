@@ -276,18 +276,6 @@ def _postiz_upload_from_url(cfg: Config, url: str) -> str:
     return f"{media_id}|{pub}"
 
 
-def _youtube_tags(hashtags) -> list[dict]:
-    # YouTube tags are bare keywords — strip a leading '#', dedupe, drop empties. Postiz's
-    # @IsYoutubeTagsLength caps the total label length (~500); stop before it so a long hashtag list
-    # can't 422 the whole post. Best-effort SEO, never load-bearing.
-    out, used = [], 0
-    for h in (hashtags or []):
-        t = (h or "").lstrip("#").strip()
-        if not t or any(t == o["label"] for o in out): continue
-        if used + len(t) > 480: break
-        out.append({"value": t, "label": t}); used += len(t)
-    return out
-
 def build_postiz_payload(*, integration_id: str, platform: str, content: str,
                          media_urls: list[str], scheduled_time: str | None, post_type: str,
                          title: str | None = None, hashtags: list[str] | None = None) -> dict:
@@ -303,6 +291,7 @@ def build_postiz_payload(*, integration_id: str, platform: str, content: str,
     # BEFORE any network. Empty media is NOT rejected for "post": the cutover probe (cutover_postiz.py)
     # deliberately builds a row-less text-only "post". A LEDGER post's empty-media refusal lives at the
     # publish boundary (_validate_ledger_media), where it is unconditionally a defect.
+    from fanops.caption_compose import _youtube_tags
     images = [_postiz_image(u) for u in (media_urls or []) if u]
     if platform == "youtube":
         yt_title = (title or "").strip()[:100]
@@ -560,6 +549,9 @@ class PostizPoster:
                                        content=content, media_urls=media_urls,
                                        scheduled_time=sched, post_type=declared,
                                        title=title, hashtags=post.hashtags)
+        # Before either adopt return: set_post_state model_copies this object. A matched
+        # existing submission returns here and never reaches the POST.
+        post.sent_content = content
         existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
         if existing_sid:
             return self._adopt_submission(led, post_id, existing_sid, existing_raw)

@@ -140,7 +140,7 @@ def register_schedule_routes(app, cfg):
                                                           # across pages — a saves=10 row reads the same width on any page
         accts = Accounts.load(cfg)
         accounts = accts.active()                          # content-lifecycle Phase 4: cross-account picker options
-        tag_exposure = views.tag_exposure(led)
+        tag_exposure = views.tag_exposure(led, cfg)
         # U10: the performance lenses (Lift + What's-working + legend) refresh on FULL-page load only — the
         # HTMX #posted-body swaps (library filter / repost / recover) stay scoped to the library, so the
         # lenses aren't re-rendered on every action. Mirror the (now-removed) /lift handler's call sequence

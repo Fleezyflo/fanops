@@ -55,7 +55,7 @@ def test_retire_source_refuses_unrestorable_snapshot_no_unlink(tmp_path, monkeyp
     clip_path = tmp_path / "c0.mp4"
     _seed_with_clip(cfg, clip_path)
     from fanops import ledger_wipe
-    monkeypatch.setattr(ledger_wipe, "snapshot_is_restorable", lambda _p: False)
+    monkeypatch.setattr(ledger_wipe, "snapshot_is_restorable", lambda _p, **_k: False)
     assert main(["retire-source", "src_x", "--i-understand-this-deletes-unshipped-media"]) == 2
     assert clip_path.exists()
     assert Ledger.load(cfg).sources["src_x"].state is SourceState.catalogued

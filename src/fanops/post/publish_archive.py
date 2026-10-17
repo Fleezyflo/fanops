@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from fanops.caption_compose import send_caption
 from fanops.config import Config
 from fanops.controlio import write_text_atomic
 from fanops.ledger import Ledger
@@ -21,8 +22,10 @@ def _moment_hook(led, post: Post) -> str:
 
 def _archive_published(cfg: Config, post: Post) -> None:
     """Day-bucketed, human-browsable record of a just-published post -> 06_published/<YYYY-MM-DD>/<post_id>.json
-    (the dir existed but nothing wrote it). FAIL-OPEN: any write/mkdir error is logged and swallowed — the
-    archive is a convenience artifact, NEVER a publish blocker (a full disk must not strand a live post). Day =
+    (the dir existed but nothing wrote it). `caption` is `sent_content` when that field is a string, else
+    the send_caption text; `hashtags` are the tags send_caption returns for this same post. FAIL-OPEN: any
+    write/mkdir error is logged and swallowed — the archive is a convenience artifact, NEVER a publish
+    blocker (a full disk must not strand a live post), and this stays outside the finalize transaction. Day =
     operator_local_day(published_at), else created_at, else scheduled_time, else now (MOL-735)."""
     from fanops.timeutil import operator_local_day
     try:
@@ -41,12 +44,17 @@ def _archive_published(cfg: Config, post: Post) -> None:
         except OSError:
             pass
         hook = ""
+        led = None
         try:
-            hook = _moment_hook(Ledger.load(cfg), post)
+            led = Ledger.load(cfg)
+            hook = _moment_hook(led, post)
         except Exception as exc:                          # hook lookup is best-effort enrichment — archive without it
             get_logger(cfg)("publish", post.id, "archive_hook_lookup_failed", err=str(exc)[:120])
+        text, tags, _entry = send_caption(cfg, led, post)
+        sent = post.sent_content
+        caption = sent if isinstance(sent, str) else text
         rec = {"post_id": post.id, "clip_id": post.parent_id, "account": post.account,
-               "platform": post.platform.value, "caption": post.caption, "hashtags": list(post.hashtags or []),
+               "platform": post.platform.value, "caption": caption, "hashtags": list(tags),
                "public_url": post.public_url, "scheduled_time": post.scheduled_time,
                "created_at": post.created_at, "published_at": post.published_at,
                "render_id": post.render_id, "hook": hook,

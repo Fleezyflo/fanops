@@ -153,9 +153,26 @@ def test_timing_window_clamp_skips_out_of_window_hour(tmp_path, monkeypatch):
     # The winning hour must land in the account's posting window; else the bias is skipped (crux Task 3
     # window-clamp) so timing never proposes a slot the cadence layer later rejects.
     from fanops.timing_bias import timing_bias_hour_for
-    cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_hour=3); _validate(cfg)   # winner = 03:00
+    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")         # switch ON so this asserts the window, not the default-off gate
+    cfg = Config(root=tmp_path); led = _timing_led(cfg, hot_hour=3, cold_hour=18); _validate(cfg)  # two hours; winner = 03:00
     monkeypatch.setattr(Config, "account_window", lambda self, h: (9, 23), raising=True)  # window 09–23
     assert timing_bias_hour_for(led, cfg, "a") is None    # 03:00 outside 09–23 -> no bias
+
+
+def test_timing_hour_for_is_none_when_kill_switch_off(tmp_path, monkeypatch):
+    # Default OFF: a validated in-window winner must not reach the schedule. crosspost applies
+    # timing_bias_hour_for and does not read FANOPS_TIMING_BIAS itself.
+    from fanops.timing_bias import timing_bias_hour_for
+    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)
+    cfg = Config(root=tmp_path); led = _timing_led(cfg); _validate(cfg)   # winner = 18:00, window open
+    assert timing_bias_hour_for(led, cfg, "a") is None
+
+
+def test_timing_hour_for_returns_winner_when_kill_switch_on(tmp_path, monkeypatch):
+    from fanops.timing_bias import timing_bias_hour_for
+    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")
+    cfg = Config(root=tmp_path); led = _timing_led(cfg); _validate(cfg)
+    assert timing_bias_hour_for(led, cfg, "a") == 18
 
 
 def _frozen(led):

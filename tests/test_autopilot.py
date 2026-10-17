@@ -40,6 +40,45 @@ def test_set_env_var_preserves_other_lines(tmp_path):
     assert "FANOPS_LLM_TRANSPORT=claude" in body
 
 
+def test_set_unset_env_var_sequential_preserves_other_lines(tmp_path):
+    # flock around read-modify-replace must not change the atomic line-preserving contract.
+    env = tmp_path / ".env"
+    env.write_text("POSTIZ_API_KEY=s3cret\nFANOPS_WHISPER_MODEL=turbo\n# keep me\n")
+    autopilot.set_env_var(env, "FANOPS_LLM_TRANSPORT", "claude")
+    autopilot.set_env_var(env, "FANOPS_CLIP_PROFILE", "tight")
+    autopilot.unset_env_var(env, "FANOPS_LLM_TRANSPORT")
+    body = env.read_text()
+    assert "POSTIZ_API_KEY=s3cret" in body
+    assert "FANOPS_WHISPER_MODEL=turbo" in body
+    assert "# keep me" in body
+    assert "FANOPS_CLIP_PROFILE=tight" in body
+    assert "FANOPS_LLM_TRANSPORT" not in body
+    assert not (tmp_path / ".env.tmp").exists()
+
+
+def test_set_unset_env_var_lock_busy_raises_oserror(tmp_path, monkeypatch):
+    # golive._dual_write catches OSError, not LockBusyError. A timeout must stay on that channel.
+    import pytest
+    from fanops.errors import LockBusyError
+    from fanops import ledger
+
+    class _Busy:
+        def __enter__(self):
+            raise LockBusyError("ledger lock busy > 30.0s")
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(ledger, "_file_lock", lambda *a, **k: _Busy())
+    env = tmp_path / ".env"
+    env.write_text("POSTIZ_API_KEY=s3cret\n")
+    with pytest.raises(OSError, match="lock busy"):
+        autopilot.set_env_var(env, "FANOPS_LLM_TRANSPORT", "claude")
+    assert env.read_text() == "POSTIZ_API_KEY=s3cret\n"
+    with pytest.raises(OSError, match="lock busy"):
+        autopilot.unset_env_var(env, "POSTIZ_API_KEY")
+    assert env.read_text() == "POSTIZ_API_KEY=s3cret\n"
+
+
 def test_set_env_var_updates_in_place_no_duplicate(tmp_path):
     env = tmp_path / ".env"
     env.write_text("FANOPS_LLM_TRANSPORT=cursor\n")

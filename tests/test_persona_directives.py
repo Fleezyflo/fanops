@@ -1,6 +1,6 @@
 # tests/test_persona_directives.py — MOL-171
 from fanops.personas import Persona, casting_directive, hook_directive
-from fanops.persona_directives import Directive, _FOCUS_CLAUSE, _base_voice, _join
+from fanops.persona_directives import Directive, _FOCUS_CLAUSE, _base_voice, _join, hook_author_slot
 
 def _snap_casting(p):
     # MOL-523: content_focus is editorial; cut_policy tokens compile to clauses.
@@ -30,3 +30,9 @@ def test_directive_exposes_structured_fields():
 def test_every_string_consumer_still_works():
     p = Persona(id="p", voice="bold", cut_policy=["punchlines"], hook_angle="curiosity gap")
     assert str(casting_directive(p)) and str(hook_directive(p))
+
+def test_hook_author_slot_excludes_hook_angle():
+    p = Persona(id="p", voice="bold fan", hook_angle="dare or challenge the viewer to react")
+    slot = hook_author_slot(p)
+    assert "bold fan" in slot
+    assert "For the on-screen hook" not in slot

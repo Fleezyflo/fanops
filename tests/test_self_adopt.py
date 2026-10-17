@@ -92,34 +92,36 @@ def test_no_kickstart_when_shas_match(tmp_path, monkeypatch):
     assert res["action"] == "none"
 
 
-def test_no_kickstart_when_running_sha_absent(tmp_path, monkeypatch):
-    # _last_heartbeat_code -> None (no log / pre-upgrade heartbeat with no `code`) DISARMS the drift branch.
+def test_kickstart_when_running_sha_absent(tmp_path, monkeypatch):
+    # Loaded pump, heartbeat SHA missing: miss is a mismatch, same rule as doctor._deploy_code_check.
     cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
     monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: None)
     monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("bbb", "git-head"))
     monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
     monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
 
     res = daemon.ensure(cfg)
 
-    assert _kickstart_argv(uid) not in fake.calls           # absent running SHA -> never kickstart
-    assert res["action"] == "none"
+    assert _kickstart_argv(uid) in fake.calls
+    assert res["action"] == "kickstart_stale_code"
 
 
-def test_no_kickstart_when_deployed_sha_absent(tmp_path, monkeypatch):
-    # _version_signal -> (None,"unavailable") (git-less install) DISARMS the drift branch.
+def test_kickstart_when_deployed_sha_absent(tmp_path, monkeypatch):
+    # Loaded pump, disk SHA missing: miss is a mismatch, same rule as doctor._deploy_code_check.
     cfg, fake, uid = _base_ensure_env(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
     monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "aaa")
     monkeypatch.setattr(daemon, "_version_signal", lambda cfg: (None, "unavailable"))
     monkeypatch.setattr(daemon, "_pump_pid_age_s", lambda: (None, None))
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
     monkeypatch.setattr(daemon, "_kickstart_studio_if_present", lambda cfg: None)
 
     res = daemon.ensure(cfg)
 
-    assert _kickstart_argv(uid) not in fake.calls           # absent deployed SHA -> never kickstart
-    assert res["action"] == "none"
+    assert _kickstart_argv(uid) in fake.calls
+    assert res["action"] == "kickstart_stale_code"
 
 
 def test_storm_guard_holds(tmp_path, monkeypatch):

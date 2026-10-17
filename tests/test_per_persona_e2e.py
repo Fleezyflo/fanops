@@ -91,8 +91,8 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
     # PASS 1: per-account gates, owner-attributed picks
     led = request_moments(led, cfg, "src_1", accounts=accts)
     led = _ingest_picks(led, cfg, "src_1", {
-        "trust": [MomentPick(start=0, end=30, reason="credible window", personas=["trust"])],
-        "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
+        "trust": [MomentPick(start=0, end=30, reason="sensational credible window", personas=["trust"])],
+        "drama": [MomentPick(start=20, end=28, reason="started the rivalry", personas=["drama"])],
     })
     moms = led.moments_of("src_1")
     assert len(moms) == 2

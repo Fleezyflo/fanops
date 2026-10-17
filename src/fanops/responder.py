@@ -53,23 +53,25 @@ def screen_model_text(obj):
     return obj
 
 # Agent gates: `moments` (M1b pass 1 — pick the WINDOWS, sees whole-source frames), `moment_hooks` (pass 2 —
-# the vision hook AUTHOR, sees the PICKED WINDOW's frames), and `captions` (text-only hashtags). The two vision
-# gates attach `frames` as images. (The moment_casting per-account SELECTION gate was removed in P11/MOL-152.)
+# the vision hook AUTHOR, sees the PICKED WINDOW's frames), and `captions` (sentence + lock tags, sees that
+# same window's frames). These gates attach `frames` as images. (The moment_casting per-account SELECTION
+# gate was removed in P11/MOL-152.)
 _SCHEMA = {"moments": MomentDecision, "moment_hooks": MomentHookDecision, "captions": CaptionSet}
 _PROMPT = {"moments": moment_pick_prompt, "moment_hooks": moment_hook_prompt, "captions": caption_prompt}
-_VISION_GATES = ("moments", "moment_hooks")   # gates whose payload MAY carry top-level `frames` to attach
+_VISION_GATES = ("moments", "moment_hooks", "captions")   # gates whose payload MAY carry top-level `frames` to attach
 
 def _default_claude_model(kind: str, payload: dict, *, cfg: Config | None = None, log=None) -> dict:
     """The production model: hand claude -p the committed prompt + the gate's JSON schema, PINNED to
     cfg.llm_model_for(kind) (V2 M1/F1 — an unpinned `claude -p` drifts with the CLI default; the tier is
     PER-GATE — opus for the creative VISION moments gate, sonnet for the mechanical caption gate). For
-    the two VISION gates (`moments` = window picks, `moment_hooks` = the frame-seeing on-screen-hook author),
-    also hand the relevant frames (top-level `frames`) as images; `captions` stays text-only. When
+    the VISION gates (`moments` = window picks, `moment_hooks` = the frame-seeing on-screen-hook author,
+    `captions` = this clip's window), also hand the relevant frames (top-level `frames`) as images with
+    the keyframe `read_root`. Unread frames raise LlmFramesUnreadError and the gate stays pending. When
     cfg is given, emit ONE provenance line per call (the model that ANSWERED, the prompt fingerprint, and
     the brief fingerprint) so every creative output is traceable to the exact model + brief that produced
     it (M1/F10). cfg=None (the legacy test path) keeps the old behavior: no pin, no provenance."""
     schema = _SCHEMA[kind].model_json_schema()
-    images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # M1b: pick pass SEES source stills; hook pass SEES the picked WINDOW's stills
+    images = (payload.get("frames") or None) if kind in _VISION_GATES else None   # pick: source stills; hook and caption: this window's stills
     prompt = _PROMPT[kind](payload)
     out, answered, frames_unread = claude_json_meta(prompt, schema, images=images,
                                      model=(cfg.llm_model_for(kind) if cfg else None),

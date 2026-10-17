@@ -376,32 +376,30 @@ def test_preflight_blocks_cursor_when_cursor_agent_absent(tmp_path, monkeypatch,
     assert "cursor-agent" in err and "Traceback" not in err
 
 
-def test_preflight_cursor_blocks_when_vision_unsupported(tmp_path, monkeypatch, mocker, capsys):
-    # Absolute transport: cursor cannot run vision gates — refuse until Go-Live flips to claude.
+def test_preflight_cursor_allows_when_agent_present(tmp_path, monkeypatch, mocker, capsys):
+    # cursor-agent on PATH is enough: vision is the prompt path list, so preflight does not refuse.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
     mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/cursor-agent" if b == "cursor-agent" else None)
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
-    err = capsys.readouterr().err
-    assert "vision" in err.lower() and "go-live" in err.lower() and "fallback" in err.lower()
+    assert _check_preflight(Config(root=tmp_path)) == 0
+    assert "vision" not in capsys.readouterr().err.lower()
 
 
 
 
-def test_preflight_cursor_blocks_even_if_claude_present(tmp_path, monkeypatch, mocker, capsys):
-    # Having claude on PATH must NOT paper over transport=cursor — no silent dual-CLI.
+def test_preflight_cursor_allows_even_if_claude_present(tmp_path, monkeypatch, mocker, capsys):
+    # claude on PATH does not change the cursor preflight: the run is allowed, not flipped.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
     mocker.patch("shutil.which", return_value="/usr/local/bin/x")
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
-    err = capsys.readouterr().err.lower()
-    assert "go-live" in err and "fallback" in err
+    assert _check_preflight(Config(root=tmp_path)) == 0
+    assert "fallback" not in capsys.readouterr().err.lower()
 
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises

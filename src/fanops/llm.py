@@ -41,8 +41,9 @@ from fanops.llm_json import _json_candidates  # noqa: F401 — re-export for tes
 logger = logging.getLogger("fanops.llm")
 _sleep = time.sleep                                  # indirection so tests can stub the backoff wait
 
-# T01 probe (cursor-agent absent on probe host — defaults from cursor.com/docs/cli/reference/output-format):
-_CURSOR_SUPPORTS_VISION = False
+# Headless cursor-agent has no image flag. Frames go in the prompt; read_root is --add-dir
+# (cursor-agent --help). Same contract as the claude path's path list + keyframe root.
+_CURSOR_SUPPORTS_VISION = True
 _CURSOR_MODEL_ALIASES: dict[str, str] = {}
 _CURSOR_RATE_LIMIT_MARKERS = ("rate limit", "too many requests", "429", "503", "529", "overloaded")
 
@@ -132,9 +133,9 @@ def claude_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
     """Dispatch to exactly ONE CLI per FANOPS_LLM_TRANSPORT (Studio Go-Live — the single switch).
 
     No silent cross-transport fallback: cursor means cursor-agent for every gate; claude means
-    claude -p for every gate. If transport=cursor and a vision gate needs frames but cursor-agent
-    cannot do vision, raise ToolchainMissingError telling the operator to flip the ONE switch to
-    claude — never shell `claude` behind their back (that was the captions-vs-moments split).
+    claude -p for every gate. Cursor vision is the prompt path list plus `--add-dir` on the
+    keyframe root. If `_CURSOR_SUPPORTS_VISION` is false, a frames payload raises
+    ToolchainMissingError instead of shelling `claude` behind the operator's back.
     Cursor uses its OWN auto model selection (no --model) unless FANOPS_LLM_MODEL forces one; the
     per-gate claude tiers (opus/sonnet) are Claude-only and are NOT forwarded to cursor-agent."""
     from fanops.config import Config, resolve_llm_transport
@@ -307,9 +308,12 @@ def _resolve_cursor_model(model: str | None) -> str | None:
     if not model: return None
     return _CURSOR_MODEL_ALIASES.get(model, model)
 
-def _build_cursor_cmd(model: str | None) -> list[str]:
+def _build_cursor_cmd(model: str | None, *, add_dir: str | None = None) -> list[str]:
     resolved = _resolve_cursor_model(model)
-    return ["cursor-agent", "-p", "--output-format", "json", "--trust"] + (["--model", resolved] if resolved else [])
+    cmd = ["cursor-agent", "-p", "--output-format", "json", "--trust"]
+    if add_dir:
+        cmd += ["--add-dir", add_dir]
+    return cmd + (["--model", resolved] if resolved else [])
 
 def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int | None:
     rl = _rate_limit_status(returncode, stdout)
@@ -323,7 +327,13 @@ def _cursor_rate_limit_status(returncode: int, stdout: str, stderr: str) -> int 
 def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
                       images: list[str] | None = None, model: str | None = None,
                       read_root: str | None = None) -> tuple[dict, str | None, bool]:
-    """Call `cursor-agent -p` with schema-prefixed stdin; return (object, model, frames_unread)."""
+    """Call `cursor-agent -p` with schema-prefixed stdin; return (object, model, frames_unread).
+
+    Images use the same path preamble as `_claude_json_meta`. `read_root` is `--add-dir` so those
+    keyframe paths are in the workspace the hook gate already scopes. The cursor JSON envelope has
+    no `num_turns`, so this path does not re-ask on an unread frame."""
+    add_dir = read_root if images else None
+
     def _schema_stdin(base: str) -> str:
         return _prompt_side_schema(schema, base)
 
@@ -331,8 +341,9 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         delay = _RL_BASE_DELAY
         for attempt in range(_MAX_RL_RETRIES + 1):
             try:
-                r = subprocess.run(_build_cursor_cmd(model), check=False, capture_output=True, text=True,
-                                   timeout=timeout, input=_schema_stdin(stdin_prompt))
+                r = subprocess.run(_build_cursor_cmd(model, add_dir=add_dir), check=False,
+                                   capture_output=True, text=True, timeout=timeout,
+                                   input=_schema_stdin(stdin_prompt))
             except (FileNotFoundError, OSError) as e:
                 raise ToolchainMissingError(
                     f"cursor-agent not found on PATH — install Cursor CLI or set FANOPS_LLM_TRANSPORT=claude "
@@ -365,6 +376,10 @@ def _cursor_json_meta(prompt: str, schema: dict, *, timeout: float = 300.0,
         return env
 
     frames_unread = False                                    # cursor json envelope has no num_turns analogue
+    if images:
+        prompt = ("Read each image frame below with the Read tool FIRST, then return ONLY the JSON "
+                  "object matching the provided schema — no prose, no preamble, no explanation:\n"
+                  + "\n".join(images) + "\n\n" + prompt)
     env = _run(prompt)
 
     def _resolve_from_env(e: dict) -> tuple[dict | None, bool]:

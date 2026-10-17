@@ -28,6 +28,8 @@ def test_ensure_noop_when_pump_loaded(tmp_path, monkeypatch):
     main_print = f"gui/{uid}/{daemon.LABEL}"
     fake = _fake_launchctl(**{main_print: (0, "")})
     monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
     cfg = Config(root=tmp_path)
 
     res = daemon.ensure(cfg)
@@ -55,6 +57,8 @@ def test_ensure_bootstraps_when_pump_absent(tmp_path, monkeypatch):
         return fake(cmd, *a, **k)
     run.calls = fake.calls
     monkeypatch.setattr(daemon.subprocess, "run", run)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
 
     res = daemon.ensure(cfg)
 
@@ -78,6 +82,8 @@ def test_ensure_rewrites_stale_plist_when_loaded(tmp_path, monkeypatch):
     stale["ProgramArguments"] = ["/bin/bash", str(cfg.control / "fanops-run.sh")]
     daemon.plist_path().write_bytes(plistlib.dumps(stale))
     (cfg.control / "fanops-run.sh").write_text("#!/bin/bash\n# legacy wrapper\n")
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
     res = daemon.ensure(cfg)
     pl = plistlib.loads(daemon.plist_path().read_bytes())
     assert pl["ProgramArguments"] == [daemon._fanops_bin(), "run", "--loop", "--interval", str(iv)]

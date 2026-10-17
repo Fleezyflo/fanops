@@ -793,8 +793,9 @@ class Config:
         # transcription-accuracy lever for music/rap: the instrumental is what wrecks the lyrics, and
         # removing it turned near-gibberish Arabic into coherent lines + fixed clear English errors on
         # real clips. DEFAULT ON; only the explicit off-words "0"/"false"/"no"/"off" disable it.
-        # Safe to default ON: if demucs/the [asr] extra isn't installed, isolation FAILS OPEN to the
-        # raw audio (today's behavior), so this never breaks a host without Demucs.
+        # When this is on and Demucs is missing, times out, exits nonzero, or leaves no stem,
+        # vocals.isolate_vocals raises ToolchainMissingError. The caller sets the source to error
+        # and does not transcribe the mix.
         return env_bool(os.getenv("FANOPS_ISOLATE_VOCALS"), default=True)
 
     @property

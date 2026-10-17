@@ -4,7 +4,7 @@
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| H-DOCS-F01 | medium | doc-rot | Subsystem traces frozen 2026-07; +87 modules unaudited semantically | Regen traces or mark stale per cluster | `docs/CODEMAPS/subsystem-traces/` |
+| H-DOCS-F01 | medium | doc-rot | closed by explicit stale mark | Traces last touched 2026-09-09 (`f11d0af7`). `subsystem-traces/STALE.md` records 196 live modules vs 124 indexed stems on `d2cded31`. Not regenerated | `docs/CODEMAPS/subsystem-traces/STALE.md` |
 
 ## Evidence commands run
 

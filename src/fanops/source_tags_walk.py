@@ -40,8 +40,8 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     from fanops.ig_safari_shell import mark_safari_tick_slot, safari_tick_slot_claimed
     if safari_tick_slot_claimed():
         return
-    from fanops.ig_hashtag_scrape import open_client
-    opener = open_client_fn or open_client
+    from fanops.ig_web_scrape import open_web_session
+    opener = open_client_fn or open_web_session
     from fanops.ig_web_scrape import _lock_web_users
     now = now or datetime.now(timezone.utc)
     marked = False

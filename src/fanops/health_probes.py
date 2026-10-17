@@ -67,9 +67,16 @@ def _http_reachable(url: str | None, name: str) -> DepHealth:
 
 
 def zernio_dep_health(cfg: Config) -> DepHealth:
+    """Map doctor's authenticated Zernio check onto a DepHealth row. No creds stays skipped."""
     if not cfg.backend_has_creds("zernio"):
         return DepHealth("zernio", True, "skipped (not configured)")
-    return _http_reachable(cfg.zernio_url, "zernio")
+    from fanops.doctor import _zernio_reach_check
+    check = _zernio_reach_check(cfg)
+    if check is None:
+        return DepHealth("zernio", True, "skipped (not configured)")
+    if check.get("ok"):
+        return DepHealth("zernio", True, "reachable")
+    return DepHealth("zernio", False, check.get("hint") or "")
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:

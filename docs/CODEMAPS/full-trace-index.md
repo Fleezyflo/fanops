@@ -1,5 +1,7 @@
 > Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
 
+> Re-verified 2026-10-17 on `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`: live `src/fanops/**/*.py` count is 196; `partition.json` is the C-cluster map (124 indexed stems, 196 keys); this file is an explicitly stale 2026-07-11 ledger, not the live module list.
+
 <!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
@@ -122,18 +124,15 @@ callbacks). Outcome:
   `templates/` line-by-line in this pass): `views.py:run_next_step`, `zero_post_clips`,
   `metrics_stale_hint`; `views_common.py:accounts_in`, `term_def`; `views_results.py:operator_error`,
   `bar_pct`; `views_review.py:provenance_chips`, `group_review_by_batch` (all C10). Of these,
-  `zero_post_clips` is separately confirmed as a **real bug** below (referenced by a template but
-  never passed by the view), not merely unreferenced. `provenance_chips` / `group_review_by_batch`
-  are registered on the Jinja env in `studio/app.py` (live).
+  `zero_post_clips` was listed below as dead-on-arrival; that sentence is stale.
+  `src/fanops/studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)`.
+  `provenance_chips` / `group_review_by_batch` are registered on the Jinja env in `studio/app.py` (live).
 
 Full per-candidate detail with file:line citations lives in each cluster's own trace document.
 
 ## Real bugs found (not just anomalies — confirmed logic defects)
 
-1. **`views.zero_post_clips` is dead-on-arrival wiring** (C10/C9 boundary) — the function exists
-   and `home.html` references `{% if zero_post_clips %}`, but `app.py`'s `render_template` call for
-   the Home route never passes it as a kwarg. The conditional block silently never renders. This is
-   the one place the trace found a genuine template/view wiring defect, not merely an anomaly.
+1. **`views.zero_post_clips` dead-on-arrival wiring is stale** (C10/C9 boundary) — the 2026-07-11 ledger said the function exists and `home.html` references `{% if zero_post_clips %}`, but the Home route never passes it as a kwarg. That dead-on-arrival sentence is stale: `src/fanops/studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)` into `render_template`.
 2. **CLAUDE.md documentation drift on the Go-Live mechanism** — the project notes describe
    `FANOPS_POSTER=postiz` as being set through the Go-Live confirm path; current code
    (`studio/golive.py:go_live`, comment "D12: go_live NEVER writes FANOPS_POSTER") never writes that

@@ -26,6 +26,17 @@ def test_config_row_shows_env_source_and_masks_secret(tmp_path, monkeypatch):
     assert row["studio"] is True
 
 
+def test_config_row_masks_ig_scrape_password(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "scrape-secret-value")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_IG_SCRAPE_PASSWORD")
+    assert row["source"] == "os.environ"
+    assert row["effective"] == "(set)"
+    assert row["studio"] is False
+    assert "scrape-secret-value" not in format_config_report(cfg)
+
+
 def test_config_row_studio_settable_flag(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)

@@ -227,9 +227,10 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
 def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     """Deploy gate — the pump's heartbeat `code` must match the code SHA on disk.
 
-    FAIL when the daemon is loaded and the running SHA (_last_heartbeat_code) differs from the
-    deployed SHA (_version_signal). N/A when the daemon is not loaded. Mirrors daemon.ensure's
-    drift branch (keeper kickstart) as an operator-visible doctor check (STD-VER-02)."""
+    FAIL when the daemon is loaded and either SHA is missing, or the running SHA
+    (_last_heartbeat_code) differs from the deployed SHA (_version_signal()[0]). N/A when
+    the daemon is not loaded. daemon.ensure kickstarts on that same miss-or-mismatch when
+    the pump is loaded (STD-VER-02). Both present and equal pass, and do not kickstart."""
     from fanops import daemon
     lbl = "publish daemon running current code (heartbeat SHA matches disk)"
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
@@ -244,7 +245,14 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
         return None                                              # N/A — pump not loaded
     running = daemon._last_heartbeat_code(cfg)
     deployed = daemon._version_signal(cfg)[0]
-    if running is not None and deployed is not None and running != deployed:
+    if running is None or deployed is None:
+        missing = []
+        if running is None:
+            missing.append("running SHA")
+        if deployed is None:
+            missing.append("disk SHA")
+        return _check(lbl, False, f"{' and '.join(missing)} missing")
+    if running != deployed:
         return _check(lbl, False,
                       f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
                       f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
