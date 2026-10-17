@@ -223,7 +223,7 @@ def test_swap_shipped_tag_keeps_sentence_and_state(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed(cfg)
     sentence = "The pocket stays."
-    led.posts["p_edit"].state = PostState.awaiting_approval
+    led.set_post_state("p_edit", PostState.awaiting_approval)
     led.posts["p_edit"].caption = sentence
     led.posts["p_edit"].hashtags = ["#keep", "#low"]
     led.add_post(Post(id="p_sib", parent_id="clip_1", account="b", account_id="2",

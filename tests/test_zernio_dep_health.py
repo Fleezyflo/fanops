@@ -1,9 +1,7 @@
-"""OPS-ZERNIO: zernio_dep_health follows doctor's authenticated /accounts posture.
+"""OPS-ZERNIO: with creds, zernio_dep_health is a 2xx GET. No creds skips. No network."""
+import requests
 
-No network. Auth is monkeypatched; a completed 401 or unreachable result is down.
-"""
 from fanops.config import Config
-from fanops.errors import ZernioAuthError
 from fanops.health_probes import zernio_dep_health
 
 
@@ -12,43 +10,39 @@ def _cfg(tmp_path, monkeypatch, *, key=None):
     monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *a, **k: None)
     if key is not None:
         monkeypatch.setenv("ZERNIO_API_KEY", key)
+        monkeypatch.setenv("ZERNIO_API_URL", "http://zernio.test/v1")
     return Config(root=tmp_path)
 
 
 def test_zernio_dep_health_skips_when_creds_absent(tmp_path, monkeypatch):
-    def _no_auth(cfg):
-        raise AssertionError("auth probe must not run without Zernio creds")
-    monkeypatch.setattr("fanops.post.zernio.zernio_check_auth", _no_auth)
+    def boom(*_a, **_k):
+        raise AssertionError("network")
+
+    monkeypatch.setattr(requests, "get", boom)
     row = zernio_dep_health(_cfg(tmp_path, monkeypatch))
     assert row.name == "zernio" and row.ok is True
     assert row.detail == "skipped (not configured)"
 
 
-def test_zernio_dep_health_up_when_auth_ok(tmp_path, monkeypatch):
-    monkeypatch.setattr("fanops.post.zernio.zernio_check_auth", lambda cfg: True)
+def test_zernio_dep_health_up_on_2xx(tmp_path, monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda url, timeout=3: type("R", (), {"status_code": 200})())
     row = zernio_dep_health(_cfg(tmp_path, monkeypatch, key="sk_test"))
     assert row.name == "zernio" and row.ok is True
     assert row.detail == "reachable"
 
 
-def test_zernio_dep_health_down_when_auth_false(tmp_path, monkeypatch):
-    monkeypatch.setattr("fanops.post.zernio.zernio_check_auth", lambda cfg: False)
+def test_zernio_dep_health_down_on_401(tmp_path, monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda url, timeout=3: type("R", (), {"status_code": 401})())
     row = zernio_dep_health(_cfg(tmp_path, monkeypatch, key="sk_test"))
     assert row.name == "zernio" and row.ok is False
-    assert "unreachable" in row.detail
+    assert row.detail == "HTTP 401"
 
 
-def test_zernio_dep_health_down_on_zernio_auth_error(tmp_path, monkeypatch):
-    def _boom(cfg):
-        raise ZernioAuthError("401")
-    monkeypatch.setattr("fanops.post.zernio.zernio_check_auth", _boom)
+def test_zernio_dep_health_down_on_connection_error(tmp_path, monkeypatch):
+    def boom(*_a, **_k):
+        raise requests.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr(requests, "get", boom)
     row = zernio_dep_health(_cfg(tmp_path, monkeypatch, key="sk_test"))
     assert row.name == "zernio" and row.ok is False
-    assert "401" in row.detail
-
-
-def test_zernio_dep_health_skips_when_reach_check_returns_none(tmp_path, monkeypatch):
-    monkeypatch.setattr("fanops.doctor._zernio_reach_check", lambda cfg, **k: None)
-    row = zernio_dep_health(_cfg(tmp_path, monkeypatch, key="sk_test"))
-    assert row.name == "zernio" and row.ok is True
-    assert row.detail == "skipped (not configured)"
+    assert row.detail == "unreachable"

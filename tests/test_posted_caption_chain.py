@@ -13,6 +13,7 @@ from fanops.caption import ingest_captions, request_captions
 from fanops.caption_compose import posted_text_for
 from fanops.config import Config
 from fanops.crosspost import crosspost_clips
+from fanops.hashtags import play_rank_key
 from fanops.ig_hashtag_scrape import ScrapeUnavailable
 from fanops.ledger import Ledger
 from fanops.models import (CaptionItem, CaptionSet, Clip, ClipState, Moment, MomentState,
@@ -138,7 +139,7 @@ def test_lock_to_vendor_is_one_sentence_and_those_tags(tmp_path, mocker, monkeyp
 
     mocker.patch("fanops.llm.claude_json_meta", _claude)
     lock_ready_sources(cfg, client=client,
-                       research_fn=lambda s, e: shortlist_source_tags(s, e, []))
+                       research_fn=lambda s, e: shortlist_source_tags(s, e, names))
     from fanops.hashtags import lock_from_pile, play_rank_key
     rec = load_source_tag_locks(cfg)[sid]
     meas = {
@@ -198,7 +199,7 @@ def test_finished_empty_lock_ships_sentence_without_tags(tmp_path, mocker, monke
     mocker.patch("fanops.llm.claude_json_meta",
                  lambda prompt, schema, **_k: ({"keep": ["quiet"]}, "m", False))
     lock_ready_sources(cfg, client=client,
-                       research_fn=lambda s, e: shortlist_source_tags(s, e, []))
+                       research_fn=lambda s, e: shortlist_source_tags(s, e, ["quiet"]))
     rec = load_source_tag_locks(cfg)[sid]
     assert rec["lock"] == []
     assert isinstance(rec.get("researched_at"), str) and rec["researched_at"].strip()
@@ -226,7 +227,7 @@ def test_finished_empty_lock_ships_sentence_without_tags(tmp_path, mocker, monke
     assert "#" not in SENTENCE
 
 
-def test_missing_researched_at_leaves_caption_gate_closed(tmp_path):
+def test_missing_researched_at_opens_empty_caption_menu(tmp_path):
     cfg = Config(root=tmp_path)
     led, sid, clip_id = _lineage(cfg)
 
@@ -237,14 +238,17 @@ def test_missing_researched_at_leaves_caption_gate_closed(tmp_path):
                        research_fn=lambda s, e: shortlist_source_tags(s, e, []))
     assert sid not in load_source_tag_locks(cfg)
     led = request_captions(led, cfg, clip_id, [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", clip_id).exists()
-    assert led.clips[clip_id].state is ClipState.rendered
+    assert request_path(cfg, "captions", clip_id).exists()
+    assert led.clips[clip_id].state is ClipState.captions_requested
+    req = json.loads(request_path(cfg, "captions", clip_id).read_text())
+    assert "hashtag_store" not in req["surfaces"][0]
 
 
 def test_longer_aspect_tag_list_does_not_replace_seed_sentence(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     seed_tags = ["#keep", "#also"]
+    ranked = sorted(seed_tags, key=lambda t: play_rank_key(t, None))
     longer = seed_tags + ["#extra", "#more"]
     lock = longer
     p = source_tag_locks_path(cfg)
@@ -275,7 +279,7 @@ def test_longer_aspect_tag_list_does_not_replace_seed_sentence(tmp_path):
                       platform=Platform.instagram, caption=stale, hashtags=list(seed_tags)))
     led.add_post(Post(id="p_seed", parent_id="clip_seed", account="a", account_id="1",
                       platform=Platform.instagram, caption=stale, hashtags=list(seed_tags)))
-    want = seed_sentence + "\n" + " ".join(seed_tags)
+    want = seed_sentence + "\n" + " ".join(ranked)
     for pid in ("p_aspect", "p_seed"):
         post = led.posts[pid]
         assert _seed_clip_id(led, post) == "clip_seed"
@@ -283,7 +287,7 @@ def test_longer_aspect_tag_list_does_not_replace_seed_sentence(tmp_path):
         surface = _surface(post, persona=None, now=NOW, cfg=cfg, led=led)
         assert surface.caption == seed_sentence
         assert surface.approve_caption == want
-        assert surface.hashtags == seed_tags
+        assert surface.hashtags == ranked
         assert surface.tag_sources == {t: "lock" for t in seed_tags}
         assert wrong not in surface.caption and wrong not in surface.approve_caption
 

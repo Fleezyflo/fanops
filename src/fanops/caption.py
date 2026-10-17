@@ -27,7 +27,7 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import load_measurements, ship_from_lock, _dedupe_norm
+from fanops.hashtags import ship_from_lock, _dedupe_norm
 from fanops.control import load_guidance
 from fanops.caption_compose import (_hashtag_metrics_for, _lock_fingerprint, _source_lock_completed,
                                     _source_lock_measurements, _source_lock_tags)
@@ -162,8 +162,17 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     else:
         peaks = env_peaks
     segs = list(moment.segments) if moment.segments else None
-    excerpt = excerpt_for_window(src, cs, ce)
-    if excerpt and excerpt != (moment.transcript_excerpt or ""):
+    rendered = segs if segs and len(segs) >= 2 else None
+    if rendered:
+        excerpt = excerpt_for_window(src, cs, ce, spans=rendered)
+    else:
+        excerpt = excerpt_for_window(src, cs, ce)
+    stored = moment.transcript_excerpt or ""
+    if rendered:
+        if excerpt != stored:
+            led.moments[moment.id] = moment.model_copy(update={"transcript_excerpt": excerpt})
+            moment = led.moments[moment.id]
+    elif excerpt and excerpt != stored:
         led.moments[moment.id] = moment.model_copy(update={"transcript_excerpt": excerpt})
         moment = led.moments[moment.id]
     frames = _window_frames(cfg, src, cs, ce, segments=segs)
@@ -172,15 +181,19 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
     # request back). Absent registry / None value -> no key (byte-identical to before).
     personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
-    lock = _source_lock_tags(cfg, src) if _source_lock_completed(cfg, src) else []
-    meas = load_measurements(cfg)
+    if _source_lock_completed(cfg, src):
+        lock = _source_lock_tags(cfg, src)
+        meas = _source_lock_measurements(cfg, src)
+    else:
+        lock = []
+        meas = {}
     hashtag_metrics = _hashtag_metrics_for(meas, lock)
     payload = {
         "clip_id": clip_id,
         "start": moment.start,
         "end": moment.end,
         "reason": moment.reason,
-        "transcript_excerpt": excerpt or moment.transcript_excerpt,
+        "transcript_excerpt": excerpt if rendered else (excerpt or moment.transcript_excerpt),
         "signal_peaks": peaks,
         "frames": frames,
         "language": src.language if src else None,
