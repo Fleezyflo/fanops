@@ -1,6 +1,6 @@
 # Weakness register (working tree on `d2cded31`)
 
-Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audit-2026-09`. The rows below cite symbols in this working tree after the remediate program. They replace the committed 2026-09-12 register and the uncommitted re-verdict of `088702ca`. Studio `GET /_fingerprint` is `f65411d5806cce087a475261bf4c96c98f0bcf97`, which equals `origin/main`. This tree is not that SHA. The ledger was not modified.
+Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audit-2026-09`. The rows below cite symbols in this working tree after the remediate program. They replace the committed 2026-09-12 register and the uncommitted re-verdict of `088702ca`. Studio `GET /_fingerprint` sha is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of PR #1316 and `origin/main` at that poll. The ledger was not modified.
 
 ## Rows
 
@@ -42,7 +42,7 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | OPS-SHA | closed | `doctor._deploy_code_check` fails when the daemon is loaded and either SHA is missing or the two differ. Unloaded stays N/A. Both present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump is loaded. |
 | OPS-POSTIZ | open | 2026-10-17 `uv run fanops doctor` exit 1: Postiz unreachable, docker down. Ledger +0. Closure: [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). |
 | OPS-QUEUE | open | 2026-10-17 `fanops doctor` exit 1: `5 drainable past-due (up to 463.9h); 76 parked on non-active accounts; 0 retired lineage; 851 total queued`. Ledger +0, not wiped. Closure: [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue). |
-| REL-UNDEPLOYED | open | PR #1316 is not fingerprint `f65411d5806cce087a475261bf4c96c98f0bcf97`. Unit check `39021062319` passed and is not a deploy. Closure: [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
+| REL-UNDEPLOYED | closed | Merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of #1316. Unit run `39073814011`, impact run `39073814128`, and lane-guard run `39073814368` passed on `6f355d09b2dea3275101434d8c03c96bc7692d08`. `GET /_fingerprint` sha equals that merge commit. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
 | REL-PROT | closed | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-16T08:47:37Z`. |
 | REL-CI-ASR | open | Nightly run `38868030626` failed `[asr] toolchain smoke (nightly)` (`whisper produced no JSON (rc=1)`, `test_e2e_real.py` moments `0 == 1`). Closure: [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr). |

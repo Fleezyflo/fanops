@@ -6,15 +6,9 @@ Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-
 
 ## REL-UNDEPLOYED
 
-**Current evidence.** PR #1316. Fingerprint and `origin/main` are `f65411d5806cce087a475261bf4c96c98f0bcf97`. Required check `unit (fast, no toolchain)` passed on run `39021062319`. That pass is not a deploy. `impact report` run `39021062321` failed: `views_review` had hoisted `caption_compose` and `hashtags` to module level (ARCH-007). On this working tree those imports are back inside the functions that use them, and `python -m tools.arch impact --base origin/main --strict` exits 0 (`COMPATIBLE_CHANGE`). `lane file-ownership + cross-PR collision` run `39021062324` failed because this PR still changed `src/fanops/post/postiz.py` (also #1282) and `src/fanops/reconcile.py` (also #1290, #1315). Those two files are restored to `origin/main` in this working tree. The GitHub check stays red until that restore is committed and pushed. The collision guard was not weakened.
+**Current evidence.** Closed. Merge commit `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of PR #1316 is `origin/main`. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":20339,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:13:09.098405+00:00"}`. That `sha` equals the merge commit.
 
-**Closure work.**
-
-1. Keep `unit (fast, no toolchain)` green on the PR head.
-2. Land the `views_review` call-time imports so `impact --strict` stays clean. Do not add an `approved_breaking_changes` exception for the hoist.
-3. Land the restore of `postiz.py` and `reconcile.py` to `origin/main` so this PR no longer shares those hot files with #1282, #1290, and #1315.
-4. Merge #1316.
-5. `GET /_fingerprint` SHA equals that merge commit.
+**Closure work.** Done.
 
 **Who.** `both`
 
@@ -110,13 +104,9 @@ Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-
 
 ## Cap ≥84
 
-**Current evidence.** Headline stays **78**. Required check pass `39021062319` is not a deploy. Fingerprint is `f65411d5806cce087a475261bf4c96c98f0bcf97`.
+**Current evidence.** Closed. Headline stays **78**. Fingerprint `sha` is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of #1316. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":20339,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:13:09.098405+00:00"}`. That `sha` equals the merge commit. This does not close 85+.
 
-**Closure work.**
-
-1. Merge the remediation SHA.
-2. Fingerprint equals that merge SHA.
-3. `unit (fast, no toolchain)` is green on the shipped SHA.
+**Closure work.** Done. The headline stays 78 until a ledger row moves.
 
 **Who.** `both`
 
