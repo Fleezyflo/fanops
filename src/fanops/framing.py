@@ -203,6 +203,21 @@ def _load_detect_cache(path: Path) -> dict:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
 
+def _sample_detect_frames(frames: list[str]) -> list[str]:
+    """Face detection reads the shared 9fps grid at 4fps timestamps.
+
+    `_compute_track` and `motion_saliency` already extract at `_ASD_FPS`. Calling
+    `extract_frames_grid` at that same fps hits one cache key. The detect sidecar
+    still reports `_DETECT_FPS` so frame index maps to the 4fps clock.
+    """
+    if len(frames) < 2:
+        return frames
+    n = max(1, int(round(len(frames) * _DETECT_FPS / _ASD_FPS)))
+    if n >= len(frames):
+        return frames
+    return [frames[min(len(frames) - 1, int(round(j * _ASD_FPS / _DETECT_FPS)))] for j in range(n)]
+
+
 def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) -> dict | None:
     """ONE grid pass over [start,end) -> {fps, frames:[[ [cx,cy,fh,ey], ... per face ], ... per frame ]},
     cached per (source, window) in a `<source_id>.detect.json` sidecar. This is the SINGLE detection that
@@ -262,20 +277,21 @@ def detect_window(cfg, src, *, start: float, end: float, _rt=None, _trace=None) 
         # they re-extract the same window 3× per pass; with it, the second + third callers find
         # the frames on disk and short-circuit.
         frames = keyframes.extract_frames_grid(getattr(src, "source_path", ""), start, end,
-                                               fps=_DETECT_FPS, out_dir=tmp, width=_KF_WIDTH,
+                                               fps=_ASD_FPS, out_dir=tmp, width=_KF_WIDTH,
                                                source_id=source_id, cfg=cfg, _trace=_trace)
+        detect_frames = _sample_detect_frames(frames)
         stats = None
         try:
-            if frames:
+            if detect_frames:
                 stats = {"fps": _DETECT_FPS,
-                         "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in frames]}
+                         "frames": [[list(t) for t in _detect_faces(cv2, det, fp)] for fp in detect_frames]}
         except Exception as exc:
             _log.warning("detect_window: detection pass failed (%s: %s); centering", type(exc).__name__, str(exc)[:120])
             _rec(_trace, _FE.DETECTOR_RUNTIME_FAILED, exc_type=type(exc).__name__)
             stats = None                                      # fail-open by contract
         if stats is None:
             return None                                       # frames==[] -> keyframes ALREADY recorded which one
-        _rec(_trace, _FE.FACES_DETECTED, frames=len(frames), fps=_DETECT_FPS,
+        _rec(_trace, _FE.FACES_DETECTED, frames=len(detect_frames), fps=_DETECT_FPS,
              faces=sum(len(fr) for fr in stats["frames"]))
         cache[key] = stats
         try:

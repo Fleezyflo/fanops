@@ -82,7 +82,7 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` (`daemon.py:393`) matches the doctor miss-or-mismatch rule. Launchd policy was not changed |
 | H-CI | Gates | [H-CI-gates.md](packs/H-CI-gates.md) | **H-CI-F01 closed** | Parent extends `tests/test_production_audit_gates.py` only for new pack finding IDs, last |
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
-| H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 accepted** | Dual map stays. `reconcile.py` is C7 in `partition.json` and C6 for edits |
+| H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 closed** | `partition.json` is the only C-map. `reconcile.py` is C7. Publish owns the file |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
 | X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO closed**. **OPS-POSTIZ** and **OPS-QUEUE** deferred | 2026-10-17 `uv run fanops doctor` exit 1: docker down, Postiz unreachable, 5 drainable past-due (463.5h), 851 queued |
 | X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** deferred | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. Architecture schedule run `38253871938` failed DC-3 with `gh` HTTP 403. That row is not the 84 cap. REL-UNDEPLOYED stays open until #1316 merges and the fingerprint equals the merge SHA |
@@ -225,11 +225,11 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `tools/arch/policy/rules.py` (`ARCH-001`, “The subsystem partition is TOTAL”), `tools/arch/cli.py`, `.reports/architecture/derived/` (regen output; dirty in this working tree), `docs/CODEMAPS/partition.json`.
 - **Pack.** [packs/H-INT-invariants.md](packs/H-INT-invariants.md).
-- **Register.** **H-INT-F01 accepted.** Dual authority is still true: ARCH-001 is the S-subsystem totality; operator C-clusters are `partition.json`. The pack’s “partition.json is absent” clause is stale on this HEAD.
+- **Register.** **H-INT-F01 closed.** `partition.json` is the only C-map. `reconcile.py` is C7 there. Publish owns edits to that file in `.agents/lanes.json`. Operator prose does not keep a second map.
 - **Lane.** ci.
 - **Audit.** State both maps and the two disagreements this index cares about: `reconcile.py` is C7 in `partition.json` and C6 in the operator brief; `post/metrics/*` is C6 in `partition.json` and C7 here. X-modules must stay overlays. Confirm a scanned-source edit path is `python -m tools.arch regen` plus the architecture workflow.
 - **Remediate.** Document the dual map and the C6/C7 file split in the pack. Do not merge the partitions and do not add X-keys.
-- **Finalize.** H-INT-F01 stays accepted, with evidence from this HEAD. Pack table updated.
+- **Finalize.** H-INT-F01 closed. `partition.json` is the C-map. Publish owns `reconcile.py` edits.
 
 ## X-SEC — secrets and config introspection
 
