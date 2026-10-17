@@ -312,7 +312,10 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     scrape_done = (not pending) or len(lock_from_pile(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
-        if verified or retryable_fail:
+        # A pass of only exact misses has verified=[] and retryable_fail False.
+        # Those misses still have to land, or the next tick re-researches and
+        # searches the same names (the rest of the catalog never starts).
+        if verified or retryable_fail or misses:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending,
                                catalog=catalog, catalog_at=catalog_at)

@@ -18,15 +18,15 @@ Assessed 2026-10-17. The remediated tree sits on base `d2cded31e29e027e4ed55bfdb
 |-----------|-------------------|------------------------|
 | U0 structural delta | closed by stale mark | not re-audited; Studio serves this SHA |
 | C1 data model | closed — `get_logger` on the wipe path | not re-audited |
-| C2 ingest | closed — `vocals._demucs_env` | not re-audited |
-| C3 clip production | closed — `framing._compute_track` | not re-audited |
-| C4 moments/personas | closed — `persona_directives.persona_facts` | not re-audited |
-| C5 caption/hashtags | closed — `hashtags.ship_from_lock`; `vet_hashtags` absent | not re-audited |
-| C6 crosspost/publish | closed — `assert _JITTER_MAX < _STEP_MIN` | not re-audited |
-| C7 metrics/learning | closed — `meta_graph._read_queries` absent | not re-audited |
-| C8 ops/CLI/daemon | closed — `health_projectors.half_live_state` | not re-audited |
-| C9 studio backend | closed — `actions_wipe.confirm_wipe` | not re-audited |
-| C10 studio views | closed — `app_routes_home` passes `zero_post_clips` | not re-audited |
+| C2 ingest | C2-F01 and C2-F02 closed. C2-F04 closed: native scan skips a child `.pull`. C2-F03 open: `config.isolate_vocals` docstring, `config.py` not edited | not re-audited |
+| C3 clip production | C3-F01 accepted (second grid still reachable). C3-F02 closed. C3-F03 closed: empty rc-0 temp does not publish over the prior mp4 | not re-audited |
+| C4 moments/personas | C4-F01 through C4-F04 closed. Ingest and studio `regenerate_hook` share `_hook_script_mismatch` | not re-audited |
+| C5 caption/hashtags | C5-F01 closed. C5-F02 closed: a miss-only scrape pass writes the sidecar. Hook prompt still says “SEE them” | not re-audited |
+| C6 crosspost/publish | C6-F01 and C6-F02 closed. Dirty-tree pass found no C6-F03. Dry-run does not POST | not re-audited |
+| C7 metrics/learning | C7-F01 and C7-F02 closed. `_read_queries` has no successor. `reconcile.py` was not edited | not re-audited |
+| C8 ops/CLI/daemon | C8-F01 closed. OPS-SHA closed. `daemon.ensure` matches the doctor miss-or-mismatch rule | not re-audited |
+| C9 studio backend | C9-F01 through C9-F03 closed. Imminent queued regenerate is refused before `render_moment` | not re-audited |
+| C10 studio views | C10-F01 through C10-F04 closed. A failed card or feed swap re-renders the card with the error inside it | not re-audited |
 | H-CI gates | closed — `tests/test_production_audit_gates.py` | not re-audited |
 | H-DOCS drift | closed by `subsystem-traces/STALE.md` | not re-audited |
 | H-INT invariants | accepted — ARCH-001 vs C-map; `reconcile.py` is C7 in `partition.json` and C6 for edits | not re-audited |

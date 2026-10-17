@@ -1724,6 +1724,48 @@ def test_unattended_lock_walks_budget_tags(tmp_path, monkeypatch):
     assert not any(r.get("err") == "scrape_unfinished" for r in recs)
 
 
+def test_unattended_exact_miss_pass_persists_and_advances(tmp_path, monkeypatch):
+    """A pass that only exact-misses must land exact_miss and remaining. The next tick
+    searches the rest of the catalog, not those misses, and does not re-research."""
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_LOCK_TAGS_PER_PASS", "2")
+    names = ["missa", "missb", "hitc", "hitd"]
+    research_calls = {"n": 0}
+    clients = []
+
+    def research(_s, _e):
+        research_calls["n"] += 1
+        return list(names)
+
+    def opener(_cfg, user=None):
+        cli = _SearchClient(
+            {"missa": [], "missb": [], "hitc": [_Hit("hitc")], "hitd": [_Hit("hitd")]},
+            media_by_tag={"#hitc": [_Media(1, "", play_count=8)],
+                          "#hitd": [_Media(1, "", play_count=9)]},
+        )
+        cli._fanops_scrape_user = user
+        clients.append(cli)
+        return cli
+
+    ensure_source_lock(cfg, _src(), research_fn=research, open_client_fn=opener, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert research_calls["n"] == 1
+    assert clients[-1].search_calls == ["missa", "missb"]
+    assert rec.get("exact_miss") == ["#missa", "#missb"]
+    assert rec.get("remaining") == ["#hitc", "#hitd"]
+    assert not rec.get("researched_at")
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()
+    ensure_source_lock(cfg, _src(), research_fn=research, open_client_fn=opener, **_ok_graph())
+    assert research_calls["n"] == 1
+    assert clients[-1].search_calls == ["hitc", "hitd"]
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert rec2.get("exact_miss") == ["#missa", "#missb"]
+    assert "#missa" not in rec2.get("lock", []) and "#missb" not in rec2.get("lock", [])
+    assert rec2.get("researched_at")
+
+
 def test_lock_tags_per_pass_env_override(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")

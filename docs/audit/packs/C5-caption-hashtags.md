@@ -5,6 +5,7 @@
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
 | C5-F01 | low | design-note | closed on this tree | `vet_hashtags` is absent. `ship_from_lock` is picks ∩ lock, cap n, no floors, no backfill | `hashtags.ship_from_lock` |
+| C5-F02 | high | stall | fixed on this working tree | A pass of only exact misses writes `exact_miss` and `remaining`. The next tick searches the rest of the catalog and does not re-research. | `source_tags_scrape.ensure_source_lock` |
 
 ## Evidence commands run
 
@@ -15,7 +16,7 @@ tests/test_hashtags.py tests/test_fanops_hashtags.py
 
 ## Full checklist 2026-10-17
 
-Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Product code was read with `git show HEAD:path`. Unrelated dirty worktree edits were not reverted and were not treated as the subject. No C5-F02. C5-F01 stays closed.
+Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Product code was read with `git show HEAD:path`. Unrelated dirty worktree edits were not reverted and were not treated as the subject. The HEAD pass filed no further id. C5-F01 stays closed. Wave 1 below filed C5-F02 on the dirty tree.
 
 ### Ship path (lock → `posted_text_for`)
 
@@ -90,3 +91,42 @@ git grep -n 'retryable_fail\|search_fail\|measure_fail\|stop_dead' HEAD -- src/f
 git grep -n posted_text_for HEAD -- src/fanops/post/postiz.py src/fanops/post/zernio.py src/fanops/post/dryrun.py
 git show HEAD:src/fanops/prompts.py
 ```
+
+## Wave 1 evidence (dirty tree)
+
+Subject working tree at `d2cded31`. Product reads are the dirty files. This pass edited `source_tags_scrape.py` and `tests/test_source_tags.py`. `prompts.py` was not edited. No pytest. No symbol was deleted. `ensure_source_lock` is imported by `source_tags.py` and called from `source_tags_walk.lock_ready_sources`.
+
+### Frame-grounding verdict
+
+Not a defect. The skill (Part 1) requires the hook author to see the clip's frames and write one short line (`keep the viewer watching`). It does not require the sentence "write the hook true to what is on screen."
+
+Dirty `moment_hook_prompt` still says "SEE them" on both frame lines when frames are attached (`prompts.py`). The no-frames path still forbids claiming the screen. `_hook_spec` still contains "keep the viewer watching". The Claude and cursor first-pass prefixes say to read each frame and return JSON. The Claude re-ask prefix still says to ground the answer in the frames (`llm.py`). That is the skill's see-the-frames requirement. No C5 id for it.
+
+### C5-F02
+
+An unattended pass (`FANOPS_LOCK_TAGS_PER_PASS=2`, no injected client) whose first tags were exact misses returned `scrape_unfinished` and wrote no sidecar. `verified` was empty and `retryable_fail` was false, so the `exact_miss` write never ran. The next tick called research again and searched `missa` / `missb` again. `hitc` / `hitd` never started. Probe before the edit: sidecar absent, `research` count 2, second search list `['missa', 'missb']`.
+
+The unfinished write now runs when `misses` is non-empty. The same probe after the edit, as `test_unattended_exact_miss_pass_persists_and_advances`, stores `exact_miss` `#missa` `#missb` and `remaining` `#hitc` `#hitd`, then the next tick searches only `hitc` and `hitd` and does not re-research. Called directly with a tempfile `Path`. No pytest.
+
+### Rest of the dirty caption surface
+
+C5-F01 stays closed. `rg vet_hashtags` on `hashtags.py`, `caption.py`, `caption_ingest.py`, and `prompts_caption.py` found no matches. `ship_from_lock` is still picks ∩ lock, cap, then artist-norm drop, then `play_rank_key`. No floors, no backfill.
+
+`caption.ingest_captions` still holds a declared language mismatch. `request_captions` attaches this window's frames and does not copy `moment.hook`. `prompts_caption.caption_prompt` tells the model the choose-key is `play_count`, the tie is `current_top_reel_play_max_7d`, and menu position is not a reason. `hookcheck.py` is a docstring change; `is_weak_hook` is still empty / exact-dup / opening-cluster only. `recaption.run_recaption` still drives `request_captions` / `ingest_captions`. `states` defaults to awaiting-approval and queued. `source_tags_walk._iter_lock_clients` defaults to `open_web_session`, which matches the skill's Safari lock walk. `IgWebSession` duck-types `search_hashtags` / `hashtag_medias_top`. `ig_hashtag_scrape.py` is not dirty. `source_tags.py` is not dirty.
+
+### Commands
+
+```
+git rev-parse HEAD
+git status --short --branch
+git diff HEAD -- src/fanops/prompts.py .claude/skills/fanops-hook-hashtag/SKILL.md
+git diff HEAD -- src/fanops/hashtags.py src/fanops/hookcheck.py src/fanops/caption_ingest.py src/fanops/source_tags_walk.py src/fanops/source_tags_shortlist.py src/fanops/source_tags_sidecar.py
+git diff HEAD -- src/fanops/caption.py src/fanops/recaption.py src/fanops/source_tags_scrape.py
+rg -n 'vet_hashtags|write the hook true|SEE them' src/fanops/hashtags.py src/fanops/prompts.py src/fanops/llm.py
+rg -n 'vet_hashtags' src/fanops/hashtags.py src/fanops/caption.py src/fanops/caption_ingest.py src/fanops/prompts_caption.py
+rg -n 'ensure_source_lock' src/fanops --glob '*.py'
+PYTHONPATH=src python -   # miss-only pass: sidecar absent; second tick research=2 searches ['missa','missb']
+PYTHONPATH=src:tests python -   # test_unattended_exact_miss_pass_persists_and_advances: KeyError src_1 before the fix; PASS after
+```
+
+No pytest.

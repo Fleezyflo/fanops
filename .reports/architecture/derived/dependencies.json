@@ -183,7 +183,8 @@
         "fanops.controlio",
         "fanops.errors",
         "fanops.ledger",
-        "fanops.models"
+        "fanops.models",
+        "fanops.speech_trust"
       ],
       "lazy": [
         "fanops.signals",
@@ -3121,7 +3122,7 @@
     "fanops.source_tags_shortlist": 3,
     "fanops.source_tags_sidecar": 4,
     "fanops.source_tags_walk": 2,
-    "fanops.speech_trust": 2,
+    "fanops.speech_trust": 3,
     "fanops.stage_lock": 1,
     "fanops.stitch_render": 2,
     "fanops.stranded_posts": 0,
@@ -3188,7 +3189,7 @@
     "fanops.adjust": 5,
     "fanops.agentstep": 4,
     "fanops.apply_common": 0,
-    "fanops.artifacts": 5,
+    "fanops.artifacts": 6,
     "fanops.audio_energy": 0,
     "fanops.audit": 2,
     "fanops.autopilot": 1,
@@ -5241,7 +5242,7 @@
     "G2_largest_scc_size": 40,
     "G2_module_sccs_total": 109,
     "G2_non_trivial_sccs": 8,
-    "compile_edges_G1": 840,
+    "compile_edges_G1": 841,
     "lazy_edges": 467,
     "lazy_edges_lateral": 46,
     "lazy_edges_strictly_upward": 130,

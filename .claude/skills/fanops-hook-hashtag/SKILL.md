@@ -6,11 +6,12 @@ description: Use when writing or reviewing on-screen HOOKS or HASHTAGS for FanOp
 # FanOps Hooks & Hashtags — researched, platform-measured
 
 > **Source of truth = code.** Hook patterns live in `prompts._hook_spec`. Caption
-> ship is `hashtags.ship_from_lock` (picks ∩ source lock, cap 4) — no AR floor,
+> ship is `hashtags.ship_from_lock` (picks ∩ source lock, cap 4, then `play_rank_key`) — no AR floor,
 > no mega slot, no store ∪ corpus. `tests/test_skill_drift.py` keeps hook patterns
 > and ship rules honest. Caption membership is the source lock only. Lock is
-> catalog keep ∩ positive play_count (`shortlist_source_tags`, keep order, cap 12);
-> caption picks ≤4 by CLIP FIT among the lock. IG/TT vendor `content` is
+> `lock_from_pile` (positive `play_count`, `play_rank_key`, cap 12). The caption
+> menu drops the artist-name tag and is ordered by `play_rank_key`. The choose-key
+> is `play_count`; the tie is `current_top_reel_play_max_7d`. IG/TT vendor `content` is
 > `posted_text_for` → `compose_posted_caption` — `src/fanops/post/CLAUDE.md`.
 
 The knowledge that drives two things the engine generates: the **on-screen hook**
@@ -45,9 +46,13 @@ INT32_MEDIA_COUNT=2_147_483_647
    present. Do not invent a sentence from `moment.hook` for already-minted rows.
 3. **Hashtags come from the source lock via `ship_from_lock`** — never words the
    model invents, never the 80-pile / store ∪ corpus. Membership is the lock
-   (`hashtag_store` on every surface of that source). The lock is catalog keep ∩
-   positive play_count (`shortlist_source_tags` judge, keep order, cap 12).
-   Caption picks up to 4 from that lock by CLIP FIT. Empty lock → empty tag line.
+   (`hashtag_store` on every surface of that source). The lock is `lock_from_pile`
+   (positive `play_count`, `play_rank_key`, cap 12). `shortlist_source_tags` names
+   candidates; it does not order the lock. The artist-name tag is off the menu.
+   Caption picks at most 4 measured tags a stranger would search to find this window.
+   The choose-key is `play_count`; the tie is `current_top_reel_play_max_7d`
+   (the same order as `play_rank_key`). Menu position is not a reason.
+   Empty lock → empty tag line.
    Invented / off-lock tags die. No AR floor, no mega slot, no `VETTED` pool, no semantic ban-list on the ship path.
 
 ---
@@ -87,16 +92,19 @@ line from `ship_from_lock`; stored caption still ships on the IG/TT wire.
 (`_per_account_hashtag_stores` / `_aligned_pool`) or store ∪ corpus — those are
 not the caption menu.
 
-Lock list order is catalog keep order (not play-rank). Caption picks ≤4 by
-CLIP FIT among that lock. `play_count` and `current_top_reel_play_max_7d`
-(7-day reel max) are visibility numbers on the row — meters, not the
-choose-key. `media_count` may appear as a number on the metrics row; it is
-not the choose-key. `size_band` / `size_rank_key` may order cache chips;
-they are not the caption menu.
+Lock is `lock_from_pile`: positive `play_count`, ordered by `play_rank_key`, cap 12.
+The caption menu is that lock with the artist-name tag removed, still in
+`play_rank_key` order. The choose-key is `play_count` (higher first). The tie is
+`current_top_reel_play_max_7d` (7-day reel max, higher first) — the same order as
+`play_rank_key`. Menu position is not a reason. `play_count` then
+`current_top_reel_play_max_7d` ranks the tags that fit this window, the same order
+as `play_rank_key`. It does not assign the highest `play_count` tags to every window.
+`media_count` is a post count on the row. `size_band` / `size_rank_key` may order cache chips; they are not the
+caption menu.
 
 ### Shipped line (`ship_from_lock`)
 
-- `ship_from_lock(picks, lock, n=4)` — picks ∩ lock, pick order, hard cap 4
+- `ship_from_lock` — picks ∩ lock, cap 4, artist-name tag dropped, then `play_rank_key` on the lock row's measurements
 - invented / off-lock tags die (not in the intersection)
 - empty lock → empty tag line; tags-only HOLD still holds
 - **no** AR region floor, **no** mega/untrusted slot cap, **no** backfill
@@ -111,15 +119,16 @@ they are not the caption menu.
 
 Authority: `docs/CODEMAPS/hashtag-lifecycle.md`. Summary:
 
-1. **Source lock produce** (`shortlist_source_tags` + Safari scrape) — per-source
-   sidecar `source_tag_locks.json`: catalog keep ∩ positive `play_count` → lock
-   (keep order, cap 12). Caption surfaces read that lock as `hashtag_store`.
-   Caption picks ≤4 by CLIP FIT among that lock.
+1. **Source lock produce** (`shortlist_source_tags` names candidates; Safari scrape
+   stamps with `lock_from_pile`) — per-source sidecar `source_tag_locks.json`:
+   positive `play_count`, `play_rank_key`, cap 12. Caption surfaces read that lock
+   minus the artist-name tag, in `play_rank_key` order, as `hashtag_store`.
+   The choose-key is `play_count`; the tie is `current_top_reel_play_max_7d`.
 2. **Tick remesure** (`fanops_hashtags.refresh_store_if_due` on the run loop) —
    remesure sidecar pile∪lock names only. **Not** persona discovery, **not**
    `persona_terms`, **not** vocab expand on the loop (HV1-PR4).
-3. **Ship** (`caption` → `hashtags.ship_from_lock`) — picks ∩ lock, cap 4. That
-   is every posted tag.
+3. **Ship** (`caption` → `hashtags.ship_from_lock`) — picks ∩ lock, cap 4, artist-name
+   tag dropped, then `play_rank_key`. That is every posted tag.
 4. **Attribution severance** — a tag's worth is Instagram's own number for the
    tag, never a post that used it (`tests/test_hashtag_attribution_severance.py`).
 

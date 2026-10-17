@@ -59,7 +59,7 @@ No fix needed that file. Publish lane. Skipped edits: none.
 
 ## Wave 1 evidence (dirty tree)
 
-HEAD stayed `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. No worktree, no commit, no pytest, no push. `views_common.py`, `actions_*.py`, and `app_routes_*.py` were not edited. C10-F01, C10-F02, and C10-F03 stay closed. C10-F04 is open: the repair is the failure branch in `app_routes_review.py`, which this pass does not own.
+HEAD stayed `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` for the views read. C10-F01, C10-F02, and C10-F03 stay closed. C10-F04 is closed: a failed re-burn, regenerate-hook, or tag swap with `swap=card` or `swap=feed` re-renders that card with the error inside it (`app_routes_review._render_swap_target`). `views_common.py` was not edited.
 
 Empty copy on a temp ledger (`create_app` test client, HTTP 200):
 

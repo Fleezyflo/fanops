@@ -14,7 +14,7 @@ It is 78 rather than 72 because the code rows that were actually open are closed
 
 ## Score ledger
 
-The headline did not fall. Commit `d2cded31` scores **72/100** (`git show HEAD:docs/audit/PRODUCTION_SCORE.md`, 2026-09-12). The uncommitted re-verdict of `088702ca` is not a score file at that SHA and is not what Studio serves. Finalize replaced that prose with this working tree. The number on this tree is **78/100**, which is **+6**.
+The headline did not fall. Commit `d2cded31` scores **72/100** (`git show d2cded31:docs/audit/PRODUCTION_SCORE.md`, 2026-09-12). The uncommitted re-verdict of `088702ca` is not a score file at that SHA and is not what Studio serves. This branch scores **78/100**, which is **+6**.
 
 The prior pass stated +6 for five code closures and did not publish per-row weights. This ledger attributes **+2** to C1 (the only 72-sheet high-value item whose code changed) and **+1** each to the four closures that were not on the 72 sheet. C7-F01 and C9-F01 were already true on `d2cded31`; closing that stale prose is **+0**.
 
@@ -33,6 +33,7 @@ The prior pass stated +6 for five code closures and did not publish per-row weig
 | C4-F04 | +0 | 78 | Opened and closed this pass. Studio `regenerate_hook` uses `_hook_script_mismatch` |
 | C9-F03 | +0 | 78 | Opened and closed this pass. An imminent queued post is refused before `render_moment` |
 | C10-F04 | +0 | 78 | Opened and closed this pass. A failed card or feed swap re-renders the card with the error inside it |
+| C5-F02 | +0 | 78 | Opened and closed this pass. A miss-only source-tag pass writes the sidecar so the next tick moves on |
 | H-DOCS-F01, U0-F01 | +0 | 78 | Stale-mark closure. Traces were not regenerated |
 | Deferred, no points | 0 | 78 | OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, REL-CI-ARCH stay deferred with command output in the register |
 | REL-PROT, REL-CI-E2E | 0 | 78 | Closed 2026-10-17 on fingerprint `f65411d5`. They do not lift the cap |

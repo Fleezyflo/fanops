@@ -75,7 +75,7 @@ Subject working tree at `d2cded31`. Product reads are the dirty files. This pass
 
 C4-F03. `ingest_moment_hooks` compared `_hook_lang_base` (`ar`, or `en` for every other script) to the whisper base code with `!=`. A Latin hook on `fr` / `es` / `zh` / `ja` was stored on `hook_removed` and shipped `hook=None`. Probe before the edit: `fr` + `the part you will replay` → strip. `_hook_script_mismatch` keeps a non-Arabic hook when the source code is outside `{en, ar}`. `en`/`ar` mismatches still null. An Arabic-script hook on any other code still nulls. `test_non_en_ar_source_keeps_latin_hook` and `test_non_arabic_source_strips_arabic_script_hook` cover that. The four existing language-gate tests still pass when called directly.
 
-C4-F04 is the same comparison in `studio/actions_edit.regenerate_hook` (`hook_lang != src_lang`). That file is outside this pass. Not edited.
+C4-F04 is closed. `actions_edit.regenerate_hook` uses `moments._hook_script_mismatch`. A Latin hook on a source outside `{en, ar}` is kept. An Arabic-script hook on any other code is still rejected. `tests/test_studio_regenerate_hook.py` covers both.
 
 `hook_author_slot` still returns voice only (dirty tree, `test_hook_author_slot_excludes_hook_angle`). `mechanism_lean` still rides the hook payload and `moment_hook_prompt` still drops it (`test_hook_prompt_reads_owner_voice_not_mechanism_lean_or_demos`). That is the locked contract, not a new defect.
 
@@ -85,7 +85,7 @@ C4-F04 is the same comparison in `studio/actions_edit.regenerate_hook` (`hook_la
 
 ### prompts.py (not edited)
 
-Dirty `moment_hook_prompt` no longer says to write the hook true to the frames. Both frame lines are now “SEE them.” The claude re-ask prefix still says to ground the answer in the frames; the first-pass prefix and the cursor prefix only say to read the frames and return JSON. Left for C5.
+C5 recorded this as not a defect. Both frame lines say “SEE them.” `tests/test_prompts.py` `test_hook_prompt_with_frames_keeps_stills_claim` still requires the stills claim when frames are attached. There is no open C5 prompt finding.
 
 ### Commands
 

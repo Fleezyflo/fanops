@@ -157,19 +157,19 @@
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 191
+        "line": 193
       },
       {
         "call": "Ledger.transaction",
-        "line": 237
+        "line": 239
       },
       {
         "call": "Ledger.transaction",
-        "line": 377
+        "line": 379
       },
       {
         "call": "Ledger.transaction",
-        "line": 417
+        "line": 419
       }
     ],
     "fanops.recaption": [
@@ -237,23 +237,23 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 135
+        "line": 140
       },
       {
         "call": "Ledger.transaction",
-        "line": 155
+        "line": 160
       },
       {
         "call": "Ledger.transaction",
-        "line": 173
+        "line": 178
       },
       {
         "call": "Ledger.transaction",
-        "line": 206
+        "line": 211
       },
       {
         "call": "Ledger.transaction",
-        "line": 361
+        "line": 366
       }
     ],
     "fanops.studio.actions_casting": [
@@ -659,19 +659,19 @@
     "fanops.clip_ffmpeg": [
       {
         "call": "subprocess.run",
-        "line": 125
+        "line": 141
       },
       {
         "call": "subprocess.run",
-        "line": 195
+        "line": 209
       },
       {
         "call": "subprocess.run",
-        "line": 203
+        "line": 217
       },
       {
         "call": "subprocess.run",
-        "line": 211
+        "line": 225
       }
     ],
     "fanops.daemon": [
@@ -689,23 +689,23 @@
       },
       {
         "call": "subprocess.run",
-        "line": 712
+        "line": 716
       },
       {
         "call": "subprocess.run",
-        "line": 738
+        "line": 742
       },
       {
         "call": "subprocess.run",
-        "line": 743
+        "line": 747
       },
       {
         "call": "subprocess.run",
-        "line": 771
+        "line": 775
       },
       {
         "call": "subprocess.run",
-        "line": 844
+        "line": 848
       }
     ],
     "fanops.discover": [
@@ -743,7 +743,7 @@
     "fanops.ingest": [
       {
         "call": "subprocess.run",
-        "line": 310
+        "line": 316
       }
     ],
     "fanops.ingest_shard": [

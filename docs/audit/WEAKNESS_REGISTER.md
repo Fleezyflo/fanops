@@ -20,6 +20,7 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | C4-F03 | closed | `moments._hook_script_mismatch` keeps a non-Arabic hook when the source language is outside `{en, ar}`. English and Arabic mismatches still null the hook. `tests/test_hook_language_gate.py`. |
 | C4-F04 | closed | `actions_edit.regenerate_hook` uses `moments._hook_script_mismatch`. A Latin hook on `fr` is kept. An Arabic-script hook on `fr` is still rejected. `tests/test_studio_regenerate_hook.py`. |
 | C5-F01 | closed | `vet_hashtags` is absent. `hashtags.ship_from_lock` still states no floors and no backfill. |
+| C5-F02 | closed | `source_tags_scrape.ensure_source_lock` writes the in-progress sidecar when a pass is only exact misses. The next tick stores those misses and searches the rest of the catalog. `tests/test_source_tags.py` `test_unattended_exact_miss_pass_persists_and_advances`. |
 | C6-F01 | closed | `crosspost.py` has module-level `assert _JITTER_MAX < _STEP_MIN`. |
 | C6-F02 | closed | `_NET_POST_FIELDS` includes `publish_hour` and `publish_dow`. `_publish_one` stamps them on the submitted→published promotion and finalize keeps them. |
 | C7-F01 | closed | `meta_graph._read_queries` is absent. No successor. |

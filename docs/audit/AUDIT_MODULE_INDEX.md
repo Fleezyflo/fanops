@@ -9,7 +9,7 @@ Finalize is complete against the register on this commit. Every row is closed, a
 | HEAD (audit subject) | PR #1316 | Remediation `f19d7e5e`. Scored base `d2cded31`. Fingerprint is `origin/main` |
 | `origin/main` | `f65411d5806cce087a475261bf4c96c98f0bcf97` (merge of #1314) | Neither ancestor of HEAD nor descendant of HEAD |
 | Studio `GET http://127.0.0.1:8787/_fingerprint` | `f65411d5806cce087a475261bf4c96c98f0bcf97` | Equals `origin/main`. pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00` |
-| `088702ca3ef4048e217befbb703443d6c1f5fde9` | ancestor of `origin/main` | Named by the uncommitted working-tree copies of `MASTER_MAP.md`, `PRODUCTION_SCORE.md`, and `WEAKNESS_REGISTER.md`. Studio is not serving it |
+| `088702ca3ef4048e217befbb703443d6c1f5fde9` | ancestor of `origin/main` | Not this score. Studio is not serving it |
 
 The committed score on this branch is **78/100**. The score on `d2cded31` was 72/100. See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Studio’s fingerprint equals `origin/main`, not this branch.
 
@@ -72,7 +72,7 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | U0 | Codemap / partition / stem drift | [U0-structural-delta.md](packs/U0-structural-delta.md) | **U0-F01 closed** (stale mark, traces not regenerated) | None in product code. Do not treat the stale mark as a regenerated trace |
 | C1 | Data model and persistence | [C1-data-model.md](packs/C1-data-model.md) | **C1-F01 closed** (`get_logger` on the unrestorable wipe path) | `config.py` stays on publish. No C1 code wave in this pass |
 | C2 | Ingest | [C2-ingest.md](packs/C2-ingest.md) | **C2-F01 closed**, **C2-F02 closed**, **C2-F03 closed**, **C2-F04 closed** | None. `config.isolate_vocals` matches the raise. `vocals.py` was not edited |
-| C5 | Caption, hooks, hashtags | [C5-caption-hashtags.md](packs/C5-caption-hashtags.md) | **C5-F01 closed** (`hashtags.ship_from_lock`) | None. Full checklist 2026-10-17 is on the pack. `prompts.py` was not edited |
+| C5 | Caption, hooks, hashtags | [C5-caption-hashtags.md](packs/C5-caption-hashtags.md) | **C5-F01 closed**, **C5-F02 closed** | A miss-only scrape pass now writes the sidecar, so the next tick does not research the same names. The hook prompt still says “SEE them”. `prompts.py` was not edited |
 | C3 | Clip production | [C3-clip-production.md](packs/C3-clip-production.md) | **C3-F01 accepted**, **C3-F02 closed**, **C3-F03 closed** | An empty rc-0 re-render no longer stamps the old mp4. A second `extract_frames_grid` pass is still reachable. `clip.py` was not edited |
 | C4 | Moments and personas | [C4-moments-personas.md](packs/C4-moments-personas.md) | **C4-F01 closed**, **C4-F02 closed**, **C4-F03 closed**, **C4-F04 closed** | Studio `regenerate_hook` uses the same script check as ingest. `prompts.py` is with C5 |
 | C9 | Studio backend | [C9-studio-backend.md](packs/C9-studio-backend.md) | **C9-F01 closed**, **C9-F02 closed**, **C9-F03 closed** | A queued post that becomes imminent during hook regeneration is refused before `render_moment`. Repeated approve does not rewrite queued times |
@@ -149,7 +149,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 - **Lane.** `prompts.py` is picking and rfd. Hashtag modules are unrestricted. Do not run concurrent with C4 if both would edit `prompts.py`.
 - **Audit.** Ship path from lock to `posted_text_for`. Source-lock scrape error versus `play_count` (`source_tags_scrape.ensure_source_lock` is the #1303 change on this HEAD). Hook authorship and language gate stay in the skill’s rules; this module collects whether the code matches them.
 - **Remediate.** Register and pack drop `vet_hashtags`. A new caption-lock defect found in audit is a separate `fix-defect` on a branch that does not take `prompts.py` unless picking or rfd owns that wave.
-- **Finalize.** C5-F01 closed with `ship_from_lock`. No C5-F02.
+- **Finalize.** C5-F01 closed with `ship_from_lock`. The frame lines stay “SEE them” (`tests/test_prompts.py` `test_hook_prompt_with_frames_keeps_stills_claim`); that is not a finding. C5-F02 is closed: a miss-only scrape pass writes the sidecar.
 
 ## C6 — crosspost and publish
 
