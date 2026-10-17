@@ -2,7 +2,7 @@
 
 Subject of this index is the head of pull request #1316 on branch `audit/production-audit-2026-09`. The remediation commit is `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67`. The scored base before that commit was `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Measured 2026-10-17 from `/Users/molhamhomsi/Moh Flow Fanops`. `GET http://127.0.0.1:8787/_fingerprint` is still `f65411d5806cce087a475261bf4c96c98f0bcf97` (pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00`).
 
-Finalize is complete against the register on this commit. Every row is closed, resolved, or open with a subsection in [OPEN_GAPS.md](OPEN_GAPS.md). C2–C10 packs carry a Full checklist 2026-10-17. Open rows are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. REL-UNDEPLOYED closes when #1316 merges and the fingerprint equals that merge SHA.
+Finalize is complete against the register on this commit. Every row is closed, resolved, or open with a subsection in [OPEN_GAPS.md](OPEN_GAPS.md). The open row is REL-CI-ASR. OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, and REL-CI-ARCH are closed. Fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals the merge of #1316.
 
 | Plane | SHA | Relation to the subject |
 |-------|-----|-------------------------|
@@ -31,7 +31,7 @@ One finding, one owner path, on a lane-respecting branch. A hot file in `.agents
 
 Parent pass after the module gates exist. Merge rows into `docs/audit/WEAKNESS_REGISTER.md` so every ID on this index is present. Refresh `docs/audit/MASTER_MAP.md` component verdicts for this HEAD (the live fingerprint SHA is a separate column, already measured as `f65411d5`). Re-score `docs/audit/PRODUCTION_SCORE.md` from the closed and open rows. `H-CI` lands last so `tests/test_production_audit_gates.py` encodes the closed findings.
 
-**All gaps finalized.** Every row in the working-tree `WEAKNESS_REGISTER.md` is closed with a symbol, resolved with the dual-map citation, or open in [OPEN_GAPS.md](OPEN_GAPS.md). Open rows are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. C2-F03 is closed. Live machine facts stay open because this checkout is not fingerprint `f65411d5`.
+**All gaps finalized.** Every row in the working-tree `WEAKNESS_REGISTER.md` is closed with a symbol, resolved with the dual-map citation, or open in [OPEN_GAPS.md](OPEN_GAPS.md). The open row is REL-CI-ASR. C2-F03 is closed. Studio fingerprint sha is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`.
 
 ### Dispatch order
 
@@ -84,8 +84,8 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
 | H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 resolved** | `partition.json` stays C1–C10. Operator edits of `reconcile.py` are C6; the partition keeps C7. No retag |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
-| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO closed**. **OPS-POSTIZ** and **OPS-QUEUE** open | 2026-10-17 `uv run fanops doctor` exit 1: docker down, Postiz unreachable, 5 drainable past-due (463.5h), 851 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
-| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** open | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. REL-CI-ARCH is open: run `38253871938` failed the old 403 hard-fail, and no new dispatch transcript exists. Not the 84 cap. REL-UNDEPLOYED is open until #1316 merges and the fingerprint equals the merge SHA. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed | 2026-10-17 doctor: Postiz reachable, `0 drainable past-due`, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, and **REL-CI-ARCH** closed. **REL-CI-ASR** open | Fingerprint `430ece73`. ASR run `38868030626` failed. REL-CI-ARCH run `39074333775` succeeded. [OPEN_GAPS.md](OPEN_GAPS.md) |
 | X-DATA | Ledger immutability | [X-DATA-ledger.md](packs/X-DATA-ledger.md) | **X-DATA-F01 closed** | Ledger was not wiped. Do not edit `ledger.py` |
 
 Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) on this working tree. The committed 2026-09-12 register on `d2cded31` is the baseline those bullets replaced.
@@ -245,21 +245,21 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `health_probes.py` (`postiz_dep_health`, `postiz_doctor_check`, `zernio_dep_health`, `_http_reachable`, `dep_health_list`), `doctor.py` (`_postiz_reach_check`, `_zernio_reach_check`, `_daemon_liveness_check`), `post/postiz.py`, `post/zernio.py`, `docs/POSTIZ_OPS.md`, `docs/POSTIZ_SETUP.md`. Overlaps C6 and C8.
 - **Pack.** None.
-- **Register.** **OPS-ZERNIO closed.** **OPS-POSTIZ open.** **OPS-QUEUE open.** 2026-10-17 doctor: docker down, Postiz unreachable, 5 drainable past-due, 851 queued. Ledger +0. [OPEN_GAPS.md](OPEN_GAPS.md).
+- **Register.** **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed. 2026-10-17 doctor: Postiz reachable, `0 drainable past-due`, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md).
 - **Lane.** publish for `postiz.py` and `zernio.py`. `doctor.py` and `health_probes.py` are unrestricted.
 - **Audit.** After C6: what “drainable” means in `_daemon_liveness_check` versus `publish_due`, and which errors are Postiz-local versus code. Probe status-code handling for Zernio. Do not start docker or drain the ledger.
 - **Remediate.** `fix-defect` for OPS-ZERNIO on `health_probes._http_reachable` / `zernio_dep_health`. OPS-POSTIZ process recovery is the operator closure in [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). The probe itself is not the open defect.
-- **Finalize.** OPS-ZERNIO closed. OPS-POSTIZ and OPS-QUEUE stay open. X-DEP was not re-opened after C6.
+- **Finalize.** OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE are closed. X-DEP was not re-opened after C6.
 
 ## X-REL — deploy protection, rollback, undeployed gap
 
 - **Paths.** `docs/GOLIVE.md` section “Rollback / safety”, `.github/ci-control-registry.yml` `required_contexts`, `tools/ci/live.py`, `doctor.py` `_deploy_code_check`, `daemon.py` `ensure`. Workflows listed on H-CI.
 - **Pack.** None.
-- **Register.** **OPS-SHA closed** on `doctor._deploy_code_check` and `daemon.ensure`. **REL-PROT closed.** **REL-CI-E2E closed.** **REL-UNDEPLOYED**, **REL-CI-ASR**, and **REL-CI-ARCH** are open. Closure steps are [OPEN_GAPS.md](OPEN_GAPS.md). REL-CI-ARCH is a `workflow_dispatch` transcript, not a PAT.
+- **Register.** **OPS-SHA**, **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, and **REL-CI-ARCH** are closed. **REL-CI-ASR** is open. Closure steps are [OPEN_GAPS.md](OPEN_GAPS.md). REL-CI-ARCH is run `39074333775`.
 - **Lane.** ci for the registry and workflows. `doctor.py` is unrestricted.
 - **Audit.** Rollback section present. Required context list. Undeployed relation of this HEAD to the fingerprint. Deploy-code miss path. Do not change branch protection.
 - **Remediate.** OPS-SHA is closed on `doctor._deploy_code_check` and `daemon.ensure`. Protection and scheduled-CI redness stay operator or ci-lane settings.
-- **Finalize.** OPS-SHA, REL-PROT, and REL-CI-E2E are closed. REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH stay open. The 84 cap still binds.
+- **Finalize.** OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH are closed. REL-CI-ASR stays open.
 
 ## X-DATA — ledger immutability
 

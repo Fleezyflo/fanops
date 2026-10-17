@@ -15,9 +15,9 @@ Re-measured 2026-10-17 after PR #1316 existed:
 
 ## Why capped at 84
 
-- **Ceiling, not a subtraction.** The production-audit skill caps the report at **84** when CI is not green or the launch-critical path was not tested end to end. The ledger headline stays **78** (+6 over the committed **72** on `d2cded31`). **78, capped at 84** means the number stays 78 until more ledger rows close. The product is not **85+** launch-verified until the cap conditions clear. The five open rows (**REL-UNDEPLOYED**, **OPS-POSTIZ**, **OPS-QUEUE**, **REL-CI-ASR**, **REL-CI-ARCH**) are ledger delta **0**. Steps are [OPEN_GAPS.md](OPEN_GAPS.md). They are caveats. They are not why the sheet says capped at 84. The **69** secrets cap does not bind.
-- **Two binding conditions.** **REL-UNDEPLOYED:** the scored tree is not what Studio serves. Fingerprint `f65411d5806cce087a475261bf4c96c98f0bcf97`. PR #1316 head `c1d892df86a02e57e3a9243109a00702c1bdfce8`. **Launch-critical publish** was not re-run end to end on the scored SHA. Dry-run does not count: `docs/GOLIVE.md` posts nothing in dry-run, and `post/run.py` `_post_provider` returns `"dryrun"` when the tree is not live. **REL-CI-E2E** closed on `f65411d5` does not lift this cap. **REL-CI-ASR** and **REL-CI-ARCH** stay open and have no cap mechanics.
-- **What lifts ≥84 versus 85+.** **≥84** is the score’s “Path to ≥84”: merge so the fingerprint equals the merge SHA, and `unit (fast, no toolchain)` is green. That clears the deploy mismatch in the cap narrative. It does not raise 78 without new ledger rows. **85+** also needs a documented **live** publish smoke on that shipped SHA (“Path to 100” in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md); live versus dry-run in `src/fanops/post/CLAUDE.md` and `docs/GOLIVE.md`).
+- **Ceiling, not a subtraction.** The production-audit skill caps the report at **84** when CI is not green or the launch-critical path was not tested end to end. The ledger headline stays **78** (+6 over the committed **72** on `d2cded31`). **78, capped at 84** means the number stays 78 until more ledger rows close. The ≥84 fingerprint condition and the 85+ live publish are recorded. The headline stays 78. **REL-CI-ASR** is the open row and is ledger delta **0**. The deploy, ops, architecture, and live-publish transcripts are closed in [OPEN_GAPS.md](OPEN_GAPS.md). The **69** secrets cap does not bind.
+- **Two binding conditions.** Both are closed. Fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals the merge of #1316. Live publish `post_5854bb63fefb` went through Postiz on that SHA. **REL-CI-ASR** stays open and is not a cap mechanic. **REL-CI-ARCH** is closed on run `39074333775`.
+- **What lifts ≥84 versus 85+.** Both transcripts exist. Fingerprint equals merge `430ece73` and unit run `39073814011` passed. `post_5854bb63fefb` is the live Postiz publish on that SHA. Neither raises 78 without a new ledger row.
 
 The committed baseline on `d2cded31` is **72/100**. This branch is **78/100**. The cap is a ceiling on that 78. The five open rows are delta 0. Neither is a drop from 72.
 
@@ -28,11 +28,11 @@ Nothing in this pass drains the ledger, starts Docker, or merges.
 | Gap class | ID or rule | Moves the headline? | Evidence |
 |-----------|------------|---------------------|----------|
 | Cap | **84** | No. The headline stays 78. The cap is the ceiling until the conditions in the score’s “Path to ≥84” and “85+” sentences are true. | [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md) score ledger cap row and the 84-cap paragraph: this tree is not fingerprint `f65411d5`; launch-critical publish was not re-run end to end on the scored SHA. |
-| Open, ledger delta 0 | **REL-UNDEPLOYED** | No. | PR #1316, fingerprint `f65411d5`. Closes only when the merge SHA is the fingerprint. [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
-| Open, ledger delta 0 | **OPS-POSTIZ** | No. | 2026-10-17 doctor: `localhost:4007` `/api/public/v1/integrations` max retries; `[DOWN] docker: daemon down`; `[DOWN] postiz: unreachable`. |
-| Open, ledger delta 0 | **OPS-QUEUE** | No. | Same doctor: `5 drainable past-due (up to 463.9h); 76 parked on non-active accounts; 0 retired lineage; 851 total queued`. Ledger delta 0. The ledger was not wiped. |
-| Open, ledger delta 0 | **REL-CI-ASR** | No. | Nightly run `38868030626`, schedule, failure, head `f65411d5`. Job `[asr] toolchain smoke (nightly)` failed. `dependency audit (pip-audit)` succeeded. Log: `tests/integration/test_e2e_real.py:68` `assert 0 == 1`, and produce `whisper produced no JSON (rc=1)`. The moments count is 0 because whisper returned no JSON. |
-| Open, ledger delta 0 | **REL-CI-ARCH** | No. | Schedule run `38253871938` failed the old 403 hard-fail. Working tree `cmd_deployed` no longer escalates an unreadable DC-3. No dispatch transcript yet. [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-arch). |
+| Closed, ledger delta 0 | **REL-UNDEPLOYED** | Yes. | Fingerprint equals merge `430ece73`. [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
+| Closed, ledger delta 0 | **OPS-POSTIZ** | Yes. | 2026-10-17 doctor: Postiz reachable, docker up. |
+| Closed, ledger delta 0 | **OPS-QUEUE** | Yes. | `0 drainable past-due`; 837 queued, not wiped. |
+| Open, ledger delta 0 | **REL-CI-ASR** | No. | Nightly run `38868030626` failed (`whisper produced no JSON (rc=1)`). `HF_TOKEN` is absent. |
+| Closed, ledger delta 0 | **REL-CI-ARCH** | Yes. | Run `39074333775` printed `[SKIP] DC-3` (HTTP 403) and exited 0. |
 | Closed | **C3-F01** | No. Not in the +6. | `test_ct_multi_resolve_one_real_ffmpeg` counts one real ffmpeg at 9.0 on the CT_MULTI path. `clip.py` was not edited. |
 | Resolved | **H-INT-F01** | No. | Operator edits of `reconcile.py` are C6. `partition.json` keeps C7. No retag. |
 | Closed by stale mark | **U0-F01**, **H-DOCS-F01** | No. Score ledger records both as +0. | `docs/CODEMAPS/subsystem-traces/STALE.md`. Live Python count 196, indexed stems 124. This is the closure. Traces were not regenerated. |
@@ -82,32 +82,32 @@ No new C6 finding. `docs/audit/packs/C6-crosspost-publish.md` “Full checklist 
 
 ## Part 3 — Repo work versus not
 
-**Repo work still open on the pushed SHA:** the `views_review` call-time imports, the restore of `postiz.py` and `reconcile.py` to `origin/main`, and the `cmd_deployed` hard list that drops unreadable DC-3. Those are in this working tree and are not on the remote until committed. C3-F01 is closed by `test_ct_multi_resolve_one_real_ffmpeg`. REL-CI-ASR still needs `HF_TOKEN` or a cached model on the nightly job. The required unit check on the pushed head passed; the fingerprint is still `f65411d5`.
+**Repo work on the merged SHA:** call-time `views_review` imports, `postiz.py` and `reconcile.py` matching `origin/main`, and the DC-8-only `cmd_deployed` hard list are in merge `430ece73`. C3-F01 is closed by `test_ct_multi_resolve_one_real_ffmpeg`. REL-CI-ASR still needs `HF_TOKEN` on the nightly job. The fingerprint equals that merge.
 
 | Gap | Owning file / symbol | Invariant | Test pattern | This pass |
 |-----|----------------------|-----------|--------------|-----------|
 | REL-CI-ASR | `tests/integration/test_e2e_real.py` `test_real_transcript_drives_moment_and_real_clip_renders`; produce log `whisper produced no JSON (rc=1)` | The nightly job must get a real whisper JSON from the pinned `tiny` model, then `awaiting.moments == 1`. | Extend `tests/integration/test_e2e_real.py` or the nightly workflow env. Do not change `doctor.py`. | Not a one-file fix. Class: **env**. Unauthenticated Hugging Face Hub, whisper rc=1. The `sample.wav` / `no_video_stream` line is ingest skipping the TTS sidecar; the source that errored is the mp4’s `src_…`. Greening it needs a cached model or `HF_TOKEN` on the nightly job, which is decision 3. |
-| REL-CI-ARCH | `tools/ci/cli.py` `cmd_deployed`; `.github/workflows/architecture.yml` `workflow_dispatch` | Unreadable DC-3 prints `[SKIP] DC-3` and does not fail `--require-live`. DC-8 still fails when unreadable. A protection payload that was read still fails when contexts differ. | Dispatch after the hard-list change is on the ref. | Open. Run `38253871938` is the old failure. No new transcript. |
-| REL-UNDEPLOYED | No product symbol. PR #1316 and `/_fingerprint`. | Fingerprint equals the merge SHA. | CI `unit (fast, no toolchain)`. | The required unit check passed on run `39021062319`. Fingerprint is still `f65411d5`. Merge is the deploy. |
-| OPS-POSTIZ, OPS-QUEUE | Doctor only. | Unchanged. | None in repo. | Operator. Decisions 1 and 2. |
+| REL-CI-ARCH | `tools/ci/cli.py` `cmd_deployed`; `.github/workflows/architecture.yml` | Unreadable DC-3 prints `[SKIP] DC-3` and does not fail `--require-live`. | Dispatch on the merged SHA. | Closed. Run `39074333775`. |
+| REL-UNDEPLOYED | PR #1316 and `/_fingerprint`. | Fingerprint equals the merge SHA. | CI `unit (fast, no toolchain)`. | Closed. Fingerprint `430ece73`. Unit run `39073814011`. |
+| OPS-POSTIZ, OPS-QUEUE | Doctor only. | Postiz up. Drainable past-due 0. Queued rows kept. | None in repo. | Closed. 2026-10-17 doctor. |
 | C6 | `post/run.py`, `reconcile.py` | Pack checklist stands. | No new test. | No new finding. |
 
 ## Part 4 — Decisions
 
-1. **Queue (OPS-QUEUE).** Open. Run a controlled publish/reconcile (`fanops run` or Studio Publish after Go Live), or park/retire accounts via Studio / `00_control/accounts.json` (never commit), until doctor’s drainable count is 0. Do not wipe the 851 queued rows. Headline stays 78 either way. [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue).
+1. **Queue (OPS-QUEUE).** Closed. Doctor: `0 drainable past-due`; 837 queued. `markmakmouly` and `cisumwolfhom` are `planned` locally. [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue).
 
-2. **Postiz (OPS-POSTIZ).** Open. Start local Docker and Postiz so the `/integrations` probe succeeds. A Zernio-only exercise does not close this row. [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz).
+2. **Postiz (OPS-POSTIZ).** Closed. Doctor: Postiz reachable, docker up. [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz).
 
-3. **ASR nightly (REL-CI-ASR).** Open. `secrets.HF_TOKEN` non-empty on schedule, or a cached model in the nightly job env, until whisper returns JSON and `awaiting.moments == 1`. Do not change `doctor.py`. [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr).
+3. **ASR nightly (REL-CI-ASR).** Open. `secrets.HF_TOKEN` is absent. Nightly `38868030626` failed. Do not change `doctor.py`. [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr).
 
 4. **Trace and codemap (U0-F01, H-DOCS-F01).** Closed by policy. `subsystem-traces/STALE.md` stays. Live count 196, indexed stems 124. Traces were not regenerated.
 
 5. **C3-F01.** Closed. `test_ct_multi_resolve_one_real_ffmpeg` counts one real ffmpeg at `framing._FRAMING_GRID_FPS` (9.0) on the CT_MULTI path. `clip.py` was not edited. This does not change 78.
 
-6. **Score target.** Ship at **78, capped at 84**, after #1316 merges, the fingerprint equals the merge SHA, and the required check is green on that SHA. **85+** needs a live publish on that SHA ([OPEN_GAPS.md](OPEN_GAPS.md#85)). Closing the open rows is extra transcripts, not a rescaled ledger.
+6. **Score target.** Closed on the evidence. Fingerprint equals merge `430ece73`. Unit run `39073814011` passed. **85+** is the Postiz publish of `post_5854bb63fefb` ([OPEN_GAPS.md](OPEN_GAPS.md#85)). The headline stays 78.
 
 ## Stop line
 
-Open: **1, 2, 3, 6**, plus REL-CI-ARCH. Decision **4** is closed by the stale mark. Decision **5** is closed by `test_ct_multi_resolve_one_real_ffmpeg`. The required unit check passed on run `39021062319`. The fingerprint is `f65411d5`.
+Open: **3** (REL-CI-ASR). Decisions **1**, **2**, **4**, **5**, and **6** are closed. REL-CI-ARCH is closed on run `39074333775`. Fingerprint sha is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`.
 
 Next wave: the open rows in [OPEN_GAPS.md](OPEN_GAPS.md). Re-measure HEAD before the next product edit.

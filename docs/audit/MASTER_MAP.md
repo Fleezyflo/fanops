@@ -31,8 +31,8 @@ Assessed 2026-10-17. The remediated tree sits on base `d2cded31e29e027e4ed55bfdb
 | H-DOCS drift | closed by `subsystem-traces/STALE.md` | not re-audited |
 | H-INT invariants | resolved — operator edits of `reconcile.py` are C6; `partition.json` keeps C7. No retag | not re-audited |
 | X-SEC | closed — SEC-IGPW, SEC-ENV | not re-audited |
-| X-DEP | OPS-ZERNIO closed; OPS-POSTIZ and OPS-QUEUE open ([OPEN_GAPS.md](OPEN_GAPS.md)) | not re-probed |
-| X-REL | OPS-SHA closed on doctor and `daemon.ensure`; REL-PROT and REL-CI-E2E closed on the 2026-10-17 re-read; REL-UNDEPLOYED, REL-CI-ASR, REL-CI-ARCH open ([OPEN_GAPS.md](OPEN_GAPS.md)) | this column is that deploy |
+| X-DEP | OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE closed ([OPEN_GAPS.md](OPEN_GAPS.md)) | 2026-10-17 doctor |
+| X-REL | OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH closed. REL-CI-ASR open (`HF_TOKEN` absent). ([OPEN_GAPS.md](OPEN_GAPS.md)) | fingerprint `430ece73` |
 | X-DATA | closed — preview token and `snapshot_is_restorable` before wipe | not re-audited |
 
 `partition.json` was not given X-keys. Publish owns `reconcile.py`. This pass did not edit it.

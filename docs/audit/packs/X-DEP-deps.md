@@ -5,14 +5,14 @@
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
 | OPS-ZERNIO | closed | code | `health_probes.zernio_dep_health`. 2026-10-17 `uv run fanops doctor`: `[PASS] Zernio backend auth ok`; `[ok] zernio: reachable`. |
-| OPS-POSTIZ | open | operator | 2026-10-17 doctor: docker down, Postiz unreachable. Ledger +0. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-postiz). |
-| OPS-QUEUE | open | operator | 2026-10-17 doctor: 5 drainable past-due, 851 queued. Ledger +0, not wiped. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-queue). |
+| OPS-POSTIZ | closed | closed | 2026-10-17 doctor: `[ok] postiz: reachable`, `[ok] docker: daemon up`. Integrations probe HTTP 401 from Express. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-postiz). |
+| OPS-QUEUE | closed | closed | 2026-10-17T22:18Z: `0 drainable past-due`; 837 queued, not wiped. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-queue). |
 
 ## Audit
 
 `zernio_dep_health` uses `_http_reachable(..., require_2xx=True)`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped.
 
-OPS-POSTIZ and OPS-QUEUE are open. Closure is [OPEN_GAPS.md](../OPEN_GAPS.md). `command -v fanops` printed nothing. `uv` is `/Users/molhamhomsi/.local/bin/uv`. 2026-10-17 `uv run fanops doctor` exited 1. Ledger was not drained.
+OPS-POSTIZ and OPS-QUEUE are closed. The 2026-10-17 doctor transcript is [OPEN_GAPS.md](../OPEN_GAPS.md). The block below is the earlier down transcript, not the close.
 
 ```
 Postiz health probe failed (treating as unhealthy): ConnectionError: HTTPConnectionPool(host='localhost', port=4007): Max retries exceeded with url: /api/public/v1/integrations (Caused by NewConnectionError("H
