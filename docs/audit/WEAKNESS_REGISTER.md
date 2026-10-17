@@ -46,7 +46,7 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | REL-PROT | closed | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-16T08:47:37Z`. |
 | REL-CI-ASR | deferred | Owner: operator. 2026-10-17 nightly run `38868030626`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T07:33:59Z`). `[asr] toolchain smoke (nightly)` failed. `dependency audit (pip-audit)` succeeded. |
-| REL-CI-ARCH | deferred | Owner: operator. `architecture.yml` cron `17 5 * * 1`. 2026-10-17 last 5 runs have no `schedule` event. Newest `38388756295` is `pull_request` / `success` / `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. |
+| REL-CI-ARCH | deferred | Owner: operator. `architecture.yml` cron `17 5 * * 1` fired. Schedule run `38253871938` (2026-10-12) failed DC-3 with `gh` HTTP 403. Not a cap rule. |
 | X-DATA-F01 | closed | Wipe stays operator-gated: preview token, then `snapshot_is_restorable`, then `execute_wipe`. `AGENTS.md` forbids wipe-as-repair. No script under `scripts/` resets the ledger. |
 
 A row is finished when it is closed with a symbol on this tree, accepted with the dual-map citation, or deferred with the owner in the table.

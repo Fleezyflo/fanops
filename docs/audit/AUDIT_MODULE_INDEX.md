@@ -11,7 +11,7 @@ Finalize is complete against the register on this commit. Every row is closed, a
 | Studio `GET http://127.0.0.1:8787/_fingerprint` | `f65411d5806cce087a475261bf4c96c98f0bcf97` | Equals `origin/main`. pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00` |
 | `088702ca3ef4048e217befbb703443d6c1f5fde9` | ancestor of `origin/main` | Not this score. Studio is not serving it |
 
-The committed score on this branch is **78/100**. The score on `d2cded31` was 72/100. See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Studio’s fingerprint equals `origin/main`, not this branch.
+The committed score on this branch is **78/100**. The score on `d2cded31` was 72/100. See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Cap rationale: [Why capped at 84](GAP_CLOSURE_PLAN.md#why-capped-at-84). Studio’s fingerprint equals `origin/main`, not this branch.
 
 The working tree is the audit subject for the Wave 1–2 re-audit. Dirty product files are in scope. `088702ca` is an ancestor of `origin/main` and is not this score. `partition.json` assigns every `src/fanops/**/*.py` path to C1–C10 only (`live_py_count` 196). X-modules overlap those files; they do not get a third key unless `tests/test_production_audit_gates.py` `test_live_partition_covers_every_module` is changed on purpose.
 
@@ -85,7 +85,7 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 accepted** | Dual map stays. `reconcile.py` is C7 in `partition.json` and C6 for edits |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
 | X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO closed**. **OPS-POSTIZ** and **OPS-QUEUE** deferred | 2026-10-17 `uv run fanops doctor` exit 1: docker down, Postiz unreachable, 5 drainable past-due (463.5h), 851 queued |
-| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** deferred | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. No architecture `schedule` event in the last 5 runs. REL-UNDEPLOYED stays open until a PR merges this branch to `main` |
+| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** deferred | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. Architecture schedule run `38253871938` failed DC-3 with `gh` HTTP 403. That row is not the 84 cap. REL-UNDEPLOYED stays open until #1316 merges and the fingerprint equals the merge SHA |
 | X-DATA | Ledger immutability | [X-DATA-ledger.md](packs/X-DATA-ledger.md) | **X-DATA-F01 closed** | Ledger was not wiped. Do not edit `ledger.py` |
 
 Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) on this working tree. The committed 2026-09-12 register on `d2cded31` is the baseline those bullets replaced.

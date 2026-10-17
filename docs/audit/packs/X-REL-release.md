@@ -5,11 +5,11 @@
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
 | OPS-SHA | closed | code | `doctor._deploy_code_check` |
-| REL-UNDEPLOYED | deferred | operator | 2026-10-17 `git rev-parse`: HEAD `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`, `origin/main` `f65411d5806cce087a475261bf4c96c98f0bcf97`. Doctor pump `f65411d5806c`, disk `d2cded31e29e`. Fingerprint sha in this pack equals `origin/main`. No PR opened. |
+| REL-UNDEPLOYED | deferred | operator | PR #1316 head is not fingerprint `f65411d5806cce087a475261bf4c96c98f0bcf97`. Closes when the merge SHA is the fingerprint. |
 | REL-PROT | closed | operator | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | operator | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T08:47:37Z`). |
 | REL-CI-ASR | deferred | operator | 2026-10-17 nightly run `38868030626`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T07:33:59Z`). Job `[asr] toolchain smoke (nightly)` failed. `dependency audit (pip-audit)` succeeded. |
-| REL-CI-ARCH | deferred | operator | Cron Mondays `17 5 * * 1`. 2026-10-17 last 5 `architecture.yml` runs have no `schedule` event. Newest: `38388756295`, event `pull_request`, conclusion `success`, headSha `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. |
+| REL-CI-ARCH | deferred | operator | Cron `17 5 * * 1` fired. Schedule run `38253871938` (2026-10-12) failed DC-3 with `gh` HTTP 403. Not a cap rule. |
 
 ## Rollback
 
