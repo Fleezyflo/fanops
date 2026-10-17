@@ -395,7 +395,6 @@ def test_youtube_review_matches_payload_and_preview(tmp_path, monkeypatch, mocke
     wire = sent["body"]["posts"][0]
     assert wire["value"][0]["content"] == caption
     assert [row["label"] for row in wire["settings"]["tags"]] == labels
-    assert led.posts[post.id].sent_content == caption
 
 
 def test_ig_schedule_queue_and_dryrun_match_posted_text(tmp_path):
@@ -566,7 +565,7 @@ def test_rotation_ignores_off_lock_tag(tmp_path):
     assert counted == {"#keep": 2}
 
 
-def test_publish_one_persists_sent_content_and_archives_the_send(tmp_path, monkeypatch, mocker):
+def test_publish_one_archives_the_send(tmp_path, monkeypatch, mocker):
     from fanops.caption_compose import send_caption
     from fanops.post.run import _publish_one
     from fanops.studio.views_posted import posted_library
@@ -583,16 +582,15 @@ def test_publish_one_persists_sent_content_and_archives_the_send(tmp_path, monke
     assert wire == text
     loaded = Ledger.load(cfg)
     saved = loaded.posts[post.id]
-    assert saved.sent_content == wire
     assert saved.caption == SENTENCE and "#offlock" in saved.hashtags
     files = list(cfg.published.glob(f"*/{post.id}.json"))
     assert len(files) == 1
     rec = json.loads(files[0].read_text())
     assert rec["caption"] == wire and rec["hashtags"] == send_tags
-    assert posted_library(loaded, cfg)[0].caption == saved.sent_content
+    assert posted_library(loaded, cfg)[0].caption == wire
 
 
-def test_publish_one_adopted_duplicate_persists_sent_content(tmp_path, monkeypatch, mocker):
+def test_publish_one_adopted_duplicate_keeps_the_submission(tmp_path, monkeypatch, mocker):
     from fanops.caption_compose import send_caption
     from fanops.post.run import _publish_one
     cfg = Config(root=tmp_path)
@@ -607,7 +605,6 @@ def test_publish_one_adopted_duplicate_persists_sent_content(tmp_path, monkeypat
     saved = Ledger.load(cfg).posts[post.id]
     assert final == "needs_reconcile"
     assert saved.submission_id == "postiz_existing"
-    assert saved.sent_content == text
 
 
 def test_unchanged_approve_keeps_off_lock_tag(tmp_path):
