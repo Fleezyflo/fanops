@@ -42,15 +42,15 @@ The prior pass stated +6 for five code closures and did not publish per-row weig
 
 ## Blockers
 
-None on this tree. Studio is serving `f65411d5`, not this working tree. Shipping these fixes is a PR onto `main`, which this pass did not open.
+None on this tree. Code score on branch HEAD `f19d7e5e` is 78. Studio is serving `f65411d5`. The deploy note is pull request #1316: https://github.com/Fleezyflo/fanops/pull/1316. REL-UNDEPLOYED stays deferred until that PR merges and the fingerprint equals the merge SHA.
 
 ## Caveats that hold the score
 
-- REL-UNDEPLOYED, deferred to the operator. Fingerprint and `origin/main` are `f65411d5806cce087a475261bf4c96c98f0bcf97`. Doctor on 2026-10-17: pump `f65411d5806c`, disk `d2cded31e29e`.
+- REL-UNDEPLOYED, deferred to the operator. Fingerprint and `origin/main` are `f65411d5806cce087a475261bf4c96c98f0bcf97`. PR head is `f19d7e5e`. Doctor on 2026-10-17: pump `f65411d5806c`, disk `d2cded31e29e` (the checkout before the remediation commit).
 - REL-PROT closed 2026-10-17: `main` protection requires `unit (fast, no toolchain)` and matches the registry. REL-CI-E2E closed: scheduled run `38876056441` succeeded on `f65411d5`. REL-CI-ASR stays deferred: nightly ASR failed on that SHA (`38868030626`, `test_e2e_real.py:68`). REL-CI-ARCH stays deferred: no schedule event in the last 8 architecture runs.
 - OPS-POSTIZ and OPS-QUEUE, deferred to the operator. 2026-10-17 doctor: Postiz unreachable, docker down, 5 drainable past-due, 851 queued. The ledger was not drained.
 - U0-F01 and H-DOCS-F01 are closed by an explicit stale mark, not by regenerating traces.
-- H-INT-F01 stays accepted. `reconcile.py` remains C7 in `partition.json`. Publish owns edits to that file. It was not edited here.
+- H-INT-F01 stays accepted. `reconcile.py` remains C7 in `partition.json`. Publish owns that file. The commit touches a lookup string in it. The park predicate was not changed.
 
 ## High-value fixes
 
@@ -58,7 +58,7 @@ No open code row. OPS-POSTIZ, OPS-QUEUE, REL-CI-ASR, REL-CI-ARCH, and REL-UNDEPL
 
 ## Evidence checked
 
-- `git rev-parse HEAD` → `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`
+- `git rev-parse HEAD` → `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67` (PR #1316). Fingerprint stays `f65411d5` until merge.
 - `GET http://127.0.0.1:8787/_fingerprint` → sha `f65411d5806cce087a475261bf4c96c98f0bcf97`
 - Symbols: `ledger_wipe.snapshot_is_restorable`, `secret_provider.is_secret_env_key`, `config_introspect._is_secret`, `settings._is_resolved_secret_key`, `autopilot.set_env_var`, `health_probes.zernio_dep_health`, `doctor._deploy_code_check`, `vocals._demucs_env`, `framing._compute_track`, `persona_directives.persona_facts`, `hashtags.ship_from_lock`, `crosspost.py` assert, `health_projectors.half_live_state`, `actions_wipe.confirm_wipe`
 - `docs/GOLIVE.md` section “Rollback / safety”
@@ -72,6 +72,6 @@ No open code row. OPS-POSTIZ, OPS-QUEUE, REL-CI-ASR, REL-CI-ARCH, and REL-UNDEPL
 
 ## Next action
 
-Open the PR that makes this tree the SHA Studio serves, and get `unit (fast, no toolchain)` green. OPS-POSTIZ, OPS-QUEUE, REL-CI-ASR, and REL-CI-ARCH stay deferred on the 2026-10-17 `uv run fanops doctor` and `gh run list` output.
+PR #1316 is open. Get `unit (fast, no toolchain)` green, then merge so the fingerprint can become this SHA. OPS-POSTIZ, OPS-QUEUE, REL-CI-ASR, and REL-CI-ARCH stay deferred on the 2026-10-17 doctor and `gh run list` output.
 
 **Caps:** 84 because this tree is not fingerprint `f65411d5` and its publish path was not re-tested end to end. Nightly ASR on that fingerprint SHA failed (`38868030626`). The 69 secrets cap is not applied.

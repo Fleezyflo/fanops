@@ -1,17 +1,17 @@
 # Audit module index
 
-Subject of this index is commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on branch `audit/production-audit-2026-09` (tracks `origin/audit/production-audit-2026-09`). Measured 2026-10-17 from `/Users/molhamhomsi/Moh Flow Fanops`. Re-measured 2026-10-17 before this continuation: HEAD is still `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. `git diff --stat origin/main...HEAD` is still 29 files (+904 / −26). `GET http://127.0.0.1:8787/_fingerprint` is still `f65411d5806cce087a475261bf4c96c98f0bcf97` (pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00`).
+Subject of this index is commit `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67` on branch `audit/production-audit-2026-09` (tracks `origin/audit/production-audit-2026-09`), pull request #1316. The scored base before this commit was `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Measured 2026-10-17 from `/Users/molhamhomsi/Moh Flow Fanops`. `git diff --stat origin/main...HEAD` is 145 files (+6964 / −1094). `GET http://127.0.0.1:8787/_fingerprint` is still `f65411d5806cce087a475261bf4c96c98f0bcf97` (pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00`).
 
-Finalize is complete against the working-tree register. Every row is closed, accepted, or deferred with an owner. C2–C10 packs carry a Full checklist 2026-10-17. Nothing was committed. **All gaps finalized.** The sole open code/doc row, C2-F03, is closed. Deferred rows that remain are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH.
+Finalize is complete against the register on this commit. Every row is closed, accepted, or deferred with an owner. C2–C10 packs carry a Full checklist 2026-10-17. Deferred rows that remain are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. REL-UNDEPLOYED closes when #1316 merges and the fingerprint equals that merge SHA.
 
 | Plane | SHA | Relation to the subject |
 |-------|-----|-------------------------|
-| HEAD (audit subject) | `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` | This index |
+| HEAD (audit subject) | `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67` | This index. PR #1316. Parent of the remediation commit is `d2cded31` |
 | `origin/main` | `f65411d5806cce087a475261bf4c96c98f0bcf97` (merge of #1314) | Neither ancestor of HEAD nor descendant of HEAD |
 | Studio `GET http://127.0.0.1:8787/_fingerprint` | `f65411d5806cce087a475261bf4c96c98f0bcf97` | Equals `origin/main`. pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00` |
 | `088702ca3ef4048e217befbb703443d6c1f5fde9` | ancestor of `origin/main` | Named by the uncommitted working-tree copies of `MASTER_MAP.md`, `PRODUCTION_SCORE.md`, and `WEAKNESS_REGISTER.md`. Studio is not serving it |
 
-`git diff --stat origin/main...HEAD` is 29 files, +904 / −26. That range excludes the dirty working tree. The committed score on HEAD is 72/100 dated 2026-09-12 and still lists C1-F01, C7-F01, and C9-F01 as open fixes. The working-tree score is **78/100** (+6). See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Studio’s fingerprint equals `origin/main`, not this HEAD.
+The committed score on this branch is **78/100**. The score on `d2cded31` was 72/100. See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Studio’s fingerprint equals `origin/main`, not this branch.
 
 The working tree is the audit subject for the Wave 1–2 re-audit. Dirty product files are in scope. `088702ca` is an ancestor of `origin/main` and is not this score. `partition.json` assigns every `src/fanops/**/*.py` path to C1–C10 only (`live_py_count` 196). X-modules overlap those files; they do not get a third key unless `tests/test_production_audit_gates.py` `test_live_partition_covers_every_module` is changed on purpose.
 
