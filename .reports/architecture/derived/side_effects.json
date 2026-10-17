@@ -545,7 +545,7 @@
     "fanops.health_probes": [
       {
         "call": "requests.get",
-        "line": 67
+        "line": 64
       }
     ],
     "fanops.post.metrics.postiz_read": [
@@ -579,15 +579,15 @@
       },
       {
         "call": "requests.post",
-        "line": 337
+        "line": 326
       },
       {
         "call": "requests.get",
-        "line": 364
+        "line": 353
       },
       {
         "call": "requests.post",
-        "line": 571
+        "line": 563
       }
     ],
     "fanops.post.zernio": [
@@ -681,15 +681,19 @@
       },
       {
         "call": "subprocess.run",
-        "line": 309
+        "line": 308
       },
       {
         "call": "subprocess.run",
-        "line": 314
+        "line": 313
       },
       {
         "call": "subprocess.run",
-        "line": 741
+        "line": 736
+      },
+      {
+        "call": "subprocess.run",
+        "line": 763
       },
       {
         "call": "subprocess.run",
@@ -697,19 +701,15 @@
       },
       {
         "call": "subprocess.run",
-        "line": 773
+        "line": 796
       },
       {
         "call": "subprocess.run",
-        "line": 807
+        "line": 869
       },
       {
         "call": "subprocess.run",
-        "line": 880
-      },
-      {
-        "call": "subprocess.run",
-        "line": 896
+        "line": 885
       }
     ],
     "fanops.discover": [
@@ -731,7 +731,7 @@
     "fanops.health_probes": [
       {
         "call": "subprocess.run",
-        "line": 26
+        "line": 25
       }
     ],
     "fanops.ig_hashtag_scrape": [
@@ -807,11 +807,11 @@
     "fanops.postiz_lifecycle": [
       {
         "call": "subprocess.Popen",
-        "line": 82
+        "line": 78
       },
       {
         "call": "subprocess.run",
-        "line": 127
+        "line": 123
       }
     ],
     "fanops.reframe": [

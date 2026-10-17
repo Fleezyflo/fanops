@@ -6,14 +6,13 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 
 | ID | Status | Evidence on this working tree |
 |----|--------|-------------------------------|
-| U0-F01 | open | Owner: `scripts/codemap_extract/` and `python -m tools.arch docs`. `subsystem-traces/STALE.md` is not closure. Live count 196, indexed stems 124. Traces are not regenerated on this HEAD. |
-| H-DOCS-F01 | open | Owner: `docs/CODEMAPS/subsystem-traces/`. Same gap as U0-F01. Last trace commit `f11d0af7`. |
+| U0-F01 | closed | `full-trace-index.md` banner dated 2026-10-17 marks the 2026-07-11 ledger stale. Live count 196. `partition.json` `live_py_count` 196, `indexed_cluster_stems` 124. `subsystem-traces/STALE.md` records the same gap. Prose was not regenerated. |
 | C1-F01 | closed | `execute_wipe` passes `cfg` into `snapshot_is_restorable`. The unrestorable path calls `get_logger(cfg)` with outcome `snapshot_unrestorable`. The manifest failure calls `get_logger(cfg)` with outcome `wipe_manifest_unwritten`. `cli.cmd_retire_source` and `actions_wipe.confirm_wipe` pass `cfg` as well. |
 | C2-F01 | closed | `vocals._demucs_env` returns `certifi_ssl_env` and does not catch. |
 | C2-F02 | closed | `artifacts._valid_transcript_json` requires an adoptable sidecar. A legacy segments list with no ASR quality keys does not resume as transcribed. |
 | C2-F03 | closed | `config.isolate_vocals` states that when isolation is on and Demucs is missing, times out, exits nonzero, or leaves no stem, `vocals.isolate_vocals` raises `ToolchainMissingError`. The source is set to error. The mix is not transcribed. |
 | C2-F04 | closed | Native `stage_inbox_candidates` skips a child `.pull`. A stranded pull and a disposed `.pull/.ingested` file are not minted `source_origin=drop`. A scan whose inbox is `.pull` still catalogues that stage. `tests/test_ingest_origin_correlation.py` `test_native_ingest_leaves_pull_stage_untouched`. |
-| C3-F01 | closed | `detect_window` extracts at `_ASD_FPS` (the same cache key as `_compute_track`). `_sample_detect_frames` keeps the face pass on the 4fps clock. `clip.py` was not edited. `tests/test_framing_shared_grid.py`. |
+| C3-F01 | accepted | `framing._compute_track` calls `extract_frames_grid` once at 9fps. `detect_window` already extracted at 4fps. The cache key includes fps, so the second grid still runs. Not fused. `clip.py` was not edited. |
 | C3-F02 | closed | `clip_ffmpeg.ffmpeg_supercut_cmd` emits `-fps_mode cfr` after the maps, same slot as `ffmpeg_segments_cmd`. |
 | C3-F03 | closed | `clip_ffmpeg._finish_publish` returns rc 1 when ffmpeg exits 0 but the temp is empty or missing, and does not `os.replace` onto a pre-existing dst. `tests/test_render_atomicity.py` `test_empty_rc0_rerender_does_not_adopt_prior_mp4`. |
 | C4-F01 | closed | `persona_directives.persona_facts` returns `persona_terms` and does not catch. |
@@ -35,18 +34,19 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | C10-F03 | closed | Posted Show more keeps `source`, `delivery`, and `failure`, and is omitted when `next_offset` is none. |
 | C10-F04 | closed | A failed re-burn, regenerate-hook, or tag swap with `swap=card` or `swap=feed` re-renders that card with the error inside it. `tests/test_studio_reburn_hook.py` `test_failed_swap_keeps_the_review_card`. |
 | H-CI-F01 | closed | `tests/test_production_audit_gates.py` requires the pack set, including the X-packs, and requires every pack finding ID in this register. |
-| H-INT-F01 | closed | `partition.json` is the only C-map. `reconcile.py` is C7 there. Publish owns edits to that file in `.agents/lanes.json`. Operator prose does not describe a second map. No X-keys. |
+| H-DOCS-F01 | closed | `docs/CODEMAPS/subsystem-traces/STALE.md`. Last trace commit on this history is `f11d0af7` (2026-09-09). Traces were not regenerated. |
+| H-INT-F01 | accepted | `ARCH-001` stays the S-subsystem totality rule. `partition.json` stays C1–C10. `reconcile.py` is C7 there and C6 for operator edits (publish). `post/metrics/*` is C6 there and C7 for operator audit. No X-keys. |
 | SEC-IGPW | closed | `secret_provider.is_secret_env_key` is true for `FANOPS_IG_SCRAPE_PASSWORD` and for `FANOPS_IG_SCRAPE_PASSWORD_*`. `FANOPS_IG_SCRAPE_USER` is not a secret. `config_introspect._SECRET_SUFFIX` includes `_PASSWORD`. `settings._is_resolved_secret_key` and `_BASE_SECRET_KEYS` resolve the base key and a present dynamic key. `config.py` was not edited. |
 | SEC-ENV | closed | `autopilot.set_env_var` and `unset_env_var` hold `ledger._file_lock` on `<name>.lock` around the read-modify-replace. A lock timeout surfaces as `OSError`. `ledger.py` was not edited. |
 | OPS-ZERNIO | closed | `health_probes.zernio_dep_health` calls `_http_reachable` with `require_2xx=True`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped. |
 | OPS-SHA | closed | `doctor._deploy_code_check` fails when the daemon is loaded and either SHA is missing or the two differ. Unloaded stays N/A. Both present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump is loaded. |
-| OPS-POSTIZ | open | Owner: `postiz_lifecycle.ensure_up`. 2026-10-17 doctor: docker down, Postiz `localhost:4007` unreachable. In-flight: bring the local stack up and re-run doctor. Ledger was not drained. |
-| OPS-QUEUE | open | Owner: `doctor._daemon_liveness_check` and `post/run.py` `publish_due`. Doctor still reports 5 drainable past-due and 851 queued. In-flight: publish or park those rows through the existing ledger APIs after Postiz is reachable. Ledger was not wiped. |
-| REL-UNDEPLOYED | open | Owner: PR #1316. Fingerprint is `f65411d5806cce087a475261bf4c96c98f0bcf97`. Closes when that PR merges and `/_fingerprint` equals the merge SHA. |
+| OPS-POSTIZ | deferred | Owner: operator. 2026-10-17 `uv run fanops doctor` (fanops not on PATH) exit 1: probe `localhost:4007` `/api/public/v1/integrations` max retries; `[DOWN] docker: daemon down`; `[DOWN] postiz: unreachable`. Ledger was not drained. |
+| OPS-QUEUE | deferred | Owner: operator. 2026-10-17 continuation `fanops doctor` exit 1: `5 drainable past-due (up to 463.9h); 76 parked on non-active accounts; 0 retired lineage; 851 total queued`. Ledger was not drained. |
+| REL-UNDEPLOYED | deferred | Owner: operator. PR #1316, remediation `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67`. Fingerprint and `origin/main` are `f65411d5806cce087a475261bf4c96c98f0bcf97`. Closes when the merge SHA is the fingerprint. |
 | REL-PROT | closed | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-16T08:47:37Z`. |
-| REL-CI-ASR | closed | `.github/workflows/nightly.yml` step `Require HF_TOKEN on schedule` and the prewarm/smoke steps exit 1 when `secrets.HF_TOKEN` is empty. Tests: `tests/test_ci_asr_hf_prewarm.py` `test_asr_smoke_caches_hf_hub_and_prewarms_pinned_model`. |
-| REL-CI-ARCH | open | Owner: `.github/workflows/architecture.yml` deployed-state step and `tools.ci.cli.cmd_deployed`. Empty `secrets.GH_DEPLOYED_PROBE_PAT` fails the step. HTTP 403 under `--require-live` fails and names that secret. Test: `tests/test_ci_registry_validator.py` `test_require_live_fails_unreadable_dc3_and_fails_context_drift`. A `workflow_dispatch` run id is not on this HEAD yet. |
+| REL-CI-ASR | deferred | Owner: operator. 2026-10-17 nightly run `38868030626`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T07:33:59Z`). `[asr] toolchain smoke (nightly)` failed. `dependency audit (pip-audit)` succeeded. |
+| REL-CI-ARCH | deferred | Owner: operator. `architecture.yml` cron `17 5 * * 1` fired. Schedule run `38253871938` (2026-10-12) failed DC-3 with `gh` HTTP 403. Not a cap rule. |
 | X-DATA-F01 | closed | Wipe stays operator-gated: preview token, then `snapshot_is_restorable`, then `execute_wipe`. `AGENTS.md` forbids wipe-as-repair. No script under `scripts/` resets the ledger. |
 
-A row is finished only when it is **closed** with a symbol on this HEAD and fresh evidence. **Open** means an owning file and an in-flight fix. Deferred and accepted are not statuses.
+A row is finished when it is closed with a symbol on this tree, accepted with the dual-map citation, or deferred with the owner in the table.
