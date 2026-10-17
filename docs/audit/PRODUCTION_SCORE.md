@@ -42,7 +42,7 @@ The prior pass stated +6 for five code closures and did not publish per-row weig
 
 ## Blockers
 
-None on this tree. Code score on branch HEAD `f19d7e5e` is 78. Studio is serving `f65411d5`. The deploy note is pull request #1316: https://github.com/Fleezyflo/fanops/pull/1316. REL-UNDEPLOYED stays deferred until that PR merges and the fingerprint equals the merge SHA.
+None on this tree. Code score on this branch is 78 (remediation `f19d7e5e`). Studio is serving `f65411d5`. The deploy note is pull request #1316: https://github.com/Fleezyflo/fanops/pull/1316. REL-UNDEPLOYED stays deferred until that PR merges and the fingerprint equals the merge SHA.
 
 ## Caveats that hold the score
 
@@ -58,7 +58,7 @@ No open code row. OPS-POSTIZ, OPS-QUEUE, REL-CI-ASR, REL-CI-ARCH, and REL-UNDEPL
 
 ## Evidence checked
 
-- `git rev-parse HEAD` → `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67` (PR #1316). Fingerprint stays `f65411d5` until merge.
+- `git rev-parse` remediation `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67` on PR #1316. Fingerprint stays `f65411d5` until merge.
 - `GET http://127.0.0.1:8787/_fingerprint` → sha `f65411d5806cce087a475261bf4c96c98f0bcf97`
 - Symbols: `ledger_wipe.snapshot_is_restorable`, `secret_provider.is_secret_env_key`, `config_introspect._is_secret`, `settings._is_resolved_secret_key`, `autopilot.set_env_var`, `health_probes.zernio_dep_health`, `doctor._deploy_code_check`, `vocals._demucs_env`, `framing._compute_track`, `persona_directives.persona_facts`, `hashtags.ship_from_lock`, `crosspost.py` assert, `health_projectors.half_live_state`, `actions_wipe.confirm_wipe`
 - `docs/GOLIVE.md` section “Rollback / safety”
