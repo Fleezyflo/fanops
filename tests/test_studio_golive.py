@@ -7,6 +7,9 @@
 # direct os.environ writes are undone because monkeypatch tracks the KEY, not the value-at-mutation).
 import json
 import os
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
@@ -43,14 +46,105 @@ def _seed_accounts(cfg, accounts):
     cfg.accounts_path.write_text(json.dumps({"accounts": accounts}))
 
 
-# ---- set_postiz_config: dual-write (.env + os.environ), auth tested, key NEVER returned ----
+def _no_proxy(monkeypatch):
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+
+
+@contextmanager
+def _http_stub(handler):
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        t.join(timeout=2)
+
+
+class _AuthFailHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(401)
+        self.send_header("Content-Length", "6")
+        self.end_headers()
+        self.wfile.write(b"denied")
+    do_POST = do_GET
+    def log_message(self, *_a, **_k):
+        pass
+
+
+class _PostizOkHandler(BaseHTTPRequestHandler):
+    def _json(self, code, body):
+        raw = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path.endswith("/integrations"):
+            self._json(200, [{"id": "ig_1", "name": "throwaway", "platform": "instagram"}])
+        elif "/analytics/post/" in path:
+            # likes-only does not prove; saves does (track._shape_proves_learning).
+            pt = [{"total": "10", "date": "2026-09-01"}]
+            self._json(200, [{"label": "Likes", "data": pt},
+                             {"label": "Reach", "data": [{"total": "100", "date": "2026-09-01"}]},
+                             {"label": "Saves", "data": [{"total": "5", "date": "2026-09-01"}]}])
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n:
+            self.rfile.read(n)
+        path = self.path.split("?", 1)[0]
+        if path.endswith("/posts"):
+            self._json(200, {"id": "pz1"})
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *_a, **_k):
+        pass
+
+
+def _ready_live_postiz(monkeypatch, tmp_path, url):
+    cfg = _clean(monkeypatch, tmp_path)
+    _no_proxy(monkeypatch)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("POSTIZ_API_KEY", "SECRETKEY")
+    monkeypatch.setenv("POSTIZ_URL", url)
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
+    return cfg
+
+
+# ---- set_postiz_config: probe first, then dual-write; key NEVER returned ----
 def test_set_postiz_config_dual_writes_and_tests_auth(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    seen = {}
+    def probe(c):
+        seen["url"] = c.postiz_url
+        seen["key"] = c.postiz_api_key
+        assert os.environ["POSTIZ_URL"] == "https://old.example/api"          # not persisted before the probe
+        assert "postiz.example.com" not in (tmp_path / ".env").read_text()
+        return True
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)
     res = golive.set_postiz_config(cfg, "https://postiz.example.com", "SECRETKEY")
     assert res.ok is True
+    assert seen["url"] == "https://postiz.example.com/api" and seen["key"] == "SECRETKEY"
     env = (tmp_path / ".env").read_text()                # durable (URL only — secret is keyring)
     assert "POSTIZ_URL=https://postiz.example.com/api" in env and "POSTIZ_API_KEY" not in env
+    assert "old.example" not in env
     assert os.environ["POSTIZ_URL"] == "https://postiz.example.com/api"     # in-process (no restart needed)
     assert os.environ["POSTIZ_API_KEY"] == "SECRETKEY"
     assert "SECRETKEY" not in repr(res)                  # the key must NEVER appear in a result
@@ -67,31 +161,96 @@ def test_set_postiz_config_reports_auth_failure_redacted(tmp_path, monkeypatch):
     monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "WRONGKEY")
     assert res.ok is False and "POSTIZ_API_KEY" in res.error
+    assert "saved" not in res.error.lower()
     assert "WRONGKEY" not in repr(res)                   # key never echoed even on failure
+    assert not (tmp_path / ".env").exists()
+    assert "POSTIZ_URL" not in os.environ
 
-def test_set_postiz_config_auth_fail_notes_credentials_saved(tmp_path, monkeypatch):
-    # W9: the key WAS written (dual-write happens before the auth test), so a rejected key must tell the
-    # operator it was saved (re-enter to correct) — not imply nothing happened. Still never echoes the key.
+def test_set_postiz_config_auth_fail_leaves_previous_url(tmp_path, monkeypatch):
+    # A rejected key must not persist the candidate URL or replace the stored key, and must not
+    # tell the operator the credentials were saved. The probe still hits the candidate.
     cfg = _clean(monkeypatch, tmp_path)
-    def boom(c): raise PostizAuthError("401 bad key")
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
-    res = golive.set_postiz_config(cfg, "https://x.example.com", "WRONGKEY")
-    assert res.ok is False and "saved" in res.error.lower() and "POSTIZ_API_KEY" in res.error
+    _no_proxy(monkeypatch)
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "old-key")
+    seen = {}
+    class _Record(_AuthFailHandler):
+        def do_GET(self):
+            seen["path"] = self.path
+            seen["auth"] = self.headers.get("Authorization")
+            seen["env_url"] = os.environ.get("POSTIZ_URL")
+            seen["file"] = (tmp_path / ".env").read_text()
+            super().do_GET()
+    with _http_stub(_Record) as url:
+        res = golive.set_postiz_config(cfg, url, "WRONGKEY")
+    assert res.ok is False and "saved" not in (res.error or "").lower() and "POSTIZ_API_KEY" in (res.error or "")
     assert "WRONGKEY" not in repr(res)
+    assert seen["path"].endswith("/public/v1/integrations") and seen["auth"] == "WRONGKEY"
+    assert seen["env_url"] == "https://old.example/api" and url not in seen["file"]
+    assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+    assert os.environ["POSTIZ_API_KEY"] == "old-key"
+    env = (tmp_path / ".env").read_text()
+    assert env == "POSTIZ_URL=https://old.example/api\n"
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "old-key"
+
+def test_set_postiz_config_persists_only_after_auth(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    _no_proxy(monkeypatch)
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "old-key")
+    seen = {}
+    class _Record(_PostizOkHandler):
+        def do_GET(self):
+            seen["auth"] = self.headers.get("Authorization")
+            seen["env_url"] = os.environ.get("POSTIZ_URL")
+            seen["file"] = (tmp_path / ".env").read_text()
+            super().do_GET()
+    with _http_stub(_Record) as url:
+        res = golive.set_postiz_config(cfg, url, "NEWKEY")
+    assert res.ok is True and seen["auth"] == "NEWKEY"
+    assert seen["env_url"] == "https://old.example/api" and "old.example" in seen["file"]
+    normalized = url.rstrip("/") + "/api"
+    assert os.environ["POSTIZ_URL"] == normalized and os.environ["POSTIZ_API_KEY"] == "NEWKEY"
+    body = (tmp_path / ".env").read_text()
+    assert f"POSTIZ_URL={normalized}" in body and "old.example" not in body and "NEWKEY" not in body
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "NEWKEY"
+    assert "NEWKEY" not in repr(res)
 
 def test_set_postiz_config_url_only_keeps_existing_key(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("POSTIZ_API_KEY", "existing")
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)
+    golive.secret_provider.set_secret("POSTIZ_API_KEY", "existing-ring")
+    seen = {}
+    def probe(c):
+        seen["key"] = c.postiz_api_key
+        return True
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "")    # blank key -> not rewritten
-    assert res.ok is True
+    assert res.ok is True and seen["key"] == "existing-ring"            # keyring wins; blank input is not stored
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") == "existing-ring"
+    assert os.environ["POSTIZ_API_KEY"] == "existing"
     env = (tmp_path / ".env").read_text()
     assert "POSTIZ_URL=" in env and "POSTIZ_API_KEY" not in env
 
 def test_set_postiz_config_unreachable_reports_clean(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
-    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: False)   # bad URL / down
+    (tmp_path / ".env").write_text("POSTIZ_URL=https://old.example/api\n")
+    monkeypatch.setenv("POSTIZ_URL", "https://old.example/api")
+    monkeypatch.setenv("POSTIZ_API_KEY", "old-key")
+    def probe(c):
+        assert c.postiz_url == "https://nope.example.com/api"
+        assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+        return False
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", probe)   # bad URL / down
     res = golive.set_postiz_config(cfg, "https://nope.example.com", "K")
-    assert res.ok is False and "reach" in res.error.lower()
+    assert res.ok is False and "reach" in res.error.lower() and "saved" not in res.error.lower()
+    assert os.environ["POSTIZ_URL"] == "https://old.example/api"
+    assert os.environ["POSTIZ_API_KEY"] == "old-key"
+    assert "nope.example" not in (tmp_path / ".env").read_text()
+    assert golive.secret_provider.get_secret("POSTIZ_API_KEY") is None
 
 
 # ---- refresh_integrations ----
@@ -245,8 +404,6 @@ def test_golive_status_default_dryrun(tmp_path, monkeypatch):
     st = views.golive_status(cfg)
     assert st.mode == "dryrun" and st.is_live is False
     assert st.key_set is False and st.postiz_url is None
-    assert st.checks == [] or st.checks is not None         # dataclass attrs present
-    assert st.notes is not None
 
 def test_golive_status_reflects_config_and_per_platform_channels(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -280,6 +437,10 @@ def test_golive_status_tolerates_malformed_accounts(tmp_path, monkeypatch):
     from fanops.studio import views
     st = views.golive_status(cfg)                              # must not raise
     assert st.accounts == [] and st.mode == "dryrun"
+    failing = " ".join(f"{c.get('label', '')} {c.get('hint', '')}" for c in (st.checks or []) if not c.get("ok"))
+    assert "accounts.json" in failing
+    body = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "accounts.json" in body
 
 def test_golive_status_tolerates_doctor_failure(tmp_path, monkeypatch):
     # invariant: the Go-Live tab must never 500 — a raising build_health_report falls back without inventing LIVE
@@ -311,10 +472,12 @@ def test_golive_status_typo_backend_is_not_false_live(tmp_path, monkeypatch):
 # ---- .env write failure must surface as a clean ActionResult, never a 500 (the tab's invariant) ----
 def test_set_postiz_config_disk_error_is_clean_not_raise(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", lambda c: True)   # probe succeeds; the write is what fails
     monkeypatch.setattr(golive, "set_env_var", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only fs")))
     res = golive.set_postiz_config(cfg, "https://x.example.com", "K")
     assert res.ok is False and ".env" in res.error
     assert "POSTIZ_URL" not in os.environ                # os.environ NOT mutated when the durable write failed
+    assert "POSTIZ_API_KEY" not in os.environ
 
 def test_go_dryrun_disk_error_is_clean(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_POSTER", "postiz")
@@ -323,12 +486,15 @@ def test_go_dryrun_disk_error_is_clean(tmp_path, monkeypatch):
     assert res.ok is False and ".env" in res.error
 
 def test_set_postiz_config_newline_in_key_blocked_cleanly(tmp_path, monkeypatch):
-    # end-to-end: a key with an embedded newline (injection attempt) is rejected by set_env_var and
-    # surfaced as a clean ActionResult, never written, never a 500.
+    # A key with an embedded newline is rejected before the probe and before any write.
     cfg = _clean(monkeypatch, tmp_path)
+    def boom(c): raise AssertionError("probe must not run")
+    monkeypatch.setattr(golive.postiz, "postiz_check_auth", boom)
     res = golive.set_postiz_config(cfg, "https://x.example.com", "good\nINJECTED=1")
     assert res.ok is False
     assert os.environ.get("INJECTED") is None            # the injected key never lands
+    assert "POSTIZ_URL" not in os.environ
+    assert not (tmp_path / ".env").exists()
 
 
 # ---- Flask wiring (create_app + test_client), mirroring test_studio_publish_now's route tests ----
@@ -497,42 +663,40 @@ def test_validate_learning_never_echoes_key(tmp_path, monkeypatch):
 
 
 def test_golive_validate_route_runs(tmp_path, monkeypatch):
-    # M3 route: POST /golive/validate runs the (mocked) cutover; the panel re-renders showing validated.
-    from fanops.studio.app import create_app
-    from fanops import cutover as cutmod
-    cfg = _live_postiz(monkeypatch, tmp_path); _one_integration(monkeypatch)
-    _seed_accounts(cfg, [{"handle": "@a", "platforms": ["instagram"], "status": "active", "integrations": {"instagram": "ig_1"}}])
-    monkeypatch.setattr(golive.cutover, "cutover_auth", lambda c: {"ok": True})
-    monkeypatch.setattr(golive.cutover, "cutover_post", lambda c, iid, **kw: {"submission_id": "pz1"})
-    def fake_metrics(c, sid, **kw): cutmod._save_state(c, {"metrics_confirmed": True}); return {"reconciliation": {"scored": ["likes"]}}
-    monkeypatch.setattr(golive.cutover, "cutover_metrics", fake_metrics)
-    monkeypatch.setattr(golive.cutover, "cutover_lift", lambda c, sid: {"lift_score": 5.0})
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/golive/validate", data={"integration_id": "ig_1", "confirm": "1"})
-    assert r.status_code == 200 and b"validated" in r.data.lower()
+    from fanops.validation_gate import learning_validated
+    with _http_stub(_PostizOkHandler) as url:
+        cfg = _ready_live_postiz(monkeypatch, tmp_path, url)
+        r = _client(cfg).post("/golive/validate", data={"integration_id": "ig_1", "confirm": "1"})
+    assert r.status_code == 200
+    state = json.loads(cfg.cutover_path.read_text())
+    assert state.get("metrics_confirmed") is True
+    assert learning_validated(cfg) is True
 
 def test_post_golive_live_confirm_requires_exactly_one(tmp_path, monkeypatch):
-    # opsec follow-up: the live switch must treat ONLY confirm="1" (the checkbox value) as confirmed,
-    # not any truthy string — mirrors the map/adopt routes (== "1"). A crafted confirm="false" must NOT confirm.
-    from fanops.studio.actions_common import ActionResult
+    # ONLY confirm="1" (the checkbox value) arms live — a crafted confirm="false" must not.
     cfg = _clean(monkeypatch, tmp_path)
-    seen = {}
-    def _spy(c, *, confirmed): seen["confirmed"] = confirmed; return ActionResult(ok=True, detail={"live": confirmed})
-    monkeypatch.setattr(golive, "go_live", _spy)
-    _client(cfg).post("/golive/live", data={"confirm": "false"})
-    assert seen["confirmed"] is False              # "false" != "1" -> not confirmed (was bool("false")=True)
-    _client(cfg).post("/golive/live", data={"confirm": "1"})
-    assert seen["confirmed"] is True               # the real checkbox value still confirms
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+                          "integrations": {"instagram": "ig_1"}, "backends": {"instagram": "postiz"}}])
+    c = _client(cfg)
+    c.post("/golive/live", data={"confirm": "false"})
+    assert cfg.is_live is False
+    assert os.environ.get("FANOPS_LIVE") != "1"
+    c.post("/golive/live", data={"confirm": "1"})
+    assert cfg.is_live is True
+    assert os.environ.get("FANOPS_LIVE") == "1"
 
 def test_post_golive_validate_confirm_requires_exactly_one(tmp_path, monkeypatch):
-    # same hardening on the validate route (it also gated on bool(confirm)).
-    from fanops.studio.actions_common import ActionResult
-    cfg = _clean(monkeypatch, tmp_path)
-    seen = {}
-    def _spy(c, integration_id=None, confirmed=False): seen["confirmed"] = confirmed; return ActionResult(ok=True, detail={})
-    monkeypatch.setattr(golive, "validate_learning", _spy)
-    _client(cfg).post("/golive/validate", data={"integration_id": "ig_1", "confirm": "yes"})
-    assert seen["confirmed"] is False
+    from fanops.validation_gate import learning_validated
+    with _http_stub(_PostizOkHandler) as url:
+        cfg = _ready_live_postiz(monkeypatch, tmp_path, url)
+        c = _client(cfg)
+        c.post("/golive/validate", data={"integration_id": "ig_1", "confirm": "yes"})
+        assert learning_validated(cfg) is False
+        assert not (cfg.cutover_path.exists() and json.loads(cfg.cutover_path.read_text()).get("metrics_confirmed"))
+        c.post("/golive/validate", data={"integration_id": "ig_1", "confirm": "1"})
+        assert learning_validated(cfg) is True
+        assert json.loads(cfg.cutover_path.read_text()).get("metrics_confirmed") is True
 
 def test_golive_panel_renders_validate_select_when_live_postiz(tmp_path, monkeypatch):
     # M3 panel: a live-postiz, not-yet-validated tab renders the "5 · Validate learning" step with the
@@ -782,33 +946,23 @@ def test_golive_status_carries_responder_and_daemon(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path); monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     st = views.golive_status(cfg)
     assert st.responder_mode == "llm"
-    assert st.llm_transport == "claude" and st.llm_cli_binary == "claude"
+    assert st.llm_transport == "grok" and st.llm_cli_binary == "grok"
     assert st.daemon is None or isinstance(st.daemon, dict)        # dict on darwin, None off-darwin — never raises
 
-def test_set_llm_transport_toggles_dual_write(tmp_path, monkeypatch):
+def test_golive_has_no_transport_switch(tmp_path, monkeypatch):
+    from fanops.studio import views
     cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_llm_transport(cfg, "cursor")
-    assert res.ok and res.detail["llm_transport"] == "cursor" and res.detail["llm_cli_binary"] == "cursor-agent"
-    assert "FANOPS_LLM_TRANSPORT=cursor" in (tmp_path / ".env").read_text()
-    assert cfg.llm_transport == "cursor" and cfg.llm_cli_binary == "cursor-agent"
-    res = golive.set_llm_transport(cfg, "claude")
-    assert res.ok and res.detail["llm_transport"] == "claude"
-    assert "FANOPS_LLM_TRANSPORT=claude" in (tmp_path / ".env").read_text()
-
-def test_set_llm_transport_rejects_unknown(tmp_path, monkeypatch):
-    cfg = _clean(monkeypatch, tmp_path)
-    res = golive.set_llm_transport(cfg, "openai")
-    assert not res.ok and "claude or cursor" in res.error
-
-def test_golive_llm_transport_route_flips_cursor(tmp_path, monkeypatch):
-    from fanops.studio.app import create_app
-    cfg = _clean(monkeypatch, tmp_path)
-    app = create_app(cfg); app.config.update(TESTING=True)
-    r = app.test_client().post("/golive/llm-transport", data={"transport": "cursor"})
-    assert r.status_code == 200
-    assert cfg.llm_transport == "cursor"
-    assert "Switch to Claude" in r.get_data(as_text=True)
-
+    # Stub the snapshot — neighboring golive daemon tests mock launchctl; do not talk to live launchd.
+    monkeypatch.setattr(views, "daemon_health", lambda _cfg: {
+        "loaded": True, "verdict": "alive", "heartbeat_age_s": 5, "interval": 600,
+    })
+    html = _client(cfg).get("/golive").get_data(as_text=True)
+    assert "Switch to Claude" not in html
+    assert 'name="transport"' not in html
+    assert "captions only; moments/hooks stay on Claude" not in html
+    assert "Hands-off processing" in html and "LLM transport" in html
+    assert "gates are answered by <code>grok</code>" in html
+    assert "Each tick invokes <code>grok</code> to answer pending gates." in html
 
 def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)
@@ -817,6 +971,8 @@ def test_golive_panel_shows_hands_off_section(tmp_path, monkeypatch):
     # The AI on/off toggle was retired: gates are always answered by the LLM, Review still gates publish.
     assert "AI responder" not in html
     assert "Review" in html
+    assert "Switch to Claude" not in html
+    assert 'name="transport"' not in html
 
 def test_golive_panel_renders_the_pause_control(tmp_path, monkeypatch):
     cfg = _clean(monkeypatch, tmp_path)

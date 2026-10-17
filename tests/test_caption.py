@@ -227,21 +227,30 @@ def test_ingest_captions_multi_surface_clean_advances(tmp_path):
 
 def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     # The operator rule: <=4 hashtags, HARD, and only source-lock members (never random AI words).
-    # ingest filters through ship_from_lock. Empty completed lock -> honest-empty (no discovery pad).
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    # Non-empty 6-tag lock: ship_from_lock caps at 4; invented / off-lock die.
+    from fanops.hashtags import ship_from_lock
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    lock = ["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"]
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
+    _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     rid = latest_request_id(cfg, "captions", "clip_1")
     sentence = "they slept. not anymore."
+    picks = lock + ["#inventedslogan"]
     response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
         CaptionItem(surface="a/instagram", caption=sentence,
-                    hashtags=["#hiphop", "#rap", "#rapper", "#bars", "#newmusic", "#mohflow"])]).model_dump_json())
+                    hashtags=picks)]).model_dump_json())
     led = ingest_captions(led, cfg, "clip_1")
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
-    assert mc["caption"] == sentence                      # stored sentence, never join(hashtags)
-    assert len(mc["hashtags"]) <= 4                       # hard cap
-    assert "#mohflow" not in mc["hashtags"]               # an unmeasured random word is dropped
-    assert mc["hashtags"] == []                           # cold cache -> empty (no discovery pad)
-    assert mc["tag_sources"] == {t: "lock" for t in mc["hashtags"]}
+    assert mc["caption"] == sentence
+    assert mc["hashtags"] == ship_from_lock(picks, lock)
+    assert mc["hashtags"] == lock[:4]
+    assert len(mc["hashtags"]) == 4
+    assert "#inventedslogan" not in mc["hashtags"]
 
 def test_ingest_captions_noop_without_response(tmp_path):
     # No response on disk -> ledger untouched, not held (stale/pending guard).
@@ -355,13 +364,13 @@ def _seed_variant_posts_for_at_a(led):
     for i in range(3):
         led.add_post(Post(id=f"p{i}", parent_id="clip_win", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="https://www.instagram.com/p/clip_1/"))
     led.add_moment(Moment(id="mom_lose", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
     led.add_clip(Clip(id="clip_lose", parent_id="mom_lose", path="/c_lose.mp4"))
     for i in range(3, 6):
         led.add_post(Post(id=f"p{i}", parent_id="clip_lose", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 10.0}, public_url="https://www.instagram.com/p/clip_1/"))
 
 def test_request_captions_injects_learned_hint_when_gate_met(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
@@ -391,7 +400,7 @@ def test_request_captions_below_gate_emits_no_hint(monkeypatch, tmp_path):
     led.add_clip(Clip(id="clip_p0", parent_id="mom_p0", path="/c_p0.mp4"))
     led.add_post(Post(id="p0", parent_id="clip_p0", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      metrics={"lift_score": 90.0}, public_url="dryrun://p0"))  # only 1
+                      metrics={"lift_score": 90.0}, public_url="https://www.instagram.com/p/p0/"))  # only 1
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload
@@ -408,31 +417,16 @@ def test_request_captions_dedups_hint_across_surfaces(monkeypatch, tmp_path):
     for i in range(3):
         led.add_post(Post(id=f"t{i}", parent_id="clip_twin", account="a", account_id="1",
                           platform=Platform.tiktok, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="https://www.instagram.com/p/clip_1/"))
     led.add_moment(Moment(id="mom_tlose", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
     led.add_clip(Clip(id="clip_tlose", parent_id="mom_tlose", path="/c_tlose.mp4"))
     for i in range(3, 6):
         led.add_post(Post(id=f"t{i}", parent_id="clip_tlose", account="a", account_id="1",
                           platform=Platform.tiktok, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 10.0}, public_url="https://www.instagram.com/p/clip_1/"))
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram), ("a", Platform.tiktok)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert payload["learned_hooks"] == ["WIN"]             # one entry, not ["WIN", "WIN"]
-
-def test_request_captions_failopen_on_learning_error(monkeypatch, tmp_path):
-    # A raising best_hooks must NOT propagate: the request is still written, no hint, clip advances.
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_variant_posts_for_at_a(led)
-    monkeypatch.setattr("fanops.caption.best_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])   # must NOT raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()                                      # request still written -> clip advances
-    payload = json.loads(p.read_text())
-    assert "learned_hooks" not in payload                  # error -> no hint
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
 
 # --- transfer: request_captions injects the cross-surface prior for a COLD recipient ----------
 from fanops.accounts import Account, Accounts, AccountStatus
@@ -453,13 +447,13 @@ def _win_surface_for(led, account, platform, hook, *, n=3):
     for i in range(n):
         led.add_post(Post(id=f"{account}_{platform.value}_{i}", parent_id=f"c_{account}_{hook}", account=account,
                           account_id="x", platform=platform, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 90.0}, public_url="https://www.instagram.com/p/clip_1/"))
     led.add_moment(Moment(id=f"m_{account}_LOSE", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="LOSE"))
     led.add_clip(Clip(id=f"c_{account}_LOSE", parent_id=f"m_{account}_LOSE", path=f"/c_{account}_LOSE.mp4"))
     for i in range(n):
         led.add_post(Post(id=f"{account}_{platform.value}_l{i}", parent_id=f"c_{account}_LOSE", account=account,
                           account_id="x", platform=platform, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 10.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 10.0}, public_url="https://www.instagram.com/p/clip_1/"))
 
 def test_request_captions_injects_transferred_prior_for_cold_surface(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
@@ -511,25 +505,6 @@ def test_request_captions_own_winner_takes_precedence_over_transfer(monkeypatch,
     assert payload["learned_hooks"] == ["OWN"]                 # own signal present
     assert "learned_hooks_transferred" not in payload          # borrowed signal suppressed (own-wins, not the freeze)
 
-def test_request_captions_failopen_on_transfer_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_TRANSFER", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    accts = _transfer_accounts(cfg, [("a", "hype"), ("b", "hype"), ("c", "hype")])
-    _win_surface_for(led, "a", Platform.instagram, "STYLE")
-    _win_surface_for(led, "b", Platform.instagram, "STYLE")
-    from fanops import cutover
-    cutover._save_state(cfg, {"metrics_confirmed": True})      # open the validation gate so the raising
-    #                                                           scorer is actually REACHED (else the freeze
-    #                                                           short-circuits and the fail-open path is untested)
-    monkeypatch.setattr("fanops.caption.transferred_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    led = request_captions(led, cfg, "clip_1", [("c", Platform.instagram)], accounts=accts)  # no raise
-    p = request_path(cfg, "captions", "clip_1")
-    assert p.exists()
-    payload = json.loads(p.read_text())
-    assert "learned_hooks_transferred" not in payload          # error -> no prior
-    assert led.clips["clip_1"].state is ClipState.captions_requested
-
 def test_ingest_captions_ignores_legacy_caption_hook(tmp_path):
     # ROOT FIX: the caption gate no longer authors a hook (the frame-seeing moment gate does). Even if a
     # (legacy) response still carries a hook, ingest_captions IGNORES it and stores None.
@@ -565,12 +540,12 @@ def _seed_thinlead_for_at_a(led):
     for i in range(1, 9):
         led.add_post(Post(id=f"L{i}", parent_id="clip_lead", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": 60.0}, public_url="dryrun://clip_1"))
+                          metrics={"lift_score": 60.0}, public_url="https://www.instagram.com/p/clip_1/"))
     led.add_moment(Moment(id="mom_new", parent_id=src, content_token="0-7", start=0, end=7, reason="r", hook="NEW"))
     led.add_clip(Clip(id="clip_new", parent_id="mom_new", path="/c_new.mp4"))
     led.add_post(Post(id="N1", parent_id="clip_new", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                      metrics={"lift_score": 59.0}, public_url="dryrun://N1"))
+                      metrics={"lift_score": 59.0}, public_url="https://www.instagram.com/p/N1/"))
 
 def test_request_captions_ucb_picks_challenger_when_flag_on(monkeypatch, tmp_path):
     monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
@@ -600,17 +575,6 @@ def test_request_captions_no_hint_when_learning_off_even_with_ucb(monkeypatch, t
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
     assert "learned_hooks" not in payload                 # learning off -> neither scorer runs
-
-def test_request_captions_failopen_on_ucb_error(monkeypatch, tmp_path):
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
-    monkeypatch.setattr("fanops.caption.ucb_rank",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
-    _seed_thinlead_for_at_a(led)
-    led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])  # must NOT raise
-    assert request_path(cfg, "captions", "clip_1").exists()                   # written anyway
-    assert led.clips["clip_1"].state is ClipState.captions_requested          # clip advanced
 
 
 # --- persona injection: the UI-set per-account fan voice must reach the caption request ----------
@@ -698,18 +662,9 @@ def test_caption_missing_platform_errors_end_to_end(tmp_path):
     with pytest.raises(ValueError, match="missing platform"):
         ingest_captions(led, cfg, "clip_1")
 
-def test_platform_coerce_gone():
-    import pathlib
-    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "fanops" / "caption.py"
-    text = src.read_text()
-    assert "platform_coerced" not in text
-    assert "_platform_of" not in text
-
-def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
+def test_platform_derived_from_request_not_model_string(tmp_path):
     # Ingest no longer vets; request platform is still required. A diverged key/platform
-    # must not raise, and ingest must not call vet_hashtags_traced.
-    import inspect
-    from fanops.caption import ingest_captions as ingest_fn
+    # must not raise, and ingest must not coerce the surface tail over the request record.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
     req = json.loads(request_path(cfg, "captions", "clip_1").read_text())
@@ -721,10 +676,7 @@ def test_platform_derived_from_request_not_model_string(tmp_path, mocker):
                                            hashtags=["#hiphop"])]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     assert led.clips["clip_1"].meta_captions["a/instagram"]["hashtags"] == []
-    src = inspect.getsource(ingest_fn)
-    assert "vet_hashtags_traced" not in src
-    assert "_platform_for_surface" in src
-    assert "ship_from_lock" in src
+    assert led.clips["clip_1"].state is ClipState.captioned
 
 
 # --- HV1-SHIP: compose sentence + lock tags at send/display only --------------------------------
@@ -930,15 +882,49 @@ def test_posted_text_keeps_post_sentence_when_its_tags_hit_the_lock(tmp_path):
 
 # --- HV1-WALK B: caption gate stays closed until the source lock row is completed ----------------
 
-def test_request_captions_no_sidecar_does_not_open(tmp_path):
+def test_request_captions_no_sidecar_opens_empty_menu(tmp_path):
+    """D2: missing lock must still open the captions gate (empty menu)."""
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
                           reason="r", transcript_excerpt="they slept on me"))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", "clip_1").exists()
-    assert led.clips["clip_1"].state is ClipState.rendered
+    assert request_path(cfg, "captions", "clip_1").exists()
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+    payload = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    assert "hashtag_store" not in payload["surfaces"][0]
+
+
+def test_refresh_reopens_captioned_empty_when_lock_completes(tmp_path):
+    """D3: captioned with [] hashtags + later researched_at lock must request_captions again."""
+    from fanops.accounts import Accounts
+    from fanops.log import get_logger
+    from fanops.pipeline import _stage_refresh_caption_requests
+    from fanops.source_tags import source_tag_locks_path
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({
+        "accounts": [{"handle": "a", "account_id": "1", "platforms": ["instagram"],
+                      "status": "active", "persona": "x"}],
+    }))
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
+    led.add_clip(Clip(
+        id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.captioned,
+        meta_captions={"a/instagram": {"caption": "x", "hashtags": []}},
+    ))
+    led.save()
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": ["#x"], "lock": ["#x"], "researched_at": "2026-08-18T00:00:00Z"},
+    }))
+    led = _stage_refresh_caption_requests(led, cfg, Accounts.load(cfg), get_logger(cfg))
+    assert led.clips["clip_1"].state is ClipState.captions_requested
+    assert request_path(cfg, "captions", "clip_1").exists()
 
 
 def test_request_captions_empty_completed_lock_opens(tmp_path):

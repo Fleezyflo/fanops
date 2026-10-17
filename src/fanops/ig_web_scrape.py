@@ -66,6 +66,8 @@ class IgWebSession:
         name = data.get("name")
         if not isinstance(name, str) or not name.strip():
             return []
+        if _norm(name) != _norm(q):
+            return []
         hid = data.get("id")
         media_count = data.get("media_count")
         if hid in (None, "") and not (isinstance(media_count, (int, float)) and media_count > 0):

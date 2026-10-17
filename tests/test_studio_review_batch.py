@@ -63,7 +63,7 @@ def test_clip_in_editable_and_recent_dedups_to_editable(tmp_path):
     _await(led, "p_aw", "clip_1", "a")             # awaiting -> editable card
     led.add_post(Post(id="p_pub", parent_id="clip_1", account="a", account_id="1",   # same clip, shipped
                       platform=Platform.instagram, caption="c", state=PostState.published,
-                      scheduled_time=_z(NOW - timedelta(hours=1)), public_url="dryrun://p_pub"))
+                      scheduled_time=_z(NOW - timedelta(hours=1)), public_url="https://www.instagram.com/p/p_pub/"))
     cards = review_buckets(led, Accounts.load(cfg), cfg, now=NOW)
     for_clip = [c for c in cards if c.clip_id == "clip_1"]
     assert [c.bucket for c in for_clip] == ["editable"]   # ONE card; the recent dup is dropped (two <video> fix)
@@ -107,12 +107,13 @@ def test_review_renders_collapsible_batch_section(tmp_path):
     _await(led, "p_a", "clip_1", "a", batch_id="batch_x"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
     assert "<details" in html and "Launch Week" in html         # batch name in a collapsible <summary>
+    assert "clip_1" in html
 
 def test_review_unbatched_renders_ungrouped_section(tmp_path):
     cfg = Config(root=tmp_path); _seed_accounts(cfg); led = Ledger.load(cfg); _lineage(led)
     _await(led, "p_a", "clip_1", "a"); led.save()
     html = _client(cfg).get("/review?view=list").data.decode()
-    assert "Ungrouped" in html and b"c" in _client(cfg).get("/review?view=list").data   # card still renders
+    assert "Ungrouped" in html and "clip_1" in html   # card still renders
 
 
 # ---- Face 4 follow-up: B3 header / B4 excluded / C3 affinity / B2 filter ----

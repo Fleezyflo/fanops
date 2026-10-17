@@ -4,7 +4,7 @@
 # the manifest, and the live output cannot disagree. The no-drift assertion is the standing instrument: mutate
 # a lever and the manifest moves with it; a hand-maintained copy would red.
 from fanops.config import Config
-from fanops.personas import Persona, compose_breakdown, manifest
+from fanops.personas import Persona, compose_breakdown, manifest, derive_cut_spec
 import fanops.persona_levers as pl
 
 
@@ -68,17 +68,22 @@ def test_manifest_is_derived_no_drift(tmp_path):
     d = compose_breakdown(cfg, p)
     m = {row["key"]: row for row in manifest(cfg, p)}
     assert m["niche"]["produces"] == d["tags"]["terms"]               # the niche == the terms Layer A searches on
-    assert d["cut"]["band"] in m["cut_policy"]["produces"]             # MOL-523: cut_policy derives the length band
+    assert d["cut"]["framing"] == "top"
+    assert m["cut_policy"]["produces"] == "top crop (derived from cut_policy)"
     assert m["hook_angle"]["produces"] == d["hook"]["text"]            # the compiled hook directive
 
 def test_manifest_moves_when_a_lever_changes(tmp_path):
     # the standing instrument: change a lever, the manifest's produced value moves with it (proves derivation).
     cfg = Config(root=tmp_path)
-    base = Persona(id="p", voice="v", cut_policy=["punchlines"])    # short
-    longer = base.model_copy(update={"cut_policy": ["storytelling"]})  # long
+    base = Persona(id="p", voice="v", cut_policy=["punchlines"])
+    story = base.model_copy(update={"cut_policy": ["storytelling"]})
     m0 = {r["key"]: r for r in manifest(cfg, base)}
-    m1 = {r["key"]: r for r in manifest(cfg, longer)}
-    assert m0["cut_policy"]["produces"] != m1["cut_policy"]["produces"]   # MOL-523: cut_policy moves the band
+    m1 = {r["key"]: r for r in manifest(cfg, story)}
+    assert derive_cut_spec(base)[1] == "center"
+    assert derive_cut_spec(story)[1] == "top"
+    assert m0["cut_policy"]["produces"] == "center crop (derived from cut_policy)"
+    assert m1["cut_policy"]["produces"] == "top crop (derived from cut_policy)"
+    assert m0["cut_policy"]["produces"] != m1["cut_policy"]["produces"]
 
 
 # ---- Task 4: the health flag exactly tracks coherence (empty incoherent set post-M3) ----

@@ -2,13 +2,16 @@
 (lock-free) and assembles these dataclasses; templates render them. Mutations live in actions.py."""
 from __future__ import annotations
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 from fanops.config import Config
 from fanops.accounts import Accounts
-from fanops.errors import fail_open
+from fanops.errors import ControlFileError, fail_open
 from fanops.ledger import Ledger
+from fanops.health_probes import deps_from_snapshot
+from fanops.health_projectors import sending_backend_label
 # Facade re-exports: the names consumers reach via `fanops.studio.views` / `views.X` (templates / app.py /
 # tests). Dead re-exports (no facade consumer AND no internal use here) were trimmed — every trimmed symbol
 # still lives in its home submodule (views_common/_review/_results); this is just the public views surface.
@@ -190,13 +193,15 @@ class PersonasPage:
 def personas_page(cfg: Config, *, led: Optional[Ledger] = None) -> "PersonasPage":
     """The Personas-page read-model: every persona as a card (linked account handles + levers)
     + every account's current persona link (connect dropdown). Posted hashtags are the source lock.
-    Fail-open: a corrupt personas.json / accounts.json -> an EMPTY page (the surface never 500s),
-    mirroring golive_accounts. `led` is accepted for call-compat; the surface reads no ledger."""
+    Corrupt personas.json / unreadable control files raise ControlFileError (route layer maps to 200).
+    `led` is accepted for call-compat; the surface reads no ledger."""
     try:
         from fanops.personas import (Personas, compose_persona_instruction, persona_facts,   # lazy: personas imports accounts (in migrate) -> avoid a load cycle
                                      hook_directive, caption_directive, resolved_cut_spec, manifest)
         reg = Personas.load(cfg)
         accts = Accounts.load(cfg).accounts
+    except ControlFileError:
+        raise
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("personas", "-", "read_error", err=str(exc)[:160])
@@ -321,7 +326,7 @@ def build_system_strip(cfg: Config) -> dict:
     except Exception as exc:
         get_logger(cfg)("system_strip", "-", "postiz_down_error", err=str(exc)[:160])
         postiz_down = _postiz_down_on_helper_raise(cfg)
-    return {"is_live": cfg.is_live, "mode": _publish_mode_label(cfg), "blocked_gates": blocked,
+    return {"is_live": cfg.is_live, "mode": sending_backend_label(cfg, deps_from_snapshot(cfg)), "blocked_gates": blocked,
             "strip_metrics_unknown": strip_metrics_unknown,
             "recoverable_sources": recoverable, "failed": failed, "insights_blocked": insights_blocked,
             "errored_sources": errored, "errored_first_id": errored_first_id,
@@ -365,14 +370,18 @@ def daemon_health(cfg: Config) -> Optional[dict]:
 
     Enriched with `interval`/`pending_gates` so the banner can frame a NOT-INSTALLED driver as OPT-IN
     rather than a fault; gates are always answered by the LLM, so there is no AI on/off to disclose."""
-    with fail_open("studio.views.daemon_health"):
+    try:
         from fanops import daemon
         from fanops import pipeline
         interval = daemon.installed_interval(cfg) or 600
         rep = daemon.status(cfg, interval=interval)
         pending_gates = None                                   # never let a torn agent_io dir 500 the banner
-        with fail_open("studio.views.daemon_health.pending_gates"):
+        try:
             pending_gates = pipeline.pending_gate_count(cfg)   # need-aware truth: claude runs ONLY to answer these
+        except Exception as exc:
+            logging.getLogger("fanops.studio.views").debug(
+                "studio.views.daemon_health.pending_gates fail-open: %s: %s",
+                type(exc).__name__, str(exc)[:200], exc_info=True)
         siblings = daemon.sibling_agents_status()
         from fanops.pipeline_run import run_status_line
         out = {**rep, "interval": interval,
@@ -382,7 +391,10 @@ def daemon_health(cfg: Config) -> Optional[dict]:
         if run_line != "run=idle":
             out["run_line"] = run_line
         return out
-    return None
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views").debug(
+            "studio.views.daemon_health fail-open: %s: %s", type(exc).__name__, str(exc)[:200], exc_info=True)
+        return None
 
 
 def daemon_health_strip(cfg: Config) -> Optional[dict]:
@@ -400,8 +412,12 @@ def daemon_health_strip(cfg: Config) -> Optional[dict]:
                 "hint": f"daemon strip snapshot {sr.freshness.value}"}
     snap = dict(sr.data) if isinstance(sr.data, dict) else {}
     pending_gates = None
-    with fail_open("studio.views.daemon_health_strip.pending_gates"):
+    try:
         pending_gates = pipeline.pending_gate_count(cfg)
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views").debug(
+            "studio.views.daemon_health_strip.pending_gates fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     age, stale, _iv = heartbeat_stale(cfg, interval=snap.get("interval") or 600)
     return project_daemon_strip(
         snap, age=age, stale=stale, pending_gates=pending_gates,

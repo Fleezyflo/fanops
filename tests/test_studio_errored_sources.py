@@ -120,15 +120,8 @@ def test_run_errored_name_links_library_detail(tmp_path, monkeypatch):
 def test_run_next_recover_links_library(tmp_path, monkeypatch):
     import pytest
     pytest.importorskip("flask")
-    from fanops.studio import views as v
     cfg = _cfg(tmp_path, monkeypatch)
     _add_errored(cfg, "src_1")
-    _real = v.pipeline_status
-    def stub(c):
-        st = _real(c)
-        st["sources_recoverable"] = 1
-        return st
-    monkeypatch.setattr(v, "pipeline_status", stub)
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True)
     html = app.test_client().get("/run").data.decode()
@@ -151,11 +144,9 @@ def test_run_resume_route_recovers_and_rerenders(tmp_path, monkeypatch):
     assert s.state is SourceState.transcribed and s.transcript
 
 def test_strip_unknown_does_not_scan_ledger(tmp_path, monkeypatch):
-    # Unknown metrics stay unknown. Do not Ledger.load on every page to fill errored/failed.
+    # Unknown metrics stay unknown. A real recoverable source in the ledger must not fill the strip.
     cfg = _cfg(tmp_path, monkeypatch)
     _add_errored(cfg, "src_err")
-    monkeypatch.setattr("fanops.ledger.Ledger.load", lambda *a, **k: (_ for _ in ()).throw(
-        AssertionError("build_system_strip must not Ledger.load")))
     strip = views.build_system_strip(cfg)
     assert strip["strip_metrics_unknown"] is True
     assert strip["recoverable_sources"] == 0

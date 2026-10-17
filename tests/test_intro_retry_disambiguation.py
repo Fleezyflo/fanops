@@ -7,7 +7,6 @@
 # after 3 transient misses. The fix: the prewarm writes a {cid}.introfail.json marker ONLY when it attempted
 # the compose and it failed; the commit burns the cap only on a matching marker, and waits (no burn) otherwise.
 import json
-from pathlib import Path
 from fanops.config import Config
 from fanops.models import StitchState
 import fanops.stitch_render as sr
@@ -54,24 +53,27 @@ def test_genuine_compose_failure_burns_and_parks(tmp_path):
     assert p.state is StitchState.error and "compose failed after" in (p.error_reason or "")
 
 
-def test_prewarm_writes_failure_marker_on_compose_fail(tmp_path, mocker):
+def test_prewarm_writes_failure_marker_on_compose_fail(tmp_path):
     # The prewarm records the genuine-failure marker when prepend_intro returns False (no composite produced),
     # which is exactly what lets the commit tell a real failure from a not-yet-warmed pairing.
+    # Seed paths exist in the ledger but the intro file is absent -> prepend_intro fail-opens (False).
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
-    mocker.patch("fanops.compose.prepend_intro", return_value=False)   # attempted, produced nothing
     sr.prewarm_approved_stitches(led, cfg, lambda *a, **k: None)
     cid = _stitch_clip_id("iplan", "9:16")
     assert (cfg.clips / f"{cid}.introfail.json").exists(), "prewarm did not record the genuine-failure marker"
 
 
-def test_successful_prewarm_clears_a_stale_failure_marker(tmp_path, mocker):
-    # A prior genuine failure left a marker; a later successful prewarm must CLEAR it so the now-warm pairing
-    # adopts instead of being treated as still-failing.
+def test_successful_prewarm_clears_a_stale_failure_marker(tmp_path):
+    # A prior genuine failure left a marker; a later warm composite (matching compose-fp) must CLEAR it
+    # so the now-warm pairing adopts instead of being treated as still-failing.
+    from fanops.compose import _compose_fingerprint
     cfg = Config(root=tmp_path); led = _seed_intro_approved(cfg)
     cid = _intro_fail_marker(cfg, led)                     # stale failure from an earlier pass
-    def fake_prepend(b, i, o, *, tease_text, intro_seconds, **kw):
-        Path(o).parent.mkdir(parents=True, exist_ok=True); Path(o).write_bytes(b"COMPOSED"); return True
-    mocker.patch("fanops.compose.prepend_intro", side_effect=fake_prepend)
+    base = led.clips["clip_base"]; intro = led.sources["intro1"]
+    cfg.clips.mkdir(parents=True, exist_ok=True)
+    (cfg.clips / f"{cid}.mp4").write_bytes(b"COMPOSED")
+    fp = _compose_fingerprint(base.path, intro.source_path, led.stitch_plans["iplan"].plan_params, 1920, 1080)
+    (cfg.clips / f"{cid}.render.json").write_text(json.dumps({"fp": fp}))
     sr.prewarm_approved_stitches(led, cfg, lambda *a, **k: None)
     assert not (cfg.clips / f"{cid}.introfail.json").exists(), "success did not clear the stale failure marker"
     render_approved_stitches(led, cfg)

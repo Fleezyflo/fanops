@@ -17,7 +17,7 @@ import requests
 from fanops.config import Config
 from fanops.errors import ZernioAuthError
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, Platform, PostState, is_real_submission_id
+from fanops.models import Clip, ClipState, ErrorKind, Post, Platform, PostState, is_real_submission_id
 from fanops.post import Poster
 from fanops.post import run as run_mod
 from fanops.post import zernio
@@ -79,7 +79,7 @@ def _post(pid="post_x", acct_id="acc_abc", platform=Platform.tiktok, created_at=
     return Post(id=pid, parent_id="c1", account="tk", account_id=acct_id, platform=platform,
                 caption="fire", state=PostState.submitting, created_at=created_at,
                 media_urls=["https://media.zernio.com/x.mp4"], scheduled_time="2099-01-01T00:00:00Z",
-                public_url="dryrun://c1")
+                public_url="https://www.instagram.com/p/c1/")
 
 
 def _led(cfg, post):
@@ -414,7 +414,6 @@ def test_32_409_survives_publish_one_end_to_end(tmp_path, monkeypatch):
     p = _post().model_copy(update={"state": PostState.queued})
     led = _led(cfg, p); led.save()
     monkeypatch.setattr(zernio.requests, "post", _Rec(_R(409, {"details": {"existingPostId": "z_other"}})))
-    monkeypatch.setattr(run_mod, "_ensure_media", lambda *a, **k: None)
     state = run_mod._publish_one(cfg, p.id, "zernio", account_id="acc_abc")
     assert state == PostState.needs_reconcile.value
     after = Ledger.load(cfg).posts[p.id]
@@ -448,18 +447,25 @@ def test_34_429_retry_after_beyond_the_deadline_never_sends_again(tmp_path, monk
     assert p.state is PostState.needs_reconcile
     assert "rate_limited_may_be_live" in p.error_reason
 
-def test_35_connecttimeout_past_the_deadline_with_nothing_sent_is_terminal(tmp_path, monkeypatch):
-    # A connection never established sent nothing, so `failed` (re-queueable) is CORRECT and safe here — the
-    # one boundary where terminal is provable.
-    cfg = _cfg(tmp_path, monkeypatch); clock = _clocked(monkeypatch)
-    class _SlowTimeout(_Rec):
-        def __call__(s, *a, **k):
-            clock.advance(120.0)                          # each attempt burns wall-clock before failing
-            return super().__call__(*a, **k)
-    rec = _SlowTimeout(requests.exceptions.ConnectTimeout("blip"))
-    p = _publish(cfg, _post(), rec, monkeypatch)
-    assert p.state is PostState.failed
-    assert "connect_timeout" in p.error_reason and "nothing was sent" in p.error_reason
+def test_35_connecttimeout_past_the_deadline_with_nothing_sent_stays_queued(tmp_path, monkeypatch):
+    # Defect D1: never-established POST raises into `_publish_one`, which re-queues (error_kind=None).
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = _cfg(tmp_path, monkeypatch)
+    f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id="post_x", parent_id="c1", account="tk", account_id="acc_abc",
+                          platform=Platform.tiktok, caption="fire", state=PostState.queued,
+                          created_at=_BIRTH, media_urls=["https://media.zernio.com/x.mp4"],
+                          scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
+    rec = _Rec(requests.exceptions.ConnectTimeout("blip"))
+    monkeypatch.setattr(zernio.requests, "post", rec)
+    run_mod._publish_one(cfg, "post_x", "zernio")
+    p = Ledger.load(cfg).posts["post_x"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None
+    assert (p.error_reason or "").startswith("publish deferred:")
+    assert not is_real_submission_id(p.submission_id)
 
 def test_36_the_budget_is_driven_by_monotonic_not_the_wall_clock(monkeypatch):
     # An NTP correction / DST step must neither extend nor collapse the budget. Pin the formula exactly to
@@ -589,17 +595,23 @@ def test_45c_a_held_candidate_row_is_not_selected_by_the_transient_requeue(tmp_p
     assert is_transient_failure(after) is False
 
 def test_45d_a_failed_poll_without_a_candidate_still_fails_ordinarily(tmp_path, monkeypatch):
-    # The B-case: no candidate => unchanged pre-existing behaviour. Negative control for 45b/45c.
+    # TikTok vendor-failed poll, no candidate: remint door. Live GET shape is platforms[].errorMessage.
     cfg = _cfg(tmp_path, monkeypatch)
+    from types import SimpleNamespace
     from fanops import reconcile as rec_mod
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_mine"                            # no reconcile_candidate_id
-    out = rec_mod.reconcile_posts(_led(cfg, p), cfg,
-                                  get_status=lambda sid: {"status": "failed", "errorMessage": "rejected upstream"})
+    capacity = "TikTok direct posting is at capacity right now."
+    body = {"post": {"platforms": [{"status": "failed", "errorMessage": capacity}]}}
+    monkeypatch.setattr(
+        "fanops.post.metrics.zernio_read.requests.get",
+        lambda *a, **k: SimpleNamespace(status_code=200, text="{}", json=lambda: body))
+    out = rec_mod.reconcile_posts(_led(cfg, p), cfg)
     after = out.posts[p.id]
     assert after.state is PostState.failed
-    assert "poster reports failed" in after.error_reason
-    assert after.error_kind is ErrorKind.unknown
+    assert after.error_kind is ErrorKind.transient
+    assert after.submission_id is None
+    assert capacity in after.error_reason
     assert after.reconcile_candidate_id is None
 
 def test_46_candidate_is_mirrored_into_error_reason(tmp_path, monkeypatch):
@@ -612,13 +624,18 @@ def test_47_reconcile_clears_the_candidate_on_an_explicit_identity_decision(tmp_
     # Resolved on THIS row's own submission_id + the platform liveness gate — evidence that never touched the
     # candidate. Spent evidence must not outlive the ambiguity it described.
     cfg = _cfg(tmp_path, monkeypatch)
+    from types import SimpleNamespace
     from fanops import reconcile as rec_mod
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "fanops.post.metrics.zernio_read.requests.get",
+        lambda *a, **k: SimpleNamespace(status_code=200, text="{}",
+                                        json=lambda: {"author_unique_id": "x"}))
     p = _post().model_copy(update={"state": PostState.needs_reconcile})
     p.submission_id = "z_real"; p.reconcile_candidate_id = "z_other"
     led = _led(cfg, p)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {
-        "status": "published", "publicUrl": "https://tiktok.com/@x/video/1", "postSubmissionId": "z_real"})
+        "status": "published", "publicUrl": "https://www.tiktok.com/@x/video/1",
+        "postSubmissionId": "z_real", "tiktokUsername": "x"})
     after = out.posts[p.id]
     assert after.state is PostState.published
     assert after.reconcile_candidate_id is None
@@ -679,6 +696,7 @@ def test_52_connecttimeout_is_retried(tmp_path, monkeypatch):
     rec = _Rec(requests.exceptions.ConnectTimeout("blip"), _R(201, {"_id": "z1"}))
     p = _publish(cfg, _post(), rec, monkeypatch)
     assert len(rec.calls) == 2 and p.state is PostState.submitted
+    assert rec.rids[0] == rec.rids[1]
 
 def test_52b_readtimeout_is_retried_as_idempotent_replay(tmp_path, monkeypatch):
     # Same x-request-id: a ReadTimeout retry is a replay, not a second create. Parking on the first

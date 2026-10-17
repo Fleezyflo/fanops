@@ -135,7 +135,7 @@ def reason(exc: Exception) -> str:
 
 @contextlib.contextmanager
 def fail_open(site: str, log=None):
-    """Degradable fail-open: log every failure, never swallow KeyboardInterrupt/SystemExit."""
+    """Log every failure, then re-raise. KeyboardInterrupt/SystemExit skip the breadcrumb."""
     if log is None:
         log = _log.warning
     try:
@@ -144,3 +144,4 @@ def fail_open(site: str, log=None):
         raise
     except Exception as exc:
         log("%s fail-open: %s: %s", site, type(exc).__name__, str(exc)[:200], exc_info=True)
+        raise

@@ -20,12 +20,12 @@ STORE = ["#hiphop", "#rap"]        # the measurement cache as an ordered menu
 # --- vet_hashtags(corpus=...) — the deterministic gate -----------------------------------------
 
 def test_persona_facts_failopen_on_weird_corpus(tmp_path):
-    # D6 end-to-end: persona_facts is the Personas-page transparency read. Even a duck-typed object whose
-    # corpus holds a non-str must NOT crash the read (vet_hashtags drops it). Pins the page's fail-open.
-    from types import SimpleNamespace
+    # D6: persona_facts is the Personas-page transparency read. Call the real compiler on a real Persona
+    # (hashtag_corpus is leftover unused state — caption tags are the source lock).
     cfg = Config(root=tmp_path)
-    p = SimpleNamespace(clip_profile=None, framing="top", hashtag_corpus=["#detroitrap", 7])
-    facts = core.persona_facts(cfg, p)                      # must return cleanly, not raise
+    p = core.Persona(id="p", voice="v", cut_policy=["storytelling"],
+                     hashtag_corpus=["#detroitrap", "not-a-real-tag"])
+    facts = core.persona_facts(cfg, p)
     assert facts["framing"] == "top" and facts["lead_tags"] == []
 
 
@@ -110,17 +110,23 @@ def test_request_captions_omits_corpus_when_no_measured_overlap(tmp_path):
 def test_ingest_uses_source_corpus_lead_not_persona_monopoly(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _clip(led, transcript="detroit rap bars fire", cfg=cfg)
+    lock = ["#detroit", "#rap"]
+    _write_lock(cfg, "src_1", lock)
     _write_meas_tags(cfg, ["#detroit", "#rap", "#bars", "#fire", "#alphacorpus"],
                      {"#detroit": 9000.0, "#alphacorpus": 5.0})
     accts = _accounts_with_corpus(cfg, ["#alphacorpus", "#betacorpus"])
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)], accounts=accts)
     rid = latest_request_id(cfg, "captions", "clip_1")
-    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[]).model_dump_json())
+    response_path(cfg, "captions", "clip_1").write_text(CaptionSet(request_id=rid, items=[
+        CaptionItem(surface="a/instagram", caption="they slept on me", language="en",
+                    hashtags=["#detroit", "#alphacorpus", "#betacorpus"]),
+    ]).model_dump_json())
     ingest_captions(led, cfg, "clip_1")
     c = led.clips["clip_1"]
-    assert c.held is True and c.state is ClipState.held
-    assert "caption_missing_language" in (c.held_reason or "")
-    assert "a/instagram" not in c.meta_captions
+    shipped = c.meta_captions["a/instagram"]["hashtags"]
+    assert "#detroit" in shipped
+    assert "#alphacorpus" not in shipped and "#betacorpus" not in shipped
+    assert c.held is False and c.state is ClipState.captioned
 
 
 # --- the prompt surfaces the corpus rule -------------------------------------------------------

@@ -4,13 +4,14 @@ Depends on views_common for lineage_maps; lazy-imports golive_accounts/led_for_r
 the views facade to avoid circular imports."""
 from __future__ import annotations
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from fanops.config import Config
-from fanops.errors import fail_open
+from fanops.errors import ControlFileError, fail_open
 from fanops.ledger import Ledger
 from fanops.models import ClipState, PostState
 from fanops.timeutil import parse_iso
@@ -99,18 +100,23 @@ def review_handoff(cfg: Config) -> dict:
 
 def zero_post_clips(cfg: Config) -> list[dict]:
     """Captioned/queued clips with no Post born — the silent crosspost drop surfaced for Home."""
-    with fail_open("studio.views_home.zero_post_clips"):
-        led = Ledger.load(cfg)
-        out = []
-        for clip in led.clips.values():
-            if clip.state not in (ClipState.queued, ClipState.captioned):
-                continue
-            if any(p.parent_id == clip.id for p in led.posts.values()):
-                continue
-            mom = led.moments.get(clip.parent_id)
-            out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
-                        "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
-        return out[:5]
+    try:
+        with fail_open("studio.views_home.zero_post_clips"):
+            led = Ledger.load(cfg)
+            out = []
+            for clip in led.clips.values():
+                if clip.state not in (ClipState.queued, ClipState.captioned):
+                    continue
+                if any(p.parent_id == clip.id for p in led.posts.values()):
+                    continue
+                mom = led.moments.get(clip.parent_id)
+                out.append({"clip_id": clip.id, "moment_id": clip.parent_id,
+                            "window": f"{int(mom.start)}–{int(mom.end)}" if mom else "—"})
+            return out[:5]
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views_home").debug(
+            "studio.views_home.zero_post_clips fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     return []
 
 
@@ -162,26 +168,31 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
     from collections import defaultdict
     from fanops.studio import views as _views
     out: dict[str, dict] = defaultdict(lambda: {"awaiting": 0, "scheduled": 0, "failed": 0, "inflight": 0, "review_batch": None})
-    with fail_open("studio.views_home.account_work_counts"):
-        led = _views.led_for_request(cfg)
-        now = datetime.now(timezone.utc)
-        # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
-        # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
-        for p in led.posts.values():
-            h = p.account
-            if p.state is PostState.awaiting_approval and led.can_promote(p):
-                out[h]["awaiting"] += 1
-            elif p.state is PostState.queued and _queued_has_future_schedule(p, now):
-                out[h]["scheduled"] += 1
-        for h in {p.account for p in led.posts.values()}:
-            hist = led.state_histogram(account=h)
-            inflight = (hist[PostState.needs_reconcile] + hist[PostState.submitting]
-                        + hist[PostState.submitted])
-            failed = hist[PostState.failed] + hist[PostState.error]
-            if inflight:
-                out[h]["inflight"] = inflight
-            if failed:
-                out[h]["failed"] = failed
+    try:
+        with fail_open("studio.views_home.account_work_counts"):
+            led = _views.led_for_request(cfg)
+            now = datetime.now(timezone.utc)
+            # awaiting stays the owned worklist predicate (can_promote); scheduled is a time predicate on
+            # queued rows — neither is a pure PostState census. inflight/failed read Ledger.state_histogram.
+            for p in led.posts.values():
+                h = p.account
+                if p.state is PostState.awaiting_approval and led.can_promote(p):
+                    out[h]["awaiting"] += 1
+                elif p.state is PostState.queued and _queued_has_future_schedule(p, now):
+                    out[h]["scheduled"] += 1
+            for h in {p.account for p in led.posts.values()}:
+                hist = led.state_histogram(account=h)
+                inflight = (hist[PostState.needs_reconcile] + hist[PostState.submitting]
+                            + hist[PostState.submitted])
+                failed = hist[PostState.failed] + hist[PostState.error]
+                if inflight:
+                    out[h]["inflight"] = inflight
+                if failed:
+                    out[h]["failed"] = failed
+    except Exception as exc:
+        logging.getLogger("fanops.studio.views_home").debug(
+            "studio.views_home.account_work_counts fail-open: %s: %s",
+            type(exc).__name__, str(exc)[:200], exc_info=True)
     for h in out:
         if out[h]["awaiting"]:
             out[h]["review_batch"] = review_nav_params(cfg, h).get("batch")
@@ -189,10 +200,10 @@ def account_work_counts(cfg: Config) -> dict[str, dict]:
 
 
 def home_status(cfg: Config) -> HomeStatus:
-    """Lock-free, fail-open read-model for GET / (the status home): connection state per account (via the
+    """Lock-free read-model for GET / (the status home): connection state per account (via the
     shared golive_accounts helper — NEVER golive_status, which also runs build_health_report on every load) +
-    headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger -> zeroed counts +
-    batches=None + empty by_account, never a 500."""
+    headline counts + per-account post counts, all from ONE Ledger.load. A torn ledger raises
+    ControlFileError (the Home route maps that to HTTP 200; this helper does not re-swallow)."""
     from fanops.studio import views as _views
     accounts = _views.golive_accounts(cfg)                   # once-bound, already fail-open (no build_health_report on /)
     mode = _views._publish_mode_label(cfg)                    # provider-aware (M3); 'dryrun' when not live
@@ -227,7 +238,9 @@ def home_status(cfg: Config) -> HomeStatus:
                   "failed_oversize": fb.get("oversize", 0),
                   "posted": st[PostState.published] + st[PostState.analyzed]}
         by_account = dict(Counter(p.account for p in led.posts.values()))
-    except Exception as exc:                          # the first page an operator sees must never 500
+    except ControlFileError:
+        raise
+    except Exception as exc:                          # GET / 200-on-non-control-file is the route owner
         from fanops.log import get_logger
         get_logger(cfg)("home", "-", "error", err=str(exc)[:160])
         counts = {"sources": 0, "batches": None, "awaiting": 0, "awaiting_posts": 0, "scheduled": 0,
@@ -237,10 +250,10 @@ def home_status(cfg: Config) -> HomeStatus:
 
 
 def home_batches(cfg: Config) -> list[HomeBatch]:
-    """Lock-free, fail-open batch list for the Home entry point — each row deep-links ?batch=<id> into Review
+    """Lock-free batch list for the Home entry point — each row deep-links ?batch=<id> into Review
     and carries posts_born + a zero-result flag (a non-empty target that birthed NO post — the silent
     crosspost batch_target_skip outcome, surfaced). Newest-first by created_at (None sinks last), tie-broken
-    by id. Torn ledger -> [] + logged, never a 500. Surfaces the outcome; computes no skip logic."""
+    by id. Torn ledger raises ControlFileError. Surfaces the outcome; computes no skip logic."""
     try:
         led = Ledger.load(cfg)
         out = []
@@ -254,6 +267,8 @@ def home_batches(cfg: Config) -> list[HomeBatch]:
                                  is_emptied=is_emptied, is_zero_result=is_zero_result))
         out.sort(key=lambda h: (h.created_at or "", h.id), reverse=True)
         return out
+    except ControlFileError:
+        raise
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("home_batches", "-", "error", err=str(exc)[:160])

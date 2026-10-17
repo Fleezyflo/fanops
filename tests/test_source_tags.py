@@ -5,8 +5,11 @@ import inspect
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from fanops.caption import request_captions
 from fanops.config import Config
+from fanops.errors import ControlFileError
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, search_hashtags_scrape
 from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, load_source_tag_locks,
                                 lock_ready_sources, source_tag_locks_path)
@@ -109,14 +112,22 @@ def test_produce_lock_follows_play_rank(tmp_path):
 
 def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     captured = {}
+    envelope = {"structuredOutput": {
+        "keep": ["#hiphop", "#inventedslogan", "#rickross"],
+        "reject": ["#fyp"]}, "result": "", "session_id": "s"}
 
-    def fake_claude(prompt, schema, **_k):
-        captured["prompt"] = prompt
-        captured["schema"] = schema
-        return {"keep": ["#hiphop", "#inventedslogan", "#rickross"],
-                "reject": ["#fyp"]}, "m", False
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    def fake_run(cmd, **kw):
+        captured["prompt"] = open(cmd[cmd.index("--prompt-file") + 1]).read()
+        if "--json-schema" in cmd:
+            captured["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
+        return R()
+
+    mocker.patch("fanops.llm.subprocess.run", side_effect=fake_run)
     from fanops.source_tags import shortlist_source_tags
     src = _src(title="Rick Ross talks tiers", language="en")
     catalog = ["#rickross", "#hiphop", "#fyp", "#miami"]
@@ -131,22 +142,21 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     assert "Choose ONLY from the catalog" in p or "only from the catalog" in p.lower()
 
 
-def test_shortlist_empty_catalog_does_not_call_llm(tmp_path, mocker):
-    captured = {}
+def test_shortlist_empty_catalog_does_not_invent(mocker):
+    """Empty catalog is fail-closed: never invent names (skill: never invent)."""
+    envelope = {"structuredOutput": {"keep": ["#rickross", "#hiphop"], "reject": []},
+                "result": "", "session_id": "s"}
 
-    def fake_claude(prompt, schema, **_k):
-        captured["prompt"] = prompt
-        return {"keep": ["#rickross", "#hiphop"]}, "m", False
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
     from fanops.source_tags import shortlist_source_tags
-    names = shortlist_source_tags(_src(title="Rick Ross talks tiers"), "he says nobody left to fight", [])
-    assert names == ["#rickross", "#hiphop"]
-    assert "Choose ONLY from the catalog" not in captured["prompt"]
-    assert "title: Rick Ross talks tiers" in captured["prompt"]
-    shortlist_source_tags(_src(title=None, sid="src_0492c4e71071"), "he says nobody left to fight", [])
-    assert "src_0492c4e71071" not in captured["prompt"]
-    assert "title:" not in captured["prompt"]
+    names = shortlist_source_tags(_src(title="Rick Ross talks tiers"),
+                                  "he says nobody left to fight", [])
+    assert names == []
 
 
 def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
@@ -253,11 +263,16 @@ def test_researched_without_catalog_rejudges(tmp_path):
 
 
 def test_catalog_search_feeds_judge(tmp_path, mocker):
-    def fake_claude(*_a, **_k):
-        return {"keep": ["#rickross"],
-                "reject": ["#fyp", "#whichwayamifacing"]}, "m", False
+    envelope = {"structuredOutput": {
+        "keep": ["#rickross"],
+        "reject": ["#fyp", "#whichwayamifacing"]}, "result": "", "session_id": "s"}
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    class R:
+        returncode = 0
+        stdout = json.dumps(envelope)
+        stderr = ""
+
+    mocker.patch("fanops.llm.subprocess.run", return_value=R())
     from fanops.source_tags import shortlist_source_tags
     cfg = _cfg(tmp_path)
     client = _SearchClient(
@@ -265,7 +280,7 @@ def test_catalog_search_feeds_judge(tmp_path, mocker):
         media_by_tag={"#rickross": [_Media(1, "", play_count=8)]},
     )
     ensure_source_lock(cfg, _src(title="Rick Ross"), client=client,
-                       research_fn=lambda s, e: shortlist_source_tags(s, e, []),
+                       research_fn=lambda s, e: shortlist_source_tags(s, e, ["#rickross"]),
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["lock"] == ["#rickross"]
@@ -306,11 +321,11 @@ def test_unattended_researched_without_catalog_resumes(tmp_path, monkeypatch):
 def test_empty_title_search_does_not_stamp(tmp_path, mocker):
     called = {"n": 0}
 
-    def fake_claude(*_a, **_k):
+    def fake_run(*_a, **_k):
         called["n"] += 1
-        return {"keep": ["#rickross"]}, "m", False
+        raise AssertionError("LLM must not run")
 
-    mocker.patch("fanops.llm.claude_json_meta", fake_claude)
+    mocker.patch("fanops.llm.subprocess.run", side_effect=fake_run)
     cfg = _cfg(tmp_path)
     client = _SearchClient({"rick ross": []})
     ensure_source_lock(cfg, _src(title="Rick Ross"), client=client, **_ok_graph())
@@ -443,7 +458,7 @@ def test_scrape_unavailable_leaves_sidecar_absent(tmp_path):
     assert SOURCE_TAG_LOCKS_NAME == "source_tag_locks.json"
 
 
-def test_no_graph_leaves_sidecar_absent(tmp_path):
+def test_no_graph_still_stamps_researched_at(tmp_path):
     """Graph absence must not withhold researched_at after scrape finishes."""
     cfg = _cfg(tmp_path)
     seen = {"research": 0}
@@ -616,7 +631,7 @@ def test_search_runtime_error_leaves_name_for_later_play_count(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
     rec2 = load_source_tag_locks(cfg)["src_1"]
     assert calls["n"] == 1
-    assert rec2["lock"] == ["#later", "#plays"]
+    assert rec2["lock"] == ["#plays", "#later"]
     assert rec2["measurements"]["#plays"]["play_count"] == 1.0
     assert rec2["measurements"]["#later"]["play_count"] == 90.0
     assert rec2.get("researched_at")
@@ -1080,7 +1095,7 @@ def test_lock_ready_search_fail_resumes_across_ticks(tmp_path, monkeypatch):
     assert rec3["measurements"]["#plays"]["play_count"] == 1.0
     assert rec3["measurements"]["#later"]["play_count"] == 90.0
     assert rec3.get("researched_at")
-    assert rec3["lock"] == ["#later", "#plays"]
+    assert rec3["lock"] == ["#plays", "#later"]
 
 
 def test_lock_ready_measure_fail_resumes_across_ticks(tmp_path, monkeypatch):
@@ -1216,7 +1231,7 @@ def test_advance_calls_lock_ready_after_produce():
     assert "shortlist_source_tags" in src
 
 
-def test_graph_refused_writes_nothing(tmp_path):
+def test_graph_refused_still_stamps(tmp_path):
     from fanops.meta_graph import GraphRefused
     cfg = _cfg(tmp_path)
     client = _SearchClient({"music": [_Hit("music")]},
@@ -1643,7 +1658,7 @@ def test_graph_refused_does_not_wipe_scrape_admits(tmp_path):
     assert "#likes" not in rec["lock"]
 
 
-def test_request_captions_noops_without_researched_at(tmp_path):
+def test_request_captions_opens_without_researched_at(tmp_path):
     from fanops.agentstep import request_path
     from fanops.ledger import Ledger
     from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
@@ -1654,7 +1669,7 @@ def test_request_captions_noops_without_researched_at(tmp_path):
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", "clip_1").exists()
+    assert request_path(cfg, "captions", "clip_1").exists()
     p = source_tag_locks_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({
@@ -1989,3 +2004,164 @@ def test_pool_shortlist_then_scrape_completes(tmp_path):
     shortlist_norm = {f"#{n}" for n in shortlist}
     assert set(rec["lock"]) <= shortlist_norm
     assert rec.get("catalog") == [f"#{n}" for n in shortlist]
+
+
+_KEPT = {
+    "src_other": {
+        "pile": ["#kept"],
+        "lock": ["#kept"],
+        "researched_at": "2026-01-01T00:00:00Z",
+        "catalog": ["#kept"],
+        "catalog_at": "2026-01-01T00:00:00Z",
+    }
+}
+
+
+def _plant_other(cfg):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(_KEPT))
+    return p
+
+
+def test_missing_sidecar_reads_empty_and_ships_stored_caption(tmp_path):
+    from fanops.caption_compose import posted_text_for
+    cfg = _cfg(tmp_path)
+    assert load_source_tag_locks(None) == {}
+    assert not source_tag_locks_path(cfg).exists()
+    assert load_source_tag_locks(cfg) == {}
+    led = _seed_source_with_tags(cfg, "src_1", ["#keep"])
+    post = led.posts["post_src_1"].model_copy(update={"caption": "stored line #keep"})
+    assert posted_text_for(cfg, led, post) == "stored line #keep"
+    assert not source_tag_locks_path(cfg).exists()
+
+
+def test_corrupt_sidecar_does_not_ship_as_a_missing_lock(tmp_path):
+    from fanops.caption_compose import posted_text_for
+    cfg = _cfg(tmp_path)
+    led = _seed_source_with_tags(cfg, "src_1", ["#keep"])
+    post = led.posts["post_src_1"].model_copy(update={"caption": "stored line #keep"})
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{")
+    with pytest.raises(ControlFileError):
+        posted_text_for(cfg, led, post)
+    assert p.read_text() == "{"
+
+
+def test_corrupt_or_non_object_sidecar_is_not_empty_and_not_replaced(tmp_path):
+    from fanops.source_tags_sidecar import _stamp_source
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    for body in ("{", "[]", "null"):
+        p.write_text(body)
+        with pytest.raises(ControlFileError):
+            load_source_tag_locks(cfg)
+        with pytest.raises(ControlFileError):
+            _stamp_source(cfg, {}, "src_1", ["#music"], ["#music"],
+                          catalog=["#music"], catalog_at="2026-01-02T00:00:00Z")
+        with pytest.raises(ControlFileError):
+            ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"])
+        assert p.read_text() == body
+
+
+def test_unreadable_sidecar_is_not_empty_and_not_replaced(tmp_path):
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(_KEPT)
+    p.write_text(body)
+    p.chmod(0)
+    called = {"n": 0}
+
+    def research(*_a):
+        called["n"] += 1
+        return ["music"]
+
+    try:
+        with pytest.raises(ControlFileError):
+            load_source_tag_locks(cfg)
+        with pytest.raises(ControlFileError):
+            ensure_source_lock(cfg, _src(), research_fn=research)
+        assert called["n"] == 0
+    finally:
+        p.chmod(0o644)
+    assert p.read_text() == body
+
+
+def test_stamp_source_merges_into_latest_sidecar(tmp_path):
+    from fanops.source_tags_sidecar import _stamp_source
+    cfg = _cfg(tmp_path)
+    p = _plant_other(cfg)
+    stale: dict = {}
+    _stamp_source(cfg, stale, "src_1", ["#music"], ["#music"],
+                  catalog=["#music"], catalog_at="2026-01-02T00:00:00Z")
+    table = json.loads(p.read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert table["src_1"]["lock"] == ["#music"]
+    assert table["src_1"]["researched_at"]
+    assert "src_other" not in stale
+
+
+def test_ensure_source_lock_does_not_clobber_a_stamp_during_scrape(tmp_path):
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+
+    class _Plant(_SearchClient):
+        def search_hashtags(self, query):
+            _plant_other(cfg)
+            return super().search_hashtags(query)
+
+    planted = _Plant(client.search_by_query, media_by_tag=client.media_by_tag)
+    ensure_source_lock(cfg, _src(), client=planted, research_fn=lambda *_a: ["music"])
+    table = json.loads(source_tag_locks_path(cfg).read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert table["src_1"]["lock"] == ["#music"]
+    assert table["src_1"]["researched_at"]
+
+
+def test_unfinished_scrape_does_not_clobber_a_stamp_during_the_walk(tmp_path, monkeypatch):
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    names = [f"t{i}" for i in range(5)]
+
+    def opener(_cfg, user=None):
+        _plant_other(cfg)
+        cli = _SearchClient({n: [_Hit(n)] for n in names},
+                            media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+        cli._fanops_scrape_user = user
+        return cli
+
+    reset_safari_tick_slot()
+    try:
+        ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener)
+    finally:
+        reset_safari_tick_slot()
+    table = json.loads(source_tag_locks_path(cfg).read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert not table["src_1"].get("researched_at")
+    assert table["src_1"].get("verified")
+
+
+def test_stamp_refuses_when_scrape_leaves_the_sidecar_corrupt(tmp_path):
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+
+    class _Tear(_SearchClient):
+        def search_hashtags(self, query):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("{")
+            return super().search_hashtags(query)
+
+    torn = _Tear(client.search_by_query, media_by_tag=client.media_by_tag)
+    with pytest.raises(ControlFileError):
+        ensure_source_lock(cfg, _src(), client=torn, research_fn=lambda *_a: ["music"])
+    assert p.read_text() == "{"

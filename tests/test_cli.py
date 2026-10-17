@@ -3,13 +3,15 @@ import pytest
 from fanops.cli import main
 
 def test_hashtags_cli_help_is_safari_sidecar(capsys):
+    """Current hashtags help is instagrapi envelope — no Chrome/Safari harvest."""
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "--help"])
     assert e.value.code == 0
     out = capsys.readouterr().out
     assert "instagrapi" in out.lower()
     assert "chrome" not in out.lower()
-    assert "Safari" in out or "safari" in out.lower() or "sidecar" in out.lower() or "lock" in out.lower()
+    assert "safari" not in out.lower()
+    assert "harvest" not in out.lower()
     with pytest.raises(SystemExit) as e:
         main(["hashtags", "refresh", "--help"])
     assert e.value.code == 0
@@ -144,7 +146,7 @@ def test_status_surfaces_needs_reconcile(tmp_path, monkeypatch, capsys):
     from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="a", account_id="1",
-                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile, public_url="dryrun://prec"))
+                      platform=Platform.twitter, caption="x", state=PostState.needs_reconcile, public_url="https://www.instagram.com/p/prec/"))
     led.save()
     rc = main(["status"])
     out = capsys.readouterr().out
@@ -211,7 +213,7 @@ def test_reconcile_command_skips_without_key(tmp_path, monkeypatch, capsys):
     from fanops.models import Post, Platform, PostState
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="https://www.instagram.com/p/p/"))
     led.save()
     rc = main(["reconcile"])
     assert rc == 0
@@ -234,7 +236,7 @@ def test_reconcile_command_promotes_published(tmp_path, monkeypatch, capsys, moc
     monkeypatch.setenv("ZERNIO_API_KEY", "k")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.twitter,
-                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="dryrun://p"))
+                      caption="x", state=PostState.needs_reconcile, submission_id="sub_x", public_url="https://www.instagram.com/p/p/"))
     led.save()
     # cmd_reconcile now delegates to reconcile.reconcile_due, which binds the poller via
     # _default_get_status there — patch the seam at its definition site (exercises the REAL
@@ -283,24 +285,25 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
 
 
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
-# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH (2026-06-04): the responder
-# uses the operator's EXISTING `claude` subscription (plain `claude -p`, NOT `--bare`/API key), so
-# the llm trap is "FANOPS_RESPONDER=llm but `claude` is NOT on PATH" (no binary -> every gate raises
-# -> zero content), NOT a missing ANTHROPIC_API_KEY. The poster trap is unchanged: rest/mcp with no
-# BLOTATO_API_KEY (publish 401). Mirrors _check_accounts: 0 clean / actionable line + returns 2.
-# Tests patch shutil.which to control `claude` presence deterministically.
+# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH: the responder shells grok
+# (`grok login` session file, no API key), so the llm trap is "FANOPS_RESPONDER=llm but `grok`
+# is NOT on PATH" (no binary -> every gate raises -> zero content), NOT a missing API key.
+# The poster trap is unchanged: rest/mcp with no BLOTATO_API_KEY (publish 401). Mirrors
+# _check_accounts: 0 clean / actionable line + returns 2.
+# Tests patch shutil.which to control `grok` presence deterministically.
 
 def test_preflight_blocks_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # isolate the assertion to the llm case
-    mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `claude`
+    mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `grok`
     from fanops.config import Config
     from fanops.cli import _check_preflight
     rc = _check_preflight(Config(root=tmp_path))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "claude login" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypatch, mocker, capsys):
@@ -317,7 +320,8 @@ def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypat
     rc = main(["advance"])
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_refuses_manual_responder(tmp_path, monkeypatch, capsys):
@@ -345,61 +349,58 @@ def test_preflight_blocks_default_llm_when_claude_absent(tmp_path, monkeypatch, 
     rc = _check_preflight(Config(root=tmp_path))
     assert rc == 2
     err = capsys.readouterr().err
-    assert "claude" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "claude" not in err.lower()
 
 
 def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypatch, mocker):
-    # The correctly-configured live cutover with the EXISTING subscription: FANOPS_RESPONDER=llm,
-    # `claude` ON PATH, NO ANTHROPIC_API_KEY (we ride OAuth, not a key), postiz + its key.
-    # Must pass — the gate blocks only the absent-`claude` case, and crucially does NOT require an
-    # API key (that was the old --bare contract this change removes).
+    # Correctly-configured live cutover: FANOPS_RESPONDER=llm, `grok` ON PATH, grok_models_ok,
+    # NO ANTHROPIC_API_KEY, postiz + its key. Must pass — the gate does NOT require an API key.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # NO api key — riding the subscription
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://p.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
-    mocker.patch("shutil.which", return_value="/usr/local/bin/claude")  # claude IS logged-in-capable
+    mocker.patch("shutil.which", return_value="/usr/local/bin/grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
 
 
-def test_preflight_blocks_cursor_when_cursor_agent_absent(tmp_path, monkeypatch, mocker, capsys):
+def test_preflight_blocks_grok_when_grok_absent(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 2
     err = capsys.readouterr().err
-    assert "cursor-agent" in err and "Traceback" not in err
+    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "moments/hooks stay on Claude" not in err
+    assert "set LLM transport to claude" not in err
+    assert "claude" not in err.lower()
 
 
-def test_preflight_cursor_allows_when_agent_present(tmp_path, monkeypatch, mocker, capsys):
-    # cursor-agent on PATH is enough: vision is the prompt path list, so preflight does not refuse.
+def test_preflight_grok_does_not_blanket_fail_vision(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/cursor-agent" if b == "cursor-agent" else None)
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/grok" if b == "grok" else None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 0
-    assert "vision" not in capsys.readouterr().err.lower()
 
 
-
-
-def test_preflight_cursor_allows_even_if_claude_present(tmp_path, monkeypatch, mocker, capsys):
-    # claude on PATH does not change the cursor preflight: the run is allowed, not flipped.
+def test_preflight_grok_models_fail_is_exit_2(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
-    mocker.patch("shutil.which", return_value="/usr/local/bin/x")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/grok" if b == "grok" else None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 0
-    assert "fallback" not in capsys.readouterr().err.lower()
+    assert _check_preflight(Config(root=tmp_path)) == 2
+    assert "grok login" in capsys.readouterr().err
 
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises
@@ -607,7 +608,7 @@ def test_resolve_promotes_a_needs_reconcile_post(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="dryrun://p1"))
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="https://www.instagram.com/p/p1/"))
     from fanops.cli import main
     assert main(["resolve", "p1", "published", "--url", "https://x/p", "--submission-id", "blotato_9"]) == 0
     led = Ledger.load(cfg)
@@ -712,7 +713,7 @@ def test_resolve_can_fail_a_post_and_unknown_id_exits_2(tmp_path, monkeypatch, c
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="dryrun://p1"))
+                          caption="x", state=PostState.needs_reconcile, submission_id="fanops_t", public_url="https://www.instagram.com/p/p1/"))
     from fanops.cli import main
     # the `failed` branch (the committed test only exercised `published` -> a mis-map slipped through)
     assert main(["resolve", "p1", "failed"]) == 0
@@ -759,9 +760,9 @@ def test_retry_metrics_published_vs_not_vs_unknown(tmp_path, monkeypatch, capsys
     cfg = Config(root=tmp_path)
     with Ledger.transaction(cfg) as led:
         led.add_post(Post(id="pub", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.published, submission_id="s", public_url="dryrun://pub"))
+                          caption="x", state=PostState.published, submission_id="s", public_url="https://www.instagram.com/p/pub/"))
         led.add_post(Post(id="que", parent_id="c2", account="a", account_id="1", platform=Platform.instagram,
-                          caption="y", state=PostState.queued, public_url="dryrun://que"))
+                          caption="y", state=PostState.queued, public_url="https://www.instagram.com/p/que/"))
     from fanops.cli import main
     # published -> exit 0, and the post STAYS published so the next `track` re-pulls (no state flip)
     assert main(["retry-metrics", "pub"]) == 0

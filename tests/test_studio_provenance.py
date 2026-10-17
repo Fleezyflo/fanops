@@ -63,11 +63,6 @@ def test_cast_chip_only_when_cause_present():
     assert not any(x.value == "cast" for x in views.provenance_chips(_sp(cast_cause=None)))   # uncast fans to all → no chip
 
 
-def test_provenance_helper_never_raises():
-    class Weird: pass                                                   # an object missing every attr
-    assert views.provenance_chips(Weird()) == []                       # fail-open: a list, never an exception
-
-
 def test_surface_stamps_length_cause_via_account_pin(tmp_path):
     # persona-linked account with an account clip_profile pin: length_cause names the account (M3 persona-blind).
     cfg = Config(root=tmp_path)
@@ -80,7 +75,7 @@ def test_surface_stamps_length_cause_via_account_pin(tmp_path):
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_moment(Moment(id="m", parent_id="s", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped, affinities=["a"]))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="https://www.instagram.com/p/p/"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=["a"])
     assert sp.length_cause == "a long" and sp.framing_cause == "a center" and sp.cast_cause == "picked for a"
@@ -96,7 +91,7 @@ def _seed_for_cast(cfg, *, affinities):
                               state=MomentState.clipped, affinities=affinities))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p"))
+                          caption="x", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p/"))
     return Ledger.load(cfg)
 
 
@@ -130,7 +125,7 @@ def test_surface_persona_link_names_account_pin(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="https://www.instagram.com/p/p/"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona="hype", now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
     assert sp.length_cause == "a long"                                   # account-owned, not "persona long"
@@ -148,7 +143,7 @@ def test_surface_mismatched_account_pin_yields_no_attribution(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="long", public_url="https://www.instagram.com/p/p/"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
     assert sp.length_cause is None                                        # pin != stamped profile -> no false credit
@@ -165,7 +160,7 @@ def test_surface_attribution_is_account_when_no_persona(tmp_path):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s", source_path="/v.mp4"))
         led.add_clip(Clip(id="c", parent_id="m", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="short", public_url="dryrun://p"))
+        led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram, caption="x", state=PostState.awaiting_approval, clip_profile="short", public_url="https://www.instagram.com/p/p/"))
     led = Ledger.load(cfg); post = led.posts["p"]
     sp = views._surface(post, persona=None, now=datetime(2026, 6, 24, tzinfo=timezone.utc), cfg=cfg, led=led, acct=acct, affinities=())
     assert sp.length_cause == "a short" and sp.cast_cause is None        # account-pinned; uncast → no cast cause

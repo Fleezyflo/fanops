@@ -16,16 +16,20 @@
 #
 # Fixtures are stats matched to the permanent-evidence distributions, driven directly (no detection, so the
 # headless-YuNet fixture trap does not apply). Each face tuple is the detect_window shape (cx,cy,fh,ey,score,fw).
+# Resolver tests seed detect/track/saliency sidecars (write-path) so _resolve runs without fanops.* setattr.
+import json
 import pytest
 from fanops.config import Config
 from fanops import framing, clip
-from fanops.framing_outcomes import (FramingOutcome as _FO, FramingStrategy as _FS,
-                                     FramingEventType as _FE, StrategyState)
+from fanops.framing_outcomes import FramingOutcome as _FO, FramingStrategy as _FS, StrategyState
+from tests.fixtures.speech_segments import talk_seg
 
 
 class _Src:
     id = "src_t"; source_path = "/none/x.mp4"; width = 1920; height = 1080
-    duration = 60.0; transcript = []; language = "en"; meta = {}; sha256 = "d"; signal_peaks = []
+    duration = 60.0
+    transcript = [talk_seg("so tell me about your new record", start=0.0, end=8.0)]
+    language = "en"; meta = {}; sha256 = "d"; signal_peaks = []
 
 
 @pytest.fixture
@@ -34,19 +38,17 @@ def cfg(tmp_path, monkeypatch):
     return Config(root=tmp_path)
 
 
-def _stub(monkeypatch, **spec):
-    """Stub the framing seams (mirrors test_framing_outcomes._stub). A (events, value) pair lets a strategy
-    RECORD then RETURN NORMALLY — which is how the real fail-open strategies conclude a negative."""
-    monkeypatch.setattr(framing, "_framing_runtime_or_raise", lambda c: object())
-    def mk(s):
-        def fn(*a, _trace=None, **kw):
-            events, value = s if (isinstance(s, tuple) and len(s) == 2 and isinstance(s[0], list)) else ([], s)
-            for e in events:
-                if _trace is not None: _trace.record(e)
-            return value
-        return fn
-    for name, s in spec.items():
-        monkeypatch.setattr(framing, name, mk(s))
+def _seed(cfg, stats, *, start=0.0, end=10.0, track=None):
+    """Warm detect/track/saliency sidecars so _resolve never probes ffmpeg or patches framing.*."""
+    key = f"{round(start, 2)}-{round(end, 2)}"
+    root = cfg.agent_io / "framing"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "src_t.detect.json").write_text(json.dumps(
+        {"v": framing._DETECT_V, "windows": {key: stats}}))
+    (root / "src_t.track.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: [] if track is None else track}}))
+    (root / "src_t.saliency.json").write_text(json.dumps(
+        {"v": framing._SIDECAR_V, "windows": {key: []}}))
 
 
 def _face(cx, *, cy=0.45, fh=0.19, fw=0.13, score=0.93):
@@ -85,12 +87,11 @@ def test_primitive_rejects_d2_pip_even_though_two_cluster_fires():
 
 
 # ---- the resolver wiring: D1-A no-track -> STACKED_PAIR; D1-B / D2 stay the conservative centre ----
-def test_d1a_no_track_resolves_to_stacked_pair(cfg, monkeypatch):
+def test_d1a_no_track_resolves_to_stacked_pair(cfg):
     """THE S2 INVARIANT. Before S2 this window went to CENTERED_MULTI_UNTRACKED (as_tuple None,None,None) —
     the empty-centre crop; now it carries the subject-derived pair composition. Exactly one strategy ran
     (speaker_track, a conclusive no_track), so this is a resolved composition, not a failure."""
-    _stub(monkeypatch, detect_window=_D1A, classify_window=framing.CT_MULTI,
-          speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
+    _seed(cfg, _D1A)
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
     assert r.final_outcome is _FO.STACKED_PAIR and r.root_cause is None
     assert r.final_strategy is _FS.SUBJECT_PAIR
@@ -100,30 +101,28 @@ def test_d1a_no_track_resolves_to_stacked_pair(cfg, monkeypatch):
     assert r.classified_content_type == framing.CT_MULTI     # the classifier verdict is UNCHANGED (diagnostic only)
     assert [a.state for a in r.attempts] == [StrategyState.COMPLETED]
 
-def test_d1b_no_track_is_never_reclassified_as_a_pair(cfg, monkeypatch):
+def test_d1b_no_track_is_never_reclassified_as_a_pair(cfg):
     """D1-B (ONE dominant host + an intermittent 2nd) must never take D1-A's PAIR treatment — that is what the
     co-presence/prominence discriminators buy, and it is the enduring S2 invariant.
 
     S2 originally pinned it as "stays centred" because centred was then D1-B's only alternative. S3 gave D1-B
     its own subject-lock, so the assertion is stated in its DURABLE form: never a stack. The positive half of
     D1-B's routing is owned by tests/test_reframe_s3_d1b.py."""
-    _stub(monkeypatch, detect_window=_D1B, classify_window=framing.CT_MULTI,
-          speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
+    _seed(cfg, _D1B)
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
     assert framing.subject_aware_fallback(_D1B).kind == framing.FB_DOMINANT   # the primitive still refuses to pair it
     assert r.final_outcome is not _FO.STACKED_PAIR
     assert r.content_type != framing.RENDER_STACK_PAIR
     assert r.final_outcome is _FO.SUBJECT_LOCKED                             # S3 owns D1-B's positive routing
 
-def test_d2_no_track_is_never_stacked(cfg, monkeypatch):
+def test_d2_no_track_is_never_stacked(cfg):
     """A PIP grid is not a live two-shot to stack — the enduring S2 invariant, and all this test owns.
 
     S2 originally pinned it as CENTERED_MULTI_UNTRACKED with an untouched render tuple, because that was then
     D2's only destination. S4 routed it to the PIP layout and S5 composed its presenter, so both of those are
     now other slices' state; the durable claim is the negative: never stacked, never a pair focus. D2's
     positive routing/composition is owned by test_reframe_s4_d2.py / test_reframe_s5_d2.py."""
-    _stub(monkeypatch, detect_window=_D2, classify_window=framing.CT_MULTI,
-          speaker_track=([_FE.NO_TRACK], None), subject_focus=([_FE.NO_FACE], None))
+    _seed(cfg, _D2)
     r = framing._resolve(cfg, _Src(), 0.0, 10.0, capture_failures=True)
     assert r.final_outcome is not _FO.STACKED_PAIR
     assert r.content_type != framing.RENDER_STACK_PAIR
@@ -167,5 +166,12 @@ def test_pair_fingerprint_flips_and_others_are_stable():
 
 # ---- the defensive guard: a stray stack-pair focus never crashes reframe_filter ----
 def test_reframe_filter_guard_centres_a_stray_pair():
-    vf = clip.reframe_filter("9:16", 1920, 1080, focus=_pair_focus(), content_type=framing.RENDER_STACK_PAIR)
-    assert vf == "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"    # centred (the pair renders via render_reframed, not here)
+    # A stray stack-pair must not look like a successful centre crop. Refuse is acceptable;
+    # silently emitting the blind-centre vf is the hole (THEATRE-FIX-F, expected RED while it centres).
+    centred = "crop=ih*1080/1920:ih,scale=1080:1920,setsar=1"
+    try:
+        vf = clip.reframe_filter("9:16", 1920, 1080, focus=_pair_focus(),
+                                 content_type=framing.RENDER_STACK_PAIR)
+    except Exception:
+        return
+    assert vf != centred

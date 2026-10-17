@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt
-from fanops.studio import actions, views
+from fanops.studio import actions
 
 _NOW = datetime(2026, 6, 15, 12, 0, tzinfo=timezone.utc)
 _PAST = "2020-06-06T12:00:00Z"
@@ -82,7 +82,7 @@ def _seed_queued(cfg, pid="p1", state=PostState.queued):
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="c0", parent_id="m1", path=str(cdir / "c0.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))
     led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
-                      caption="c", state=state, scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://p1"))
+                      caption="c", state=state, scheduled_time="2099-01-01T00:00:00Z", public_url="https://www.instagram.com/p/p1/"))
     led.save()
 
 def test_resolve_post_rejects_non_terminal_states(tmp_path):
@@ -177,7 +177,20 @@ def test_studio_publish_guard_blocks_unmapped_channel(tmp_path, monkeypatch):
     res = actions.publish_now(cfg, "p1")
     assert not res.ok and "not mapped" in res.error.lower()
 
-def test_daemon_health_shows_ok_when_alive(tmp_path, monkeypatch):
-    monkeypatch.setattr(views, "daemon_health_strip", lambda _cfg: {"verdict": "alive", "heartbeat_age_s": 12})
-    html = _client(Config(root=tmp_path)).get("/home/daemon-health").data.decode()
+def test_daemon_health_shows_ok_when_alive(tmp_path):
+    from fanops.timeutil import iso_z
+    cfg = Config(root=tmp_path)
+    cfg.control.mkdir(parents=True, exist_ok=True)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    cfg.daemon_strip_path.write_text(json.dumps({
+        "checked_at": iso_z(now),
+        "installed": True, "loaded": True, "pid": 1, "last_exit": 0,
+        "heartbeat_age_s": 12, "interval": 600, "verdict": "alive",
+    }))
+    rec = {"ts": now.isoformat(), "level": "info", "stage": "heartbeat", "unit_id": "-",
+           "outcome": "ok", "origin": "loop", "heartbeat": now.isoformat(),
+           "fanops_version": "0.3.0", "published_in_run": "0"}
+    cfg.log_path.write_text(json.dumps(rec, separators=(",", ":")) + "\n")
+    html = _client(cfg).get("/home/daemon-health").data.decode()
     assert "daemon-ok" in html and "running" in html.lower()

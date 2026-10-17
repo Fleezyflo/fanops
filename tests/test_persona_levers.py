@@ -140,7 +140,7 @@ def test_studio_create_persona_persists_levers(tmp_path):
     r = sp.create_persona(cfg, name="Curator", voice="champions craft", cut_policy=["punchlines", "hype"], hook_angle="curiosity", niche="hiphop")
     assert r.ok
     p = Personas.load(cfg).get(r.detail["created"])
-    assert p.cut_policy == ["punchlines", "hype"] and p.selection_scope is None or p.selection_scope == "open"
+    assert p.cut_policy == ["punchlines", "hype"] and (p.selection_scope is None)
     assert p.hook_angle == "curiosity"                   # cut (length/framing) is DERIVED, not a settable knob
 
 def test_studio_create_persona_bad_lever_is_clean_error(tmp_path):
@@ -222,9 +222,10 @@ def test_personas_panel_renders_transparency_facts(tmp_path):
 from fanops.personas import casting_directive, hook_directive, caption_directive
 
 def test_casting_directive_is_substantive_not_adjective():
-    out = str(casting_directive(Persona(id="p", cut_policy=["punchlines", "hype"])))
-    assert "punchline" in out and ("punchline" in out)
-    assert "favors moments" not in out and "energy high" not in out      # the trivial phrasing is GONE
+    punch = str(casting_directive(Persona(id="p", cut_policy=["punchlines"])))
+    story = str(casting_directive(Persona(id="p", cut_policy=["storytelling"])))
+    assert "punchline" in punch and "story" in story and punch != story
+    assert "favors moments" not in punch and "energy high" not in punch      # the trivial phrasing is GONE
 
 def test_hook_directive_compiles_angle():
     # MOL-523: hook_angle is FREE TEXT — the operator's own words compile in verbatim (no token->clause map).

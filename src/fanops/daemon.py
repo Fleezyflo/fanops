@@ -75,21 +75,22 @@ def _ffmpeg_full_dir() -> str | None:
 
 def _daemon_path() -> str:
     """Full PATH to bake into the plist (launchd gives a bare one). Order: venv bin, ~/.local/bin
-    when it holds `claude` (the native-install symlink — tracks the operator's CURRENT claude), the
-    bin dirs holding `claude`/`cursor-agent` per shutil.which, homebrew (ffmpeg/whisper), then the
-    system defaults. De-duped, absolute — nothing depends on a sourced shell profile at fire time.
-    ffmpeg-full's bin precedes `/opt/homebrew/bin` so lite `ffmpeg` never wins (no on-screen hook).
+    when it holds `claude` or `grok` (the native-install symlink — tracks the operator's CURRENT
+    CLI), the bin dirs holding `claude`/`cursor-agent`/`grok` per shutil.which, homebrew
+    (ffmpeg/whisper), then the system defaults. De-duped, absolute — nothing depends on a sourced
+    shell profile at fire time. ffmpeg-full's bin precedes `/opt/homebrew/bin` so lite `ffmpeg`
+    never wins (no on-screen hook).
 
     The stable shim dir goes AHEAD of the which()-derived parent because which() answers from THIS
     process's PATH: under the keeper's baked plist PATH that re-derives the same stale pin forever
     (2026-07-12: an nvm v18 dir pinned claude 2.0.30, which predates --json-schema, and every
     moment_hooks/captions gate call failed for days). The existence check is PATH-independent, so a
-    plist rewrite from ANY environment converges on the current claude."""
+    plist rewrite from ANY environment converges on the current claude/grok."""
     parts = [str(Path(sys.executable).parent)]
     stable = Path.home() / ".local" / "bin"
-    if (stable / "claude").exists():
+    if (stable / "claude").exists() or (stable / "grok").exists():
         parts.append(str(stable))
-    for _bin in ("claude", "cursor-agent"):
+    for _bin in ("claude", "cursor-agent", "grok"):
         found = shutil.which(_bin)
         if found:
             parts.append(str(Path(found).parent))
@@ -357,7 +358,9 @@ def ensure(cfg: Config) -> dict:
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
+        was_loaded = True
     else:
+        was_loaded = False
         pp = plist_path()
         loaded = _load_plist(pp, LABEL) if pp.exists() else False
         action = "bootstrap" if pp.exists() else "none"
@@ -377,20 +380,24 @@ def ensure(cfg: Config) -> dict:
             if action == "none":
                 action = "rewrite_plist"
     # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
-    # the EXTERNAL keeper adopts new code. A loaded pump is stale when its heartbeat SHA is missing,
-    # the disk SHA is missing, or the two differ — the same miss-or-mismatch rule as
-    # doctor._deploy_code_check. Kickstart the PUMP (not the keeper). Kill switch default-on (matches
-    # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
+    # the EXTERNAL keeper adopts disk code. Kickstart the PUMP (not the keeper) when the heartbeat SHA
+    # differs from the SHA on disk, and when the pump is already loaded and either SHA is missing.
+    # Kill switch default-on (matches cli). Fail-open with one breadcrumb — a git/launchctl hiccup
+    # leaves the pump alone.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
+    # Nothing else advances the production checkout, so disk moves here first: a fast-forward makes the
+    # disk SHA differ from the heartbeat and the stale-code branch below adopts it in this same call.
     if cfg.auto_adopt:
         from fanops.errors import fail_open
+        if was_loaded:
+            with fail_open("ensure.fast_forward"):
+                _fast_forward_checkout(cfg)
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            # Loaded + (either SHA missing or the two differ). Both present and equal stays quiet.
-            # Unloaded is not this branch. Bootstrap above loads a pump that is not running.
-            if loaded and (running is None or deployed is None or running != deployed):
+            # A pump this call just bootstrapped already runs disk code and has not stamped a heartbeat.
+            if was_loaded and stale_code_reason(running, deployed):
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -425,13 +432,14 @@ def ensure(cfg: Config) -> dict:
 
 def status(cfg: Config, *, interval: int = 600) -> dict:
     """Read-only liveness + readiness — PID-primary, thin caller of the one liveness owner. A live
-    launchd PID + fresh activity is the PRIMARY truth: while loaded and daemon_progress reports
-    alive_mid (the newest run.log line of ANY kind is younger than the ceiling), the verdict is
-    `alive` REGARDLESS of the loop-heartbeat age (that heartbeat only lands after a whole pass
-    finishes, so it must NEVER flip a fast-logging pass to stale). `heartbeat_age_s` stays in the
-    dict for telemetry but no longer governs the verdict on its own. Not-loaded is an ALARM (should
-    be running); a stage held with the log SILENT past the ceiling is stage-stuck; genuinely dead
-    (no PID) is the ONLY 'not running' verdict. `interval` is the installed cadence. Also returns a
+    launchd PID + a loop-origin heartbeat (or mid-pass JSON activity that is NOT a MANUAL heartbeat
+    and NOT any-line TSV) is the PRIMARY truth: while loaded and daemon_progress reports alive_mid
+    (newest *owned* run.log activity younger than the ceiling), the verdict is `alive` REGARDLESS of
+    the loop-heartbeat age (that heartbeat only lands after a whole pass finishes, so it must NEVER
+    flip a fast-logging pass to stale). MANUAL-ONLY heartbeats (stage=heartbeat, no origin=loop) and
+    non-heartbeat TSV lines are not liveness. `heartbeat_age_s` stays in the dict for telemetry but no longer
+    governs the verdict on its own. Not-loaded is an ALARM (should be running); a stage held with the
+    log SILENT past the ceiling is stage-stuck. `interval` is the installed cadence. Also returns a
     SECOND, ORTHOGONAL verdict — `pass_verdict` / `last_success_age_s` (RC-6): is the pump COMPLETING
     passes? — which NEVER alters the liveness verdict above (a process can be `alive` on fresh activity
     yet be completing no passes)."""
@@ -560,9 +568,10 @@ def tail_logs(cfg: Config, n: int = 40) -> str:
 # ── internals ────────────────────────────────────────────────────────────────────────────────
 
 def _heartbeat_age_s(cfg: Config) -> float | None:
-    """Age in seconds of the last heartbeat line in run.log, or None if no log / no heartbeat / a
-    short or unparseable file. Reads JSON heartbeats (log.py) by stage+ts; legacy TAB lines still
-    parse via the leading ISO column."""
+    """Age in seconds of the last loop-origin heartbeat in run.log, or None if no log / no heartbeat
+    / a short or unparseable file. JSON counts only when stage=heartbeat AND origin=loop (MANUAL
+    heartbeats are not liveness). Legacy TAB heartbeat lines (the old loop format) still count
+    here — any other TSV line does not (activity lives in `_newest_activity_ts`)."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -591,12 +600,24 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     return (datetime.now(timezone.utc) - ts).total_seconds()
 
 
+def stale_code_reason(running: str | None, deployed: str | None) -> str | None:
+    """Why a loaded pump is not on disk code, or None when it is: the heartbeat SHA is missing, the
+    disk SHA is missing, or the two differ. doctor._deploy_code_check fails on it; ensure adopts on it."""
+    missing = [n for n, v in (("heartbeat SHA", running), ("disk SHA", deployed)) if v is None]
+    if missing:
+        return f"missing {' and '.join(missing)} — a loaded pump is not on current code"
+    if running != deployed:
+        return f"pump reports code {running[:12]} but disk is {deployed[:12]}"
+    return None
+
+
 def _last_heartbeat_code(cfg: Config) -> str | None:
     """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
     Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
     `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
-    _heartbeat_age_s). None means the running SHA is missing. On a loaded pump, daemon.ensure
-    treats that miss as a mismatch and kickstarts (storm guard, run flock, and dep sync still apply)."""
+    _heartbeat_age_s). None is not current code: a loaded pump missing this SHA fails
+    doctor._deploy_code_check, and daemon.ensure adopts disk code through the same settle and
+    run_held guards as a SHA mismatch."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -623,7 +644,8 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
 # Brief: docs/design/briefs/16-one-step-bring-up.md. Reuses `postiz-ondemand.sh ensure` verbatim
 # (its docker_up + honest 200/401 probe + Mastra self-heal) and daemon.ensure's aliveness contract;
 # it reimplements NONE of Docker/compose/launchd. Never publishes (posts are born awaiting_approval),
-# never flips FANOPS_LIVE, never mutates the git tree.
+# never flips FANOPS_LIVE. The git plane never mutates the tree; the daemon plane's `ensure` may
+# fast-forward it (`_fast_forward_checkout`).
 
 _DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
@@ -645,14 +667,12 @@ def _tail(text: str, n: int = 6) -> str:
 
 
 def _newest_activity_ts(cfg: Config) -> datetime | None:
-    """Timestamp of the newest parseable run.log line of ANY kind (tz-aware UTC), or None. Every
-    structured record carries a top-level `ts` (log.py); legacy TAB lines expose the ISO in their
-    leading column. This is the liveness signal that proves life DURING a long pass — a working stage
-    emits a run.log line every ~60s (every stage/gate/llm call), so a fresh newest line means the pump
-    is still working, however long the current stage runs. Read-only (no writes/threads), fail-open to
-    None on no-log/unreadable/unparseable. Kept OFF _heartbeat_age_s (frozen byte-for-byte:
-    health_model/doctor + the Prometheus gauge depend on it) — this reader counts EVERY line, not just
-    the loop heartbeat, which is exactly why it can't share that byte-identical reader."""
+    """Timestamp of the newest *owned* run.log activity (tz-aware UTC), or None. Owned = JSON with a
+    top-level `ts` that is not a MANUAL heartbeat (stage=heartbeat without origin=loop). TSV lines
+    are not liveness. Loop-origin heartbeats still count (kickstart freshness + mid-pass). This is
+    the mid-pass signal — a working stage emits JSON every ~60s, so a fresh owned line means the pump
+    is still working. Read-only, fail-open to None. Kept OFF _heartbeat_age_s (that reader is
+    loop-heartbeat only; health_model/doctor + the Prometheus gauge depend on it)."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -663,13 +683,13 @@ def _newest_activity_ts(cfg: Config) -> datetime | None:
                 continue
             try:
                 rec = json.loads(line)
-                ts = rec.get("ts")
-                if ts:
-                    last_ts = ts
             except json.JSONDecodeError:
-                first = line.split("\t", 1)[0].strip()       # legacy TAB line: leading ISO column
-                if first:
-                    last_ts = first
+                continue                                      # any-line TSV is not liveness
+            if rec.get("stage") == "heartbeat" and rec.get("origin") != "loop":
+                continue                                      # MANUAL-ONLY heartbeat is not liveness
+            ts = rec.get("ts")
+            if ts:
+                last_ts = ts
     except OSError:
         return None
     if last_ts is None:
@@ -684,12 +704,12 @@ def _newest_activity_ts(cfg: Config) -> datetime | None:
 def _heartbeat_fresh_since(cfg: Config, since: datetime, *,
                            tries: int = _KICKSTART_HEARTBEAT_TRIES,
                            step: float = _KICKSTART_HEARTBEAT_STEP) -> bool:
-    """Poll run.log until ANY new line newer than `since` (the restart instant) appears. The
-    load-bearing freshness proof: a restarted daemon writes SOME run.log line within its first stage
-    (not only a loop heartbeat, which won't land until the first whole pass FINISHES — hours on a big
-    pass), so a line strictly newer than the kickstart means the fresh process is alive on current
-    code within seconds. Bounded — returns False if none arrives within tries*step (the daemon didn't
-    come back healthy)."""
+    """Poll run.log until owned activity newer than `since` (the restart instant) appears. The
+    load-bearing freshness proof: a restarted daemon writes SOME JSON run.log line within its first
+    stage (not only a loop heartbeat, which won't land until the first whole pass FINISHES — hours
+    on a big pass), so an owned line strictly newer than the kickstart means the fresh process is
+    alive on current code within seconds. MANUAL heartbeats and TSV do not count. Bounded — returns
+    False if none arrives within tries*step (the daemon didn't come back healthy)."""
     for _ in range(max(1, tries)):
         ts = _newest_activity_ts(cfg)
         if ts is not None and ts > since:
@@ -703,9 +723,9 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
     `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
     per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
     per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
-    both are absent. A loaded daemon.ensure treats that None as a mismatch (same rule as
-    doctor._deploy_code_check), not a skip. NB: the signal follows the CODE tree, NOT cfg.root —
-    cfg.root is the DATA
+    BOTH are absent. A loaded pump missing this disk SHA fails doctor._deploy_code_check, and
+    daemon.ensure adopts disk code through the same settle and run_held guards as a mismatch.
+    NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
     workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
     a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open
@@ -734,7 +754,8 @@ def _plane_git(cfg: Config) -> dict:
     workspace, which by the FANOPS_ROOT split may have no .git), same as the self-adopt signal. NEVER
     mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior sync clobbered a live
     accounts.json, another produced a false verdict). Always ok=True: a stale tree or a failed fetch is
-    surfaced, never fatal. The operator decides whether to sync."""
+    surfaced, never fatal. The one tree mutation is the keeper's ff-only `_fast_forward_checkout`, whose
+    docstring answers §6."""
     import fanops, pathlib
     code_root = pathlib.Path(fanops.__file__).resolve().parent
     behind = ahead = None
@@ -858,6 +879,67 @@ def _sync_locked_deps() -> tuple[bool, str]:
     return True, f"deps synced ({shown})"
 
 
+def _git_code(root: Path, *args: str, timeout: float = 60) -> subprocess.CompletedProcess | None:
+    """One git call in the code checkout; None when git is missing or times out."""
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _fast_forward_checkout(cfg: Config) -> str:
+    """Fast-forward the code checkout onto origin/main so `ensure`'s stale-code adopt has new code to adopt.
+
+    `git merge --ff-only origin/main` runs only when HEAD is a strict ancestor of origin/main, no pass
+    holds the run flock, and the pump is past the adopt settle window — the same moment the stale-code
+    kickstart may fire, so new modules are never lazily imported into a pump that is not about to be
+    replaced. Works on a detached HEAD. Returns the outcome word; every refusal leaves the tree as it was
+    and logs one breadcrumb.
+
+    Binding non-goal §6 (docs/design/briefs/16-one-step-bring-up.md) forbade tree mutation because a
+    `reset --hard` sync clobbered a live accounts.json and a stale `main` produced a false verdict.
+    ff-only cannot clobber the way that reset did: it only moves HEAD forward along origin/main and
+    refuses, writing nothing, when the checkout has diverged or when a tracked local edit or an untracked
+    file sits on a path the merge would write. Nothing here resets, checks out, or stashes. The exception
+    is a gitignored path: git overwrites an ignored file when an incoming commit tracks that path, so
+    the data workspace stays safe only while main tracks nothing under it."""
+    from fanops.pipeline_run import run_held
+    root = _code_checkout_root()
+    if root is None:
+        return "no_checkout"
+    pid, age = _pump_pid_age_s()
+    if pid is not None and (age is None or age < _adopt_settle_s(cfg)):
+        return "settling"
+    fetched = _git_code(root, "fetch", "origin")
+    if fetched is None or fetched.returncode != 0:
+        _log.warning("ensure.fast_forward: git fetch failed in %s — tree untouched (%s)",
+                     root, _tail(fetched.stderr if fetched else "", 2) or "git unavailable")
+        return "fetch_failed"
+    revs = _git_code(root, "rev-parse", "HEAD", "origin/main", timeout=15)
+    shas = (revs.stdout or "").split() if revs is not None and revs.returncode == 0 else []
+    if len(shas) != 2:
+        _log.warning("ensure.fast_forward: could not resolve HEAD and origin/main in %s — tree untouched", root)
+        return "unresolved"
+    head, target = shas
+    if head == target:
+        return "current"
+    anc = _git_code(root, "merge-base", "--is-ancestor", "HEAD", "origin/main", timeout=15)
+    if anc is None or anc.returncode != 0:
+        _log.warning("ensure.fast_forward: HEAD %s is not an ancestor of origin/main %s — tree untouched",
+                     head[:12], target[:12])
+        return "diverged"
+    if run_held(cfg):
+        _log.warning("ensure.fast_forward: run flock held — deferring %s -> %s", head[:12], target[:12])
+        return "run_held"
+    merged = _git_code(root, "merge", "--ff-only", "origin/main", timeout=120)
+    if merged is None or merged.returncode != 0:
+        _log.warning("ensure.fast_forward: merge --ff-only %s -> %s did not complete (%s)", head[:12], target[:12],
+                     _tail(merged.stderr, 2) if merged else "git missing or timed out")
+        return "refused"
+    _log.warning("ensure.fast_forward: %s -> %s", head[:12], target[:12])
+    return "fast_forward"
+
+
 def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
     """Daemon freshness plane. First ensure the launchd agent is LOADED via the existing
     daemon.ensure (unchanged aliveness contract — the keeper depends on it). If it was ALREADY
@@ -940,11 +1022,14 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
     # Generation: if the plist has one, it must match.
     sha, _src = _version_signal(cfg)
     expect_gen = None
-    from fanops.errors import fail_open
-    with fail_open("daemon._redeploy_studio.plist_generation"):   # no plist / unreadable -> skip the
-        import plistlib                                          # generation check, keep sha + pid
+    try:
+        import plistlib                                          # no plist / unreadable -> skip generation
         pl = plistlib.loads(studio_plist_path().read_bytes())
-        expect_gen = pl.get("EnvironmentVariables", {}).get("FANOPS_STUDIO_GENERATION")
+        env = pl.get("EnvironmentVariables") or {}
+        expect_gen = env.get("FANOPS_STUDIO_GENERATION")
+    except Exception as exc:
+        _log.debug("daemon._redeploy_studio.plist_generation fail-open: %s: %s",
+                   type(exc).__name__, str(exc)[:200], exc_info=True)
     
     import fanops.daemon as _daemon
     return _daemon._studio_port_answers_within(expect_sha=sha, expect_gen=expect_gen, old_pid=old_pid)

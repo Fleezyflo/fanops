@@ -80,7 +80,9 @@ class PostizMetricsClient:
         if resp.status_code >= 300:
             raise RuntimeError(f"postiz analytics {resp.status_code}: {_safe(self.cfg, resp.text)}")
         arr = _json_or_raise(resp, "postiz analytics", self.cfg)
-        labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)] if isinstance(arr, list) else []
+        if not isinstance(arr, list):
+            raise RuntimeError("postiz analytics: expected list body")
+        labels = [str(it.get("label", "")) for it in arr if isinstance(it, dict)]
         return _map_analytics(arr), labels
 
     def list_posts(self, window: str = "30d") -> list[dict]:
@@ -106,6 +108,9 @@ class PostizMetricsClient:
                 # row would make record_metrics WHOLESALE-zero the post's already-captured metrics; skipping
                 # preserves the prior snapshot and the post is simply re-polled next pass. Log it, keep going.
                 get_logger(self.cfg)("postiz_metrics", str(sid), "fetch_failed", err=str(e)[:120])
+                if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+                    get_logger(self.cfg)("postiz_metrics", str(sid), "vendor_unreachable")
+                    break
                 continue
             rows.append({"postSubmissionId": sid, "metrics": metrics, "_raw_labels": labels})
         return rows

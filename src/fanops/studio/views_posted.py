@@ -279,28 +279,24 @@ def lineage_stats(rows) -> list:
     unmeasured sibling (lift None) still counts toward sibling_count but keeps rank/delta None (can't rank
     what wasn't measured). Pure over the already-built list — NO ledger read, reads ONLY clip_id+lift (so it
     is per-account hook rendering-independent: a shared clip across accounts is a real lineage in either mode).
-    Fail-open: any error returns the input rows unchanged (additive fields stay at their None defaults).
+    Fail-closed: a row that raises is not returned as a silent pass-through.
     Ranks within whatever filtered set is passed in. Same order and length as the input."""
-    try:
-        groups: dict = {}
-        for r in rows:
-            cid = getattr(r, "clip_id", None)
-            if cid: groups.setdefault(cid, []).append(r)
-        ann: dict = {}                                   # id(row) -> the fields to stamp on its copy
-        for sibs in groups.values():
-            n = len(sibs)
-            for r in sibs: ann[id(r)] = {"sibling_count": n}
-            measured = [r for r in sibs if isinstance(getattr(r, "lift_score", None), (int, float))
-                        and not isinstance(r.lift_score, bool)]
-            if not measured: continue
-            best = max(r.lift_score for r in measured)
-            for r in measured:
-                ann[id(r)].update(rank=1 + sum(1 for o in measured if o.lift_score > r.lift_score),
-                                  delta_vs_best=round(r.lift_score - best, 4))
-        return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
-    except Exception:
-        logger.warning("lineage sibling-ranking skipped (fail-open, additive fields stay None)", exc_info=True)
-        return rows
+    groups: dict = {}
+    for r in rows:
+        cid = getattr(r, "clip_id", None)
+        if cid: groups.setdefault(cid, []).append(r)
+    ann: dict = {}                                   # id(row) -> the fields to stamp on its copy
+    for sibs in groups.values():
+        n = len(sibs)
+        for r in sibs: ann[id(r)] = {"sibling_count": n}
+        measured = [r for r in sibs if isinstance(getattr(r, "lift_score", None), (int, float))
+                    and not isinstance(r.lift_score, bool)]
+        if not measured: continue
+        best = max(r.lift_score for r in measured)
+        for r in measured:
+            ann[id(r)].update(rank=1 + sum(1 for o in measured if o.lift_score > r.lift_score),
+                              delta_vs_best=round(r.lift_score - best, 4))
+    return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
 
 
 def account_median_deltas(rows) -> list:
@@ -311,25 +307,21 @@ def account_median_deltas(rows) -> list:
     statistics.median over the account's MEASURED lift scores. Groups by `account`; a group with <2 measured rows
     is degenerate (a median vs a single point) and left at None — mirroring lineage_stats' judgment of only
     ranking within `measured`. An unmeasured row (lift None/non-numeric) is excluded from the median AND never
-    stamped. Pure over the already-built list — NO ledger read. Fail-open: any error returns the input rows
-    unchanged (additive fields stay at their None defaults). Same order and length as the input."""
-    try:
-        groups: dict = {}
-        for r in rows:
-            acct = getattr(r, "account", None)
-            if acct: groups.setdefault(acct, []).append(r)
-        ann: dict = {}
-        for grp in groups.values():
-            measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
-                        and not isinstance(r.lift_score, bool)]
-            if len(measured) < 2: continue     # a median vs a single data point is degenerate
-            med = statistics.median(r.lift_score for r in measured)
-            for r in measured:
-                ann[id(r)] = {"delta_vs_account_median": round(r.lift_score - med, 4)}
-        return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
-    except Exception as exc:
-        logger.warning("delta_vs_account_median: stats pass failed (%s)", exc)
-        return rows   # fail-open (mirrors lineage_stats): additive field stays at its None default, never a raise
+    stamped. Pure over the already-built list — NO ledger read. Fail-closed: a row that raises is not
+    returned as a silent pass-through (same as lineage_stats). Same order and length as the input."""
+    groups: dict = {}
+    for r in rows:
+        acct = getattr(r, "account", None)
+        if acct: groups.setdefault(acct, []).append(r)
+    ann: dict = {}
+    for grp in groups.values():
+        measured = [r for r in grp if isinstance(getattr(r, "lift_score", None), (int, float))
+                    and not isinstance(r.lift_score, bool)]
+        if len(measured) < 2: continue     # a median vs a single data point is degenerate
+        med = statistics.median(r.lift_score for r in measured)
+        for r in measured:
+            ann[id(r)] = {"delta_vs_account_median": round(r.lift_score - med, 4)}
+    return [replace(r, **ann[id(r)]) if id(r) in ann else r for r in rows]
 
 
 def metric_peaks(rows) -> dict:

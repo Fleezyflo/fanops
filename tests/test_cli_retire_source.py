@@ -41,7 +41,7 @@ def test_retire_source_confirm_snapshots_audits_and_cascades(tmp_path, monkeypat
     snaps = list(cfg.control.glob("ledger.snapshot.*.sqlite"))
     assert snaps, "a restorable pre-retire snapshot must exist before mutation"
     from fanops import ledger_wipe
-    assert ledger_wipe.snapshot_is_restorable(snaps[0])
+    assert ledger_wipe.snapshot_is_restorable(snaps[0], cfg)
     audit = (cfg.control / "studio_audit.log").read_text(encoding="utf-8").splitlines()
     assert len(audit) == 1
     entry = json.loads(audit[0])
@@ -55,7 +55,7 @@ def test_retire_source_refuses_unrestorable_snapshot_no_unlink(tmp_path, monkeyp
     clip_path = tmp_path / "c0.mp4"
     _seed_with_clip(cfg, clip_path)
     from fanops import ledger_wipe
-    monkeypatch.setattr(ledger_wipe, "snapshot_is_restorable", lambda _p, **_k: False)
+    monkeypatch.setattr(ledger_wipe, "snapshot_is_restorable", lambda _p, _cfg: False)
     assert main(["retire-source", "src_x", "--i-understand-this-deletes-unshipped-media"]) == 2
     assert clip_path.exists()
     assert Ledger.load(cfg).sources["src_x"].state is SourceState.catalogued

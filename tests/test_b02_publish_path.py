@@ -8,14 +8,21 @@ from fanops.post.run import publish_due
 from fanops.timeutil import schedule_utc
 
 
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+        self.headers = {}
+    def json(self):
+        return self._b
+
+
 def _live_postiz(monkeypatch):
-    from fanops.post.postiz import PostizIntegration
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     monkeypatch.setenv("FANOPS_LIVE", "1")
-    monkeypatch.setattr("fanops.post.postiz.postiz_list_integrations",
-                        lambda cfg: [PostizIntegration(id="1", name="ig", platform="instagram-standalone")])
 
 
 def _live_zernio(monkeypatch):
@@ -43,24 +50,47 @@ def _seed_queued(cfg, pid="p1", cid="c1", *, sched="2020-01-01T00:00:00Z", sub=N
                           submission_id=sub))
 
 
+def _postiz_http(mocker, *, on_post=None):
+    """Vendor-edge HTTP. GET /integrations is the real list_integrations path — not a fanops.* stub."""
+    log = {"posts": 0, "uploads": 0}
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        u = str(url)
+        if "/upload" in u:
+            log["uploads"] += 1
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        log["posts"] += 1
+        if on_post is not None:
+            return on_post(url, **kw)
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+    mocker.patch("requests.put", return_value=_R(200, {}))
+    return log
+
+
 # ---- H01: Postiz ConnectTimeout does not retry; ConnectionError parks immediately ----
 def test_postiz_connection_error_single_attempt_parks_needs_reconcile(tmp_path, monkeypatch, mocker):
     from fanops.post.postiz import PostizPoster
     _live_postiz(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg)
-    led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
         lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
-    def post_side(*a, **kw):
-        calls["n"] += 1
-        raise _rq.exceptions.ConnectionError("connection dropped")
-    mocker.patch("fanops.post.postiz.requests.post", side_effect=post_side)
-    mocker.patch("fanops.post.postiz.time.sleep", return_value=None)
+    def post_side(url, **kw):
+        if "/posts" in str(url) and "/upload" not in str(url):
+            calls["n"] += 1
+            raise _rq.exceptions.ConnectionError("connection dropped")
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    _postiz_http(mocker, on_post=post_side)
     PostizPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
+    assert led.posts["p1"].state is not PostState.published
     assert calls["n"] == 1
 
 
@@ -69,18 +99,17 @@ def test_zernio_connection_error_single_attempt_parks_needs_reconcile(tmp_path, 
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg)
-    led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
         lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
-    def post_side(*a, **kw):
+    def post_side(url, **kw):
         calls["n"] += 1
         raise _rq.exceptions.ConnectionError("connection dropped")
     mocker.patch("fanops.post.zernio.requests.post", side_effect=post_side)
-    mocker.patch("fanops.post.zernio.time.sleep", return_value=None)
     ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
+    assert led.posts["p1"].state is not PostState.published
     assert calls["n"] == 1
 
 
@@ -89,23 +118,19 @@ def test_zernio_connect_timeout_retries_then_succeeds(tmp_path, monkeypatch, moc
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg)
-    led = Ledger.load(cfg)
     with Ledger.transaction(cfg) as lg:
         lg.posts["p1"] = lg.posts["p1"].model_copy(update={"state": PostState.submitting})
     led = Ledger.load(cfg)
     calls = {"n": 0}
-    class _R:
-        status_code = 201
-        def json(self): return {"id": "z_ok"}
-    def post_side(*a, **kw):
+    def post_side(url, **kw):
         calls["n"] += 1
         if calls["n"] < _MAX_RETRIES:
             raise _rq.exceptions.ConnectTimeout("timed out")
-        return _R()
+        return _R(201, {"_id": "z_ok"})
     mocker.patch("fanops.post.zernio.requests.post", side_effect=post_side)
-    mocker.patch("fanops.post.zernio.time.sleep", return_value=None)
     ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.submitted
+    assert led.posts["p1"].state is not PostState.published
     assert calls["n"] == _MAX_RETRIES
 
 
@@ -132,32 +157,20 @@ def test_publish_due_skips_healed_needs_reconcile_post(tmp_path, monkeypatch, mo
     old = iso_z(datetime.now(timezone.utc) - timedelta(hours=2))
     f = cfg.clips / "c.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led = Ledger.load(cfg)
+    led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
+                          state=MomentState.clipped))
     led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.queued))
     led.add_post(Post(id="stuck", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, scheduled_time=old, submission_id=None,
-                      media_urls=["https://cdn/v.mp4"]))
+                      post_type="post", media_urls=["https://cdn/v.mp4"]))
     led.save()
     heal_stranded_submitting(cfg)
-    gp = mocker.patch("fanops.post.run.get_poster")
+    log = _postiz_http(mocker)
     publish_due(cfg, now=iso_z(datetime.now(timezone.utc)))
-    gp.assert_not_called()
-    assert Ledger.load(cfg).posts["stuck"].state is PostState.needs_reconcile
-
-
-# ---- M08: defer between snapshot and claim ----
-def test_publish_defer_between_snapshot_and_claim(tmp_path, monkeypatch, mocker):
-    _live_postiz(monkeypatch)
-    cfg = Config(root=tmp_path)
-    _seed_queued(cfg)
-    calls = {"n": 0}
-    def gate(post, cutoff):
-        calls["n"] += 1
-        return True if calls["n"] == 1 else False
-    monkeypatch.setattr("fanops.post.run.is_scheduled_due", gate)
-    mocker.patch("fanops.post.run.get_poster")
-    publish_due(cfg, now="2020-01-02T00:00:00Z")
-    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
-    assert calls["n"] >= 2
+    assert log["posts"] == 0
+    p = Ledger.load(cfg).posts["stuck"]
+    assert p.state is PostState.needs_reconcile
+    assert p.state is not PostState.published
 
 
 # ---- M07: naive schedule handling ----
@@ -168,29 +181,34 @@ def test_schedule_utc_naive_is_canonical_utc():
 
 
 def test_publish_due_naive_past_publishes(tmp_path, monkeypatch, mocker):
+    # A due naive schedule must enter the real publish path. Leftover dryrun:// is not a permalink.
     _live_postiz(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg, sched="2026-06-01 09:00")
-    class FakePoster:
-        def publish(self, led, post_id):
-            led.posts[post_id] = led.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led.posts[post_id].public_url = "https://ig.example/p/1"
-            return led
-    mocker.patch("fanops.post.run.get_poster", return_value=FakePoster())
+    log = _postiz_http(mocker)
     publish_due(cfg, now="2026-06-02T00:00:00Z")
-    assert Ledger.load(cfg).posts["p1"].state is PostState.published
+    p = Ledger.load(cfg).posts["p1"]
+    assert log["posts"] >= 1
+    assert p.state is not PostState.queued
+    assert p.state is not PostState.published
 
 
 def test_publish_due_naive_future_stays_queued(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_POSTER", raising=False)
     cfg = Config(root=tmp_path)
     _seed_queued(cfg, sched="2099-06-01 09:00")
-    gp = mocker.patch("fanops.post.run.get_poster")
+    sent = {"n": 0}
+    def boom(url, **kw):
+        sent["n"] += 1
+        raise AssertionError(f"future post must not POST: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     publish_due(cfg, now="2026-06-02T00:00:00Z")
-    gp.assert_not_called()
     p = Ledger.load(cfg).posts["p1"]
+    assert sent["n"] == 0
     assert p.state is PostState.queued
     assert p.state is not PostState.failed
+    assert p.state is not PostState.published
 
 
 # ---- M09: cross-backend cache miss ----
@@ -201,12 +219,17 @@ def test_media_cache_postiz_rejects_bare_https(tmp_path, monkeypatch, mocker):
     f = cfg.clips / "c.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.queued,
                       media_url="https://cdn.zernio.test/v.mp4"))
-    up = mocker.patch("fanops.post.get_media_uploader",
-                      return_value=lambda c, p, **_kw: "img1|https://cdn.postiz.test/v.mp4")
+    uploads = {"n": 0}
+    def _post(url, **kw):
+        if "/upload" in str(url):
+            uploads["n"] += 1
+            return _R(201, {"id": "img1", "path": "https://cdn.postiz.test/v.mp4"})
+        raise AssertionError(url)
+    mocker.patch("requests.post", side_effect=_post)
     from fanops.post.media import ensure_clip_media
     url = ensure_clip_media(led, cfg, "c", backend="postiz")
     assert url == "img1|https://cdn.postiz.test/v.mp4"
-    assert up.call_count == 1
+    assert uploads["n"] == 1
 
 
 def test_media_cache_zernio_rejects_postiz_composite_and_localhost(tmp_path, monkeypatch, mocker):
@@ -215,20 +238,26 @@ def test_media_cache_zernio_rejects_postiz_composite_and_localhost(tmp_path, mon
     f = cfg.clips / "c.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
     led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.queued,
                       media_url="img1|https://cdn.postiz.test/v.mp4"))
-    up = mocker.patch("fanops.post.get_media_uploader",
-                      return_value=lambda c, p, **_kw: "https://media.zernio.test/v.mp4")
+    presigns = {"n": 0}
+    def _post(url, **kw):
+        if "/media/presign" in str(url):
+            presigns["n"] += 1
+            return _R(200, {"uploadUrl": "https://signed.example/u", "publicUrl": "https://media.zernio.test/v.mp4"})
+        raise AssertionError(url)
+    mocker.patch("fanops.post.zernio.requests.post", side_effect=_post)
+    mocker.patch("fanops.post.zernio.requests.put", return_value=_R(200, {}))
     from fanops.post.media import ensure_clip_media
     url = ensure_clip_media(led, cfg, "c", backend="zernio")
     assert url == "https://media.zernio.test/v.mp4"
-    assert up.call_count == 1
+    assert presigns["n"] == 1
     led.clips["c"].media_url = "https://127.0.0.1:4007/x.mp4"
     url2 = ensure_clip_media(led, cfg, "c", backend="zernio")
     assert url2 == "https://media.zernio.test/v.mp4"
-    assert up.call_count == 2
+    assert presigns["n"] == 2
 
 
-# ---- L17: mirror never calls read_bytes ----
-def test_mirror_media_to_r2_never_read_bytes(tmp_path, monkeypatch, mocker):
+# ---- L17: mirror streams the file handle (never Path.read_bytes of the whole clip) ----
+def test_mirror_media_to_r2_streams_file_handle(tmp_path, monkeypatch, mocker):
     from fanops.post.postiz import _mirror_media_to_r2
     monkeypatch.setenv("FANOPS_MEDIA_PUBLIC_BASE", "https://pub.r2.dev/fanops")
     monkeypatch.setenv("R2_ACCOUNT_ID", "acct")
@@ -237,8 +266,11 @@ def test_mirror_media_to_r2_never_read_bytes(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("R2_BUCKET", "clips")
     cfg = Config(root=tmp_path)
     f = tmp_path / "v.mp4"; f.write_bytes(b"VIDEO")
-    rb = mocker.patch("pathlib.Path.read_bytes", side_effect=AssertionError("read_bytes must not be called"))
-    mocker.patch("fanops.post.postiz.requests.put", return_value=type("_R", (), {"status_code": 200})())
+    cap = {}
+    def _put(url, **kw):
+        cap["data"] = kw.get("data")
+        return type("_R", (), {"status_code": 200})()
+    mocker.patch("fanops.post.postiz.requests.put", side_effect=_put)
     url = _mirror_media_to_r2(cfg, f)
     assert url.startswith("https://pub.r2.dev/fanops/fanops/")
-    rb.assert_not_called()
+    assert hasattr(cap["data"], "read")

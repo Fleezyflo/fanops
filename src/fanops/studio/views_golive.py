@@ -27,7 +27,7 @@ class ChannelReadiness:
     mapped: bool
     creds: bool           # backend_has_creds(effective_provider) — publish creds NOT Meta
     persona: bool         # persona_id or inline persona (account-level)
-    window: bool          # True always today (default-open window)
+    window: bool          # Config.account_window / daily_window: True iff 24h-open or operator-local hour is inside
     ready: bool           # MUST agree with go_live
     first_blocker: str    # earliest failing check as action phrase; "" when ready
 
@@ -55,8 +55,8 @@ class GoLiveStatus:
     account_casting: bool = False      # per-account moment casting ON (FANOPS_ACCOUNT_CASTING) — distinct moment sets per account
     clip_profile: str = "talk"         # clip-length band (FANOPS_CLIP_PROFILE): talk 12-22s / song 18-35s
     responder_mode: str = "llm"        # FANOPS_RESPONDER resolves to 'llm' (validate-or-refuse); gates answered by the LLM
-    llm_transport: str = "claude"      # FANOPS_LLM_TRANSPORT: claude | cursor (which CLI shells for gates)
-    llm_cli_binary: str = "claude"     # resolved binary name for operator copy (claude | cursor-agent)
+    llm_transport: str = "grok"        # grok is the only CLI
+    llm_cli_binary: str = "grok"       # grok is the only CLI
     daemon: Optional[dict] = None      # launchd pipeline-driver health (verdict/loaded/interval/responder), None off-darwin
     paused: bool = False               # 00_control/paused — the operator brake on the unattended pump
     demoted: list = field(default_factory=list)   # Phase 3: planned/demoted accounts (promotable) — golive_accounts lists only active()
@@ -132,6 +132,22 @@ def golive_demoted_accounts(cfg: Config) -> list:
         return []
 
 
+def _window_open_now(cfg: Config, handle: str) -> bool:
+    """True when `cfg.account_window(handle)` is 24h-open (None / degenerate) or the operator-local
+    hour sits inside the [open, close) band (wrap-around overnight windows included)."""
+    window = cfg.account_window(handle)
+    if window is None:
+        return True
+    lo, hi = window
+    if lo == hi:
+        return True
+    from datetime import datetime, timezone
+    from fanops.timeutil import _operator_zone
+    zone = _operator_zone(cfg) or timezone.utc
+    hour = datetime.now(zone).hour
+    return lo <= hour < hi if lo < hi else hour >= lo or hour < hi
+
+
 def _blocker_priority(msg: str) -> int:
     if msg == "connect Postiz or Zernio first": return 0
     if msg == "map an integration id": return 1
@@ -189,7 +205,8 @@ def channel_readiness(cfg: Config) -> list[ChannelReadiness]:
             if blocker:
                 ready = False
             out.append(ChannelReadiness(handle=a.handle, platform=pv, backend=backend, mapped=mapped, creds=creds,
-                                        persona=persona_ok, window=True, ready=ready, first_blocker=blocker))
+                                        persona=persona_ok, window=_window_open_now(cfg, a.handle),
+                                        ready=ready, first_blocker=blocker))
     return out
 
 

@@ -99,10 +99,9 @@ def test_recover_posts_discard_still_works_on_retired_lineage(tmp_path):
     ("retry_oversize_failures", _OVERSIZE, ErrorKind.oversize, "moment"),
     ("retry_transient_failures", _TRANSIENT, ErrorKind.transient, "clip"),
 ])
-def test_each_retry_verb_refuses_retired_lineage(tmp_path, mocker, verb, reason_text, kind, retire):
+def test_each_retry_verb_refuses_retired_lineage(tmp_path, verb, reason_text, kind, retire):
     """All three sweep-the-whole-ledger retry verbs carry the same guard. Each run has one retired-lineage
     and one live-lineage candidate, so a verb that refused everything would fail on `retried == 1`."""
-    mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)   # only retry_oversize calls it
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _chain(led, "live", error_reason=reason_text, error_kind=kind)
@@ -130,14 +129,16 @@ def test_stored_retired_post_is_not_revertible(tmp_path):
     assert Ledger.load(cfg).posts["self"].state is PostState.retired
 
 
-def test_retry_oversize_does_not_transcode_a_refused_post(tmp_path, mocker):
+def test_retry_oversize_does_not_transcode_a_refused_post(tmp_path):
     """The guard sits BEFORE the shrink, not before the state write: `apply_shrink_to_post` transcodes and
     rewrites `media_urls` + the render row, so guarding after it would commit a write on a REFUSED re-arm."""
-    shrink = mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _chain(led, "dead", retire="clip", error_reason=_OVERSIZE, error_kind=ErrorKind.oversize)
+    led.posts["dead"].media_urls = ["file:///orig.mp4"]
     led.save()
     res = actions.retry_oversize_failures(cfg)
     assert res.ok and res.detail["skipped_retired"] == 1 and res.detail["retried"] == 0
-    assert shrink.call_count == 0, "a refused re-arm must not transcode or mutate its media"
+    after = Ledger.load(cfg).posts["dead"]
+    assert after.state is PostState.failed and after.media_urls == ["file:///orig.mp4"]
+    assert after.error_reason == _OVERSIZE

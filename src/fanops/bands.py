@@ -1,7 +1,7 @@
 # src/fanops/bands.py
 """Clip-length BAND names leftover on Account.clip_profile / FANOPS_CLIP_PROFILE rows.
 The pick is the cut — ingest and render do not apply these numbers. band_for still
-resolves a stored profile name so old rows load; unknown/empty -> TALK."""
+resolves a stored profile name so old rows load; unknown/empty refuse (never TALK)."""
 from __future__ import annotations
 from typing import NamedTuple
 
@@ -24,11 +24,15 @@ LONG = Band(28.0, 45.0)     # a full section / longer watch
 
 _PROFILES = {"talk": TALK, "song": SONG, "short": SHORT, "medium": MEDIUM, "long": LONG}
 PROFILE_NAMES = frozenset(_PROFILES)    # the validatable set: accounts.set_clip_profile / add_account
-                                        # refuse any profile not in here, so a per-account override never
-                                        # silently resolves to the TALK default downstream (validate-or-default
-                                        # is the LOAD posture; the WRITE boundary is strict — never persist junk).
+                                        # and band_for refuse any name not in here. WRITE is strict
+                                        # (never persist junk); LOAD via band_for is also refuse —
+                                        # unknown/empty must not silently become TALK.
 
 def band_for(profile: str | None) -> Band:
-    """Resolve a content-type profile name to its Band. Unknown/empty/None -> TALK (the safe default,
-    today's behavior). Case-insensitive; surrounding whitespace tolerated (a .env value may carry it)."""
-    return _PROFILES.get((profile or "").strip().lower(), TALK)
+    """Resolve a content-type profile name to its Band. Unknown/empty/None raise ValueError
+    (never TALK). Case-insensitive; surrounding whitespace tolerated (a .env value may carry it)."""
+    key = (profile or "").strip().lower()
+    got = _PROFILES.get(key)
+    if got is None:
+        raise ValueError(f"unknown clip_profile: {profile!r} (valid: {', '.join(sorted(PROFILE_NAMES))})")
+    return got

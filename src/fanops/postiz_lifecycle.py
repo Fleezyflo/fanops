@@ -16,9 +16,11 @@ Any failure is swallowed-then-returned (fail-open): a still-down Postiz then sur
 the normal connection error in the poster, exactly as before this module existed.
 """
 import logging
+import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -67,9 +69,20 @@ def ensure_up(cfg) -> None:
     publish/reconcile that needs it. No-op unless _should_autostart(cfg). Never raises."""
     if not _should_autostart(cfg):
         return
+    from fanops.health import _docker_health
+    dh = _docker_health()
+    if not dh.ok:
+        _log.warning("ensure_up skipped (docker not ok): %s", dh.detail)
+        return
     try:
-        subprocess.run(["bash", str(_SCRIPT), "ensure"], timeout=_WAIT_S,
-                       capture_output=True, check=False)
+        p = subprocess.Popen(["bash", str(_SCRIPT), "ensure"], start_new_session=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            p.communicate(timeout=_WAIT_S)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            raise
     except Exception as e:  # fail-open: publishing proceeds; a down stack surfaces normally
         _log.warning("ensure_up skipped (%s): %s", type(e).__name__, e)
         sys.stderr.write(f"[postiz_lifecycle] ensure_up skipped ({type(e).__name__}): {e}\n")

@@ -23,10 +23,10 @@ from fanops.reconcile import reconcile_due, reconcile_posts
 
 
 def _post(led, pid, state, sub=None):
-    # R1: stamp a synthetic dryrun:// permalink when state is terminal-with-URL so the invariant
+    # R1: stamp a synthetic https permalink when state is terminal-with-URL so the invariant
     # holds. Reconcile tests then exercise the reconciler's URL back-fill (real https) on top.
     from fanops.models import _POST_TERMINAL_REQUIRES_URL
-    url = f"dryrun://{pid}" if state in _POST_TERMINAL_REQUIRES_URL else None
+    url = f"https://www.instagram.com/p/{pid}/" if state in _POST_TERMINAL_REQUIRES_URL else None
     led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=state, submission_id=sub,
                       public_url=url))
@@ -82,6 +82,23 @@ def test_reconcile_marks_failed_when_not_live(tmp_path):
     led = reconcile_posts(led, cfg, get_status=get_status)
     assert led.posts["p2"].state is PostState.failed
     assert "platform rejected" in (led.posts["p2"].error_reason or "")
+    assert led.posts["p2"].submission_id == "sub_2"              # Postiz keep-sid
+
+
+def test_tiktok_failed_poll_without_candidate_remints_transient(tmp_path):
+    # D1: TikTok vendor-failed poll with no candidate remints — transient + clear sid.
+    # Observation is what get_status emits after folding live platforms[].errorMessage.
+    capacity = "TikTok direct posting is at capacity right now."
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    led.add_post(Post(id="tt", parent_id="c", account="a", account_id="1", platform=Platform.tiktok,
+                      caption="x", state=PostState.needs_reconcile, submission_id="z_mine"))
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "failed", "errorMessage": capacity})
+    p = led.posts["tt"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.transient
+    assert p.submission_id is None
+    assert capacity in (p.error_reason or "")
 
 
 def test_reconcile_leaves_in_progress_parked(tmp_path):
@@ -261,10 +278,8 @@ def test_failed_no_sid_retry_capped_on_retired_account_is_rejected_via_reconcile
                       submission_id=None, error_kind=ErrorKind.rate_limit,
                       error_reason="postiz 429 (body withheld)", daemon_transient_retry=3))
     led.save()
-    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
     reconcile_due(cfg)
     assert Ledger.load(cfg).posts["husk"].state is PostState.rejected
-    ensure.assert_not_called()
 
 
 def test_failed_no_sid_retry_capped_without_sibling_on_active_account_stays_failed(tmp_path):
@@ -317,7 +332,6 @@ def test_reconcile_due_zernio_leftover_cuid_escalates_submitting_without_get(tmp
     from fanops.accounts import add_account, set_backend
     monkeypatch.setenv("FANOPS_POSTER", "zernio")
     monkeypatch.setenv("ZERNIO_API_KEY", "sk")
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     seen = []
     def _get(url, **kw):
         seen.append(url)
@@ -391,13 +405,14 @@ def test_reconcile_read_error_writes_nothing_and_only_logs(tmp_path):
 
 def test_reconcile_logs_each_post(tmp_path):
     # Phase E4: a reconcile pass must leave an audit trail in run.log so a cron+mail/PagerDuty
-    # monitor can see which parked posts were touched and how they resolved. Today reconcile_posts
-    # emits NO log lines (no get_logger call), so cfg.log_path is never written. Seed one post that
-    # resolves to 'published' and assert the run log records both the stage ('reconcile') and the
-    # post id ('p1').
+    # monitor can see which parked posts were touched and how they resolved. Seed one post that
+    # resolves to 'published' (https permalink — not a comment claiming published for url "u")
+    # and assert the run log records both the stage ('reconcile') and the post id ('p1').
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     _post(led, "p1", PostState.needs_reconcile, sub="sub_t")
-    reconcile_posts(led, cfg, get_status=lambda sid: {"status": "published", "publicUrl": "u"})
+    led = reconcile_posts(led, cfg, get_status=lambda sid: {
+        "status": "published", "publicUrl": "https://instagram.com/p/abc"})
+    assert led.posts["p1"].state is PostState.published
     log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
     assert "reconcile" in log
     assert "p1" in log
@@ -588,10 +603,8 @@ def test_reconcile_published_post_is_archived(tmp_path):
 
 def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tmp_path):
     # I5: a `submitting` post crash-stranded >24h on a never-real fanops_ token cannot be polled.
-    # It leaves inflight as failed/unknown — never needs_reconcile (would stay inflight forever)
-    # and never transient (daemon would auto-retry a fanops_ id). Never GET.
+    # Parks needs_reconcile (no error_kind) so auto-heal can still bind. Never GET. Never failed.
     from datetime import datetime, timezone, timedelta
-    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.submitting, submission_id="fanops_abc",
@@ -600,9 +613,8 @@ def test_submitting_escalate_to_needs_reconcile_past_deadline_with_fake_token(tm
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
     p = led.posts["ps"]
     assert polled == []                                          # age ladder must not depend on a GET
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
     assert "unpollable" in (p.error_reason or "")
 
 
@@ -636,23 +648,22 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
 
 
 def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
-    # I5 exception to "waiting is not failing": a fanops_ birth token cannot be polled, so past 24h
-    # (here 80h) it leaves inflight as failed/unknown. A real backend id at this age is still
-    # untouched (test_a_real_token_past_the_old_horizon_is_also_untouched). Never GET.
+    # Already-parked birth token: first arm is submitting/submitted only, so a needs_reconcile
+    # fanops_ row stays byte-identical (auto-heal can still bind). Never GET.
     from datetime import datetime, timezone, timedelta
-    from fanops.models import ErrorKind
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
+    before = led.posts["pg"].model_dump()
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
     p = led.posts["pg"]
     assert polled == []
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
-    assert "unpollable" in (p.error_reason or "")
+    assert p.model_dump() == before
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
+    assert "unpollable" not in (p.error_reason or "")
 
 
 @pytest.mark.parametrize("legacy", [
@@ -672,7 +683,7 @@ def test_no_legacy_reason_latches_a_post_out_of_the_pass(tmp_path, legacy):
     url, rid = "https://www.instagram.com/reel/DZvZ8Itkaxz/", "17841456789012345"
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="postiz_real_1",
-                      error_reason=legacy, public_url="dryrun://pg"))
+                      error_reason=legacy, public_url="https://www.instagram.com/p/pg/"))
     calls = []
     def get_status(sid):
         calls.append(sid); return {"status": "published", "publicUrl": url, "releaseId": rid}
@@ -704,13 +715,14 @@ def test_a_real_token_past_the_old_horizon_is_also_untouched(tmp_path):
     ["published", "failed", "unknown", "raises"],
     ["fanops_FAKE", "blotato_REAL"],
     ["", "stuck 9h past schedule — check the channel"])))
-def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
+def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypatch):
     # THE 32-CELL INVARIANT, inverted. A needs_reconcile post 73h past schedule — past the horizon at which
     # the deleted ladder declared it lost — is decided by the OBSERVATION and by nothing else, across every
     # (backend × observation × token × error_reason). A published/failed answer resolves it; an unknown one,
     # or a read that raised, leaves the ledger row BYTE-IDENTICAL. The three axes that could once veto the
     # outcome (a raising read, a real token, a stale reason) still never do — but now what they cannot veto
     # is a NON-write, so no cell can invent a verdict the backend never gave.
+    monkeypatch.setenv("FANOPS_POSTER", backend)
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="m", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
@@ -731,11 +743,10 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason):
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if token.startswith("fanops_"):
         assert polled == []                                 # birth token is not a GET key
-        assert p.state is PostState.failed                  # I5: unpollable past 24h leaves inflight
-        assert p.state is not PostState.needs_reconcile
-        from fanops.models import ErrorKind
-        assert p.error_kind is ErrorKind.unknown            # never transient — daemon must not auto-retry
-        assert "unpollable" in (p.error_reason or "")
+        assert p.model_dump() == before                     # already-parked: no invented failed
+        assert p.state is PostState.needs_reconcile
+        assert p.error_kind is None
+        assert "unpollable" not in (p.error_reason or "")
     elif poll == "published":
         assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
@@ -792,15 +803,11 @@ def test_reconcile_visits_a_post_carrying_a_transient_reason(tmp_path, mocker):
                       caption="x", state=PostState.submitting, submission_id="fanops_x",
                       error_reason=reason,
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
-    spy = []
-    def fake_logger(cfg):
-        def log(*a, **k): spy.append(a)
-        return log
-    mocker.patch("fanops.reconcile.get_logger", fake_logger)
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "scheduled"})
     assert polled == []
-    assert [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])], \
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "client token is not a backend id" in log, \
         "a transient-reason client-token post was NOT visited"
     assert led.posts["pt"].error_reason == reason                    # visited, and NOT re-stamped
 
@@ -822,7 +829,7 @@ def test_reconcile_never_guesses_a_fate_on_error(tmp_path):
 def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_nothing(tmp_path):
     # MOL-791: the preview carries TWO row kinds in ONE shape, told apart by would_set_state vs state.
     #   esc   — 30h `submitting`, CLIENT token: I5 unpollable close fires (would_set_state MOVES to
-    #           failed). No lateness row: a fanops_ token can never match a backend row.
+    #           needs_reconcile). No lateness row: a fanops_ token can never match a backend row.
     #   old   — 80h `needs_reconcile`, REAL id, never mirrored: the deleted give-up rung would have
     #           declared it lost; now it previews as LATENESS ONLY (would_set_state == state).
     #   fresh — 2h `submitting`, client token: previews nothing at all.
@@ -843,7 +850,7 @@ def test_report_terminals_previews_the_escalation_and_the_lateness_and_writes_no
     writes = [r for r in rows if r["would_set_state"] != r["state"]]
     late = [r for r in rows if r["would_set_state"] == r["state"]]
     assert [r["post_id"] for r in writes] == ["esc"]          # the unpollable close, and only it, would write
-    assert writes[0]["would_set_state"] == "failed" and "unpollable" in writes[0]["reason"]
+    assert writes[0]["would_set_state"] == "needs_reconcile" and "unpollable" in writes[0]["reason"]
     assert [r["post_id"] for r in late] == ["old"]            # esc (client token) + fresh (on time) are silent
     assert late[0]["state"] == "needs_reconcile" and late[0]["event"] == "note lateness"
     assert "80h past scheduled_time" in late[0]["reason"] and "never mirrored" in late[0]["reason"]
@@ -887,11 +894,6 @@ def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()))
     before = led.posts["pk"].model_dump()
-    spy = []
-    def fake_logger(cfg):
-        def log(*a, **k): spy.append(a)
-        return log
-    mocker.patch("fanops.reconcile.get_logger", fake_logger)
     polled = []
     def gs(sid):
         polled.append(sid)
@@ -899,7 +901,8 @@ def test_a_parked_post_is_re_visited_and_re_logged_every_pass(tmp_path, mocker):
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 1
     led = reconcile_posts(led, cfg, get_status=gs)          # pass 2
     assert polled == []
-    skips = [a for a in spy if len(a) >= 3 and "client token is not a backend id" in str(a[2])]
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    skips = [ln for ln in log.splitlines() if "client token is not a backend id" in ln]
     assert len(skips) == 2                                  # visible on both passes, not silenced by pass 1
     assert led.posts["pk"].model_dump() == before           # ...and neither pass wrote a ledger byte
 
@@ -955,7 +958,6 @@ def _serve_window(mocker, rows, *, code=200, boom=None, seen=None):
         if boom is not None:
             raise boom
         return _R(code, {"posts": rows} if code == 200 else {"error": "nope"})
-    mocker.patch("fanops.postiz_lifecycle.ensure_up")
     mocker.patch("fanops.post.metrics.requests.get", side_effect=fake_get)
 
 
@@ -1017,6 +1019,7 @@ def test_an_error_row_on_a_published_post_is_recorded_never_failed(tmp_path, mon
     cfg = Config(root=tmp_path)
     _seed(cfg, "pp", PostState.published, "postiz_1", url=_IG_URL, postiz_state="PUBLISHED")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pp"]
     assert p.postiz_state == "ERROR"
@@ -1085,6 +1088,7 @@ def test_an_error_row_on_a_pending_post_still_resolves_it_failed(tmp_path, monke
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None,
                             "error": "API access blocked."}])
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
@@ -1098,13 +1102,19 @@ def test_a_failed_row_carries_the_real_cause_when_the_db_read_resolves(tmp_path,
     # from the self-host's Postgres. A resolved read must land BOTH halves on the ledger row: the typed
     # kind (auth -> Studio retry skips it) and a reason a human can act on — while keeping the
     # "poster reports failed" prefix the reason-scanners pin.
+    import base64
+    from types import SimpleNamespace
     from fanops.models import ErrorKind
-    import fanops.post.postiz_errors as pe
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
-    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {"postiz_1": "Refresh channel needed"})
+    blob = base64.b64encode(b"Refresh channel needed").decode()
+    mocker.patch("fanops.post.postiz_errors.subprocess.run",
+                 return_value=SimpleNamespace(returncode=0, stdout=f"postiz_1|{blob}\n", stderr=""))
+    d = cfg.root / "bin"; d.mkdir(exist_ok=True)
+    docker = d / "docker"; docker.write_text("#!/bin/sh\nexit 0\n"); docker.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{d}:{cfg.root}")
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
@@ -1114,21 +1124,21 @@ def test_a_failed_row_carries_the_real_cause_when_the_db_read_resolves(tmp_path,
 
 
 def test_a_failed_row_without_detail_stamps_exactly_the_old_no_detail(tmp_path, monkeypatch, mocker):
-    # The degrade contract: a shortfall of the DB read (remote stack, no docker, timeout) must leave
+    # The degrade contract: a shortfall of the DB read (no docker / OSError launching it) must leave
     # the stamp byte-identical to the pre-enrichment behavior — unknown kind, "(no detail)" reason —
-    # never a half-invented cause.
+    # never a half-invented cause. Nonzero docker/psql and TimeoutExpired raise (test_postiz_errors).
     from fanops.models import ErrorKind
-    import fanops.post.postiz_errors as pe
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "pn", PostState.needs_reconcile, "postiz_1")
     _serve_window(mocker, [{"id": "postiz_1", "state": "ERROR", "releaseURL": None, "releaseId": None}])
-    monkeypatch.setattr(pe, "fetch_error_details", lambda sids: {})
+    mocker.patch("fanops.post.postiz_errors.subprocess.run", side_effect=OSError("no docker"))
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["pn"]
     assert p.state is PostState.failed
     assert p.error_kind is ErrorKind.unknown
     assert p.error_reason.endswith("(no detail)")
+    assert p.submission_id == "postiz_1"
 
 
 def test_a_second_pass_over_unchanged_rows_writes_nothing(tmp_path, monkeypatch, mocker):
@@ -1201,9 +1211,8 @@ def test_a_zernio_backed_resting_post_is_never_stamped_absent(tmp_path, monkeypa
 def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, monkeypatch, mocker):
     # A `fanops_` idempotency token is not a Postiz row id, so no window can ever hold it: mirroring it
     # would record a permanent `absent` that says nothing about the post. It is still VISITED, because the
-    # (state, age) ladder un-strands a crash-stranded submit claim — I5 closes an unpollable token past
-    # 24h as failed/unknown (never GET, never mirrored).
-    from fanops.models import ErrorKind
+    # (state, age) ladder un-strands a crash-stranded submit claim — I5 parks an unpollable token past
+    # 24h as needs_reconcile (never GET, never mirrored, no error_kind).
     _mirror_env(monkeypatch)
     cfg = Config(root=tmp_path)
     _seed(cfg, "tok", PostState.submitting, "fanops_deadbeef", hours_ago=30)
@@ -1211,9 +1220,8 @@ def test_a_client_token_post_is_never_mirrored_but_still_escalates(tmp_path, mon
     reconcile_due(cfg)
     p = Ledger.load(cfg).posts["tok"]
     assert p.postiz_state is None                             # no row could name it -> no observation
-    assert p.state is PostState.failed
-    assert p.state is not PostState.needs_reconcile
-    assert p.error_kind is ErrorKind.unknown
+    assert p.state is PostState.needs_reconcile
+    assert p.error_kind is None
     assert "unpollable" in (p.error_reason or "")
 
 
@@ -1237,6 +1245,29 @@ def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp
     assert mirrored == []
 
 
+def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="wahed_bared"):
+    from types import SimpleNamespace
+    lists = [] if lists is None else lists
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+
+    def fake_get(url, **kw):
+        u = str(url)
+        params = kw.get("params") or {}
+        if "tiktok.com/oembed" in u:
+            return SimpleNamespace(status_code=200, text="{}",
+                                   json=lambda: {"author_unique_id": oembed})
+        if params.get("accountId") or "search" in params or params.get("page"):
+            if list_boom:
+                raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
+            payload = {"posts": lists, "pagination": {"page": 1, "totalPages": 1}}
+            return SimpleNamespace(status_code=200, text="{}", json=lambda: payload)
+        sid = u.rstrip("/").rsplit("/", 1)[-1]
+        body = bodies[sid]
+        return SimpleNamespace(status_code=200, text="{}", json=lambda: body)
+
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.requests.get", fake_get)
+
+
 def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
     from fanops import reconcile as rec_mod
     from fanops.models import Platform
@@ -1249,14 +1280,7 @@ def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_real"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_real": body}, list_boom=True)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     p = out.posts["p1"]
     assert p.state is PostState.published
@@ -1274,6 +1298,128 @@ def test_reopen_http_207_failed_for_sid_recovery(tmp_path):
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["p207"].state is PostState.needs_reconcile
     assert "sid recovery" in (out.posts["p207"].error_reason or "")
+
+
+def test_reopen_tiktok_no_detail_and_unpollable_without_candidate(tmp_path):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _post(led, "tt_nd", PostState.failed, sub="z_hex")
+    led.posts["tt_nd"] = led.posts["tt_nd"].model_copy(update={
+        "platform": Platform.tiktok,
+        "error_reason": "reconciled: poster reports failed (no detail)"})
+    _post(led, "tt_up", PostState.failed, sub="fanops_x")
+    led.posts["tt_up"] = led.posts["tt_up"].model_copy(update={
+        "platform": Platform.tiktok, "reconcile_candidate_id": None,
+        "error_reason": "unpollable fanops_* after 30h: GET 400 Invalid post ID; remint maybe-sent"})
+    _post(led, "ig_nd", PostState.failed, sub="postiz_1")
+    led.posts["ig_nd"] = led.posts["ig_nd"].model_copy(update={
+        "error_kind": ErrorKind.unknown,
+        "error_reason": "reconciled: poster reports failed (no detail)"})
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    assert out.posts["tt_nd"].state is PostState.needs_reconcile
+    assert "poster reports failed (no detail)" in (out.posts["tt_nd"].error_reason or "")
+    assert out.posts["tt_up"].state is PostState.needs_reconcile
+    assert "unpollable fanops_*" in (out.posts["tt_up"].error_reason or "")
+    assert "GET 400" in (out.posts["tt_up"].error_reason or "")
+    assert "maybe-sent" in (out.posts["tt_up"].error_reason or "")
+    assert "sid recovery" not in (out.posts["tt_up"].error_reason or "")
+    assert out.posts["ig_nd"].state is PostState.failed
+
+
+def test_d3_no_detail_without_sid_is_not_stolen_from_remint(tmp_path):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt_ns", parent_id="c", account="a", account_id="1",
+                      platform=Platform.tiktok, caption="x", state=PostState.failed,
+                      submission_id=None, error_kind=ErrorKind.transient,
+                      error_reason="reconciled: poster reports failed (no detail)"))
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    p = out.posts["tt_ns"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.transient
+    assert p.submission_id is None
+
+
+def test_restore_heal_stamp_on_tiktok_birth_token(tmp_path):
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt_heal", parent_id="c", account="a", account_id="1",
+                      platform=Platform.tiktok, caption="x",
+                      state=PostState.needs_reconcile, submission_id="fanops_deadbeef",
+                      error_reason="healed: reopening misclassified failed for sid recovery"))
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    p = out.posts["tt_heal"]
+    assert p.state is PostState.needs_reconcile
+    assert p.submission_id == "fanops_deadbeef"
+    assert p.error_reason == "unpollable fanops_* after 24h: GET 400 Invalid post ID; remint maybe-sent"
+
+
+def _zernio_due_cfg(tmp_path, monkeypatch):
+    from fanops.accounts import add_account, set_backend
+    monkeypatch.setenv("FANOPS_POSTER", "zernio")
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    return cfg
+
+
+def test_reconcile_due_tiktok_failed_hex_husk_remints_same_pass(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    capacity = "TikTok direct posting is at capacity right now."
+    body = {"post": {"platforms": [{"status": "failed", "errorMessage": capacity}]}}
+    monkeypatch.setattr(
+        "fanops.post.metrics.zernio_read.requests.get",
+        lambda *a, **k: SimpleNamespace(status_code=200, text="{}", json=lambda: body))
+    cfg = _zernio_due_cfg(tmp_path, monkeypatch)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt_hex", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x", state=PostState.failed,
+                      submission_id="6aa2bb24bf207c028b657feb",
+                      error_kind=ErrorKind.unknown,
+                      error_reason="reconciled: poster reports failed (no detail)"))
+    led.save()
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["tt_hex"]
+    assert p.state is PostState.failed
+    assert p.error_kind is ErrorKind.transient
+    assert p.submission_id is None
+    assert capacity in (p.error_reason or "")
+    log = cfg.log_path.read_text() if cfg.log_path.exists() else ""
+    assert "stale poll" not in log
+
+
+def test_reconcile_due_tiktok_failed_fanops_parks_not_reminted(tmp_path, monkeypatch):
+    _zernio_reads(monkeypatch, bodies={}, lists=[])
+    cfg = _zernio_due_cfg(tmp_path, monkeypatch)
+    unpollable = "unpollable fanops_* after 24h: GET 400 Invalid post ID; remint maybe-sent"
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt_tok", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x", state=PostState.failed,
+                      submission_id="fanops_dd1d40908f62", error_kind=ErrorKind.unknown,
+                      error_reason=unpollable))
+    led.save()
+    reconcile_due(cfg)
+    p = Ledger.load(cfg).posts["tt_tok"]
+    assert p.state is PostState.needs_reconcile
+    assert p.submission_id == "fanops_dd1d40908f62"
+    assert p.error_reason == unpollable
+
+
+def test_reconcile_reads_zernio_queued_real_sid_not_polled(tmp_path, monkeypatch):
+    from fanops.reconcile import _reconcile_reads
+    cfg = _zernio_due_cfg(tmp_path, monkeypatch)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt_q", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x", state=PostState.queued,
+                      submission_id="6aa2bb24bf207c028b657feb"))
+    mirrored, token_only, polled = _reconcile_reads(cfg, led, lambda *a, **k: None)
+    assert [p.id for p in polled] == []
+    assert [p.id for p in token_only] == []
+    assert mirrored == []
 
 
 def _tiktok_unbound(led, pid, *, sub="fanops_tok", caption="beat drop #fyp", account_id="integ-1",
@@ -1294,16 +1440,7 @@ def test_vendor_lookup_promotes_unique_caption_match(tmp_path, monkeypatch):
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/9"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
-                        lambda *a, **k: ([{"_id": "z_vendor"}], {"page": 1, "totalPages": 1}))
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_vendor"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_vendor": body}, lists=[{"_id": "z_vendor"}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     p = out.posts["pv"]
     assert p.state is PostState.published
@@ -1315,8 +1452,7 @@ def test_vendor_lookup_ambiguous_refuses_bind(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     _tiktok_unbound(led, "pamb", caption="shared hashtag caption")
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts",
-                        lambda *a, **k: ([{"_id": "z_a"}, {"_id": "z_b"}], {"page": 1, "totalPages": 1}))
+    _zernio_reads(monkeypatch, bodies={}, lists=[{"_id": "z_a"}, {"_id": "z_b"}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["pamb"].state is PostState.needs_reconcile
     assert out.posts["pamb"].submission_id == "fanops_tok"
@@ -1330,19 +1466,7 @@ def test_vendor_lookup_skipped_when_candidate_auto_bind_wins(tmp_path, monkeypat
     body = {"status": "published", "platforms": [{"platform": "tiktok",
             "accountId": {"_id": "integ-1", "username": "wahed_bared"},
             "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    monkeypatch.setattr(rec_mod, "_tiktok_url_confirmed", lambda *a, **k: True)
-
-    def _boom(*a, **k):
-        raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
-
-    monkeypatch.setattr("fanops.post.metrics.zernio_read.zernio_list_posts", _boom)
-    class _FakeClient:
-        def __init__(self, _cfg):
-            pass
-        def fetch_body(self, sid):
-            assert sid == "z_cand"
-            return body
-    monkeypatch.setattr("fanops.post.metrics.ZernioStatusClient", _FakeClient)
+    _zernio_reads(monkeypatch, bodies={"z_cand": body}, list_boom=True)
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["pcand"].state is PostState.published
     assert out.posts["pcand"].submission_id == "z_cand"

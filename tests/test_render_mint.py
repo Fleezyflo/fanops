@@ -30,8 +30,7 @@ def _run(cfg, monkeypatch):
     return crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
 
 
-def test_mint_stamps_moment_profile_no_variant_fields(tmp_path, monkeypatch, mocker):
-    mocker.patch("fanops.overlay.burn_hook_only")
+def test_mint_stamps_moment_profile_no_variant_fields(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
     led = Ledger.load(cfg)

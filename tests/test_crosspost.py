@@ -501,22 +501,27 @@ def test_crosspost_posts_when_duration_unknown(tmp_path, mocker):
         "unknown duration (0-length window) must fail-open: post to ALL surfaces, never silently drop"
 
 
-def test_crosspost_appends_artist_tag_when_decided(tmp_path, mocker):
+def test_crosspost_appends_artist_tag_when_decided(tmp_path):
     # The \n@mohflow append branch must actually fire and be correct (own line, right handle).
-    from fanops.tagging import ARTIST_HANDLE
+    from fanops.tagging import ARTIST_HANDLE, should_tag
+    cid = next(f"clip_{i}" for i in range(10_000) if should_tag(f"clip_{i}", "a"))
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
-    led = Ledger.load(cfg); _captioned(led, cfg, mocker)   # @a/instagram caption present
-    # Force the tag decision on by monkeypatching decide_tag to True for this clip.
-    import fanops.crosspost as xp
-    mocker.patch.object(xp, "decide_tag", return_value=True)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path="/s.mp4", width=1920, height=1080))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="r", state=MomentState.clipped))
+    clip = Clip(id=cid, parent_id="mom_1", path=f"/{cid}_9x16.mp4", aspect=Fmt.r9x16,
+                state=ClipState.captioned)
+    clip.meta_captions = {"a/instagram": {"caption": "ig cap", "hashtags": ["#x"]}}
+    led.add_clip(clip)
     led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     ig = next(p for p in led.posts.values() if p.platform is Platform.instagram)
     assert ig.caption.endswith(f"\n{ARTIST_HANDLE}")        # tag on its OWN line, never in the hook
     assert ig.caption.startswith("ig cap")
 
 
-def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch, mocker):
+def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
@@ -537,7 +542,6 @@ def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch, mo
     clip.meta_captions = {"a/instagram": {"caption": "A cap", "hashtags": []},
                           "b/instagram": {"caption": "B cap", "hashtags": []}}
     led.add_clip(clip)
-    mocker.patch("fanops.crosspost.overlay.burn_hook_only")
     from fanops.crosspost import crosspost_clips
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
     posts = list(led.posts.values())
@@ -546,7 +550,7 @@ def test_crosspost_stamps_moment_spec_for_all_surfaces(tmp_path, monkeypatch, mo
     assert "variant_key" not in Post.model_fields
 
 
-def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch, mocker):
+def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [{"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
@@ -559,7 +563,6 @@ def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch, mocker
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save()
-    mocker.patch("fanops.overlay.burn_hook_only")
 
     def _run():
         ld = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
@@ -571,8 +574,8 @@ def test_recrosspost_leaves_existing_awaiting_post(tmp_path, monkeypatch, mocker
     led.save(); _run()
     assert len(Ledger.load(cfg).posts) == 1 and pid in Ledger.load(cfg).posts
 
-def test_recrosspost_rebirths_rejected_and_failed_posts(tmp_path, monkeypatch, mocker):
-    # MOL-326: rejected/failed at content-addressed pid -> pop + fresh awaiting_approval rebirth.
+def test_recrosspost_keeps_rejected_and_failed_posts(tmp_path, monkeypatch):
+    # Unattended mint must not pop a rejected/failed row and birth a new create under the same pid.
     from fanops.models import Post, PostState
     from fanops.ids import child_id, surface_key
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
@@ -587,31 +590,34 @@ def test_recrosspost_rebirths_rejected_and_failed_posts(tmp_path, monkeypatch, m
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save()
-    mocker.patch("fanops.overlay.burn_hook_only")
     pid = child_id("post", "clip_1", surface_key("a", "instagram"))
     token = f"fanops_{_hash('idemp', pid)}"
+    old_at = "2020-01-01T00:00:00Z"
     for terminal in (PostState.rejected, PostState.failed):
         led = Ledger.load(cfg)
         led.set_clip_state("clip_1", ClipState.captioned)
-        old_at = "2020-01-01T00:00:00Z"
         led.posts[pid] = Post(id=pid, parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram,
                                caption="old", state=terminal, created_at=old_at, submission_id=token)
         led.save()
         led = crosspost_clips(led, cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
         led.save()
-        p = Ledger.load(cfg).posts[pid]
-        assert p.state is PostState.awaiting_approval
-        assert p.created_at != old_at and p.created_at.endswith("Z")
+        loaded = Ledger.load(cfg)
+        p = loaded.posts[pid]
+        assert len(loaded.posts) == 1
+        assert p.state is terminal
+        assert p.created_at == old_at
+        assert p.caption == "old"
         assert p.submission_id == token
     led = Ledger.load(cfg)
     queued_at = "2021-06-01T12:00:00Z"
+    led.set_clip_state("clip_1", ClipState.captioned)
     led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.queued, "created_at": queued_at})
     led.save()
     crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T19:00:00Z")
     p = Ledger.load(cfg).posts[pid]
     assert len(Ledger.load(cfg).posts) == 1 and p.state is PostState.queued and p.created_at == queued_at
 
-def test_crosspost_mints_post_without_variant_fields(tmp_path, monkeypatch, mocker):
+def test_crosspost_mints_post_without_variant_fields(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
     monkeypatch.chdir(tmp_path)
     from fanops.config import Config
@@ -628,13 +634,11 @@ def test_crosspost_mints_post_without_variant_fields(tmp_path, monkeypatch, mock
     Path(clip.path).write_bytes(b"BASECLIP")
     clip.meta_captions = {"a/instagram": {"caption": "A cap", "hashtags": []}}
     led.add_clip(clip)
-    burn = mocker.patch("fanops.crosspost.overlay.burn_hook_only")
     from fanops.crosspost import crosspost_clips
     led = crosspost_clips(led, cfg, accts, base_time="2026-06-02T18:00:00Z")
     p = next(iter(led.posts.values()))
     assert p.render_id is None and p.media_urls == []
     assert "variant_hook" not in Post.model_fields
-    burn.assert_not_called()
 
 
 from datetime import timedelta

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fanops.config import Config
+from fanops.errors import ControlFileError
 from fanops.ledger import Ledger
 from fanops.models import MomentState, PostState, SourceState
 from fanops.studio.views_common import lineage_maps
@@ -176,7 +177,8 @@ def _stage_strip(cfg: Config, led: Ledger, row: dict, *, moms, clips_bm, posts_b
 
 
 def library_catalog(cfg: Config) -> dict:
-    """Wrap asset_catalog: same fail-open shape + compact stage_strip per row (manifest-free on list)."""
+    """Wrap asset_catalog with a compact stage_strip per row (manifest-free on list).
+    Torn/unreadable ledger (ControlFileError) propagates; other read errors stay empty-catalog."""
     from fanops.studio.views import asset_catalog
     try:
         cat = asset_catalog(cfg)
@@ -190,6 +192,8 @@ def library_catalog(cfg: Config) -> dict:
                                                              posts_bc=posts_bc, pend=pend, gate_idx=gate_idx)}
                            for r in cat[bucket]]
         return cat
+    except ControlFileError:
+        raise
     except Exception as exc:
         from fanops.log import get_logger
         get_logger(cfg)("library_catalog", "-", "error", err=str(exc)[:160])

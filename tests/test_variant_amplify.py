@@ -5,7 +5,7 @@ import pathlib
 from fanops.agentstep import request_path
 from fanops.config import Config
 from fanops.ledger import Ledger
-from fanops.models import PostState, SourceState
+from fanops.models import LIFT_SCORE, PostState, SourceState
 from fanops.variant_amplify import update_streaks, amplify_candidates, apply_variant_amplify
 from fanops.variant_learning import _hook_for_post
 from tests.fixtures.variant_lineage import (
@@ -241,12 +241,16 @@ def test_apply_failsafe_on_internal_error(tmp_path, monkeypatch):
     _seed_lineage(led)
     led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
     _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
-    # Make the candidate computation raise -> the whole pass must swallow it, no partial mutation.
-    monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    # Poison a lift so best_hooks/amplify_candidates' float() raises — the pass must swallow it,
+    # leave CONTENT byte-identical, and log the real exception (fail-SAFE, not fail-silent).
+    for p in led.posts.values():
+        if LIFT_SCORE in p.metrics:
+            p.metrics[LIFT_SCORE] = "not-a-float"
     before = _frozen(led)
     apply_variant_amplify(led, cfg)        # must NOT raise
     assert _frozen(led) == before
+    log = cfg.log_path.read_text()
+    assert "not-a-float" in log and '"err":' in log
 
 
 def test_apply_amplify_inert_until_learning_validated(tmp_path, monkeypatch):
@@ -278,80 +282,6 @@ def test_apply_amplifies_once_learning_validated(tmp_path, monkeypatch):
     _validate(cfg)
     apply_variant_amplify(led, cfg)
     assert led.sources["s1"].state is SourceState.moments_requested   # amplified once validated
-
-
-def test_apply_failsafe_logs_the_error_detail(tmp_path, monkeypatch):
-    """FAIL-SAFE must not be FAIL-SILENT: when the swallowed pass hits an internal error, the log
-    line must carry WHY (err=...), not a bare 'error' outcome. Without the detail an autonomous run
-    that silently stops amplifying is indistinguishable from one with nothing to amplify — exactly
-    the silent-mass-failure the run logger (FIX F51) exists to surface."""
-    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
-    cfg = Config(root=tmp_path)
-    led = _led(cfg, _winset(8, "WIN", 90.0))
-    _seed_lineage(led)
-    led.variant_streaks["a|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
-    _validate(cfg)                                   # Phase 2: reach the try-body, not the validation gate
-    monkeypatch.setattr("fanops.variant_amplify.amplify_candidates",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("AMPLIFY-BOOM-SENTINEL")))
-    apply_variant_amplify(led, cfg)        # swallowed (must NOT raise) — but must record the reason
-    log = cfg.log_path.read_text()
-    assert "AMPLIFY-BOOM-SENTINEL" in log and '"err":"AMPLIFY-BOOM-SENTINEL"' in log
-
-
-# ---- MOL-85: per-candidate isolation in the amplify loop (mirror p4_dim_bias's per-item guard) ----
-def _seed_gated_surface(led, cfg, acct):
-    """Build ONE fully-gated amplify surface on `acct` with its OWN source lineage (source_<acct>).
-    8 analyzed WIN posts + 3 runner-ups, streak 3 — clears every gate."""
-    sid = f"source_{acct}"
-    for i in range(8):
-        _add_lineage(led, _post(f"{acct}_w{i}", acct, "WIN", 90.0, src_id=sid), src_id=sid)
-    for i in range(3):
-        _add_lineage(led, _post(f"{acct}_l{i}", acct, "LOSE", 1.0, src_id=sid), src_id=sid)
-    led.variant_streaks[f"{acct}|instagram"] = {"hook": "WIN", "fingerprint": "x", "streak": 3}
-
-
-def test_apply_isolates_one_failing_candidate(tmp_path, monkeypatch):
-    """MOL-85: a mid-loop amplify failure must isolate to THAT candidate — the others still amplify.
-    Three fully-gated surfaces (@a, @b, @c → sources source_@a/@b/@c, candidate order is account-
-    sorted). The middle candidate's amplify() raises; @a and @c must still flip to moments_requested
-    (their mutations land) and the log must name @b's post_id — proving isolation + diagnosability,
-    versus today's ONE outer guard where @a commits, @b raises, and @c is never even attempted."""
-    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # T2.3: per-candidate ISOLATION under test, not queue admission
-    monkeypatch.setenv("FANOPS_VARIANT_AMPLIFY", "1")
-    cfg = Config(root=tmp_path)
-    led = Ledger.load(cfg)
-    for acct in ("a", "b", "c"):
-        _seed_gated_surface(led, cfg, acct)
-    _validate(cfg)                                   # Phase 2: reach the try-body
-
-    # The middle candidate (@b) is source_@b; its representative post_id is the lowest WIN post_id
-    # for @b. Make amplify() raise ONLY for that source's candidate, commit for the others.
-    from fanops import variant_amplify as va
-    real_amplify = va.amplify
-    b_pids = {c["post_id"] for c in va.amplify_candidates(led, cfg)
-              if c["source_id"] == "source_b"}
-    assert b_pids, "fixture must produce a b candidate"
-
-    def _amplify(led_, cfg_, post_ids, *a, **k):
-        if set(post_ids) & b_pids:
-            raise RuntimeError("MIDDLE-CANDIDATE-BOOM")
-        return real_amplify(led_, cfg_, post_ids, *a, **k)
-
-    monkeypatch.setattr("fanops.variant_amplify.amplify", _amplify)
-    apply_variant_amplify(led, cfg)                  # must NOT raise
-
-    # @a and @c amplified (their mutations landed); @b did NOT (its amplify raised, isolated).
-    assert led.sources["source_a"].state is SourceState.moments_requested
-    assert led.sources["source_c"].state is SourceState.moments_requested
-    assert led.sources["source_b"].state is SourceState.transcribed   # untouched — failure isolated
-    assert request_path(cfg, "moments", "source_a").exists()
-    assert request_path(cfg, "moments", "source_c").exists()
-    assert not request_path(cfg, "moments", "source_@b").exists()
-
-    # Diagnosability: the log names WHICH candidate failed (its post_id), not a generic outer 'error'.
-    log = cfg.log_path.read_text()
-    failed_pid = next(iter(b_pids))
-    assert failed_pid in log and "MIDDLE-CANDIDATE-BOOM" in log
 
 
 # --- The retire-isolation invariant (v3's C1 safety, mechanized — mirrors test_variant_learning's

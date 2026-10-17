@@ -33,7 +33,7 @@ def _live_shaped(cfg):
         led.add_render(Render(id="r_drop", clip_id="c_drop", account="a", surface_key="instagram", path="/r_drop.mp4", state=RenderState.rendered, source_id="s1"))
         led.add_post(Post(id="p_drop", parent_id="c_drop", account="a", account_id="ig1",
                           platform=Platform.instagram, caption="never", state=PostState.awaiting_approval,
-                          public_url="dryrun://p_drop"))
+                          public_url="https://www.instagram.com/p/p_drop/"))
         # entity-graph refs on the UNBACKED subtree (must be swept):
         led.add_stitch_plan(StitchPlan(id="st_drop", clip_id="c_drop", strategy_key="k", state=StitchState.suggested))
         led.tag_log["a|c_drop"] = "2026-06-01T00:00:00Z"
@@ -101,7 +101,7 @@ def test_wipe_source_removed_only_when_no_kept_descendant(tmp_path):
         led.add_moment(Moment(id="m", parent_id="s_dead", content_token="X", start=0, end=1, reason="x"))
         led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.rendered))
         led.add_post(Post(id="p", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.awaiting_approval, public_url="dryrun://p"))
+                          caption="x", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p/"))
     plan = ledger_wipe.compute_wipe_set(Ledger.load(cfg))
     assert plan.source_ids == {"s_dead"}
 
@@ -131,11 +131,11 @@ def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
     cfg = Config(root=tmp_path)
     _live_shaped(cfg)
     # a snapshot that doesn't load must be detected as NOT verified-restorable
-    assert ledger_wipe.snapshot_is_restorable(cfg.ledger_path) is True
+    assert ledger_wipe.snapshot_is_restorable(cfg.ledger_path, cfg) is True
     bad = tmp_path / "bad.sqlite"; bad.write_bytes(b"not a db")
-    assert ledger_wipe.snapshot_is_restorable(bad) is False
+    assert ledger_wipe.snapshot_is_restorable(bad, cfg) is False
     legacy = tmp_path / "legacy.json"; legacy.write_text('{"schema_version": 11, "posts": {}}')
-    assert ledger_wipe.snapshot_is_restorable(legacy) is False
+    assert ledger_wipe.snapshot_is_restorable(legacy, cfg) is False
 
 
 def test_execute_wipe_refuses_json_snapshot(tmp_path):
@@ -167,8 +167,8 @@ def test_two_same_second_snapshots_yield_two_distinct_surviving_files(tmp_path):
     assert snap1.read_bytes() == first_image
     assert snap2.read_bytes() != first_image
     # both remain valid rollback points (the wipe gate still accepts them)
-    assert ledger_wipe.snapshot_is_restorable(snap1) is True
-    assert ledger_wipe.snapshot_is_restorable(snap2) is True
+    assert ledger_wipe.snapshot_is_restorable(snap1, cfg) is True
+    assert ledger_wipe.snapshot_is_restorable(snap2, cfg) is True
     # timestamp prefix retained -> sortable/recognizable
     assert snap1.name.startswith("ledger.snapshot.2026") and snap2.name.startswith("ledger.snapshot.2026")
 
@@ -187,7 +187,7 @@ def test_snapshot_refuses_to_overwrite_an_existing_path(tmp_path, monkeypatch):
     assert first == fixed_dest and first.exists()
     with pytest.raises(ControlFileError):
         Ledger.snapshot(cfg)                                    # must refuse, not overwrite
-    assert ledger_wipe.snapshot_is_restorable(first) is True    # the original survives untouched
+    assert ledger_wipe.snapshot_is_restorable(first, cfg) is True    # the original survives untouched
 
 
 def test_execute_wipe_refuses_without_snapshot(tmp_path):
@@ -260,7 +260,7 @@ def test_execute_wipe_plan_ceiling_preserves_post_previewed_set(tmp_path):
     with Ledger.transaction(cfg) as led2:
         led2.add_post(Post(id="p_new", parent_id="c_drop", account="a", account_id="ig1",
                            platform=Platform.instagram, caption="injected", state=PostState.awaiting_approval,
-                           public_url="dryrun://p_new"))
+                           public_url="https://www.instagram.com/p/p_new/"))
     result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap, plan_ceiling=ceiling)
     after = Ledger.load(cfg)
     assert "p_new" in after.posts                              # injected after preview survives
@@ -292,7 +292,7 @@ def test_cascade_abort_preserves_rows_and_files(tmp_path):
         led.add_moment(Moment(id="m1", parent_id="s1", content_token="X", start=0, end=1, reason="x"))
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(clip_path), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.failed, public_url="dryrun://p1"))
+                          caption="x", state=PostState.failed, public_url="https://www.instagram.com/p/p1/"))
     with pytest.raises(RuntimeError, match="abort"):
         with Ledger.transaction(cfg) as led:
             led._delete_moment_cascade("m1")
@@ -311,7 +311,7 @@ def test_cascade_commit_removes_rows_and_files(tmp_path):
         led.add_moment(Moment(id="m1", parent_id="s1", content_token="X", start=0, end=1, reason="x"))
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(clip_path), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=PostState.failed, public_url="dryrun://p1"))
+                          caption="x", state=PostState.failed, public_url="https://www.instagram.com/p/p1/"))
     with Ledger.transaction(cfg) as led:
         led._delete_moment_cascade("m1")
     again = Ledger.load(cfg)

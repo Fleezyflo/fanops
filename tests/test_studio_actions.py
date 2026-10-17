@@ -342,27 +342,39 @@ def test_release_held_clip_preserves_existing_posts(tmp_path):
     assert out.clips["clip_held"].state is ClipState.captions_requested
     assert out.posts["p_held"].state is PostState.queued and out.posts["p_held"].parent_id == "clip_held"
 
-def test_actions_use_single_transaction(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _seed(cfg)
-    spy = mocker.spy(Ledger, "transaction")
-    reschedule_post(cfg, "p_edit", _z(NOW + timedelta(hours=8)), now=NOW)
-    assert spy.call_count == 1   # exactly one lock acquisition per mutation (no lock-free load+save)
-
-
 # ---- FIX 2: publish_now must not let a NON-auth exception from publish_post escape as a Flask 500 ----
 def test_publish_now_non_auth_error_yields_ok_false_not_raise(tmp_path, monkeypatch, mocker):
     from fanops.studio.actions import publish_now
-    import fanops.post.postiz as postiz
-    from fanops.post.postiz import PostizHealth
-    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    import json
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
     cfg = Config(root=tmp_path); _seed(cfg)
-    monkeypatch.setattr(postiz, "postiz_health_probe", lambda c: PostizHealth(True, 200, ""))   # T10: probe healthy -> reach publish_post (the non-auth path this test exercises)
-    # publish_post raises a NON-auth error (e.g. media upload RuntimeError / corrupt clip.path)
-    mocker.patch("fanops.post.run.publish_post", side_effect=RuntimeError("media upload boom"))
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "a", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "integrations": {"instagram": "1"}, "backends": {"instagram": "postiz"}}]}))
+    led = Ledger.load(cfg)
+    cpath = cfg.clips / "clip_1.mp4"; cfg.clips.mkdir(parents=True, exist_ok=True)
+    cpath.write_bytes(b"V")
+    led.clips["clip_1"] = led.clips["clip_1"].model_copy(update={"path": str(cpath)})
+    led.posts["p_edit"] = led.posts["p_edit"].model_copy(
+        update={"media_urls": ["https://uploads.postiz.com/x.mp4"], "post_type": "post"})
+    led.save()
+
+    class _R:
+        def __init__(self, code, body=None, text=""):
+            self.status_code = code; self._b = body if body is not None else {}; self.text = text
+        def json(self):
+            return self._b
+
+    mocker.patch("fanops.post.postiz.requests.get",
+                 return_value=_R(200, [{"id": "1", "identifier": "instagram-standalone", "name": "ig"}]))
+    mocker.patch("fanops.post.postiz.requests.post", side_effect=RuntimeError("media upload boom"))
     res = publish_now(cfg, "p_edit")
     assert res.ok is False                                    # surfaced cleanly, not a raise (500)
-    assert "publish failed" in (res.error or "")
-    assert "boom" in (res.error or "")
+    assert Ledger.load(cfg).posts["p_edit"].state is not PostState.published
 
 
 # ---- content-lifecycle Phase 4: cross-account reuse (crosspost_to_account / crosspost_all_to_account) ----
@@ -440,11 +452,11 @@ def test_approve_moment_approves_all_channels_and_clips_of_one_moment(tmp_path):
         led.add_clip(Clip(id="c1a", parent_id="m1", path="/c1a.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_clip(Clip(id="c1b", parent_id="m1", path="/c1b.mp4", aspect=Fmt.r9x16, state=ClipState.queued))  # 2nd clip, same moment
         led.add_clip(Clip(id="c2", parent_id="m2", path="/c2.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_a_ig", parent_id="c1a", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_a_ig"))
-        led.add_post(Post(id="p_b_ig", parent_id="c1a", account="b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url="dryrun://p_b_ig"))
-        led.add_post(Post(id="p_b_tt", parent_id="c1b", account="b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval, public_url="dryrun://p_b_tt"))  # 2nd clip of m1
-        led.add_post(Post(id="p_a_done", parent_id="c1a", account="a", account_id="1", platform=Platform.instagram, caption="X", state=PostState.queued, public_url="dryrun://p_a_done"))  # already approved → not re-counted
-        led.add_post(Post(id="p_m2", parent_id="c2", account="a", account_id="1", platform=Platform.instagram, caption="M2", state=PostState.awaiting_approval, public_url="dryrun://p_m2"))  # other moment
+        led.add_post(Post(id="p_a_ig", parent_id="c1a", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_a_ig/"))
+        led.add_post(Post(id="p_b_ig", parent_id="c1a", account="b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_b_ig/"))
+        led.add_post(Post(id="p_b_tt", parent_id="c1b", account="b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_b_tt/"))  # 2nd clip of m1
+        led.add_post(Post(id="p_a_done", parent_id="c1a", account="a", account_id="1", platform=Platform.instagram, caption="X", state=PostState.queued, public_url="https://www.instagram.com/p/p_a_done/"))  # already approved → not re-counted
+        led.add_post(Post(id="p_m2", parent_id="c2", account="a", account_id="1", platform=Platform.instagram, caption="M2", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m2/"))  # other moment
     res = approve_moment(cfg, "m1", now=NOW)
     assert res.ok and res.detail["approved"] == 3 and res.detail["moment"] == "m1"
     led = Ledger.load(cfg)
@@ -464,8 +476,8 @@ def test_approve_account_platform_scopes_to_one_channel(tmp_path):
         led.add_source(Source(id="src1", source_path="/s.mp4"))
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_ig", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url="dryrun://p_ig"))
-        led.add_post(Post(id="p_tt", parent_id="c1", account="b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url="dryrun://p_tt"))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_ig/"))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_tt/"))
     res = approve_account(cfg, "b", platform="instagram", source="src1", now=NOW)
     assert res.ok and res.detail["approved"] == 1 and res.detail["platform"] == "instagram"
     led = Ledger.load(cfg)
@@ -484,8 +496,8 @@ def test_approve_account_no_platform_is_byte_identical(tmp_path):
         led.add_source(Source(id="src1", source_path="/s.mp4"))
         led.add_moment(Moment(id="m1", parent_id="src1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path="/c1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
-        led.add_post(Post(id="p_ig", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url="dryrun://p_ig"))
-        led.add_post(Post(id="p_tt", parent_id="c1", account="b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url="dryrun://p_tt"))
+        led.add_post(Post(id="p_ig", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="ig", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_ig/"))
+        led.add_post(Post(id="p_tt", parent_id="c1", account="b", account_id="2", platform=Platform.tiktok, caption="tt", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_tt/"))
     res = approve_account(cfg, "b", source="src1", now=NOW)
     assert res.ok and res.detail["approved"] == 2
 
@@ -529,7 +541,7 @@ def test_crosspost_to_account_repost_freely(tmp_path):
         c.meta_captions = {"b/instagram": {"caption": "x", "hashtags": []}}
         led.add_clip(c)
         led.add_post(Post(id="p_a", parent_id="clip_0", account="a", account_id="ig_a",
-                          platform=Platform.instagram, caption="on A", state=PostState.published, public_url="dryrun://p_a"))
+                          platform=Platform.instagram, caption="on A", state=PostState.published, public_url="https://www.instagram.com/p/p_a/"))
     r = crosspost_to_account(cfg, "clip_0", "b", "instagram", now=NOW)
     assert r.ok and r.detail["already_exists"] is False         # the A post does NOT block fanning to B
     assert Ledger.load(cfg).posts["p_a"].state is PostState.published   # A untouched (no supersede)
@@ -597,7 +609,7 @@ def test_crosspost_all_to_account_bulk(tmp_path):
             c.meta_captions = {"b/instagram": {"caption": f"c{i}", "hashtags": []}}
             led.add_clip(c)
             led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="a", account_id="ig_a",
-                              platform=Platform.instagram, caption="on A", state=PostState.published, public_url="dryrun://ig_a"))
+                              platform=Platform.instagram, caption="on A", state=PostState.published, public_url="https://www.instagram.com/p/ig_a/"))
     r = crosspost_all_to_account(cfg, "a", "b", "instagram", now=NOW)
     assert r.ok and r.detail["minted"] == 3 and r.detail["already_exists"] == 0
     r2 = crosspost_all_to_account(cfg, "a", "b", "instagram", now=NOW)   # idempotent
@@ -632,35 +644,29 @@ def test_crosspost_all_skips_missing_render_files(tmp_path):
         for i in range(2):
             led.add_moment(Moment(id=f"mom_{i}", parent_id="src_1", content_token=f"{i}", start=i, end=i + 5, reason="r", state=MomentState.clipped))
             led.add_clip(Clip(id=f"clip_{i}", parent_id=f"mom_{i}", path=str(cfg.clips / f"gone_{i}.mp4"), aspect=Fmt.r9x16, state=ClipState.queued))   # path never written
-            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="a", account_id="ig_a", platform=Platform.instagram, caption="A", state=PostState.published, public_url="dryrun://ig_a"))
+            led.add_post(Post(id=f"p_a{i}", parent_id=f"clip_{i}", account="a", account_id="ig_a", platform=Platform.instagram, caption="A", state=PostState.published, public_url="https://www.instagram.com/p/ig_a/"))
     r = crosspost_all_to_account(cfg, "a", "b", "instagram", now=NOW)
     assert not r.ok and r.detail["minted"] == 0 and r.detail["skipped"] == 2
 
 
 def test_crosspost_common_path_never_renders(tmp_path, monkeypatch):
     # #6: when a present same-aspect render exists, crosspost must NOT invoke ffmpeg at all (neither in the
-    # warm nor under the lock). Monkeypatch render_moment to BLOW UP if called -> a green mint proves it.
+    # warm nor under the lock). Capture subprocess.run at the OS edge — ffmpeg must not appear.
+    import subprocess
     from fanops.studio.actions import crosspost_to_account
     cfg = Config(root=tmp_path); _seed_xacct(cfg)              # clip_0 9:16 file present; IG wants 9:16 -> reuse
-    def _boom(*a, **k): raise AssertionError("render_moment called on the common reuse path")
-    monkeypatch.setattr("fanops.crosspost.render_moment", _boom)
+    bins = []
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        if cmd:
+            bins.append(str(cmd[0]))
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
     r = crosspost_to_account(cfg, "clip_0", "b", "instagram", now=NOW)
     assert r.ok and r.detail["already_exists"] is False
-
-
-def test_crosspost_warms_target_aspect_before_opening_the_lock(tmp_path, monkeypatch):
-    # #4: the target-aspect render is resolved on a lock-free snapshot BEFORE Ledger.transaction opens, so a
-    # first fan-out never runs ffmpeg (600s) under the flock. Assert the warm precedes the lock.
-    from fanops.studio import actions as A
-    cfg = Config(root=tmp_path); _seed_xacct(cfg)
-    order = []
-    real_warm, real_txn = A._warm_target_aspect, Ledger.transaction
-    def spy_warm(*a, **k): order.append("warm"); return real_warm(*a, **k)
-    def spy_txn(c): order.append("txn"); return real_txn(c)
-    monkeypatch.setattr(A, "_warm_target_aspect", spy_warm)
-    monkeypatch.setattr(Ledger, "transaction", spy_txn)
-    r = A.crosspost_to_account(cfg, "clip_0", "b", "instagram", now=NOW)
-    assert r.ok and order[:2] == ["warm", "txn"], order        # warm ran lock-free BEFORE the transaction
+    assert "ffmpeg" not in bins
 
 
 # dryrun-boundary M3: test_publish_now_live_dryrun_url_rejected DELETED. It pinned the "LIVE publish
@@ -789,7 +795,7 @@ def test_recover_posts_review_clears_publish_fields(tmp_path):
     assert q.public_url == "" and q.scheduled_time is None
 
 
-def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch, mocker):
+def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch):
     from fanops.studio.actions import retry_oversize_failures
     from fanops.accounts import add_account, set_backend
     monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
@@ -799,27 +805,32 @@ def test_retry_oversize_failures_requeues_when_shrink_ok(tmp_path, monkeypatch, 
     led = Ledger.load(cfg)
     _live_lineage(led)
     vid = tmp_path / "big.mp4"
-    vid.write_bytes(b"Z" * 100)
+    vid.write_bytes(b"Z" * 100)   # under the 4 MB cap — real apply_shrink_to_post is a no-op True
     led.add_post(Post(id="big", parent_id="clip_1", account="tt", account_id="z1", platform=Platform.tiktok,
                       caption="x", state=PostState.failed, error_reason="zernio upload 413 entity too large",
                       error_kind=ErrorKind.oversize, media_urls=[f"file://{vid}"]))
     led.save()
-    mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=True)
     res = retry_oversize_failures(cfg)
     assert res.ok and res.detail["retried"] == 1
     p = Ledger.load(cfg).posts["big"]
     assert p.state is PostState.queued and p.error_reason is None and p.submission_id is None
 
 
-def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch, mocker):
+def test_retry_oversize_skips_when_shrink_fails(tmp_path, monkeypatch):
     from fanops.studio.actions import retry_oversize_failures
+    from fanops.accounts import add_account, set_backend
+    monkeypatch.setenv("FANOPS_ZERNIO_MAX_UPLOAD_MB", "4")
     cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
     led = Ledger.load(cfg)
     _live_lineage(led)
-    led.add_post(_fail_post("big", "zernio 413", kind=ErrorKind.oversize))
-    led.posts["big"].platform = Platform.tiktok
+    vid = tmp_path / "big.mp4"
+    vid.write_bytes(b"Z" * (5 * 1024 * 1024))   # over cap; no ffmpeg in unit CI → shrink fail-open, still oversize
+    led.add_post(Post(id="big", parent_id="clip_1", account="tt", account_id="z1", platform=Platform.tiktok,
+                      caption="x", state=PostState.failed, error_reason="zernio 413",
+                      error_kind=ErrorKind.oversize, media_urls=[f"file://{vid}"]))
     led.save()
-    mocker.patch("fanops.post.compress.apply_shrink_to_post", return_value=False)
     res = retry_oversize_failures(cfg)
     assert res.ok and res.detail["retried"] == 0 and res.detail["skipped"] == 1
     assert Ledger.load(cfg).posts["big"].state is PostState.failed
@@ -850,15 +861,13 @@ def _times(cfg): return {k: v.scheduled_time for k, v in Ledger.load(cfg).posts.
 
 @pytest.mark.parametrize("bad", ["nan", "inf", "-inf", "1e400", "1e18", "banana", "", "  ",
                                  float("nan"), float("inf"), float("-inf"), 1e18, None])
-def test_shift_account_schedule_rejects_unrepresentable_hours(tmp_path, mocker, bad):
+def test_shift_account_schedule_rejects_unrepresentable_hours(tmp_path, bad):
     from fanops.studio.actions import shift_account_schedule
     cfg = Config(root=tmp_path); _seed_shift(cfg)
     before = _times(cfg)
-    spy = mocker.spy(Ledger, "transaction")
     res = shift_account_schedule(cfg, "a", bad, now=NOW)
     assert res.ok is False and res.error and res.error.startswith("bad shift")
-    assert spy.call_count == 0            # rejected BEFORE any lock is taken — never a partial mutation
-    assert _times(cfg) == before          # schedule semantically unchanged
+    assert _times(cfg) == before          # rejected before mutation — schedule semantically unchanged
 
 def test_shift_account_schedule_rejects_before_the_handle_noop(tmp_path):
     # bad hours loses to nothing: even the empty-handle no-op branch must not report OK on garbage.

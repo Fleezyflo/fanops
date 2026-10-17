@@ -16,10 +16,10 @@ def _accounts(cfg):
         {"handle": "@a", "account_id": "ig1", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig1"}}]}))
 
-def _seed_awaiting(cfg, hook="WAIT"):
+def _seed_awaiting(cfg, hook="WAIT", source_path="/v.mp4"):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     led = Ledger.load(cfg)
-    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_source(Source(id="s1", source_path=source_path, language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped, hook=hook))
     (cdir / "c0.mp4").write_bytes(b"V" * 100)
@@ -64,24 +64,18 @@ def test_spine_next_links_focus_review(tmp_path):
     assert "focus=1" in html and "view=account" in html
 
 
-def _fake_render_reset(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-    c = led.clips["c0"]
-    new = c.model_copy(update={"state": ClipState.rendered, "meta_captions": {}, "hook_burn_failed": False})
-    led.clips[c.id] = new
-    return led, new
-
-
-def test_restore_persona_hook_reburns(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
+def test_restore_persona_hook_render_fail_leaves_stripped(tmp_path):
+    # Real restore_persona_hook (no render_moment patch). Missing source makes the reburn fail.
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    _seed_awaiting(cfg, hook=None, source_path=str(tmp_path / "missing.mp4"))
     led = Ledger.load(cfg)
     led.moments["m1"] = led.moments["m1"].model_copy(update={"hook_removed": "STRIPPED"})
     led.save()
-    mocker.patch("fanops.clip.render_moment", side_effect=_fake_render_reset)
     res = actions.restore_persona_hook(cfg, "p0")
-    assert res.ok
+    assert not res.ok
     led2 = Ledger.load(cfg)
-    assert led2.moments["m1"].hook == "STRIPPED" and led2.moments["m1"].hook_removed is None
-    assert led2.clips["c0"].state is ClipState.queued   # queued state PRESERVED across re-render
+    assert led2.moments["m1"].hook is None
+    assert led2.moments["m1"].hook_removed == "STRIPPED"
 
 def test_retry_rate_limit_one_per_account_not_a_blast(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)

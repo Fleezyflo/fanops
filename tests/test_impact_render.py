@@ -10,6 +10,7 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
 from fanops.clip import render_moment
 from fanops.ids import child_id
+import fanops.overlay as overlay
 
 
 def _seed(cfg):
@@ -19,65 +20,107 @@ def _seed(cfg):
                           state=MomentState.decided))
     return led
 
-def _fake_run(cmd, **kw):
-    if not str(cmd[-1]).startswith("-"):
-        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CLIPBYTES")
-    class R: returncode = 0; stderr = ""; stdout = ""
-    return R()
+
+def _stub_ffmpeg(mocker, *, dur=9.6):
+    """Hermetic ffmpeg + ffprobe (shared stdlib subprocess). Drives real _probe_duration."""
+    overlay._TEXTFILTER_CACHE = None
+
+    def fake_run(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            class R:
+                returncode = 0
+                stdout = f"1920\n1080\n{dur}\n"
+                stderr = ""
+            return R()
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R:
+                returncode = 0
+                stdout = "Filters:\n"
+                stderr = ""
+            return R()
+        if cmd and not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"CLIPBYTES")
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=fake_run)
 
 
-def test_cut_window_override_builds_distinct_stitch_clip(tmp_path, mocker):
+def test_cut_window_override_builds_distinct_stitch_clip(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=9.6)   # render is the expected length
+    _stub_ffmpeg(mocker, dur=9.6)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16,
                               cut_window=(0.0, 9.6), clip_id="stitch_x", born_state=ClipState.stitch_draft)
     assert clip.id == "stitch_x"                          # the caller's distinct id, NOT child_id(...)
     assert clip.state is ClipState.stitch_draft           # born unpostable
     assert clip.cut_seconds == 9.6                        # window honored (round(ce-cs,3))
+    assert Path(clip.path).exists() and Path(clip.path).read_bytes() == b"CLIPBYTES"
 
-def test_cut_window_does_not_touch_moment_state(tmp_path, mocker):
+
+def test_cut_window_does_not_touch_moment_state(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.set_moment_state("mom_1", MomentState.clipped)    # the bare clip already clipped this moment
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=9.6)
+    _stub_ffmpeg(mocker, dur=9.6)
     led, clip = render_moment(led, cfg, "mom_1", cut_window=(0.0, 9.6), clip_id="stitch_x",
                               born_state=ClipState.stitch_draft)
     assert led.moments["mom_1"].state is MomentState.clipped   # stitch render leaves the moment alone
+    assert clip.state is ClipState.stitch_draft
 
-def test_duration_check_fails_visibly_on_short_render(tmp_path, mocker):
+
+def test_duration_check_fails_visibly_on_short_render(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=2.0)  # expected 9.6, far outside tolerance
+    _stub_ffmpeg(mocker, dur=2.0)  # expected 9.6, far outside tolerance
     led, clip = render_moment(led, cfg, "mom_1", cut_window=(0.0, 9.6), clip_id="stitch_x",
                               born_state=ClipState.stitch_draft)
     assert clip.state is ClipState.error
     assert "duration" in (clip.error_reason or "")
     assert not (cfg.clips / "stitch_x.render.json").exists()   # no skip-stamp on a failed render
 
-def test_duration_check_passes_within_tolerance(tmp_path, mocker):
+
+def test_duration_check_passes_within_tolerance(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=9.3)  # 0.3s off < DURATION_TOLERANCE(0.5)
+    _stub_ffmpeg(mocker, dur=9.3)  # 0.3s off < DURATION_TOLERANCE(0.5)
     led, clip = render_moment(led, cfg, "mom_1", cut_window=(0.0, 9.6), clip_id="stitch_x",
                               born_state=ClipState.stitch_draft)
     assert clip.state is ClipState.stitch_draft
 
-def test_bare_render_unchanged_without_cut_window(tmp_path, mocker):
+
+def test_bare_render_unchanged_without_cut_window(tmp_path, mocker, monkeypatch):
     # REGRESSION guard: the default path is untouched — content-addressed cid, rendered state, moment clipped
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    spy = mocker.patch("fanops.clip._probe_duration")
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
+    _stub_ffmpeg(mocker, dur=9.6)
     led, clip = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     assert clip.id == child_id("clip", "mom_1", "9:16")
     assert clip.state is ClipState.rendered
     assert led.moments["mom_1"].state is MomentState.clipped
-    spy.assert_not_called()                              # no duration probe on the bare path
+    assert Path(clip.path).exists()
 
-def test_stitch_cid_differs_from_bare(tmp_path, mocker):
+
+def test_stitch_cid_differs_from_bare(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
     cfg = Config(root=tmp_path); led = _seed(cfg)
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_fake_run)
-    mocker.patch("fanops.clip._probe_duration", return_value=9.6)
+    _stub_ffmpeg(mocker, dur=9.6)
     led, bare = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
     led, stitch = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16,
                                 cut_window=(0.0, 9.6), clip_id="stitch_x", born_state=ClipState.stitch_draft)

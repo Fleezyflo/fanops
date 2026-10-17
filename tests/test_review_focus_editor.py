@@ -14,11 +14,12 @@ def _accounts(cfg, handle="a"):
         {"handle": handle, "account_id": "ig1", "platforms": ["instagram"], "status": "active",
          "integrations": {"instagram": "ig1"}}]}))
 
-def _seed(cfg, *, pid="p1", caption="await caption", hook="SCROLL HOOK", handle="a"):
+def _seed(cfg, *, pid="p1", caption="await caption", hook="SCROLL HOOK", handle="a",
+          source_path="/v.mp4"):
     cdir = cfg.clips; cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "clip_1.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42CLIP")
     led = Ledger.load(cfg)
-    led.add_source(Source(id="s1", source_path="/v.mp4", language="en"))
+    led.add_source(Source(id="s1", source_path=source_path, language="en"))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="0-7", start=0, end=7, reason="r",
                           state=MomentState.clipped, hook=hook))
     led.add_clip(Clip(id="clip_1", parent_id="m1", path=str(cdir / "clip_1.mp4"), aspect=Fmt.r9x16,
@@ -39,30 +40,26 @@ def test_feed_card_renders_caption_and_hook_fields(tmp_path):
     assert 'name="caption"' in html and 'name="hook"' in html
     assert "await caption" in html and "SCROLL HOOK" in html
 
-def test_feed_caption_edit_via_composite_approve(tmp_path, mocker, monkeypatch):
-    from datetime import datetime, timezone
-    from fanops.timeutil import iso_z
-    NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+def test_feed_caption_edit_via_composite_approve(tmp_path):
+    # Caption-only (same hook) — no reburn, no fanops.clip.render_moment patch.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    from fanops.models import Clip as ClipModel
-    mocker.patch("fanops.clip.render_moment", return_value=(None, ClipModel(
-        id="clip_1", parent_id="m1", path=str(cfg.clips / "clip_1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)))
     html = _client(cfg).post("/posts/approve-with-edits/p1?account=a",
-                             data={"caption": "edited in feed", "hook": "NEW HOOK"}).data.decode()
+                             data={"caption": "edited in feed", "hook": "SCROLL HOOK"}).data.decode()
     assert Ledger.load(cfg).posts["p1"].caption == "edited in feed"
     assert Ledger.load(cfg).posts["p1"].state is PostState.queued
-    assert Ledger.load(cfg).posts["p1"].edited_at == iso_z(NOW)
+    assert Ledger.load(cfg).posts["p1"].edited_at
+    assert Ledger.load(cfg).posts["p1"].edited_at.endswith("Z")
     assert "Approved" in html or "approved" in html.lower()
 
-def test_feed_reburn_via_composite_approve(tmp_path, mocker):
-    cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)
-    rendered = Clip(id="clip_1", parent_id="m1", path=str(cfg.clips / "clip_1.mp4"),
-                    aspect=Fmt.r9x16, state=ClipState.rendered)
-    mocker.patch("fanops.clip.render_moment", return_value=(Ledger.load(cfg), rendered))
-    _client(cfg).post("/posts/approve-with-edits/p1?account=a",
-                      data={"caption": "await caption", "hook": "NEW HOOK TEXT"})
-    assert Ledger.load(cfg).moments["m1"].hook == "NEW HOOK TEXT"
+def test_feed_reburn_fail_leaves_hook(tmp_path):
+    # Real reburn via the route: missing source makes ffmpeg fail; hook stays.
+    cfg = Config(root=tmp_path); _accounts(cfg)
+    _seed(cfg, source_path=str(tmp_path / "missing.mp4"))
+    html = _client(cfg).post("/posts/approve-with-edits/p1?account=a",
+                             data={"caption": "await caption", "hook": "NEW HOOK TEXT"}).data.decode()
+    assert Ledger.load(cfg).moments["m1"].hook == "SCROLL HOOK"
+    assert Ledger.load(cfg).posts["p1"].state is PostState.awaiting_approval
+    assert "fail" in html.lower() or "re-burn" in html.lower() or "burn" in html.lower()
 
 def test_account_all_list_unchanged(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed(cfg)

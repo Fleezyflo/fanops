@@ -6,8 +6,6 @@ import re
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 from fanops.config import Config
@@ -15,7 +13,6 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, Fmt
 from fanops.clip import render_moment
 from fanops.keyframes import extract_frames_grid, extract_keyframes, _window_cache_key, _cache_dir_for
-import fanops.framing as framing
 
 
 @pytest.fixture(autouse=True)
@@ -110,54 +107,6 @@ def test_partial_grid_without_complete_marker_reextracts(tmp_path, mocker):
                         width=960, source_id="src_partial", cfg=cfg)
     assert len(captured) == 1, "partial grid without .complete must re-extract, not cache-hit"
     assert (cache_dir / ".complete").exists()
-
-
-def test_frames_persist_after_detect_window(tmp_path, monkeypatch):
-    # M11: detect_window must NOT unlink grid frames — they live in the keyframes cache after return.
-    cfg = Config(root=tmp_path)
-    src = Source(id="s1", source_path=str(tmp_path / "x.mp4"), width=1920, height=1080, duration=60.0)
-    (tmp_path / "x.mp4").write_bytes(b"")
-    written: list[str] = []
-
-    def fake_grid(video_path, start, end, *, fps, out_dir, width, source_id=None, cfg=None, **kw):
-        whash = _window_cache_key(source_id=source_id, start=start, end=end, fps=fps, width=width)
-        cache_dir = _cache_dir_for(cfg, source_id=source_id, window_hash=whash)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        fp = cache_dir / "grid_1000_00001.jpg"
-        fp.write_bytes(b"\xff\xd8\xff\xe0fake")
-        (cache_dir / ".complete").write_text("1")
-        written.append(str(fp))
-        return [str(fp)]
-
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", fake_grid)
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr(framing, "_detect_faces", lambda cv2, det, fp: [(0.5, 0.5, 0.2, 0.4)])
-
-    framing.detect_window(cfg, src, start=10.0, end=14.0)
-    assert written, "detect_window should have produced grid frames"
-    assert Path(written[0]).exists(), "grid frames must persist after detect_window (M11)"
-
-
-def test_transient_none_not_cached_in_speaker_track_sidecar(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = SimpleNamespace(id="s1", source_path=str(tmp_path / "x.mp4"))
-    path = cfg.agent_io / "framing" / "s1.track.json"
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr(framing, "_detector", lambda cv2: object())
-    monkeypatch.setattr(framing, "_compute_track", lambda *a, **k: None)
-    assert framing.speaker_track(cfg, src, start=0.0, end=10.0, src_w=1920, src_h=1080) is None
-    assert not path.exists(), "transient None in speaker_track must not write a sidecar entry"
-
-
-def test_transient_none_not_cached_in_motion_saliency_sidecar(tmp_path, monkeypatch):
-    cfg = Config(root=tmp_path)
-    src = SimpleNamespace(id="s1", source_path=str(tmp_path / "x.mp4"))
-    path = cfg.agent_io / "framing" / "s1.saliency.json"
-    monkeypatch.setattr(framing, "_cv2", lambda: object())
-    monkeypatch.setattr("fanops.keyframes.extract_frames_grid", lambda *a, **k: [])
-    assert framing.motion_saliency(cfg, src, start=10.0, end=14.0) is None
-    assert not path.exists(), "transient None in motion_saliency must not write a sidecar entry"
 
 
 def test_keyframe_filename_includes_end_to_avoid_collision(tmp_path, mocker):

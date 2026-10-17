@@ -20,7 +20,7 @@ def _seed(cfg):
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
-    led.add_post(Post(id="p_base", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="dryrun://p_base"))
+    led.add_post(Post(id="p_base", parent_id="clip_1", account="a", account_id="1", platform=Platform.instagram, caption="BASE", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_base/"))
     led.save()
 
 def _client(cfg):
@@ -57,9 +57,12 @@ def test_offrail_routes_stay_reachable(tmp_path):
     # U13: Blocked/Lift/Live library left the RAIL but the routes must still resolve (deep links / bookmarks).
     cfg = Config(root=tmp_path); _seed(cfg)
     c = _client(cfg)
-    for path, want in REACHABLE_ROUTES.items():
-        r = c.get(path)
-        assert r.status_code == want, f"{path} expected {want}, got {r.status_code}"
+    gates = c.get("/gates")
+    assert gates.status_code == 200 and b"Processing decisions" in gates.data
+    lift = c.get("/lift")
+    assert lift.status_code == 301 and "/posted" in lift.headers["Location"]
+    live = c.get("/live-library")
+    assert live.status_code == 301 and "view=live" in live.headers["Location"]
 
 def test_offrail_routes_absent_from_rail(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)

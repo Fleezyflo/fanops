@@ -71,12 +71,15 @@ def postiz_post(cfg: Config, integration_id: str, *, confirmed: bool, post=None)
 
 def postiz_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
     """Step 3: pull the cutover post's REAL metrics (M2's per-post PostizMetricsClient on this one id),
-    reconcile the row's mapped fields against track._W, and write metrics_confirmed=True PLUS the
-    CONFIRMED FIELD MAP — the raw Postiz labels (from the M2 row, NO self-fetch), the documented
-    label→lift map M2 used, and the reconciliation — so the operator sees the exact divergence. A
-    missing row reads as 'retry later' (Postiz analytics lag), not a hard failure."""
+    reconcile the row's mapped fields against track._W, and write the CONFIRMED FIELD MAP — the raw
+    Postiz labels (from the M2 row, NO self-fetch), the documented label→lift map M2 used, and the
+    reconciliation — so the operator sees the exact divergence. Stamps metrics_confirmed only when
+    track._shape_proves_learning says the row proves (likes-only / missing-saves never unfreeze).
+    A missing row reads as 'retry later' (Postiz analytics lag), not a hard failure."""
     from fanops.cutover import reconcile_fields, _save_state
+    from fanops.models import LIFT_SCORE
     from fanops.post.metrics import PostizMetricsClient, _POSTIZ_LABEL_MAP
+    from fanops.track import _shape_proves_learning, lift_score
     fetch = list_posts or PostizMetricsClient(cfg, submission_ids=[submission_id]).list_posts
     row = next((r for r in fetch("30d") if r.get("postSubmissionId") == submission_id), None)
     if row is None:
@@ -89,6 +92,11 @@ def postiz_metrics(cfg: Config, submission_id: str, *, list_posts=None) -> dict:
         raise CutoverError(f"metrics row for submission_id={submission_id} has no usable analytics yet — Postiz analytics may lag or the fetch failed; retry later.")
     rec = reconcile_fields(metrics)
     labels = row.get("_raw_labels", [])
-    _save_state(cfg, {"metrics_row": metrics, "reconciliation": rec, "postiz_labels": labels,
-                      "label_map": dict(_POSTIZ_LABEL_MAP), "metrics_confirmed": True, "backend": "postiz"})
+    patch = {"metrics_row": metrics, "reconciliation": rec, "postiz_labels": labels,
+             "label_map": dict(_POSTIZ_LABEL_MAP), "backend": "postiz"}
+    # Same proof the auto-unfreeze path uses — do not bypass it with an unconditional stamp.
+    if _shape_proves_learning({**metrics, LIFT_SCORE: lift_score(metrics)},
+                              require_ig_retention=cfg.ig_retention_proof):
+        patch["metrics_confirmed"] = True
+    _save_state(cfg, patch)
     return {"metrics": metrics, "reconciliation": rec, "postiz_labels": labels}

@@ -11,7 +11,7 @@ from typing import Callable, Optional
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.log import get_logger
-from fanops.models import PostState, is_real_submission_id
+from fanops.models import Platform, PostState, is_real_submission_id
 
 # Postiz cuid2 (this deployment): leftover on a Zernio channel. GET /posts/{id} 400s Invalid post ID format.
 _POSTIZ_CUID = re.compile(r"^c[a-z0-9]{24}$")
@@ -175,10 +175,11 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
                    Postiz cuid on a Zernio channel. NO backend row can ever carry that id, so there is
                    nothing to mirror and nothing to poll — but the post is still VISITED, because the
                    (state, age) escalation is what un-strands it.
-      polled     — Zernio-backed, pending, and a REAL submission id that is not a leftover Postiz cuid:
-                   the per-post GET /posts/{id}. Zernio is NOT mirrored, so a Zernio-backed resting
-                   post is out of the surface entirely and is never written an `absent` it was never
-                   asked about.
+      polled     — Zernio-backed, pending or TikTok `failed` with a REAL submission id that is not a
+                   leftover Postiz cuid: the per-post GET /posts/{id}. Zernio is NOT mirrored, so a
+                   Zernio-backed resting post is out of the surface entirely and is never written an
+                   `absent` it was never asked about. TikTok `queued`/`error` with a real sid stay
+                   unpolled (skip_resubmit / Postiz-mirror-only held).
 
     A post whose channel resolves to no live provider is skipped; that is logged for a pending post
     (it is work not done) and silent for a resting one (there is nothing it was owed)."""
@@ -188,7 +189,8 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
     for p in snapshot.posts.values():
         resting = p.state in _MIRROR_RESTING
         held = p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)
-        if not (resting or held or p.state in _RECONCILABLE) or not p.submission_id:
+        tiktok_failed = p.platform is Platform.tiktok and p.state is PostState.failed
+        if not (resting or held or p.state in _RECONCILABLE or tiktok_failed) or not p.submission_id:
             continue
         try:
             backend = _poll_backend_for_sid(cfg, routing, p.submission_id)
@@ -197,8 +199,8 @@ def _reconcile_reads(cfg: Config, snapshot: Ledger, log) -> tuple[list, list, li
                 log("reconcile", p.id, "skipped: no live provider")
             continue
         if backend != "postiz":
-            if held:
-                continue                                 # held observation is Postiz-mirror only (no remint path)
+            if held and not tiktok_failed:
+                continue                                 # queued/error observation is Postiz-mirror only
             if not resting:
                 if is_real_submission_id(p.submission_id):
                     if _POSTIZ_CUID.match(p.submission_id):

@@ -54,8 +54,11 @@ def test_no_model_field_escapes_the_editable_exempt_or_quarantine_partition():
 
 
 def test_quarantined_fields_are_not_in_the_editable_set():
-    # the quarantined fields must NOT claim editability (that would mask the incoherence the guard exists to catch).
-    assert pl.editable_fields().isdisjoint(_QUARANTINE)
+    # freeze the empty quarantine as a literal; each remaining key must not claim editability
+    assert _QUARANTINE == set()
+    editable = pl.editable_fields()
+    for k in _QUARANTINE:
+        assert k not in editable
 
 
 def test_editable_set_is_exactly_the_clean_levers():

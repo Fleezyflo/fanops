@@ -14,7 +14,7 @@ from fanops.learn_doctor import field_shape_report, cmd_learn_doctor
 def _led_with_shipped(tmp_path, *, sub="s_A", state=PostState.published):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="p1", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=state, submission_id=sub, public_url="dryrun://p1"))
+                      platform=Platform.instagram, caption="x", state=state, submission_id=sub, public_url="https://www.instagram.com/p/p1/"))
     return cfg, led
 
 
@@ -130,15 +130,14 @@ def test_cmd_propagates_a_real_code_bug(tmp_path, monkeypatch):
         cmd_learn_doctor(cfg, list_posts=boom)
 
 
-def test_cmd_swallows_a_transport_failure(tmp_path, monkeypatch):
-    # A documented transport failure (the Postiz client raises RuntimeError on a 5xx/non-JSON body, or
-    # requests raises) is transient — swallow it, print retry guidance, exit 0 (never crash a pipeline).
+def test_cmd_transport_failure_is_not_a_healthy_exit(tmp_path, monkeypatch):
+    # A 503 from the list_posts seam is a health-gate failure — must not exit 0.
     import json
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_API_KEY", "sk-x")
     cfg, led = _led_with_shipped(tmp_path); led.save()
     def neterr(w): raise RuntimeError("postiz analytics 503: upstream down")
     rc = cmd_learn_doctor(cfg, list_posts=neterr)
-    assert rc == 0
+    assert rc != 0
     recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines()]
     assert any(r["outcome"] == "fetch_failed" for r in recs)

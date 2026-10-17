@@ -37,12 +37,13 @@ def test_library_catalog_wraps_asset_catalog_shape(tmp_path):
     assert cat["native"][0]["stage_strip"] and len(cat["native"][0]["stage_strip"]) == 11
 
 
-def test_library_catalog_fail_open_on_read_error(tmp_path, monkeypatch):
+def test_library_catalog_fail_open_on_read_error(tmp_path):
+    from fanops.errors import ControlFileError
     cfg = Config(root=tmp_path)
-    monkeypatch.setattr(Ledger, "load", lambda _c: (_ for _ in ()).throw(RuntimeError("torn")))
-    cat = views.library_catalog(cfg)
-    assert cat == {"native": [], "third_party": [],
-                   "backlog": {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0}}
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"not-a-sqlite-database")
+    with pytest.raises(ControlFileError):
+        views.library_catalog(cfg)
 
 
 # ---- 2-6: strip truth matrix ----
@@ -168,7 +169,7 @@ def test_source_media_serves_bounded_path(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, lambda led: _src(led, cfg))
     r = _client(cfg).get("/source-media/src_1")
-    assert r.status_code == 200 and r.data
+    assert r.status_code == 200 and r.data == b"x" * 64
 
 
 def test_source_media_traversal_404(tmp_path):
@@ -186,7 +187,8 @@ def test_keyframe_serve_and_traversal(tmp_path):
     _seed(cfg, lambda led: _src(led, cfg))
     wh = "a" * 64
     ok = _client(cfg).get(f"/keyframe/src_1/{wh}/grid_test.jpg")
-    assert ok.status_code == 200
+    assert ok.status_code == 200 and ok.data == b"\xff\xd8\xff"
+    assert (ok.mimetype or ok.content_type or "").startswith("image/jpeg")
     assert _client(cfg).get("/keyframe/src_1/not-a-hash/grid_test.jpg").status_code == 404
     assert _client(cfg).get("/keyframe/src_1/evil.jpg").status_code == 404
 

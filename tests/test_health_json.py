@@ -1,61 +1,46 @@
-"""MOL-299: machine-readable health (--json + /healthz)."""
+"""MOL-299: machine-readable health (--json + /healthz). Empty root is not a PASS."""
 import json
+from fanops.cli import main
 from fanops.config import Config
 
-def test_health_json_exit_code_healthy(tmp_path, monkeypatch, mocker):
+
+def test_health_json_exit_code_unhealthy_on_empty_root(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    cfg = Config(root=tmp_path)
-    cfg.context_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.context_path.write_text("brand")
-    mocker.patch("fanops.doctor.shutil.which", return_value="/bin/tool")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
-    mocker.patch("fanops.doctor._daemon_liveness_check",
-                 return_value={"label": "daemon", "ok": True, "hint": ""})
-    from fanops.cli import cmd_health
-    class Args:
-        json = True
-    # B11: dryrun skips unconfigured deps — healthy exit 0, not ambiguous 0/1
-    assert cmd_health(cfg, Args()) == 0
+    rc = main(["health", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert data["healthy"] is False
+    assert any(not c.get("ok", True) for c in data["checks"])
 
 
-def test_health_dryrun_makes_no_http_requests(tmp_path, monkeypatch, mocker):
+def test_health_dryrun_makes_no_http_requests(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    get_spy = mocker.patch("requests.get")
+    seen = []
+
+    def fake_get(*a, **k):
+        seen.append(a)
+        raise AssertionError("health must not HTTP on unconfigured dryrun")
+
+    monkeypatch.setattr("requests.get", fake_get)
     from fanops.cli import cmd_health
     cmd_health(Config(root=tmp_path), None)
-    get_spy.assert_not_called()
+    assert seen == []
 
 
 def test_doctor_text_and_json_exit_parity(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    from fanops.cli import cmd_doctor
-    cfg = Config(root=tmp_path)
-    class JsonArgs:
-        json = True
-        fix_routing = False
-    class TextArgs:
-        json = False
-        fix_routing = False
-    import io, contextlib
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        rc_json = cmd_doctor(cfg, JsonArgs())
-    rc_text = cmd_doctor(cfg, TextArgs())
-    assert rc_text == rc_json
+    rc_json = main(["doctor", "--json"])
+    rc_text = main(["doctor"])
+    assert rc_text == rc_json == 1
 
 
-def test_doctor_json_emits_healthy_flag(tmp_path, monkeypatch):
+def test_doctor_json_emits_healthy_flag(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
-    from fanops.cli import cmd_doctor
-    class Args:
-        json = True
-        fix_routing = False
-    import io, contextlib
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        cmd_doctor(Config(root=tmp_path), Args())
-    data = json.loads(buf.getvalue())
-    assert "healthy" in data and "checks" in data and "deps" in data
+    rc = main(["doctor", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert data["healthy"] is False
+    assert "checks" in data and "deps" in data
 
 
 def test_report_is_healthy_fails_on_bad_check():
@@ -65,13 +50,10 @@ def test_report_is_healthy_fails_on_bad_check():
     assert report_is_healthy(rep) is False
 
 
-def test_healthz_route_returns_json(tmp_path, monkeypatch, mocker):
+def test_healthz_route_returns_json(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    spy = mocker.patch("fanops.health_model.build_health_report")
     from fanops.studio.app import create_app
     app = create_app(Config(root=tmp_path))
-    client = app.test_client()
-    r = client.get("/healthz")
+    r = app.test_client().get("/healthz")
     assert r.status_code == 200
     assert r.get_json() == {"ok": True}
-    spy.assert_not_called()

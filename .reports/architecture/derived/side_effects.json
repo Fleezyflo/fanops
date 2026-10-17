@@ -17,7 +17,7 @@
     "fanops.accounts": [
       {
         "call": "Ledger.transaction",
-        "line": 564
+        "line": 570
       }
     ],
     "fanops.canary": [
@@ -61,19 +61,23 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1131
+        "line": 1122
       },
       {
         "call": "Ledger.transaction",
-        "line": 1146
+        "line": 1137
       },
       {
         "call": "Ledger.transaction",
-        "line": 1182
+        "line": 1173
       },
       {
         "call": "Ledger.transaction",
-        "line": 1192
+        "line": 1183
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 1210
       },
       {
         "call": "Ledger.transaction",
@@ -81,11 +85,7 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1228
-      },
-      {
-        "call": "Ledger.transaction",
-        "line": 1239
+        "line": 1230
       }
     ],
     "fanops.cli_run": [
@@ -109,7 +109,7 @@
     "fanops.ledger_wipe": [
       {
         "call": "Ledger.transaction",
-        "line": 389
+        "line": 387
       }
     ],
     "fanops.overlay_reburn": [
@@ -127,11 +127,11 @@
     "fanops.pipeline": [
       {
         "call": "Ledger.transaction",
-        "line": 505
+        "line": 515
       },
       {
         "call": "Ledger.transaction",
-        "line": 532
+        "line": 542
       }
     ],
     "fanops.post.compress": [
@@ -143,33 +143,37 @@
     "fanops.post.publish_requeue": [
       {
         "call": "Ledger.transaction",
-        "line": 27
+        "line": 26
       },
       {
         "call": "Ledger.transaction",
-        "line": 76
+        "line": 70
       },
       {
         "call": "Ledger.transaction",
-        "line": 115
+        "line": 109
       }
     ],
     "fanops.post.run": [
       {
         "call": "Ledger.transaction",
-        "line": 193
+        "line": 195
       },
       {
         "call": "Ledger.transaction",
-        "line": 239
+        "line": 222
       },
       {
         "call": "Ledger.transaction",
-        "line": 379
+        "line": 252
       },
       {
         "call": "Ledger.transaction",
-        "line": 419
+        "line": 398
+      },
+      {
+        "call": "Ledger.transaction",
+        "line": 438
       }
     ],
     "fanops.recaption": [
@@ -185,15 +189,15 @@
     "fanops.reconcile": [
       {
         "call": "Ledger.transaction",
-        "line": 544
+        "line": 556
       },
       {
         "call": "Ledger.transaction",
-        "line": 613
+        "line": 625
       },
       {
         "call": "Ledger.transaction",
-        "line": 679
+        "line": 691
       }
     ],
     "fanops.responder": [
@@ -249,11 +253,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 211
+        "line": 213
       },
       {
         "call": "Ledger.transaction",
-        "line": 366
+        "line": 368
       }
     ],
     "fanops.studio.actions_casting": [
@@ -337,31 +341,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 123
+        "line": 124
       },
       {
         "call": "Ledger.transaction",
-        "line": 143
+        "line": 144
       },
       {
         "call": "Ledger.transaction",
-        "line": 168
+        "line": 169
       },
       {
         "call": "Ledger.transaction",
-        "line": 204
+        "line": 205
       },
       {
         "call": "Ledger.transaction",
-        "line": 247
+        "line": 248
       },
       {
         "call": "Ledger.transaction",
-        "line": 503
+        "line": 504
       },
       {
         "call": "Ledger.transaction",
-        "line": 617
+        "line": 624
       }
     ],
     "fanops.studio.actions_schedule": [
@@ -409,11 +413,7 @@
     "fanops.autopilot": [
       {
         "call": "_file_lock",
-        "line": 35
-      },
-      {
-        "call": "_file_lock",
-        "line": 66
+        "line": 22
       }
     ],
     "fanops.controlio": [
@@ -435,31 +435,31 @@
     "fanops.ledger": [
       {
         "call": "fcntl.flock",
-        "line": 312
+        "line": 314
       },
       {
         "call": "fcntl.flock",
-        "line": 322
+        "line": 324
       },
       {
         "call": "store.lock",
-        "line": 514
+        "line": 516
       },
       {
         "call": "self._store.lock",
-        "line": 544
+        "line": 554
       },
       {
         "call": "store.lock",
-        "line": 570
+        "line": 580
       },
       {
         "call": "store.lock",
-        "line": 589
+        "line": 599
       },
       {
         "call": "_file_lock",
-        "line": 592
+        "line": 602
       }
     ],
     "fanops.ledger_bridge": [
@@ -525,7 +525,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1411
+        "line": 1402
       }
     ],
     "fanops.post.compress": [
@@ -555,7 +555,7 @@
       },
       {
         "call": "requests.get",
-        "line": 155
+        "line": 160
       }
     ],
     "fanops.post.metrics.zernio_read": [
@@ -571,41 +571,41 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 235
+        "line": 236
       },
       {
         "call": "requests.post",
-        "line": 265
+        "line": 266
       },
       {
         "call": "requests.post",
-        "line": 325
+        "line": 326
       },
       {
         "call": "requests.get",
-        "line": 352
+        "line": 353
       },
       {
         "call": "requests.post",
-        "line": 561
+        "line": 563
       }
     ],
     "fanops.post.zernio": [
       {
         "call": "requests.put",
-        "line": 366
+        "line": 352
       },
       {
         "call": "requests.post",
-        "line": 396
+        "line": 382
       },
       {
         "call": "requests.get",
-        "line": 427
+        "line": 413
       },
       {
         "call": "requests.post",
-        "line": 515
+        "line": 501
       }
     ]
   },
@@ -620,7 +620,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1443
+        "line": 1434
       }
     ],
     "fanops.post.compress": [
@@ -677,35 +677,39 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 211
+        "line": 212
       },
       {
         "call": "subprocess.run",
-        "line": 307
+        "line": 308
       },
       {
         "call": "subprocess.run",
-        "line": 312
+        "line": 313
       },
       {
         "call": "subprocess.run",
-        "line": 716
+        "line": 736
       },
       {
         "call": "subprocess.run",
-        "line": 742
+        "line": 763
       },
       {
         "call": "subprocess.run",
-        "line": 747
+        "line": 768
       },
       {
         "call": "subprocess.run",
-        "line": 775
+        "line": 796
       },
       {
         "call": "subprocess.run",
-        "line": 848
+        "line": 869
+      },
+      {
+        "call": "subprocess.run",
+        "line": 885
       }
     ],
     "fanops.discover": [
@@ -720,8 +724,8 @@
     ],
     "fanops.health": [
       {
-        "call": "subprocess.run",
-        "line": 40
+        "call": "subprocess.Popen",
+        "line": 42
       }
     ],
     "fanops.health_probes": [
@@ -733,17 +737,17 @@
     "fanops.ig_hashtag_scrape": [
       {
         "call": "subprocess.check_output",
-        "line": 166
+        "line": 184
       },
       {
         "call": "subprocess.check_output",
-        "line": 208
+        "line": 226
       }
     ],
     "fanops.ingest": [
       {
         "call": "subprocess.run",
-        "line": 316
+        "line": 317
       }
     ],
     "fanops.ingest_shard": [
@@ -765,11 +769,11 @@
     "fanops.llm": [
       {
         "call": "subprocess.run",
-        "line": 197
+        "line": 181
       },
       {
         "call": "subprocess.run",
-        "line": 344
+        "line": 229
       }
     ],
     "fanops.media_probe": [
@@ -797,17 +801,17 @@
     "fanops.post.postiz_errors": [
       {
         "call": "subprocess.run",
-        "line": 70
+        "line": 71
       }
     ],
     "fanops.postiz_lifecycle": [
       {
-        "call": "subprocess.run",
-        "line": 71
+        "call": "subprocess.Popen",
+        "line": 78
       },
       {
         "call": "subprocess.run",
-        "line": 110
+        "line": 123
       }
     ],
     "fanops.reframe": [
@@ -857,11 +861,11 @@
   },
   "totals": {
     "env_write_sites": 1,
-    "ledger_transaction_sites": 85,
-    "lock_sites": 24,
+    "ledger_transaction_sites": 86,
+    "lock_sites": 23,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
-    "subprocess_sites": 40
+    "subprocess_sites": 41
   }
 }

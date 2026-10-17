@@ -77,7 +77,8 @@ def test_hook_quality_pov_rate_when_no_hooks(tmp_path):
     led.add_source(Source(id="s1", source_path="x.mp4", state=SourceState.moments_decided, duration=20.0))
     _decided(led, "s1", "m1", None)
     q = hook_quality(led)
-    assert q["with_hook"] == 0 and q["viewer_pov_rate"] == 1.0   # no hooks shipped -> vacuously full POV (no div/0)
+    assert q["with_hook"] == 0
+    assert q["viewer_pov_rate"] == 0.0   # no shipped hooks is not a 1.0 POV rate
 
 def test_log_hook_quality_returns_digest_and_is_read_only(tmp_path):
     from fanops.hookscore import log_hook_quality

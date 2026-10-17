@@ -88,10 +88,10 @@ def test_doctor_always_checks_llm_cli(tmp_path, monkeypatch):
     # surfaced — empty/unset OR the literal 'llm' both resolve to llm; there is no responder that skips it.
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     rep = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep["checks"])
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     rep2 = doctor.doctor_report(Config(root=tmp_path))
-    assert any("claude" in c["label"].lower() for c in rep2["checks"])
+    assert any("grok" in c["label"].lower() for c in rep2["checks"])
 
 
 def test_doctor_flags_bad_responder_and_still_checks_cli(tmp_path, monkeypatch):
@@ -101,16 +101,42 @@ def test_doctor_flags_bad_responder_and_still_checks_cli(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
     resp_checks = [c for c in rep["checks"] if "FANOPS_RESPONDER" in c["label"]]
     assert resp_checks and all(not c["ok"] for c in resp_checks)
-    assert any("claude" in c["label"].lower() for c in rep["checks"])
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
 
 
-def test_doctor_cursor_transport_checks_cursor_agent(tmp_path, monkeypatch):
+def test_doctor_grok_transport_checks_grok(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "cursor")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=True)
     rep = doctor.doctor_report(Config(root=tmp_path))
-    assert any("cursor-agent" in c["label"].lower() for c in rep["checks"])
-    # Vision is supported: doctor does not fail the transport for a missing frame path.
-    assert not [c for c in rep["checks"] if "vision" in c["label"].lower()]
+    assert any("grok" in c["label"].lower() for c in rep["checks"])
+    path = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
+    assert path["ok"] is True
+    assert not any("NOT proof" in (c.get("hint") or "") for c in rep["checks"])
+
+
+def test_doctor_grok_models_fail_is_fail_check(tmp_path, monkeypatch, mocker):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    grok_checks = [c for c in rep["checks"] if "grok" in c["label"].lower()]
+    assert grok_checks and any(c["ok"] is False for c in grok_checks)
+    fail = next(c for c in grok_checks if c["ok"] is False)
+    assert "grok login" in (fail.get("hint") or "")
+
+
+def test_doctor_grok_missing_hint_names_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
+    monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
+    import shutil
+    _real = shutil.which
+    monkeypatch.setattr("shutil.which", lambda b, *a, **k: None if b == "grok" else _real(b, *a, **k))
+    rep = doctor.doctor_report(Config(root=tmp_path))
+    grok = next(c for c in rep["checks"] if "grok" in c["label"].lower())
+    assert grok["ok"] is False
+    hint = grok.get("hint") or ""
+    assert "grok login" in hint and "API key" in hint
 
 def test_doctor_notes_learning_unvalidated(tmp_path, monkeypatch):
     rep = doctor.doctor_report(Config(root=tmp_path))
@@ -330,6 +356,23 @@ def test_deploy_code_check_passes_when_shas_match(tmp_path, monkeypatch):
     assert row is not None and row["ok"] is True
 
 
+def test_deploy_code_check_fails_when_either_sha_missing(tmp_path, monkeypatch):
+    """A loaded pump with a missing heartbeat SHA or a missing disk SHA fails the deploy gate."""
+    from fanops import daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: None)
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: ("bbb222cafef00d", "git-head"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "heartbeat SHA" in row["hint"]
+
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: "aaa111deadbeef")
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: (None, "unavailable"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "disk SHA" in row["hint"]
+
+
 def test_deploy_code_check_omitted_when_daemon_not_loaded(tmp_path):
     def _unloaded(_cfg, _interval):
         return {"installed": True, "loaded": False, "verdict": "not loaded"}
@@ -528,30 +571,41 @@ def test_doctor_hashtag_scrape_session_check(tmp_path, monkeypatch):
 
 
 def test_doctor_hashtag_scrape_soft_ok_when_any_session_among_users(tmp_path, monkeypatch):
-    """HT3: any listed user session is enough — presence only, no open_client / tag probe."""
+    """Empty/garbage session among listed users must not be ok=True (presence of `{}` is not a PASS)."""
     from fanops import doctor
     from fanops.config import Config
-    from fanops.ig_hashtag_scrape import scrape_session_path
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "a,b")
     monkeypatch.delenv("FANOPS_IG_SCRAPE_PASSWORD", raising=False)
     cfg = Config(root=tmp_path)
     sess = scrape_session_path(cfg, "b")
     sess.parent.mkdir(parents=True, exist_ok=True)
     sess.write_text("{}")
-    opens = {"n": 0}
-    def boom_open(_c):
-        opens["n"] += 1
-        raise AssertionError("doctor must not open_client")
-    def boom_probe(*_a, **_k):
-        raise AssertionError("doctor must not probe tags")
-    row = doctor._hashtag_scrape_check(cfg, open_client=boom_open, probe_resolve=boom_probe)
-    assert row["ok"] is True and row["hint"] == ""
-    assert opens["n"] == 0
-    assert "present" in row["label"]
+    assert any_scrape_session(cfg) is False
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
+
+
+def test_doctor_hashtag_scrape_garbage_session_is_not_ok(tmp_path, monkeypatch):
+    """Garbage session file must not be a green PASS; password must not leak into the row."""
+    from fanops import doctor
+    from fanops.config import Config
+    from fanops.ig_hashtag_scrape import any_scrape_session, scrape_session_path
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", "secret-password-must-not-leak")
+    cfg = Config(root=tmp_path)
+    sess = scrape_session_path(cfg, "u")
+    sess.parent.mkdir(parents=True, exist_ok=True)
+    sess.write_text("not-json{{{")
+    assert any_scrape_session(cfg) is False
+    row = doctor._hashtag_scrape_check(cfg)
+    assert row is None or row.get("ok") is not True
+    blob = "" if row is None else f"{row.get('hint','')}{row.get('label','')}"
+    assert "secret-password" not in blob
 
 
 def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monkeypatch):
-    """HT3: session file present → PASS; open_client / tag probe never called (even if they would fail)."""
+    """HT3: dump_settings envelope → PASS; open_client / tag probe never called (even if they would fail)."""
     from fanops import doctor
     from fanops.config import Config
     from fanops.ig_hashtag_scrape import ScrapeUnavailable
@@ -562,7 +616,10 @@ def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monke
     from fanops.ig_hashtag_scrape import scrape_session_path
     _sess = scrape_session_path(cfg, "u")
     _sess.parent.mkdir(parents=True, exist_ok=True)
-    _sess.write_text("{}")
+    _sess.write_text(json.dumps({
+        "uuids": {"uuid": "u", "phone_id": "p"},
+        "authorization_data": {"ds_user_id": "1"},
+    }))
     calls = {"open": 0, "probe": 0}
     def boom(_cfg):
         calls["open"] += 1
@@ -574,7 +631,6 @@ def test_doctor_hashtag_scrape_session_presence_ok_without_probe(tmp_path, monke
     assert row["ok"] is True and row["hint"] == ""
     assert calls == {"open": 0, "probe": 0}
     assert "secret-password" not in row["hint"] and "secret-password" not in row["label"]
-    # Challenge inject also ignored — offline presence only.
     def locked(_cfg):
         calls["open"] += 1
         raise ChallengeRequired("challenge_required")
@@ -619,15 +675,14 @@ def _by_label(rep, needle):
     return next((c for c in rep["checks"] if needle in c["label"]), None)
 
 
-def test_cli_on_path_is_warn_not_a_silent_authenticated_pass(tmp_path, monkeypatch):
-    """PATH ok != authenticated. When the LLM CLI binary is present, severity=WARN (non-blocking)
-    makes explicit that PATH is NOT proof of login — never a silent authenticated PASS."""
+def test_cli_on_path_and_models_ok_is_pass(tmp_path, monkeypatch):
+    """Grok on PATH + grok_models_ok is a login-probe PASS — never the old claude/cursor
+    'PATH is NOT proof of login' WARN. Autouse `_hermetic_llm` already stubs both."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.setattr(doctor.shutil, "which", lambda _b: "/usr/local/bin/stub")
     rep = doctor.doctor_report(Config(root=tmp_path))
-    cli = next((c for c in rep["checks"] if "on PATH" in c["label"] and "NOT proof" in (c.get("hint") or "")), None)
-    assert cli is not None and cli["ok"] is True and cli.get("severity") == "warn"
-    assert "NOT proof" in cli.get("hint", "")
+    cli = next(c for c in rep["checks"] if c["label"] == "grok on PATH")
+    assert cli["ok"] is True and cli.get("severity") != "warn"
+    assert "NOT proof" not in (cli.get("hint") or "")
 
 
 def test_half_live_never_fails_open_to_a_silent_healthy_pass(tmp_path, monkeypatch):
@@ -701,7 +756,7 @@ def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
         def state_histogram(self, **k):
             return {PostState.awaiting_approval: 3}
     monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
-    notes = doctor._doctor_notes(cfg)
+    notes = doctor._doctor_notes(cfg, [])
     assert any("approval backlog" in n.lower() and "3" in n for n in notes)
     # ...and it is NOT emitted as an operational (warn) sensor.
     assert not any("approval" in c["label"].lower() for c in doctor._operational_sensor_checks(cfg))
@@ -711,5 +766,48 @@ def test_postiz_ondemand_missing_script_is_an_info_note(tmp_path, monkeypatch):
     """FANOPS_POSTIZ_ONDEMAND is a bootstrap-only path override. If set to a missing script, doctor emits
     a lean INFO note (a `fanops up` bring-up concern) — not a publish-path failure."""
     monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(tmp_path / "nope" / "postiz-ondemand.sh"))
-    notes = doctor._doctor_notes(Config(root=tmp_path))
+    notes = doctor._doctor_notes(Config(root=tmp_path), [])
     assert any("FANOPS_POSTIZ_ONDEMAND" in n and "does not exist" in n for n in notes)
+
+
+def _routed_live(tmp_path, monkeypatch):
+    """Live per-channel routing with the legacy FANOPS_POSTER unset (resolves to dryrun)."""
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "backends": {"instagram": "postiz"}, "integrations": {"instagram": "1"}},
+        {"handle": "@tk", "account_id": "2", "platforms": ["tiktok"], "status": "active",
+         "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "2"}}]}))
+    return cfg
+
+
+def test_doctor_note_names_the_routed_backend_not_legacy_dryrun(tmp_path, monkeypatch):
+    """is_live with FANOPS_POSTER unset: the note names what sends (postiz, zernio), never 'dryrun (LIVE)'."""
+    from fanops.health_types import DepHealth
+    cfg = _routed_live(tmp_path, monkeypatch)
+    assert cfg.poster_backend == "dryrun" and cfg.is_live
+    deps = [DepHealth("postiz", True, "reachable"), DepHealth("zernio", True, "reachable")]
+    assert doctor._doctor_notes(cfg, deps)[0] == "poster backend: postiz, zernio (LIVE)"
+
+
+def test_doctor_note_carries_the_sending_dep_detail(tmp_path, monkeypatch):
+    """A sending provider whose DepHealth row is not ok shows that row's detail; a snapshot-unknown
+    `deps` row annotates every sending provider."""
+    from fanops.health_types import DepHealth, Severity
+    cfg = _routed_live(tmp_path, monkeypatch)
+    down = [DepHealth("postiz", False, "unreachable"), DepHealth("zernio", True, "reachable")]
+    assert doctor._doctor_notes(cfg, down)[0] == "poster backend: postiz (unreachable), zernio (LIVE)"
+    unknown = [DepHealth("deps", False, "deps unknown (snapshot stale)", severity=Severity.UNKNOWN)]
+    assert doctor._doctor_notes(cfg, unknown)[0] == (
+        "poster backend: postiz (deps unknown (snapshot stale)), zernio (deps unknown (snapshot stale)) (LIVE)")
+
+
+def test_doctor_note_dryrun_when_not_live(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False); monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    note = doctor._doctor_notes(Config(root=tmp_path), [])[0]
+    assert note == "poster backend: dryrun (dryrun — writes payloads, posts nothing)"

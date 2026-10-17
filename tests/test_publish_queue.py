@@ -13,7 +13,7 @@ def _seed(cfg, when="2020-01-01T00:00:00Z", state=PostState.queued):
     led = Ledger.load(cfg)
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="fire caption", state=state, scheduled_time=when, public_url="dryrun://p1"))
+                      caption="fire caption", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/p1/"))
     led.save()
 
 
@@ -38,7 +38,7 @@ def test_lists_manually_resolvable_states(tmp_path):
     for st in (PostState.queued, PostState.failed, PostState.error, PostState.needs_reconcile):
         led.add_post(Post(id=f"p_{st.value}", parent_id="c1", account="a", account_id="1",
                           platform=Platform.instagram, caption="x", state=st,
-                          scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://c1"))
+                          scheduled_time="2020-01-01T00:00:00Z", public_url="https://www.instagram.com/p/c1/"))
     led.save()
     assert {r["post_id"] for r in views.publish_queue(cfg, now=_NOW)} == {
         "p_queued", "p_failed", "p_error", "p_needs_reconcile"}
@@ -91,9 +91,9 @@ def test_unscheduled_post_sorts_last(tmp_path):
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_post(Post(id="future", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="f", state=PostState.queued, scheduled_time="2099-01-01T00:00:00Z", public_url="dryrun://future"))
+                      caption="f", state=PostState.queued, scheduled_time="2099-01-01T00:00:00Z", public_url="https://www.instagram.com/p/future/"))
     led.add_post(Post(id="none", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
-                      caption="n", state=PostState.queued, scheduled_time=None, public_url="dryrun://none"))
+                      caption="n", state=PostState.queued, scheduled_time=None, public_url="https://www.instagram.com/p/none/"))
     led.save()
     ids = [r["post_id"] for r in views.publish_queue(cfg, now=_NOW)]
     assert ids.index("future") < ids.index("none")

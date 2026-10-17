@@ -24,8 +24,14 @@ def _src_moment(cfg, *, start=10, end=14, dur=120.0):
                           start=start, end=end, reason="r", state=MomentState.clipped))
     return led
 
-def _capturing_run(captured):
+def _capturing_run(captured, *, filters_on=True):
     def run(cmd, **kw):
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R:
+                returncode = 0
+                stdout = "Filters:\n subtitles\n drawtext\n" if filters_on else "Filters:\n scale\n"
+                stderr = ""
+            return R()
         if not str(cmd[-1]).startswith("-"):           # the output path (not a capability flag)
             captured["cmd"] = cmd
             out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"CUT")
@@ -39,7 +45,7 @@ def _to_of(cmd):
 def test_cut_keeps_short_window_without_band_growth(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
@@ -51,7 +57,7 @@ def test_cut_keeps_short_window_without_band_growth(tmp_path, mocker, monkeypatc
 def test_cut_keeps_short_window_for_short_profile(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
@@ -62,7 +68,7 @@ def test_cut_keeps_short_window_for_short_profile(tmp_path, mocker, monkeypatch)
 def test_cut_burns_the_hook(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
@@ -75,10 +81,10 @@ def test_cut_no_textfilter_still_cuts_without_hook(tmp_path, mocker, monkeypatch
     # fail-open legibility: the toolchain can't burn text -> still cut the RIGHT LENGTH (clean clip), True
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: False)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
-    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured, filters_on=False))
     out = str(cfg.clips / "r.9x16.mp4")
     ok, _ = render_account_cut(led, cfg, "mom_1", aspect=Fmt.r9x16, profile="long", hook="H", out_path=out)
     assert ok is True and "subtitles" not in captured["cmd"][captured["cmd"].index("-vf") + 1]
@@ -86,7 +92,7 @@ def test_cut_no_textfilter_still_cuts_without_hook(tmp_path, mocker, monkeypatch
 def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     mocker.patch("fanops.clip.subprocess.run", side_effect=FileNotFoundError("ffmpeg gone"))
     out = str(cfg.clips / "r.9x16.mp4")
@@ -96,9 +102,12 @@ def test_cut_fail_open_on_ffmpeg_absent(tmp_path, mocker, monkeypatch):
 def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     def bad_run(cmd, **kw):
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n subtitles\n"; stderr = ""
+            return R()
         class R: returncode = 1; stderr = "boom"; stdout = ""
         return R()
     mocker.patch("fanops.clip.subprocess.run", side_effect=bad_run)
@@ -110,7 +119,7 @@ def test_cut_fail_open_on_nonzero_rc(tmp_path, mocker, monkeypatch):
 def test_cut_success_leaves_no_artifacts(tmp_path, mocker, monkeypatch):
     monkeypatch.setenv("FANOPS_VISUAL_START", "0")
     monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
-    monkeypatch.setattr(overlay, "ffmpeg_has_textfilter", lambda: True)
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path); led = _src_moment(cfg)
     captured = {}
     mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
@@ -138,30 +147,26 @@ def _seed_clip(led, cfg, *, m_hook=None, m_profile=None, surfaces, batch_id=None
     clip.meta_captions = {s: {"caption": f"cap {s}", "hashtags": ["#x"]} for s in surfaces}
     led.add_clip(clip)
 
-def _run_crosspost(cfg, mocker):
-    cfg.clips.mkdir(parents=True, exist_ok=True)
-    out = cfg.clips / "r.mp4"; out.write_bytes(b"R")
-    rendered = Clip(id="clip_mom_1_9x16", parent_id="mom_1", path=str(out), aspect=Fmt.r9x16, state=ClipState.rendered)
-    mocker.patch("fanops.crosspost.render_moment", return_value=(Ledger.load(cfg), rendered))
+def _run_crosspost(cfg):
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     led.save()
     return Ledger.load(cfg)
 
-def test_crosspost_stamps_moment_profile_on_post(tmp_path, mocker):
+def test_crosspost_stamps_moment_profile_on_post(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="hook L", m_profile="long", surfaces=("long/instagram",)); led.save()
-    led = _run_crosspost(cfg, mocker)
+    led = _run_crosspost(cfg)
     p = next(iter(led.posts.values()))
     assert p.clip_profile == "long"
 
-def test_crosspost_default_profile_from_moment(tmp_path, mocker):
+def test_crosspost_default_profile_from_moment(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("a", "1")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", surfaces=("a/instagram",)); led.save()
-    led = _run_crosspost(cfg, mocker)
+    led = _run_crosspost(cfg)
     assert next(iter(led.posts.values())).clip_profile == "talk"
 
 def test_render_spec_band_tagged_when_profile_differs(tmp_path):
@@ -173,7 +178,11 @@ def test_render_spec_band_tagged_when_profile_differs(tmp_path):
     rid_talk, _, _, _ = render_spec(cfg, clip=clip, hook="H", moment=m_talk)
     assert wants_cut is True and profile == "long" and rid_long == rid_talk
 
-def test_same_moment_same_profile_one_render(tmp_path, mocker):
+def test_same_moment_same_profile_one_render(tmp_path, mocker, monkeypatch):
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    monkeypatch.setenv("FANOPS_BURN_SUBS", "0")
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("short", "1", clip_profile="short"), _acct("long", "2", clip_profile="long")])
     led = Ledger.load(cfg)
@@ -185,20 +194,19 @@ def test_same_moment_same_profile_one_render(tmp_path, mocker):
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r16x9, state=ClipState.captioned)
     clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("short/instagram", "long/instagram")}
     led.add_clip(clip); led.save()
-    calls = []
-    def _rm(led, cfg, moment_id, *, aspect=Fmt.r9x16, **kw):
-        calls.append(1)
-        rc = Clip(id="clip_mom_1_9x16", parent_id="mom_1", path=str(cfg.clips / "r.mp4"),
-                  aspect=aspect, state=ClipState.rendered)
-        led.clips[rc.id] = rc
-        return led, rc
-    mocker.patch("fanops.crosspost.render_moment", side_effect=_rm)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
-    assert len(calls) == 1
+    encodes = 1 if captured.get("cmd") else 0
+    assert encodes == 1
     assert {p.clip_profile for p in led.posts.values()} == {"long"}
+    assert sum(1 for c in led.clips.values() if c.aspect is Fmt.r9x16) == 1
 
-def test_render_moment_file_fail_open_burn(tmp_path, mocker):
+def test_render_moment_file_fail_open_burn(tmp_path, mocker, monkeypatch):
     from fanops.crosspost import render_moment_file
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
@@ -210,15 +218,29 @@ def test_render_moment_file_fail_open_burn(tmp_path, mocker):
     from fanops.models import Post, Platform, PostState
     post = Post(id="p1", parent_id="clip_1", account="long", account_id="1", platform=Platform.instagram,
                 caption="c", state=PostState.awaiting_approval)
-    mocker.patch("fanops.crosspost.render_account_cut", return_value=(False, None))
-    def _burn(base, out, hook, **kw):
-        Path(out).parent.mkdir(parents=True, exist_ok=True); Path(out).write_bytes(b"BURN"); return True
-    mocker.patch("fanops.overlay.burn_hook_only", side_effect=_burn)
+
+    def run(cmd, **kw):
+        if cmd and cmd[0] == "ffmpeg" and "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n subtitles\n"; stderr = ""
+            return R()
+        dest = str(cmd[-1]) if cmd else ""
+        if dest.endswith(".part.mp4"):
+            class R: returncode = 1; stderr = "cut fail"; stdout = ""
+            return R()
+        if dest and not dest.startswith("-"):
+            Path(dest).parent.mkdir(parents=True, exist_ok=True)
+            Path(dest).write_bytes(b"BURN")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+    mocker.patch("fanops.clip.subprocess.run", side_effect=run)
     plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=led.sources["src_1"])
     assert plan.produced is False and Path(plan.vpath).exists()
 
-def test_render_moment_file_cut_success(tmp_path, mocker):
+def test_render_moment_file_cut_success(tmp_path, mocker, monkeypatch):
     from fanops.crosspost import render_moment_file
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
+    monkeypatch.setenv("FANOPS_VISUAL_START", "0")
+    overlay._TEXTFILTER_CACHE = None
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", width=1080, height=1920, duration=120.0))
@@ -230,14 +252,13 @@ def test_render_moment_file_cut_success(tmp_path, mocker):
     from fanops.models import Post, Platform, PostState
     post = Post(id="p1", parent_id="clip_1", account="long", account_id="1", platform=Platform.instagram,
                 caption="c", state=PostState.awaiting_approval)
-    def _cut(led, cfg, moment_id, *, aspect, profile, hook, out_path, top_bias=False):
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True); Path(out_path).write_bytes(b"ACUT")
-        return (True, 12.0)
-    mocker.patch("fanops.crosspost.render_account_cut", side_effect=_cut)
+    captured = {}
+    mocker.patch("fanops.clip.subprocess.run", side_effect=_capturing_run(captured))
     plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=led.sources["src_1"])
-    assert plan.produced is True and Path(plan.vpath).read_bytes() == b"ACUT"
+    assert plan.produced is True and Path(plan.vpath).exists()
+    assert Path(plan.vpath).read_bytes() == b"CUT"
 
-def test_posts_share_moment_profile_not_account_override(tmp_path, mocker):
+def test_posts_share_moment_profile_not_account_override(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_accounts(cfg, [_acct("long", "1", clip_profile="long")])
     led = Ledger.load(cfg)
@@ -250,5 +271,5 @@ def test_posts_share_moment_profile_not_account_override(tmp_path, mocker):
     clip = Clip(id="clip_1", parent_id="mom_1", path=str(base), aspect=Fmt.r9x16, state=ClipState.captioned)
     clip.meta_captions = {s: {"caption": "c", "hashtags": []} for s in ("long/instagram", "long/tiktok")}
     led_obj.add_clip(clip); led_obj.save()
-    led = _run_crosspost(cfg, mocker)
+    led = _run_crosspost(cfg)
     assert {p.clip_profile for p in led.posts.values()} == {"talk"}

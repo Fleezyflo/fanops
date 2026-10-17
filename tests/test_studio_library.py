@@ -1,5 +1,7 @@
 # tests/test_studio_library.py — M1 (structural-hooks): the Studio Library tab (asset-memory surface)
 import io
+import subprocess
+import types
 import pytest
 pytest.importorskip("flask")   # Studio is the optional [studio] extra — skip route tests when Flask is absent
 from fanops.config import Config
@@ -19,6 +21,25 @@ def _seed_mixed(cfg):
                               state=SourceState.catalogued))
 
 
+def _stub_ffprobe(monkeypatch, dims=(1080, 1920, 0.0)):
+    real = subprocess.run
+    w, h, dur = dims
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                return subprocess.CompletedProcess(list(cmd), 0, stdout="video\n", stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout=f"{w}\n{h}\n{dur}\n", stderr="")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+
+
+def _no_spawn(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: types.SimpleNamespace(pid=424242))
+
+
 # ---- read-models ----
 def test_asset_catalog_splits_native_and_third_party(tmp_path):
     cfg = Config(root=tmp_path); _seed_mixed(cfg)
@@ -31,12 +52,12 @@ def test_asset_catalog_fail_open_on_absent_ledger(tmp_path):
     cat = views.asset_catalog(Config(root=tmp_path))
     assert cat["native"] == [] and cat["third_party"] == []
 
-def test_asset_catalog_records_read_failure_not_silent(tmp_path, monkeypatch):
+def test_asset_catalog_records_read_failure_not_silent(tmp_path):
     # fail-open must NOT be silent: a real read failure (vs a genuinely-empty library) must leave a
     # run.log signal, else the operator reads "0 assets" as "nothing uploaded" when the ledger is torn.
     cfg = Config(root=tmp_path)
-    def _boom(_cfg): raise RuntimeError("torn ledger")
-    monkeypatch.setattr(Ledger, "load", _boom)
+    cfg.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.ledger_path.write_bytes(b"not a sqlite database")
     cat = views.asset_catalog(cfg)
     assert cat == {"native": [], "third_party": [],
                    "backlog": {"actionable": 0, "blocked_on_gates": 0, "recoverable": 0, "inventory": 0},
@@ -78,9 +99,9 @@ def test_library_route_renders(tmp_path):
     r = _client(cfg).get("/library")
     assert r.status_code == 200 and b"Asset library" in r.data
 
-def test_library_upload_catalogues_third_party(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
+def test_library_upload_catalogues_third_party(tmp_path, monkeypatch):
+    _stub_ffprobe(monkeypatch)
+    _no_spawn(monkeypatch)
     cfg = Config(root=tmp_path)
     r = _client(cfg).post("/library/upload", data={"files": (io.BytesIO(b"P"), "hold.jpg")},
                           content_type="multipart/form-data")

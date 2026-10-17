@@ -8,6 +8,32 @@ def _sha(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+class _Proc:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+
+
+def _ffprobe(mode="video"):
+    """OS-edge ffprobe: video stream, no stream, or timeout (rc 124 -> has_video_stream None)."""
+    def run(cmd, **kw):
+        joined = " ".join(str(x) for x in cmd)
+        if mode == "timeout":
+            return _Proc("", 124)
+        if "codec_type" in joined:
+            return _Proc("video\n" if mode == "video" else "")
+        if "width" in joined or "duration" in joined:
+            return _Proc("1080\n1920\n5.0\n")
+        return _Proc()
+    return run
+
+
+def _stub_ffprobe(mocker, mode="video"):
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=_ffprobe(mode))
+    mocker.patch("fanops.studio.actions_run.subprocess.Popen", return_value=None)
+
+
 def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
@@ -53,8 +79,7 @@ def test_upload_chunk_offset_mismatch_409(tmp_path, monkeypatch):
 
 def test_upload_chunk_append_and_finalize(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(mocker)
     cfg = Config(root=tmp_path)
     data = b"V" * (512 * 1024)   # 512 KB — within 1 MB cap
     init = actions.upload_init(cfg, "big.mp4", len(data), _sha(data))
@@ -74,7 +99,7 @@ def test_upload_chunk_append_and_finalize(tmp_path, monkeypatch, mocker):
 
 def test_upload_finalize_rejects_sha_mismatch(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    _stub_ffprobe(mocker)
     cfg = Config(root=tmp_path)
     data = b"B" * 2048
     init = actions.upload_init(cfg, "clip.mp4", len(data), _sha(data))
@@ -89,7 +114,7 @@ def test_upload_finalize_rejects_sha_mismatch(tmp_path, monkeypatch, mocker):
 
 
 def test_upload_finalize_probes_before_promote(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=False)
+    _stub_ffprobe(mocker, mode="audio")
     cfg = Config(root=tmp_path)
     data = b"C" * 128
     init = actions.upload_init(cfg, "audio.mp4", len(data), _sha(data))
@@ -102,7 +127,7 @@ def test_upload_finalize_probes_before_promote(tmp_path, mocker):
 
 
 def test_upload_finalize_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=None)
+    _stub_ffprobe(mocker, mode="timeout")
     cfg = Config(root=tmp_path)
     data = b"KEEPME" * 16
     init = actions.upload_init(cfg, "clip.mp4", len(data), _sha(data))
@@ -117,7 +142,7 @@ def test_upload_finalize_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
 
 def test_upload_resume_after_partial(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_UPLOAD_MAX_MB", "1")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    _stub_ffprobe(mocker)
     cfg = Config(root=tmp_path)
     data = b"D" * (512 * 1024)   # 512 KB — within 1 MB cap; resume after partial still exercised
     digest = _sha(data)
@@ -144,8 +169,7 @@ def test_sweep_clears_uploadmeta(tmp_path):
 
 
 def test_upload_route_unchanged_without_js(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(mocker)
     cfg = Config(root=tmp_path)
     r = _client(cfg).post("/run/upload", data={"files": (io.BytesIO(b"VID"), "up.mp4")},
                           content_type="multipart/form-data")

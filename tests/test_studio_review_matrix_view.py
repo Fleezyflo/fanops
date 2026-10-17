@@ -30,13 +30,13 @@ def _seed(cfg):
         led.add_clip(Clip(id="c2", parent_id="m2", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_clip(Clip(id="c0", parent_id="m0", path=str(base), aspect=Fmt.r9x16, state=ClipState.queued))
         # m1: @a IG + @b IG cast; @b TikTok UNCAST (no post → "—")
-        led.add_post(Post(id="p_m1_a", parent_id="c1", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="dryrun://p_m1_a"))
-        led.add_post(Post(id="p_m1_b", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url="dryrun://p_m1_b"))
+        led.add_post(Post(id="p_m1_a", parent_id="c1", account="a", account_id="1", platform=Platform.instagram, caption="A", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m1_a/"))
+        led.add_post(Post(id="p_m1_b", parent_id="c1", account="b", account_id="2", platform=Platform.instagram, caption="B", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m1_b/"))
         # m2: @b on BOTH platforms
-        led.add_post(Post(id="p_m2_bi", parent_id="c2", account="b", account_id="2", platform=Platform.instagram, caption="Bi", state=PostState.awaiting_approval, public_url="dryrun://p_m2_bi"))
-        led.add_post(Post(id="p_m2_bt", parent_id="c2", account="b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval, public_url="dryrun://p_m2_bt"))
+        led.add_post(Post(id="p_m2_bi", parent_id="c2", account="b", account_id="2", platform=Platform.instagram, caption="Bi", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m2_bi/"))
+        led.add_post(Post(id="p_m2_bt", parent_id="c2", account="b", account_id="2", platform=Platform.tiktok, caption="Bt", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m2_bt/"))
         # src0 has its own awaiting post (proves the picker + that default focus is src1, not src0)
-        led.add_post(Post(id="p_m0_a", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="Old", state=PostState.awaiting_approval, public_url="dryrun://p_m0_a"))
+        led.add_post(Post(id="p_m0_a", parent_id="c0", account="a", account_id="1", platform=Platform.instagram, caption="Old", state=PostState.awaiting_approval, public_url="https://www.instagram.com/p/p_m0_a/"))
 
 def _client(cfg):
     from fanops.studio.app import create_app
@@ -64,7 +64,7 @@ def test_matrix_focuses_newest_source_by_default(tmp_path):
 def test_matrix_uncast_channel_renders_dash(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)
     html = _client(cfg).get("/review?view=matrix").data.decode()
-    assert "—" in html                                               # m1 × @b·tiktok is uncast → em-dash cell
+    assert 'class="matrix-cell empty"' in html                       # m1 × @b·tiktok is uncast → empty cell, not a bare em-dash
 
 def test_view_list_renders_legacy_cards_not_matrix(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg)

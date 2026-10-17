@@ -103,6 +103,8 @@
     "tests/test_studio_lifecycle_e2e.py"
   ],
   "src/fanops/errors.py": [
+    "tests/test_fail_open_primitive.py",
+    "tests/test_fail_open_logging_mol67.py",
     "tests/test_cli.py",
     "tests/test_swallow_ratchet.py"
   ],
@@ -155,6 +157,10 @@
     "tests/test_machine_health_severity.py",
     "tests/test_escalation_exits.py",
     "tests/test_health_json.py"
+  ],
+  "src/fanops/ig_hashtag_scrape.py": [
+    "tests/test_ig_hashtag_scrape.py",
+    "tests/test_doctor.py"
   ],
   "src/fanops/ig_safari_shell.py": [
     "tests/test_ig_web_scrape.py",
@@ -417,7 +423,8 @@
     "tests/test_studio_live_library.py"
   ],
   "src/fanops/studio/views_posted.py": [
-    "tests/test_studio_views.py"
+    "tests/test_studio_views.py",
+    "tests/test_fail_open_logging_mol67.py"
   ],
   "src/fanops/studio/views_results.py": [
     "tests/test_studio_views.py"

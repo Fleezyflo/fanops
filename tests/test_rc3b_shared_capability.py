@@ -17,11 +17,45 @@ from fanops.accounts import Accounts
 from fanops.post.run import publish_due, publish_post
 
 
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+        self.headers = {}
+    def json(self):
+        return self._b
+
+
+def _wire_vendor(mocker):
+    """Vendor HTTP only. Real get_poster / _ensure_media / ensure_up run. leftover dryrun:// is not a permalink."""
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [
+                {"id": "h1", "name": "h", "identifier": "instagram-standalone"},
+                {"id": "h1", "name": "h", "identifier": "tiktok"},
+            ])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        u = str(url)
+        if "/media/presign" in u:
+            return _R(200, {"uploadUrl": "https://signed.example/u", "publicUrl": "https://media.zernio.com/x.mp4"})
+        if "zernio.com" in u:
+            return _R(201, {"_id": "z_1"})
+        if "/upload" in u:
+            return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+        return _R(201, {"id": "postiz_1"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
+    mocker.patch("requests.put", return_value=_R(200, {}))
+
+
 @pytest.fixture(autouse=True)
-def _isolate_env(monkeypatch):
+def _isolate_env(monkeypatch, mocker):
     for k in ("FANOPS_LIVE", "FANOPS_POSTER", "POSTIZ_API_KEY", "ZERNIO_API_KEY", "BLOTATO_API_KEY"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setattr("fanops.postiz_lifecycle.ensure_up", lambda cfg: None)   # never start a real stack
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    _wire_vendor(mocker)   # never a real Postiz/Zernio stack; ensure_up is a pytest no-op
     yield
 
 
@@ -41,35 +75,34 @@ def _queued(cfg, platform=Platform.instagram):
     # fails CLOSED, so an orphan post is (correctly) never promotable and the RC-3b parity below could never
     # observe a producer claim. The invariant under test is BACKEND CAPABILITY, not lineage, so the fixture
     # must supply a live lineage and let the backend state be the only variable.
+    f = cfg.clips / "c.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"VIDEO")
     with Ledger.transaction(cfg) as led:
         led.add_moment(Moment(id="m", parent_id="src_1", start=0.0, end=5.0, reason="worth posting",
                               state=MomentState.clipped))
-        led.add_clip(Clip(id="c", parent_id="m", path="/c.mp4", state=ClipState.queued))
+        led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="h", account_id="h1", platform=platform,
                           caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
-                          scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c"))
+                          scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c",
+                          post_type="post", created_at="2026-07-16T13:31:00Z"))
 
 
-def _park_poster(monkeypatch):
-    """A poster that parks in needs_reconcile (the normal fresh-Postiz outcome) — proves the post was CLAIMED
-    without a real network call."""
-    import fanops.post.run as run
-    class _P:
-        def publish(self, led, pid):
-            led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.needs_reconcile})
-            return led
-    monkeypatch.setattr(run, "get_poster", lambda cfg, backend=None: _P())
-    monkeypatch.setattr(run, "_ensure_media", lambda *a, **k: None, raising=False)
+def _assert_not_published(cfg):
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is not PostState.published, (
+        f"leftover dryrun:// must not become published (state={p.state} url={p.public_url!r})")
+    return p
 
 
 # ── 1. permitted to BOTH publish and reconcile ──────────────────────────────────────────────
 def test_live_ready_channel_publishes_and_is_reconcilable(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     _accounts(tmp_path, "postiz"); cfg = Config(root=tmp_path); _queued(cfg)
-    _park_poster(monkeypatch)
     res = publish_due(cfg)
     assert res["not_live_ready"] == 0
-    assert Ledger.load(cfg).posts["p1"].state is not PostState.queued        # CLAIMED (producer ran)
+    p = _assert_not_published(cfg)
+    assert p.state is not PostState.queued        # CLAIMED (producer ran)
     assert cfg.is_live_backend is True                                       # reconcile ENABLED (consumer runs)
 
 
@@ -114,13 +147,13 @@ def test_normalized_backend_value_admitted_symmetrically(tmp_path, monkeypatch):
     # that is the point. An UNRECOVERABLE typo is instead dropped + refused: see test 4.)
     monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("POSTIZ_API_KEY", "k")
     _accounts(tmp_path, "postiz "); cfg = Config(root=tmp_path); _queued(cfg)
-    _park_poster(monkeypatch)                                                 # once admitted, avoid a real network call
     accts = Accounts.load(cfg)
     assert accts.accounts[0].backends == {"instagram": "postiz"}             # S02 repaired the trailing space at load
     assert accts.channel_provider_if_ready("h", Platform.instagram) == "postiz"   # consumer admits
     res = publish_due(cfg)
     assert res["not_live_ready"] == 0
-    assert Ledger.load(cfg).posts["p1"].state is not PostState.queued        # producer claimed -> symmetric admit
+    p = _assert_not_published(cfg)
+    assert p.state is not PostState.queued        # producer claimed -> symmetric admit
     assert cfg.is_live_backend is True                                        # consumer ON too — symmetric
 
 
@@ -157,15 +190,22 @@ def test_existing_submitting_post_not_rewritten_by_the_gate(tmp_path, monkeypatc
     publish_due(cfg)                                                          # iterates queued only
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.submitting and p.submission_id == "fanops_x"  # untouched
+    assert p.state is not PostState.published
 
 
 # ── 9. the refusal introduces NO publish/retry (double-post) path ────────────────────────────
 def test_gate_introduces_no_publish_or_retry_path(tmp_path, monkeypatch, mocker):
     monkeypatch.setenv("FANOPS_LIVE", "1")                                    # cred-less -> refused at claim
     _accounts(tmp_path, "postiz"); cfg = Config(root=tmp_path); _queued(cfg)
-    gp = mocker.patch("fanops.post.run.get_poster")
+    sent = {"n": 0}
+    def boom(url, **kw):
+        sent["n"] += 1
+        raise AssertionError(f"cred-less refuse must not POST: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     publish_due(cfg)
-    gp.assert_not_called()                                                    # no poster -> no double-post, no retry
+    assert sent["n"] == 0
+    assert Ledger.load(cfg).posts["p1"].state is PostState.queued
 
 
 # ── 10. SHARED-PREDICATE PARITY — future edits cannot split producer and consumer again ──────
@@ -194,9 +234,9 @@ def test_producer_consumer_share_one_capability(tmp_path, monkeypatch, backend, 
     # the PRODUCER claims a `submitting` post IFF the same predicate admits — never for a config the
     # consumer refuses. This is the parity a future edit cannot split without turning this red.
     _queued(cfg, platform=plat)
-    _park_poster(monkeypatch)
     publish_due(cfg)
-    claimed = Ledger.load(cfg).posts["p1"].state is not PostState.queued
+    p = _assert_not_published(cfg)
+    claimed = p.state is not PostState.queued
     assert claimed is ready
 
 
@@ -230,9 +270,9 @@ def test_exhaustive_producer_consumer_parity(tmp_path, monkeypatch, is_live, bac
 
     # PRODUCER permission — run the REAL producer; did the queued post enter `submitting` (leave queued)?
     _queued(cfg, platform=plat)
-    _park_poster(monkeypatch)                                # a live-ready channel claims -> parks needs_reconcile
     publish_due(cfg)
-    producer_claim = Ledger.load(cfg).posts["p1"].state is not PostState.queued
+    p = _assert_not_published(cfg)
+    producer_claim = p.state is not PostState.queued
 
     assert producer_claim == consumer_reconcile, (
         f"RC-3b PARITY BROKEN: is_live={is_live} backend={backend!r} postiz_key={postiz_key} "

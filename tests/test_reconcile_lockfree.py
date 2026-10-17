@@ -2,12 +2,22 @@
 OUTSIDE the ledger write lock — only the apply belongs inside a tight transaction. Pre-fix, advance() ran
 reconcile_posts INSIDE its main Ledger.transaction, so each GET held the lock across the network (the
 same contention class #89 removed from publish). The lock-probe poller below proves the property: its
-get_status can acquire the ledger store lock, which is only possible if the poll loop is NOT holding it."""
+GET can acquire the ledger store lock, which is only possible if the poll loop is NOT holding it."""
 import json
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform
 from fanops.pipeline import advance
+
+
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+        self.headers = {}
+    def json(self):
+        return self._b
 
 
 def _persist_parked(cfg, pid="p1", cid="c1"):
@@ -30,16 +40,20 @@ def test_advance_reconciles_with_polls_outside_the_lock(tmp_path, monkeypatch, m
         {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}]}))
     _persist_parked(cfg, pid="p1", cid="c1")
     acquired = {}
+    url = "https://www.instagram.com/reel/abc/"
 
-    def lock_probe_status(sid):
-        with Ledger.load(cfg)._store.lock(timeout=3):       # only succeeds if the poll loop holds no lock
-            acquired[sid] = True
-        return {"status": "published", "publicUrl": "https://insta/p/abc"}
+    def _get(u, **kw):
+        s = str(u)
+        if "zernio_sid_1" in s:
+            with Ledger.load(cfg)._store.lock(timeout=3):       # only succeeds if the poll loop holds no lock
+                acquired["zernio_sid_1"] = True
+            return _R(200, {"status": "published", "publicUrl": url})
+        return _R(200, {"posts": []})
 
-    # advance builds the poller via _default_get_status; swap it for the lock probe (no real network).
-    mocker.patch("fanops.reconcile._default_get_status", return_value=lock_probe_status)
+    mocker.patch("fanops.post.metrics.requests.get", side_effect=_get)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert acquired.get("zernio_sid_1") is True           # the poll ran with the lock free
     assert led.posts["p1"].state is PostState.published   # and the post reconciled
-    assert led.posts["p1"].public_url == "https://insta/p/abc"
+    assert led.posts["p1"].public_url == url
+    assert not (led.posts["p1"].public_url or "").startswith("dryrun://")

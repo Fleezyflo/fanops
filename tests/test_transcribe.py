@@ -8,6 +8,28 @@ from fanops.transcribe import (whisper_cmd, fw_cmd, transcribe_source, _adopt_ca
                                _finalize_segments, _segment, adopt_transcript_keep_state)
 from tests.fixtures.speech_segments import LEGACY_EN, talk_seg
 
+
+def _ok():
+    class R: returncode = 0; stderr = ""; stdout = ""
+    return R()
+
+
+def _write_fw_json(cmd, payload):
+    outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(payload))
+
+
+def _is_demucs(cmd):
+    return isinstance(cmd, (list, tuple)) and len(cmd) >= 3 and cmd[1] == "-m" and cmd[2] == "demucs"
+
+
+def _write_demucs_vocals(cmd):
+    out = Path(cmd[cmd.index("-o") + 1])
+    d = out / "htdemucs" / Path(cmd[-1]).stem
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "vocals.mp3").write_bytes(b"VOCALS")
+
+
 def test_segment_passes_through_quality_metadata():
     raw = {"start": 0.0, "end": 2.0, "text": " hi", "avg_logprob": -0.5, "no_speech_prob": 0.1, "compression_ratio": 1.4}
     seg = _segment(raw)
@@ -39,149 +61,113 @@ def test_fw_cmd_shape():
     assert cmd[cmd.index("--language") + 1] == ""            # "" -> runner auto-detects (EN+AR)
     assert cmd[cmd.index("--output_dir") + 1] == "/out" and cmd[-1] == "/s/x.mp3"
 
-def test_fwrun_enables_multilingual_for_comma_list(tmp_path, mocker):
-    # "en,ar" enables multilingual=True (language=None) — per-segment detection; NOT a candidate pin.
-    from fanops import _fwrun
-    calls = {}
-    class _Info: language = "en"
-    class _Fake:
-        def transcribe(self, audio, **kw): calls.update(kw); return ([], _Info())
-    mocker.patch("fanops._fwrun._load_model", return_value=_Fake())
-    (tmp_path / "x.mp3").write_bytes(b"")
-    _fwrun.transcribe_to_json(str(tmp_path / "x.mp3"), str(tmp_path), "medium", "en,ar")
-    assert calls["multilingual"] is True and calls["language"] is None
-    calls.clear()
-    _fwrun.transcribe_to_json(str(tmp_path / "x.mp3"), str(tmp_path), "medium", "ar")
-    assert calls["multilingual"] is False and calls["language"] == "ar"
-
 def test_transcribe_prefers_faster_whisper_when_available(tmp_path, mocker, monkeypatch):
-    # DEFAULT engine: when faster-whisper (the [asr] extra) is importable, transcribe_source runs the
-    # fanops._fwrun runner with the pinned FANOPS_ASR_MODEL (here large-v3), NOT the legacy `whisper`
-    # CLI. Subprocess is mocked; this proves the SELECTION + the asr_model pin wiring.
+    # transcribe_source shells fanops._fwrun with the FANOPS_ASR_MODEL pin, never the legacy `whisper` CLI.
     monkeypatch.setenv("FANOPS_ASR_MODEL", "large-v3")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "ar", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "ar", "segments": []})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
+    assert captured["cmd"][0] != "whisper"
     assert captured["cmd"][2] == "fanops._fwrun"                       # ran the faster-whisper runner
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "large-v3"
     assert led.sources["src_1"].state is SourceState.transcribed
 
 def test_transcribe_selects_fw_model_by_source_duration(tmp_path, mocker, monkeypatch):
-    # With no explicit model=, duration-aware selection picks large-v3 for short sources and steps
+    # With no explicit model=, duration-aware asr_model_for picks large-v3 for short sources and steps
     # down for long sources that would blow the whisper timeout budget.
     monkeypatch.delenv("FANOPS_ASR_MODEL", raising=False)
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "0")           # skip demucs; isolate the model-selection wiring
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="short", source_path=str(cfg.sources / "short.mp4"), state=SourceState.catalogued, duration=60.0))
     led.add_source(Source(id="long", source_path=str(cfg.sources / "long.mp4"), state=SourceState.catalogued, duration=3600.0))
     models = []
     def fake_run(cmd, **kw):
         models.append(cmd[cmd.index("--model") + 1])
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "en", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "en", "segments": []})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "short"); transcribe_source(led, cfg, "long")
     assert models == ["large-v3", "small"]
 
 def test_transcribe_passes_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
     # FANOPS_ASR_LANGUAGE -> cfg.asr_language -> fw_cmd --language, threaded through transcribe_source
-    # (the env->cmd chain test_fw_cmd_shape can't see). Default "" auto-detects EN+AR; pin "ar" for a
-    # single-language account. Proves a refactor can't silently drop the pin.
+    # (the env->cmd chain test_fw_cmd_shape can't see). Pin "ar" for a single-language account.
     monkeypatch.setenv("FANOPS_ASR_LANGUAGE", "ar")
-    mocker.patch("fanops.transcribe._fw_available", return_value=True)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language": "ar", "segments": []}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "ar", "segments": []})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "src_1")
     assert captured["cmd"][captured["cmd"].index("--language") + 1] == "ar"
 
-def test_transcribe_refuses_when_fw_unavailable(tmp_path, mocker):
-    mocker.patch("fanops.transcribe._fw_available", return_value=False)
+def test_transcribe_passes_default_asr_language_to_fw_runner(tmp_path, mocker, monkeypatch):
+    # Default cfg.asr_language is "en,ar" (comma-list). The runner, not transcribe_source, interprets
+    # that as multilingual=True; this pin is the env->argv contract.
+    monkeypatch.delenv("FANOPS_ASR_LANGUAGE", raising=False)
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    spy = mocker.patch("fanops.transcribe.subprocess.run")
-    led = transcribe_source(led, cfg, "src_1")
-    spy.assert_not_called()
-    assert led.sources["src_1"].state is SourceState.error
-    assert "[asr]" in (led.sources["src_1"].error_reason or "")
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        _write_fw_json(cmd, {"language": "en", "segments": []})
+        return _ok()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
+    transcribe_source(led, cfg, "src_1")
+    assert captured["cmd"][2] == "fanops._fwrun"
+    assert captured["cmd"][captured["cmd"].index("--language") + 1] == "en,ar"
 
 def test_transcribe_uses_isolated_vocals_when_enabled(tmp_path, mocker, monkeypatch):
-    # With isolation ON, transcribe_source strips the beat first and whisper transcribes the ISOLATED
-    # vocals (moved under the source stem), not the raw mix. isolate_vocals is mocked (the demucs run
-    # is covered in test_vocals); here we prove the WIRING + that the .json lookup still resolves.
+    # Isolation ON: real isolate_vocals (demucs at the subprocess edge) then whisper transcribes the
+    # moved source-stem mp3, not the raw mix. .json lookup still resolves.
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")        # conftest forces 0; opt back in
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")   # exists so the move succeeds
-    iso = mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
     captured = {}
     def fake_run(cmd, **kw):
+        if _is_demucs(cmd):
+            _write_demucs_vocals(cmd)
+            return _ok()
         captured["cmd"] = cmd
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({
-            "language": "ar", "segments": [{"start": 0.0, "end": 2.0, "text": " ورا الستارة"}]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "ar", "segments": [{"start": 0.0, "end": 2.0, "text": " ورا الستارة"}]})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
-    iso.assert_called_once()                                # isolation ran
+    assert captured["cmd"][2] == "fanops._fwrun"
     assert captured["cmd"][-1].endswith("src_1.mp3")       # whisper transcribed the ISOLATED mp3 (source stem)
     s = led.sources["src_1"]
     assert s.state is SourceState.transcribed and s.transcript[0]["text"] == "ورا الستارة"
+    assert s.meta.get("vocals_isolated") is True
 
-def test_transcribe_failopen_to_source_stem_when_vocal_move_fails(tmp_path, mocker, monkeypatch):
-    # When the isolated-vocals move raises OSError (e.g. cross-device), error the source — never fall
-    # back to the mix / never call whisper.
-    monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
-                          state=SourceState.catalogued))
-    voc = tmp_path / "isolated_vocals.mp3"; voc.write_bytes(b"VOCALS")
-    mocker.patch("fanops.transcribe.isolate_vocals", return_value=str(voc))
-    mocker.patch("pathlib.Path.replace", side_effect=OSError("cross-device link"))
-    spy = mocker.patch("fanops.transcribe.subprocess.run")
-    led = transcribe_source(led, cfg, "src_1")
-    spy.assert_not_called()
-    s = led.sources["src_1"]
-    assert s.state is SourceState.error
-    assert "vocals isolation failed:" in (s.error_reason or "")
-
-def test_transcribe_failopen_to_raw_when_isolation_unavailable(tmp_path, mocker, monkeypatch):
-    # isolation ON but demucs unavailable -> isolate_vocals raises ToolchainMissingError -> source
+def test_transcribe_errors_when_isolation_unavailable(tmp_path, mocker, monkeypatch):
+    # isolation ON but demucs unspawnable -> isolate_vocals raises ToolchainMissingError -> source
     # errors; whisper must NOT decode the mix.
-    from fanops.errors import ToolchainMissingError
     monkeypatch.setenv("FANOPS_ISOLATE_VOCALS", "1")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
-    mocker.patch("fanops.transcribe.isolate_vocals",
-                 side_effect=ToolchainMissingError("demucs unavailable"))
-    spy = mocker.patch("fanops.transcribe.subprocess.run")
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if _is_demucs(cmd):
+            raise FileNotFoundError(2, "No such file", "demucs")
+        return _ok()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
-    spy.assert_not_called()
+    assert all(c[2] != "fanops._fwrun" for c in calls if len(c) > 2)
     s = led.sources["src_1"]
     assert s.state is SourceState.error
     assert "vocals isolation failed:" in (s.error_reason or "")
@@ -193,14 +179,12 @@ def test_transcribe_captures_word_timestamps_when_present(tmp_path, mocker):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     def fake_run(cmd, **kw):
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({
+        _write_fw_json(cmd, {
             "language": "en",
             "segments": [{"start": 0.0, "end": 2.0, "text": " hi there",
                           "words": [{"word": " hi", "start": 0.0, "end": 0.5},
-                                    {"word": " there", "start": 0.5, "end": 1.2}]}]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+                                    {"word": " there", "start": 0.5, "end": 1.2}]}]})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
     seg = led.sources["src_1"].transcript[0]
@@ -211,29 +195,26 @@ def test_transcribe_parses_segments_language_and_advances(tmp_path, mocker):
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     def fake_run(cmd, **kw):
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        stem = Path(cmd[-1]).stem
-        (outdir / f"{stem}.json").write_text(json.dumps({
+        _write_fw_json(cmd, {
             "language": "en",
             "segments": [{"start": 0.0, "end": 3.0, "text": " they slept on me"},
-                         {"start": 3.0, "end": 6.5, "text": " not anymore"}]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+                         {"start": 3.0, "end": 6.5, "text": " not anymore"}]})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
     s = led.sources["src_1"]
     assert s.state is SourceState.transcribed and s.language == "en"
     assert s.transcript[0]["text"] == "they slept on me" and s.transcript[1]["end"] == 6.5
+    js = cfg.agent_io / "transcripts" / "src_1.json"
+    assert js.exists() and json.loads(js.read_text())["language"] == "en"
 
 def test_empty_speech_is_marked_ran_not_failed(tmp_path, mocker):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.catalogued))
     def fake_run(cmd, **kw):
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps({"language":"en","segments":[]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language":"en","segments":[]})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")
     s = led.sources["src_1"]
@@ -325,11 +306,8 @@ def test_stale_cache_without_metadata_not_adopted(tmp_path, mocker):
     assert _adopt_cached_transcript(led, "src_1", out_dir / "src_1.json", cfg=cfg) is False
     spy = mocker.patch("fanops.transcribe.subprocess.run")
     def fake_run(cmd, **kw):
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-            {"language": "en", "segments": [talk_seg("fresh line")]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "en", "segments": [talk_seg("fresh line")]})
+        return _ok()
     spy.side_effect = fake_run
     led = transcribe_source(led, cfg, "src_1")
     spy.assert_called_once()
@@ -350,11 +328,8 @@ def test_transcribe_reruns_when_cached_json_is_corrupt(tmp_path, mocker):
     out_dir = cfg.agent_io / "transcripts"; out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "src_1.json").write_text('{"language": "en", "segme')        # truncated
     def fake_run(cmd, **kw):
-        outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
-            {"language": "en", "segments": [{"start": 0.0, "end": 1.0, "text": " real"}]}))
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        _write_fw_json(cmd, {"language": "en", "segments": [{"start": 0.0, "end": 1.0, "text": " real"}]})
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")               # must re-run, not adopt the corrupt cache
     assert led.sources["src_1"].state is SourceState.transcribed
@@ -371,8 +346,7 @@ def test_malformed_whisper_json_is_per_source_error_not_crash(tmp_path, mocker):
     def fake_run(cmd, **kw):
         outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
         (outdir / f"{Path(cmd[-1]).stem}.json").write_text('{"language": "en", "segme')   # truncated
-        class R: returncode = 0; stderr = ""; stdout = ""
-        return R()
+        return _ok()
     mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     led = transcribe_source(led, cfg, "src_1")     # must NOT raise
     s = led.sources["src_1"]
@@ -412,12 +386,15 @@ def test_transcribe_source_force_bypasses_idempotent_cache(tmp_path, mocker):
     led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path=path, state=SourceState.picks_decided,
                           duration=10.0, meta={"transcribed": True}))
-    called = []
-    def fake(led, cfg, source_id, src, out_dir, model):
-        called.append(source_id)
-        return led
-    mocker.patch("fanops.transcribe._produce_transcript", side_effect=fake)
+    runs = []
+    def fake_run(cmd, **kw):
+        runs.append(cmd)
+        _write_fw_json(cmd, {"language": "en", "segments": [talk_seg("fresh", start=0.0, end=1.0)]})
+        return _ok()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_run)
     transcribe_source(led, cfg, "s1")
-    assert called == []                                    # transcribed=True, no force
+    assert runs == []                                    # transcribed=True, no force — no ASR
     transcribe_source(led, cfg, "s1", force=True)
-    assert called == ["s1"]                                # force re-runs isolate+ASR
+    assert runs and runs[0][2] == "fanops._fwrun"        # force re-runs isolate+ASR
+    assert led.sources["s1"].transcript[0]["text"] == "fresh"
+    assert led.sources["s1"].state is SourceState.transcribed

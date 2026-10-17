@@ -1,9 +1,10 @@
 {# src/fanops/studio/templates/review.html #}
 {% extends "base.html" %}
+{% from "_term.html" import term %}
 {% block title %}Review{% endblock %}
 {% block body %}
   <h2>Review &amp; approve</h2>
-  <p class="muted">Check the posts you want, then approve — they move to <strong>Schedule</strong> (not live yet). Reject discards.</p>
+  <p class="muted">Check the posts you want, then approve — they move to <strong>Schedule</strong> (not live yet) for each integration{{ term('integration') }}. Reject discards.</p>
   {% include "_review_live.html" %}
   {% include "_review_body.html" %}
   <script src="{{ url_for('static', filename='review.js') }}" defer></script>

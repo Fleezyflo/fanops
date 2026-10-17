@@ -7,7 +7,6 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (Source, Moment, Clip, Post, Platform, PostState, ClipState, MomentState, Fmt)
 from fanops.studio.views_common import REVIEW_FEED_SLICE
-from fanops.timeutil import iso_z
 
 NOW = datetime(2026, 6, 6, 12, 0, tzinfo=timezone.utc)
 
@@ -108,39 +107,33 @@ def test_feed_card_renders_caption_hook_reason(tmp_path):
     assert "pick reason" in html
 
 
-def test_approve_with_edits_promotes_edited(tmp_path, mocker, monkeypatch):
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+def test_approve_with_edits_promotes_edited(tmp_path):
+    # Caption-only (same hook) — no reburn, no _now / render_moment patch.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_feed_card(cfg)
-    from fanops.models import Clip as ClipModel
-    mocker.patch("fanops.clip.render_moment", return_value=(None, ClipModel(
-        id="clip_1", parent_id="m1", path=str(cfg.clips / "clip_1.mp4"), aspect=Fmt.r9x16, state=ClipState.captioned)))
     c = _client(cfg)
     html = c.post("/posts/approve-with-edits/p1?account=a",
-                  data={"caption": "edited cap", "hook": "NEW HOOK"}).data.decode()
+                  data={"caption": "edited cap", "hook": "SCROLL HOOK"}).data.decode()
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.queued
     assert led.posts["p1"].caption == "edited cap"
-    assert led.posts["p1"].edited_at == iso_z(NOW)
-    assert led.moments["m1"].hook == "NEW HOOK"
+    assert led.posts["p1"].edited_at and led.posts["p1"].edited_at.endswith("Z")
+    assert led.moments["m1"].hook == "SCROLL HOOK"
     assert "review-feed" in html or "edited cap" in html
 
 
-def test_approve_with_edits_untouched_no_render(tmp_path, mocker, monkeypatch):
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+def test_approve_with_edits_untouched_no_render(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_feed_card(cfg)
-    rm = mocker.patch("fanops.clip.render_moment")
     c = _client(cfg)
     c.post("/posts/approve-with-edits/p1?account=a",
            data={"caption": "await caption", "hook": "SCROLL HOOK"})
-    rm.assert_not_called()
     led = Ledger.load(cfg)
     assert led.posts["p1"].state is PostState.queued
     assert led.posts["p1"].caption == "await caption"
     assert led.posts["p1"].edited_at is None
+    assert led.moments["m1"].hook == "SCROLL HOOK"
 
 
-def test_approve_with_edits_offbrand_rejected(tmp_path, monkeypatch):
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+def test_approve_with_edits_offbrand_rejected(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_feed_card(cfg)
     res = _client(cfg).post("/posts/approve-with-edits/p1?account=a",
                             data={"caption": "stream now — link in bio", "hook": "SCROLL HOOK"})
@@ -149,13 +142,13 @@ def test_approve_with_edits_offbrand_rejected(tmp_path, monkeypatch):
     assert "off-brand" in html.lower() or "rejected" in html.lower()
 
 
-def test_approve_with_edits_reburn_fail_stays_awaiting(tmp_path, mocker, monkeypatch):
-    monkeypatch.setattr("fanops.studio.actions._now", lambda n=None: NOW)
+def test_approve_with_edits_reburn_fail_stays_awaiting(tmp_path):
+    # Real reburn: missing source file makes ffmpeg fail. Post stays awaiting.
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_feed_card(cfg)
-    mocker.patch("fanops.clip.render_moment", side_effect=RuntimeError("burn failed"))
     html = _client(cfg).post("/posts/approve-with-edits/p1?account=a",
                              data={"caption": "await caption", "hook": "BAD HOOK"}).data.decode()
     assert Ledger.load(cfg).posts["p1"].state is PostState.awaiting_approval
+    assert Ledger.load(cfg).moments["m1"].hook == "SCROLL HOOK"
     assert "burn" in html.lower() or "failed" in html.lower() or "re-burn" in html.lower()
 
 

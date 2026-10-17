@@ -196,9 +196,8 @@ def test_confirm_post_live_tiktok_unconfirmed_on_dead_video(tmp_path, monkeypatc
 
 # ── fanops verify-live: READ-ONLY (the ledger is byte-identical after a run) ────────────────────────────
 
-def test_verify_live_cli_leaves_ledger_byte_identical(tmp_path, monkeypatch):
-    # A verify-live run confirms nothing over the network here (no creds) but must NOT rewrite the ledger:
-    # the on-disk ledger bytes are identical before and after (read-only invariant, acceptance (e)).
+def test_verify_live_cli_leaves_ledger_byte_identical(tmp_path, monkeypatch, capsys):
+    # 0/N confirmed is not a healthy exit. Ledger stays byte-identical (read-only).
     monkeypatch.delenv("META_IG_USER_ID", raising=False)
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)
     from fanops.ledger import Ledger
@@ -208,5 +207,7 @@ def test_verify_live_cli_leaves_ledger_byte_identical(tmp_path, monkeypatch):
     led.save()
     before = cfg.ledger_path.read_bytes()
     rc = cmd_verify_live(cfg)
-    assert rc == 0
+    out = capsys.readouterr().out
+    assert "unconfirmed" in out.lower()
+    assert rc != 0
     assert cfg.ledger_path.read_bytes() == before          # NOT ONE byte changed — read-only

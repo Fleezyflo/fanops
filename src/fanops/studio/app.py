@@ -188,15 +188,20 @@ def create_app(cfg: Config) -> Flask:
         # workflow surfaces (Home + Make/Review/Schedule/Posted); every other endpoint returns {} so `spine` is
         # undefined and base.html renders nothing — no ledger read on Setup/Insights pages or htmx partial swaps.
         # `index` maps to here=None (the spine shows the path but highlights no stage); a non-workflow / None
-        # endpoint (404, partial) hits the sentinel and is skipped. Reads home_status DIRECTLY (fail-open): this
+        # endpoint (404, partial) hits the sentinel and is skipped. Reads home_status DIRECTLY: this
         # runs during error-page renders too, so it must NOT depend on flask.g / a request memo (an app-context
         # access there 500s the error page). On Home that's one extra small lock-free counts read vs the route's —
-        # accepted over fragility; the read is zeroed-not-raised on a torn ledger so the spine never 500s a surface.
+        # accepted over fragility. home_status is fail-closed on ControlFileError; THIS injector is the
+        # error-page owner and must not re-raise into the ControlFileError handler (that 500s /review).
         here = _SPINE_HERE.get(request.endpoint, _SPINE_SKIP)
         if here is _SPINE_SKIP:
             return {}
         from flask import g
-        st = views.home_status(cfg)  # still direct — same fail-open rule as today
+        from fanops.errors import ControlFileError
+        try:
+            st = views.home_status(cfg)
+        except ControlFileError:
+            return {}
         strip = getattr(g, "fanops_system_strip", None)
         if strip is None:
             strip = views.build_system_strip(cfg)

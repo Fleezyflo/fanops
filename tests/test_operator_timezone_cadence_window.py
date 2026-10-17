@@ -108,7 +108,7 @@ def _seed_queued_posts(led: Ledger, clip: Clip, *, n: int, base_iso: str) -> lis
         pid = f"p_{k}"
         led.add_post(Post(id=pid, parent_id=clip.id, account="a", account_id="ia",
                           platform=Platform.instagram, caption="c", state=PostState.queued,
-                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="dryrun://ia"))
+                          scheduled_time=base_iso, media_urls=["file:///clip_1_9x16.mp4"], public_url="https://www.instagram.com/p/ia/"))
         ids.append(pid)
     return ids
 
@@ -145,12 +145,24 @@ def test_reschedule_cadence_2_to_3_hours_jittered(tmp_path, monkeypatch):
 
 
 def test_realistic_cadence_default_off_preserves_m4_floor(tmp_path, monkeypatch):
-    """RED (default-OFF firewall): unset FANOPS_REALISTIC_CADENCE -> cfg.realistic_cadence False ->
-    the M4 30-min floor still applies. Byte-identical behaviour to today; M2 is opt-in."""
+    """Default-OFF: unset FANOPS_REALISTIC_CADENCE -> reschedule_bucket gaps ≥ 30 min (M4 floor)."""
     monkeypatch.delenv("FANOPS_REALISTIC_CADENCE", raising=False)
-    cfg = Config(root=tmp_path)
-    assert hasattr(cfg, "realistic_cadence"), "cfg.realistic_cadence not defined"
+    monkeypatch.setenv("FANOPS_POSTER", "dryrun")
+    cfg = Config(root=tmp_path); _seed_accounts(cfg)
     assert cfg.realistic_cadence is False
+    led = Ledger.load(cfg)
+    clip = _seed_clip(led)
+    yesterday_iso = iso_z(FIXED_DT - timedelta(days=1))
+    n = 2
+    _seed_queued_posts(led, clip, n=n, base_iso=yesterday_iso)
+    led.save()
+    from fanops.studio.actions import reschedule_bucket
+    res = reschedule_bucket(cfg, now=FIXED_DT)
+    assert res.ok is True and res.detail["rescheduled"] == n
+    reloaded = Ledger.load(cfg)
+    dts = sorted(parse_iso(reloaded.posts[f"p_{k}"].scheduled_time) for k in range(n))
+    gaps_min = [(b - a).total_seconds() / 60.0 for a, b in zip(dts, dts[1:])]
+    assert all(g >= 30.0 for g in gaps_min), f"M4 30-min floor violated: gaps_min={gaps_min}"
 
 
 # ────────────────────────────────────────────────────────────────────────────

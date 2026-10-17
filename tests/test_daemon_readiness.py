@@ -1,14 +1,18 @@
 """MOL-354: readiness alarm — plist on disk but launchctl not loaded is ALARM, not neutral off."""
 from __future__ import annotations
-import plistlib, subprocess
+import json, plistlib, subprocess
 from datetime import datetime, timedelta, timezone
 
 from fanops.config import Config
 from fanops import daemon, doctor
+from fanops.log import get_logger
 
 
-def _heartbeat_line(ts: str) -> str:
-    return f"{ts}\theartbeat\tok\n"
+def _loop_heartbeat_json(ts: str) -> str:
+    # Production run.log contract (get_logger JSON): stage=heartbeat AND origin=loop.
+    # daemon._heartbeat_age_s ignores JSON heartbeats without origin=loop (cli._heartbeat).
+    return json.dumps({"ts": ts, "level": "info", "stage": "heartbeat", "unit_id": "-",
+                       "outcome": "ok", "origin": "loop"}, separators=(",", ":")) + "\n"
 
 
 def _fake_launchctl(**spec):
@@ -51,29 +55,34 @@ def test_status_not_installed_when_no_plist_and_not_loaded(tmp_path, monkeypatch
 
 
 def test_status_alive_when_loaded_and_fresh_heartbeat(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     cfg = Config(root=tmp_path)
-    cfg.reports.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(timezone.utc).isoformat()
-    cfg.log_path.write_text(_heartbeat_line(now))
+    get_logger(cfg)("heartbeat", "-", "ok", origin="loop")
+    rec = json.loads(cfg.log_path.read_text().strip().splitlines()[-1])
+    assert rec["stage"] == "heartbeat" and rec["origin"] == "loop"
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
 
     rep = daemon.status(cfg, interval=600)
 
     assert rep["loaded"] is True
     assert rep["verdict"] == "alive"
+    assert rep["heartbeat_age_s"] is not None and rep["heartbeat_age_s"] < 60
+    assert rep["pass_verdict"] == "passes completing"
 
 
 def test_status_stale_when_loaded_and_old_heartbeat(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)
-    old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    cfg.log_path.write_text(_heartbeat_line(old))
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    cfg.log_path.write_text(_loop_heartbeat_json(old))
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(list=(0, '\t"PID" = 1;\n')))
 
     rep = daemon.status(cfg, interval=600)
 
     assert rep["loaded"] is True
     assert "stale" in rep["verdict"]
+    assert rep["heartbeat_age_s"] is not None and rep["heartbeat_age_s"] > 1800
 
 
 def test_doctor_fails_on_unloaded_plist_alarm(tmp_path, monkeypatch):

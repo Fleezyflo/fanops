@@ -54,6 +54,7 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
         _skip_or_fail("needs the [asr] extra (faster-whisper) — no whisper-CLI fallback")
     # Pin tiny so the golden path does not try a >1GB large-v3 download.
     monkeypatch.setenv("FANOPS_ASR_MODEL", _PINNED_WHISPER_MODEL)
+    monkeypatch.setenv("FANOPS_ASR_LANGUAGE", "en")
     cfg = Config(root=tmp_path)
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
@@ -77,16 +78,17 @@ def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypat
     # See tests/test_e2e_transcript_assertion.py for the per-vocoder RED/GREEN proof.
     assert real_transcript_signal(req["transcript"]), \
         f"expected a real, substantive whisper transcript, got: {req['transcript']}"
-    # Robust content anchor: "anymore" is the distinctive tail BOTH `say` and espeak reproduce
-    # (verified against both engines' actual run output) — a content check that isn't vocoder-fragile.
-    joined = " ".join(seg["text"].lower() for seg in req["transcript"])
-    assert "anymore" in joined, f"expected the spoken tail in the transcript, got: {req['transcript']}"
+    from fanops.speech_trust import segment_trusted
+    trusted = [s for s in req["transcript"] if segment_trusted(s, src_lang="en")]
+    assert trusted, f"no full-trust segment: {req['transcript']}"
+    seg = trusted[0]
 
     # answer the PICK gate (pass 1) with a written MomentDecision
     rid = latest_request_id(cfg, "moments", pick_key)
     response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
-        picks=[{"start": 0.0, "end": 6.5, "reason": "the line", "transcript_excerpt": "they slept on me"}]
+        picks=[{"start": float(seg["start"]), "end": float(seg["end"]), "reason": "the line",
+                "transcript_excerpt": (seg.get("text") or "")}]
     ).model_dump_json())
 
     # M1b: ingesting the pick lands picks_decided + opens the per-pick frame-seeing hook gate (real

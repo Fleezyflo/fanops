@@ -9,18 +9,21 @@ from fanops.adjust import classify_outcomes, amplify, retire
 from fanops.moments import ingest_moments
 from fanops.clip import render_aspects_for
 from fanops.models import Fmt
+from tests.fixtures.speech_segments import talk_seg
 
 def _analyzed_post(led, lift, pid, cid, mid, sid):
     if sid not in led.sources:
         led.add_source(Source(id=sid, source_path="/s.mp4", state=SourceState.moments_decided,
-                              duration=30.0, transcript=[{"start":14,"end":18,"text":"they slept on me"}],
+                              duration=30.0, language="en",
+                              transcript=[talk_seg("they slept on me", start=14, end=18),
+                                          talk_seg("second wave line here", start=16, end=30)],
                               signal_peaks=[], meta={"transcribed": True}))
     led.add_moment(Moment(id=mid, parent_id=sid, content_token="14-21", start=14, end=21,
                           reason="punchline + beat drop", transcript_excerpt="they slept on me",
                           state=MomentState.clipped))
     led.add_clip(Clip(id=cid, parent_id=mid, path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://1"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/1/"))
 
 # Retirement now needs a real POOL (adjust._MIN_SCORED_N / _MIN_DISTINCT_SCORES), so every fixture
 # below that asserts on losers carries at least that many distinctly-scored posts. The n=3/n=4 pools
@@ -32,7 +35,7 @@ def _pool(led, pairs, degraded=()):
             metrics["lift_degraded"] = True
         led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
                           platform=Platform.instagram, caption="x",
-                          state=PostState.analyzed, metrics=metrics, public_url="dryrun://c"))
+                          state=PostState.analyzed, metrics=metrics, public_url="https://www.instagram.com/p/c/"))
     return led
 
 # The live shape this ticket was measured against: the whole distribution sits at or under 3.01, so
@@ -47,7 +50,7 @@ def test_classify_excludes_failed_and_ranks_by_lift(tmp_path):
     # a failed post with no lift_score must NOT be classified (FIX F22)
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      metrics={"error": "boom"}, public_url="dryrun://pf"))
+                      metrics={"error": "boom"}, public_url="https://www.instagram.com/p/pf/"))
     # winner_pct=0.5 -> top 4 winners; retire_pct=0.5 -> bottom 4, of which the two under the floor go
     r = classify_outcomes(led, winner_pct=0.5, retire_pct=0.5, lift_floor=20.0)
     assert set(r["winners"]) == {"p1", "p3", "p5", "p6"}
@@ -184,7 +187,7 @@ def test_retire_suppresses_the_lineage_without_relabelling_posts(tmp_path):
     for pid, st in (("pAw", PostState.awaiting_approval), ("pQ", PostState.queued),
                     ("pNR", PostState.needs_reconcile)):
         led.add_post(Post(id=pid, parent_id="cL", account="a", account_id="1", platform=Platform.instagram,
-                          caption="x", state=st, public_url="dryrun://1"))
+                          caption="x", state=st, public_url="https://www.instagram.com/p/1/"))
     led = retire(led, ["pL"])
     assert led.posts["pAw"].state is PostState.awaiting_approval  # stored label UNTOUCHED — no write-time copy
     assert led.posts["pQ"].state is PostState.queued              # ditto: derivation, not relabelling
@@ -209,7 +212,7 @@ def test_amplify_respects_per_source_budget(tmp_path):
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="dryrun://p1"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": 400.0}, public_url="https://www.instagram.com/p/p1/"))
     led = amplify(led, cfg, ["p1"], max_amplify_per_source=3)
     # at the cap, the source is neither re-requested nor state-flipped
     assert led.sources["s1"].state is SourceState.moments_decided
@@ -224,12 +227,15 @@ def test_amplify_preserves_winners_published_lineage(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_source(Source(id="s1", source_path="/s.mp4", state=SourceState.moments_decided, duration=30.0,
-                          transcript=[{"start":14,"end":18,"text":"they slept on me"}], signal_peaks=[]))
+                          language="en",
+                          transcript=[talk_seg("they slept on me", start=14, end=18),
+                                      talk_seg("second wave line here", start=16, end=30)],
+                          signal_peaks=[]))
     led.add_moment(Moment(id="m1", parent_id="s1", content_token="14.00-18.00", start=14, end=18,
                           reason="punchline", transcript_excerpt="they slept on me", state=MomentState.clipped))
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c.mp4", state=ClipState.analyzed))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="dryrun://p1"))
+                      caption="x", state=PostState.published, submission_id="SUB123", metrics={"lift_score":400.0}, public_url="https://www.instagram.com/p/p1/"))
     led = amplify(led, cfg, ["p1"])
     rid = latest_request_id(cfg, "moments", "s1")
     response_path(cfg, "moments", "s1").write_text(MomentDecision(
@@ -289,7 +295,7 @@ def test_classify_winner_never_also_a_loser(tmp_path):
 # ======================= P4(a): account-aware (per-surface) WINNER ranking =======================
 def _ap(led, pid, lift, account="a", platform=Platform.instagram):
     led.add_post(Post(id=pid, parent_id="c", account=account, account_id="1", platform=platform,
-                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="dryrun://c"))
+                      caption="x", state=PostState.analyzed, metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/c/"))
 
 def test_per_surface_lets_a_small_accounts_best_win(tmp_path):
     # A1: @big (6 posts) would crowd @small (2 posts) out of the GLOBAL top winner_pct. per_surface=True
@@ -355,11 +361,32 @@ def test_per_surface_buckets_by_platform_not_just_account(tmp_path):
     on = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0, per_surface=True)
     assert "ig1" in on["winners"] and "tk1" in on["winners"]            # each platform's best wins
 
-def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch, mocker):
-    # A6: cmd_adjust passes cfg.adjust_per_surface into classify_outcomes — only when the flag is on.
+def test_cmd_adjust_threads_per_surface_flag(tmp_path, monkeypatch):
+    # A6: FANOPS_ADJUST_PER_SURFACE=on must reach classify_outcomes. A small-account post that loses
+    # the GLOBAL ranking still wins its own surface and is amplified (request written). Spying
+    # classify_outcomes would green without that write.
     import fanops.cli as cli
-    monkeypatch.chdir(tmp_path); monkeypatch.setenv("FANOPS_ADJUST_PER_SURFACE", "on")
-    cfg = Config(root=tmp_path); Ledger.load(cfg).save()
-    spy = mocker.patch("fanops.cli.classify_outcomes", return_value={"winners": [], "losers": []})
-    cli.cmd_adjust(cfg, 0.3, 0.2, 20.0)
-    assert spy.call_args.kwargs.get("per_surface") is True
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FANOPS_ADJUST_PER_SURFACE", "on")
+    monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+    monkeypatch.setenv("FANOPS_ACCOUNT_CASTING", "0")
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    for pid, lift in [("b1", 300), ("b2", 250), ("b3", 200), ("b4", 150), ("b5", 120), ("b6", 100)]:
+        _ap(led, pid, lift, account="big")
+    _ap(led, "s2", 5, account="small")
+    led.add_source(Source(id="s_small", source_path="/s.mp4", state=SourceState.moments_decided,
+                          duration=30.0, transcript=[{"start": 14, "end": 18, "text": "they slept on me"}],
+                          signal_peaks=[], meta={"transcribed": True}))
+    led.add_moment(Moment(id="m_s1", parent_id="s_small", content_token="14-21", start=14, end=21,
+                          reason="r", transcript_excerpt="they slept on me", state=MomentState.clipped))
+    led.add_clip(Clip(id="c_s1", parent_id="m_s1", path="/c.mp4", state=ClipState.analyzed))
+    led.add_post(Post(id="s1", parent_id="c_s1", account="small", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.analyzed,
+                      metrics={"lift_score": 40}, public_url="https://www.instagram.com/p/s1/"))
+    led.save()
+    glob = classify_outcomes(led, winner_pct=0.3, retire_pct=0.2, lift_floor=20.0)
+    assert "s1" not in glob["winners"]                       # crowded out globally
+    assert cli.cmd_adjust(cfg, 0.3, 0.2, 20.0) == 0
+    again = Ledger.load(cfg)
+    assert again.sources["s_small"].state is SourceState.moments_requested
+    assert request_path(cfg, "moments", "s_small").exists()

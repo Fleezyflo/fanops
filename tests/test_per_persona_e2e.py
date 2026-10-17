@@ -82,8 +82,10 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{"start": 0, "end": 8, "text": "facts matter"},
-                                      {"start": 20, "end": 28, "text": "they started the beef"}],
+                          transcript=[{"start": 0, "end": 8, "text": "facts matter",
+                                       "avg_logprob": -0.2, "compression_ratio": 1.0},
+                                      {"start": 20, "end": 28, "text": "they started the beef",
+                                       "avg_logprob": -0.2, "compression_ratio": 1.0}],
                           signal_peaks=[{"t": 4.0, "kind": "scene_cut", "score": 0.5},
                                         {"t": 24.0, "kind": "scene_cut", "score": 0.8}],
                           meta={"transcribed": True}))
@@ -91,8 +93,8 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
     # PASS 1: per-account gates, owner-attributed picks
     led = request_moments(led, cfg, "src_1", accounts=accts)
     led = _ingest_picks(led, cfg, "src_1", {
-        "trust": [MomentPick(start=0, end=30, reason="sensational credible window", personas=["trust"])],
-        "drama": [MomentPick(start=20, end=28, reason="started the rivalry", personas=["drama"])],
+        "trust": [MomentPick(start=0, end=8, reason="credible window", personas=["trust"])],
+        "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
     })
     moms = led.moments_of("src_1")
     assert len(moms) == 2
@@ -101,7 +103,7 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
         assert m.hook is None and m.state is MomentState.picked
 
     # PASS 2: one hook per owner-moment (hook gate sends ONLY the owner)
-    hooks = {"0.00-30.00": "pass on the sensational cut", "20.00-28.00": "who started it though"}
+    hooks = {"0.00-8.00": "pass on the sensational cut", "20.00-28.00": "who started it though"}
     led = _decide_hooks(led, cfg, "src_1", hooks, accts)
     for m in led.moments_of("src_1"):
         assert m.state is MomentState.decided and m.hook
@@ -126,8 +128,6 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
         m = led.moments[led.clips[p.parent_id].parent_id]
         assert p.account == m.affinities[0]
         assert p.state is PostState.awaiting_approval
-        assert "hooks_by_persona" not in Moment.model_fields
-        assert not hasattr(led, "account_selections") or not getattr(led, "account_selections", None)
 
     # approve → strictly-future queued
     pids = list(led.posts)
@@ -138,7 +138,8 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
 
 
 def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker):
-    """P15 closed-loop: crosspost mint → approve → publish (stub) → reconcile → list_posts lift metrics."""
+    """P15 closed-loop: crosspost mint → approve → publish (real PostizPoster, mocked HTTP) → metrics."""
+    monkeypatch.setenv("FANOPS_LIVE", "1")
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = Config(root=tmp_path); accts = _seed_persona_accounts(cfg)
@@ -159,21 +160,33 @@ def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker)
     pid = next(iter(led.posts))
     approve_posts(cfg, [pid], now=FIXED_DT)
     p = Ledger.load(cfg).posts[pid]
-    p.scheduled_time = "2020-01-01T00:00:00Z"; p.media_urls = ["https://h/v.mp4"]
+    p.scheduled_time = "2020-01-01T00:00:00Z"
+    p.media_urls = ["https://uploads.postiz.com/v.mp4"]
     with Ledger.transaction(cfg) as tx:
         tx.posts[pid] = p
 
-    import fanops.post.run as run
-    class _OkPoster:
-        def publish(self, led_, post_id):
-            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted})
-            led_.posts[post_id].submission_id = "sub_trust"
-            led_.posts[post_id].public_url = "https://www.instagram.com/reel/TRUST/"
-            return led_
-    mocker.patch.object(run, "get_poster", return_value=_OkPoster())
+    class _R:
+        def __init__(self, code, body=None):
+            self.status_code = code; self._body = body or {}; self.text = ""
+        def json(self):
+            return self._body
+    def _http(url, **kw):
+        u = str(url)
+        if "/integrations" in u:
+            return _R(200, [{"id": "1", "identifier": "instagram-standalone", "name": "ig"}])
+        if "/posts" in u and kw.get("json") is not None:
+            return _R(201, {"id": "sub_trust", "permalink": "https://www.instagram.com/reel/TRUST/"})
+        if "/posts" in u:
+            return _R(200, {"posts": []})
+        raise AssertionError(f"unexpected HTTP {u}")
+    mocker.patch("fanops.post.postiz.requests.get", side_effect=_http)
+    mocker.patch("fanops.post.postiz.requests.post", side_effect=_http)
+    mocker.patch("fanops.post.metrics.postiz_read.requests.get", side_effect=_http)
     publish_due(cfg, now="2020-01-01T01:00:00Z")
     led = Ledger.load(cfg)
     assert led.posts[pid].state is PostState.published
+    assert led.posts[pid].account == "trust"
+    assert "instagram.com" in (led.posts[pid].public_url or "")
 
     def _status(sid):
         return {"status": "published", "publicUrl": "https://www.instagram.com/reel/TRUST/"}

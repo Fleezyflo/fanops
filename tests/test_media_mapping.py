@@ -50,37 +50,34 @@ def _led(cfg, posts):
 
 # ---- list_user_media (the read half of identify) -------------------------------------------------
 
-def test_list_user_media_paginates_and_fails_open(tmp_path, monkeypatch):
+def test_list_user_media_paginates(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)
     page1 = _Resp(200, {"data": [{"id": "M1", "permalink": "https://www.instagram.com/reel/AAA/",
                                   "media_product_type": "REELS", "timestamp": "2026-06-30T10:00:00+0000"}],
-                        "paging": {"next": "https://graph.facebook.com/v20.0/ig-123/media?after=CUR"}})
+                        "paging": {"next": f"{cfg.meta_graph_url}/ig-123/media?after=CUR"}})
     page2 = _Resp(200, {"data": [{"id": "M2", "permalink": "https://www.instagram.com/reel/BBB/",
                                   "media_product_type": "REELS", "timestamp": "2026-06-29T10:00:00+0000"}]})
     media = meta_graph.list_user_media(cfg, get=_media_get([page1, page2]))
-    ids = {m["id"] for m in media}
-    assert ids == {"M1", "M2"}                       # both pages walked via paging.next
-    # fail-open: a transport failure yields [] rather than raising
+    assert {m["id"] for m in media} == {"M1", "M2"}          # both pages walked via paging.next
+
+
+def test_list_user_media_http_500_invents_nothing(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path, monkeypatch)
     assert meta_graph.list_user_media(cfg, get=_media_get([_Resp(500, None)])) == []
 
 
-def test_pull_metrics_default_path_skips_feed_enumeration(tmp_path, monkeypatch, mocker):
-    # MOL-790/775: a default pull_metrics pass must NOT call enumerate_scoped_media and must
-    # make zero Meta HTTP (no requests.get). media_id arrives at promotion; post_type at mint.
+def test_pull_metrics_default_path_does_not_stamp_media_id(tmp_path, monkeypatch):
+    # MOL-790/775: media_id arrives at promotion; a default pull with an empty fetch must not
+    # fabricate one. list_posts is the production fetch seam (not a fanops.* setattr).
     from fanops.track import pull_metrics
-    import requests
     cfg = _cfg(tmp_path, monkeypatch)
     led = _led(cfg, [_post("p1", "https://www.instagram.com/reel/AAA/")])
-    enum_spy = mocker.patch("fanops.meta_graph.enumerate_scoped_media", return_value=[])
-    http_spy = mocker.patch.object(requests, "get", side_effect=AssertionError("Meta HTTP on pull path"))
     pull_metrics(led, cfg, list_posts=lambda w: [])
-    assert enum_spy.call_count == 0
-    assert http_spy.call_count == 0
-    assert led.posts["p1"].media_id is None          # no resolution on the default path
+    assert led.posts["p1"].media_id is None
 
 
-def test_cmd_map_media_is_read_only_and_fail_open(tmp_path, monkeypatch, capsys):
-    # `fanops map-media` on a default (no-creds) env: fail-open, exit 0, imports nobody, no crash/network.
+def test_cmd_map_media_no_creds_invents_nothing(tmp_path, monkeypatch, capsys):
+    # `fanops map-media` with no Graph creds: authored media_id stays None (nothing fabricated).
     from fanops.cli import main
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("META_GRAPH_TOKEN", raising=False)
@@ -90,4 +87,4 @@ def test_cmd_map_media_is_read_only_and_fail_open(tmp_path, monkeypatch, capsys)
     led.save()
     assert main(["map-media"]) == 0
     assert "media mapped" in capsys.readouterr().out
-    assert Ledger.load(cfg).posts["p1"].media_id is None    # no creds -> nothing fabricated
+    assert Ledger.load(cfg).posts["p1"].media_id is None

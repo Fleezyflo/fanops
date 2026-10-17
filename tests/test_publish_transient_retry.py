@@ -27,6 +27,20 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
                           submission_id=sub))
 
 
+def test_never_sent_transport_classifies():
+    # Defect D1: never-established vs maybe-sent. ReadTimeout is transient AND maybe-sent.
+    from fanops.post.publish_errors import _is_never_sent_transport
+    assert _is_never_sent_transport(_rq.exceptions.ConnectTimeout("connect timed out")) is True
+    refused = (
+        "HTTPSConnectionPool(host='127.0.0.1', port=5000): Max retries exceeded with url: "
+        "/api/v1/posts (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection "
+        "object>: Failed to establish a new connection: [Errno 61] Connection refused'))"
+    )
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError(refused)) is True
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError("dropped")) is False
+    assert _is_never_sent_transport(_rq.exceptions.ReadTimeout("read timed out")) is False
+
+
 def test_is_transient_publish_error_classifies():
     assert _is_transient_publish_error(_rq.exceptions.ConnectionError("dropped")) is True
     assert _is_transient_publish_error(_rq.exceptions.Timeout("timed out")) is True
@@ -38,21 +52,25 @@ def test_is_transient_publish_error_classifies():
 
 
 def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkeypatch, mocker):
-    # ConnectionError during media ensure → retry → exhausted → failed (re-queueable), NOT needs_reconcile.
+    # ConnectionError during media ensure → retry → exhausted → queued (never-sent), NOT failed.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
     import fanops.post.run as run
     calls = {"n": 0}
-    def boom(*a, **kw):
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].media_urls = []
+    def _post(url, **kw):
         calls["n"] += 1
-        raise _rq.exceptions.ConnectionError("HTTPSConnectionPool(host='zernio.com', port=443): Max retries exceeded")
-    mocker.patch("fanops.post.run._ensure_media", side_effect=boom)
-    mocker.patch("fanops.post.run.time.sleep", return_value=None)   # no real backoff in unit test
+        raise _rq.exceptions.ConnectionError(
+            "HTTPSConnectionPool(host='zernio.com', port=443): Max retries exceeded")
+    mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed, f"expected failed (re-queueable), got {p.state}"
-    assert "connection" in (p.error_reason or "").lower() or "publish failed" in (p.error_reason or "").lower()
+    assert p.state is PostState.queued, f"expected queued, got {p.state}"
+    assert p.error_kind is None
+    assert p.daemon_transient_retry == 0
+    assert (p.error_reason or "").startswith("publish deferred:")
     assert calls["n"] == run._PUBLISH_TRANSIENT_MAX   # retried to exhaustion
 
 
@@ -62,11 +80,17 @@ def test_permanent_4xx_fails_no_retry(tmp_path, monkeypatch, mocker):
     cfg = Config(root=tmp_path)
     _queued(cfg)
     calls = {"n": 0}
-    def boom(*a, **kw):
+    with Ledger.transaction(cfg) as led:
+        led.posts["p1"].media_urls = []
+    class _R:
+        def __init__(self, code, text=""):
+            self.status_code = code; self.text = text
+        def json(self):
+            return {}
+    def _post(url, **kw):
         calls["n"] += 1
-        raise RuntimeError("Zernio upload failed (422) — body withheld")
-    mocker.patch("fanops.post.run._ensure_media", side_effect=boom)
-    mocker.patch("fanops.post.run.time.sleep", return_value=None)
+        return _R(422, text="bad")
+    mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.failed
@@ -74,15 +98,21 @@ def test_permanent_4xx_fails_no_retry(tmp_path, monkeypatch, mocker):
 
 
 def test_idempotency_skips_resubmit_when_submission_id_exists(tmp_path, monkeypatch, mocker):
-    # A post that already has a real submission_id must NOT be re-POSTed on retry/recovery.
+    # A post that already has a real submission_id must NOT be re-POSTed; it stays queued, not stranded submitting.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg, sub="z_existing_1")
-    import fanops.post.run as run
-    mocker.patch("fanops.post.run._ensure_media", return_value=None)
-    gp = mocker.patch.object(run, "get_poster")
+    sent = {"n": 0}
+    def boom(url, **kw):
+        sent["n"] += 1
+        raise AssertionError(f"must not POST when submission_id exists: {url}")
+    mocker.patch("requests.post", side_effect=boom)
+    mocker.patch("requests.get", side_effect=boom)
     _publish_one(cfg, "p1", "zernio")
-    gp.assert_not_called()   # poster.publish never invoked — no double-submit
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "z_existing_1"
+    assert sent["n"] == 0
 
 
 def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkeypatch, mocker):
@@ -100,7 +130,6 @@ def test_zernio_connection_error_retries_before_needs_reconcile(tmp_path, monkey
         calls["n"] += 1
         raise _rq.exceptions.ConnectionError("connection dropped")
     mocker.patch("fanops.post.zernio.requests.post", side_effect=post_side)
-    mocker.patch("fanops.post.zernio.time.sleep", return_value=None)
     ZernioPoster(cfg).publish(led, "p1")
     assert led.posts["p1"].state is PostState.needs_reconcile
     assert calls["n"] == 1

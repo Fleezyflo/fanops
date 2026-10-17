@@ -7,7 +7,7 @@ researched_at after scrape finished. Empty lock = scrape finished with zero
 admits. Caption waits on researched_at.
 
 `shortlist_source_tags` keeps a subset of a closed catalog (off-catalog dies).
-Empty catalog: names the pile from the video. Search verifies the exact name
+Empty catalog: `[]` — never invent. Search verifies the exact name
 (no siblings on the pile). Lock is keep ∩
 positive play_count admits in keep order, cap 12. Optional
 `hydrate_locks_from_known` may write `hydrated_at` + lock from already-used

@@ -19,17 +19,30 @@ def _seed_clip(cfg, *, moment_hook=None):
     clip.meta_captions = {"a/instagram": {"caption": "cap", "hashtags": ["#x"]}}
     led.add_clip(clip); led.save(); return led
 
-def test_hook_source_shared_fallback(tmp_path, mocker):
+def test_hook_source_shared_fallback(tmp_path, mocker, monkeypatch):
     from fanops.crosspost import render_moment_file
     from fanops.models import Post, Platform, PostState
+    monkeypatch.setenv("FANOPS_SMART_FRAMING", "0")
     cfg = Config(root=tmp_path)
     led = _seed_clip(cfg, moment_hook="SHARED")
     clip = next(c for c in led.clips.values())
     src = led.sources["src_1"]
     post = Post(id="p1", parent_id=clip.id, account="a", account_id="1", platform=Platform.instagram,
                 caption="cap", state=PostState.awaiting_approval)
-    mocker.patch("fanops.crosspost.render_account_cut", return_value=(True, 11.5))
-    mocker.patch("fanops.overlay.burn_hook_only", return_value=True)
+
+    def _ffmpeg(cmd, **kw):
+        from pathlib import Path
+        if cmd and not str(cmd[-1]).startswith("-"):
+            out = Path(str(cmd[-1]))
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"X")
+        class R:
+            returncode = 0
+            stdout = "subtitles\ndrawtext\n"
+            stderr = ""
+        return R()
+    mocker.patch("fanops.clip_ffmpeg.subprocess.run", side_effect=_ffmpeg)
+    mocker.patch("fanops.overlay.subprocess.run", side_effect=_ffmpeg)
     plan = render_moment_file(led, cfg, post=post, target_clip=clip, src=src)
     assert plan.hook_source is HookSource.shared_fallback
 

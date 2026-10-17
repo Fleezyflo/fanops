@@ -5,9 +5,15 @@ default, no Blotato dependency). set_env_var is the idempotent .env updater stil
 tab (MUST preserve other keys/secrets); its tests stay here. os.environ mutation is guarded per-test."""
 from __future__ import annotations
 import subprocess
+import threading
+from pathlib import Path
+
+import pytest
 
 from fanops.config import Config
-from fanops import autopilot, daemon
+from fanops.errors import LockBusyError
+from fanops.ledger import _file_lock
+from fanops import autopilot, controlio, daemon
 
 
 def _fake_launchctl(**spec):
@@ -129,6 +135,74 @@ def test_set_env_var_handles_spaces_and_skips_comment(tmp_path):
     assert "# FANOPS_LLM_TRANSPORT=commented" in body          # comment preserved, not treated as the key
     assert "FANOPS_LLM_TRANSPORT=claude" in body
     assert "= cursor" not in body                              # the real (spaced) assignment was updated
+
+
+def test_env_rewrite_keeps_keys_written_while_lock_held(tmp_path):
+    # A lock only around os.replace, or a read taken before the lock, drops THIRD.
+    env = tmp_path / ".env"
+    env.write_text("KEEP=1\n")
+    lock_path = env.with_name(env.name + ".lock")
+
+    def blocked(fn, mutate=None):
+        entered = threading.Event()
+        returned = threading.Event()
+        errors: list[Exception] = []
+
+        def run():
+            entered.set()
+            try:
+                fn()
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                returned.set()
+
+        with _file_lock(lock_path):
+            thread = threading.Thread(target=run)
+            thread.start()
+            assert entered.wait(2.0)                          # the call has started
+            assert not returned.wait(1.0)                     # and has not returned while the lock is held
+            if mutate is not None:
+                mutate()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert errors == []
+
+    blocked(
+        lambda: autopilot.set_env_var(env, "OTHER", "2"),
+        mutate=lambda: env.write_text("KEEP=1\nTHIRD=3\n"),
+    )
+    body = env.read_text()
+    assert "KEEP=1" in body and "THIRD=3" in body and "OTHER=2" in body
+
+    blocked(lambda: autopilot.unset_env_var(env, "OTHER"))
+    body = env.read_text()
+    assert "OTHER" not in body
+    assert "KEEP=1" in body and "THIRD=3" in body
+
+
+def test_env_rewrite_writes_via_write_text_atomic_inside_lock(tmp_path, monkeypatch):
+    # A fixed `.env.tmp` shared by every writer is replaced by controlio's unique temp, and the
+    # write happens while `<name>.lock` is still held (a probe on a second fd must find it busy).
+    env = tmp_path / ".env"
+    env.write_text("KEEP=1\n")
+    lock_path = env.with_name(env.name + ".lock")
+    calls: list[Path] = []
+
+    def spy(p, text, **kw):
+        with pytest.raises(LockBusyError):
+            with _file_lock(lock_path, timeout=0):
+                pass
+        calls.append(p)
+        controlio.write_text_atomic(p, text, **kw)
+
+    monkeypatch.setattr(autopilot, "write_text_atomic", spy)
+    autopilot.set_env_var(env, "OTHER", "2")
+    autopilot.unset_env_var(env, "OTHER")
+    assert calls == [env, env]
+    assert env.read_text() == "KEEP=1\n"
+    assert (env.stat().st_mode & 0o777) == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
 # ── autopilot — installs the daemon + reports readiness; NEVER writes FANOPS_RESPONDER ──────────

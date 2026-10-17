@@ -1,4 +1,3 @@
-from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, Clip, Post, SourceState, ClipState, PostState, Platform
@@ -19,7 +18,7 @@ def _arm_posts(led, arm_id, hook, lift, n, *, account="a", account_id="1", platf
         pid = f"{arm_id}_{i}"
         led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
                           platform=platform, caption="x", state=PostState.analyzed,
-                          metrics={"lift_score": lift}, public_url=f"dryrun://{pid}"))
+                          metrics={"lift_score": lift}, public_url=f"https://www.instagram.com/p/{pid}/"))
 
 
 def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform=Platform.instagram, metrics=None):
@@ -32,16 +31,16 @@ def _variant_post(led, pid, hook, lift, *, account="a", account_id="1", platform
     led.add_post(Post(id=pid, parent_id=cid, account=account, account_id=account_id,
                       platform=platform, caption="x", state=PostState.analyzed,
                       metrics=(metrics if metrics is not None else {"lift_score": lift}),
-                      public_url=f"dryrun://{pid}"))
+                      public_url=f"https://www.instagram.com/p/{pid}/"))
 
 
-def test_write_digest_failopen_on_oserror(tmp_path, monkeypatch):
+def test_write_digest_failopen_on_oserror(tmp_path):
     # OPERATIONAL: the digest is a convenience artifact written AFTER the ledger is already committed.
     # An OSError on its write (disk full / permissions) must NOT abort advance()/the CLI verb — it
     # fails open like _archive_published. Otherwise the daemon exits non-zero and launchd respins it.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    def boom(self, *a, **k): raise OSError("No space left on device")
-    monkeypatch.setattr(Path, "write_text", boom)
+    cfg.digest_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.digest_path.mkdir()                               # OS edge: write_text on a directory -> OSError
     write_digest(led, cfg)                                # must NOT raise (fail-open)
 
 def test_counts_holds_failures(tmp_path):
@@ -51,7 +50,7 @@ def test_counts_holds_failures(tmp_path):
     led.add_clip(Clip(id="c1", parent_id="m1", path="/c", state=ClipState.held, held=True, held_reason="begging"))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.failed,
-                      error_reason="blotato 422", public_url="dryrun://p1"))
+                      error_reason="blotato 422", public_url="https://www.instagram.com/p/p1/"))
     md = render_digest(led, cfg)
     assert "# FAN OPS Ledger Digest" in md
     assert "Sources" in md and "transcribed" in md
@@ -107,7 +106,7 @@ def test_empty_ledger_digest_has_no_sections(tmp_path):
 def test_none_reason_renders_fallback(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pf", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="dryrun://pf"))  # error_reason None
+                      platform=Platform.instagram, caption="x", state=PostState.failed, public_url="https://www.instagram.com/p/pf/"))  # error_reason None
     md = render_digest(led, cfg)
     assert "Failures" in md and "(no reason given)" in md and "None" not in md.split("Failures")[1]
 
@@ -115,10 +114,10 @@ def test_published_unmeasured_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     # a published post with NO metrics -> surfaced; a published post WITH metrics -> not
     led.add_post(Post(id="pm", parent_id="c", account="a", account_id="1",
-                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="dryrun://pm"))  # no metrics
+                      platform=Platform.instagram, caption="x", state=PostState.published, public_url="https://www.instagram.com/p/pm/"))  # no metrics
     led.add_post(Post(id="pok", parent_id="c", account="a", account_id="1",
                       platform=Platform.tiktok, caption="y", state=PostState.published,
-                      metrics={"saves": 5, "lift_score": 20.0}, public_url="dryrun://pok"))
+                      metrics={"saves": 5, "lift_score": 20.0}, public_url="https://www.instagram.com/p/pok/"))
     md = render_digest(led, cfg)
     assert "Published but unmeasured" in md
     assert "`pm`" in md.split("Published but unmeasured")[1]
@@ -223,21 +222,6 @@ def test_digest_variant_shows_gate_state(tmp_path):
     assert "learning ACTIVE" in a_line and "gathering data" not in a_line
     assert "gathering data" in b_line and "learning ACTIVE" not in b_line
 
-def test_digest_variant_gate_state_failopen(tmp_path, monkeypatch):
-    # FAIL-OPEN: a raising best_hooks must NOT lose the whole "Lift by variant" section (a learning
-    # failure can never degrade the operator's observability). The lift rows still render; the
-    # gate-state annotation simply degrades to "gathering data" (the safe/closed default).
-    from fanops.config import Config
-    from fanops.ledger import Ledger
-    from fanops.digest import render_digest
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
-    monkeypatch.setattr("fanops.digest.best_hooks",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    out = render_digest(led, cfg)                       # must NOT raise
-    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive the error
-    assert "gathering data" in out.split("Lift by variant")[1]            # safe default annotation
-
 def test_needs_reconcile_surfaced(tmp_path):
     # AUDIT C1: a post parked in needs_reconcile (ambiguous publish failure — may be live on the
     # platform) MUST surface so a human verifies via GET /v2/posts/:id before any resubmit. It is
@@ -245,7 +229,7 @@ def test_needs_reconcile_surfaced(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="prec", parent_id="c", account="a", account_id="1",
                       platform=Platform.twitter, caption="x", state=PostState.needs_reconcile,
-                      error_reason="blotato 503: ambiguous, may be live", public_url="dryrun://prec"))
+                      error_reason="blotato 503: ambiguous, may be live", public_url="https://www.instagram.com/p/prec/"))
     md = render_digest(led, cfg)
     assert "Needs reconcile" in md
     section = md.split("Needs reconcile")[1]
@@ -289,22 +273,6 @@ def test_digest_variant_ucb_shows_pick(tmp_path, monkeypatch):
     assert "UCB" in section and "NEW" in section            # the bandit verdict is surfaced
     a_line = [ln for ln in section.splitlines() if "a/instagram" in ln][0]
     assert "UCB" in a_line and "NEW" in a_line              # on the right surface line
-
-def test_digest_variant_ucb_failopen(tmp_path, monkeypatch):
-    # FAIL-OPEN: a raising ucb_rank must not lose the "Lift by variant" section -> degrade to
-    # "gathering data" (safe default); the lift rows still render.
-    monkeypatch.setenv("FANOPS_VARIANT_LEARNING", "1")
-    monkeypatch.setenv("FANOPS_VARIANT_UCB", "1")
-    monkeypatch.setattr("fanops.digest.ucb_rank",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    from fanops.config import Config
-    from fanops.ledger import Ledger
-    from fanops.digest import render_digest
-    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _variant_post(led, "a0", "HOOK A", 80.0, account="a", account_id="1")
-    out = render_digest(led, cfg)                          # must NOT raise
-    assert "Lift by variant" in out and "HOOK A" in out and "80" in out   # rows survive
-    assert "gathering data" in out.split("Lift by variant")[1]            # safe default on error
 
 def test_digest_variant_ucb_off_keeps_v2_wording(tmp_path, monkeypatch):
     # UCB OFF -> the v2 "learning ACTIVE"/"gathering data" wording is UNCHANGED (no "UCB ->" string).

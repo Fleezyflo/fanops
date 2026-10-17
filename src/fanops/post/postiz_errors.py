@@ -7,13 +7,12 @@ stack's own Postgres: `"Post".error` holds the Temporal failure envelope with th
 inside. This module is that read — ONE `docker exec … psql` SELECT per reconcile pass, batched over
 the failed submission ids — plus the parser that turns the stored text into (ErrorKind, short reason).
 
-Fail-open BY DESIGN, never silent: no docker binary, a remote (non-self-host) stack, a renamed
-container, a timeout, a nonzero exit, or an unparseable row each degrade to {} — reconcile then
-stamps exactly what it stamped before this module existed ("no detail") and logs the shortfall
-(its `error_detail` event carries failed=N vs detailed=M). Never raises. Read-only: one SELECT.
+Fail-open BY DESIGN for absence: no docker binary, no ids, or an unparseable row each degrade
+to {}. A hung `docker exec` (TimeoutExpired) and a nonzero docker/psql exit raise — those are
+not success-empty. Read-only: one SELECT.
 
 Container/user/db names are the official Postiz self-host compose defaults (match the live stack,
-verified 2026-08-10). A renamed deployment degrades to {} rather than growing config surface.
+verified 2026-08-10).
 """
 from __future__ import annotations
 
@@ -52,7 +51,9 @@ def _docker_bin() -> str | None:
 
 
 def fetch_error_details(sids) -> dict[str, str]:
-    """{submission_id: raw stored error text} for the ids Postgres knows — {} on any guard rail."""
+    """{submission_id: raw stored error text} for the ids Postgres knows.
+    {} when there is nothing to look up (no ids / no docker). TimeoutExpired propagates;
+    nonzero docker/psql exit raises RuntimeError — neither is success-empty."""
     ids = sorted({s for s in (sids or []) if isinstance(s, str) and _SID_RE.fullmatch(s)})
     if not ids:
         return {}
@@ -70,10 +71,11 @@ def fetch_error_details(sids) -> dict[str, str]:
         proc = subprocess.run(
             [docker, "exec", _PG_CONTAINER, "psql", "-U", _PG_USER, "-d", _PG_DB, "-t", "-A", "-c", sql],
             capture_output=True, text=True, timeout=_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except (OSError, ValueError):
         return {}
     if proc.returncode != 0:
-        return {}
+        tail = ((proc.stderr or proc.stdout or "").strip() or "no output")[:200]
+        raise RuntimeError(f"postiz error lookup failed (rc={proc.returncode}): {tail}")
     wanted = set(ids)
     out: dict[str, str] = {}
     for line in (proc.stdout or "").splitlines():

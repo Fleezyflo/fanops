@@ -53,12 +53,13 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 import requests
 from fanops.config import Config
-from fanops.errors import ZernioAuthError, fail_open, redact
+from fanops.errors import ZernioAuthError, redact
 from fanops.ledger import Ledger
 from fanops.log import get_logger
 from fanops.models import ErrorKind, PostState, error_kind_for_http_status
 from fanops.text import safe_public_url
 from fanops.post.compress import maybe_shrink_for_cap
+from fanops.post.publish_errors import _is_never_sent_transport
 from fanops.post.zernio_outcome import (Created, IdempotentReplay, ReconciliationRequired, TerminalFailure,
                                         ZernioCreateResult)
 
@@ -252,21 +253,6 @@ def _fits_deadline(started: float, wait: float) -> bool:
     """True when sleeping `wait` still leaves the NEXT SEND inside _RETRY_DEADLINE_S. monotonic-based, so a
     wall-clock jump can neither extend nor collapse the budget."""
     return (time.monotonic() - started) + wait < _RETRY_DEADLINE_S
-
-
-def _breadcrumb(cfg: Config, post_id: str, outcome: str):
-    """Adapt `errors.fail_open`'s printf-style `log` onto the HOUSE run.log channel.
-
-    fail_open defaults to `_log.warning`, i.e. stderr — but run.log is where the operator actually looks, so
-    a parse failure that only reaches stderr is a breadcrumb nobody reads. fail_open calls
-    `log(fmt, site, type(exc).__name__, str(exc)[:200], exc_info=True)`; we keep the exception TYPE plus a
-    bounded, redacted message and drop the traceback (run.log is single-line JSON). The message is redacted
-    even though a JSONDecodeError carries only a position, never document content — the sink is the ledger's
-    neighbour and the rule is redact-then-truncate, not "reason about whether this one can leak"."""
-    def _log(_fmt="", site="", exc_type="", exc_str="", **_kw):
-        get_logger(cfg)("publish", post_id, outcome, site=str(site)[:60],
-                        err=f"{exc_type}: {redact(str(exc_str), cfg.zernio_api_key, limit=120)}")
-    return _log
 
 
 def _tiktok_settings() -> dict:
@@ -490,8 +476,8 @@ class ZernioPoster:
 
     def _create(self, post, led: Ledger) -> ZernioCreateResult:
         """ONE create attempt (with its bounded, in-window retries) -> a typed result. PRIVATE: the result
-        never leaves this class. Raises ONLY ZernioAuthError, which must halt the whole run rather than burn
-        one post (a bad key fails every post).
+        never leaves this class. Raises ZernioAuthError (halt the run — a bad key fails every post) and
+        never-established transport (ConnectTimeout / refused / DNS), which `_publish_one` already classifies.
 
         Every send carries the SAME x-request-id, so a retry after a lost response, a 429, or a crash is a
         REPLAY (HTTP 200 + existingPost), not a second post. Every boundary where the request MAY have
@@ -514,15 +500,17 @@ class ZernioPoster:
             try:
                 resp = requests.post(f"{self.base}/posts", headers=headers, json=payload, timeout=_CREATE_TIMEOUT)
             except requests.exceptions.RequestException as exc:
-                if isinstance(exc, requests.exceptions.ConnectTimeout):
+                if isinstance(exc, requests.exceptions.ConnectTimeout) or (
+                    _is_never_sent_transport(exc) and not sent_any
+                ):
                     # The connection was never established, so THIS attempt sent nothing. Retry inside the
-                    # deadline; past it the verdict depends on whether an EARLIER attempt reached Zernio.
+                    # deadline; past it re-raise so `_publish_one` queues. If an earlier attempt may have
+                    # reached Zernio, park instead.
                     wait = delay + random.uniform(0, delay)
                     if attempt < _MAX_RETRIES - 1 and _fits_deadline(started, wait):
                         time.sleep(wait); delay *= 2; continue
                     if not sent_any:
-                        return TerminalFailure("connect_timeout",
-                                               f"could not connect after {attempt + 1} attempt(s); nothing was sent")
+                        raise
                     return ReconciliationRequired("connect_timeout_after_send",
                                                   f"an earlier attempt reached Zernio and this one could not re-check "
                                                   f"within {_RETRY_DEADLINE_S:.0f}s — may be live")
@@ -546,9 +534,14 @@ class ZernioPoster:
                 parsed: ZernioCreateResult | None = None
                 body = None
                 self._create_2xx_body = None
-                with fail_open("zernio.create.parse", log=_breadcrumb(self.cfg, post.id, "zernio_2xx_body_unparsed")):
+                try:
                     body = resp.json()
                     parsed = _parse_create_body(body)
+                except Exception as exc:
+                    get_logger(self.cfg)("publish", post.id, "zernio_2xx_body_unparsed",
+                                        site="zernio.create.parse",
+                                        err=f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=120)}")
+                    parsed = None
                 if isinstance(parsed, (Created, IdempotentReplay)):
                     self._create_2xx_body = body
                     return parsed
@@ -566,12 +559,16 @@ class ZernioPoster:
                 # A 409 must park whatever its body looks like — but the parse failure is NOT swallowed:
                 # "Zernio named no post" and "Zernio may have named one we could not read" are DIFFERENT
                 # facts, and only the second means the operator is missing a pointer that actually exists.
-                # `read` is the sentinel that keeps them apart: fail_open swallows, so cand=None alone is
-                # ambiguous between the two.
+                # `read` is the sentinel that keeps them apart: cand=None alone is ambiguous
+                # between "named no post" and "named one we could not read".
                 cand, read = None, False
-                with fail_open("zernio.409.parse", log=_breadcrumb(self.cfg, post.id, "zernio_409_body_unparsed")):
+                try:
                     cand = _extract_409_candidate(resp.json())
                     read = True
+                except Exception as exc:
+                    get_logger(self.cfg)("publish", post.id, "zernio_409_body_unparsed",
+                                        site="zernio.409.parse",
+                                        err=f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=120)}")
                 unread = "" if read else " (409 body unreadable — a candidate may exist but could not be read)"
                 return ReconciliationRequired("duplicate_content_409",
                                               "Zernio reports duplicate content in its 24h window — identity UNPROVEN, "
@@ -593,9 +590,14 @@ class ZernioPoster:
             if resp.status_code == 207:
                 parsed: ZernioCreateResult | None = None
                 body = None
-                with fail_open("zernio.207.parse", log=_breadcrumb(self.cfg, post.id, "zernio_207_body_unparsed")):
+                try:
                     body = resp.json()
                     parsed = _parse_create_body(body)
+                except Exception as exc:
+                    get_logger(self.cfg)("publish", post.id, "zernio_207_body_unparsed",
+                                        site="zernio.207.parse",
+                                        err=f"{type(exc).__name__}: {redact(str(exc), self.cfg.zernio_api_key, limit=120)}")
+                    parsed = None
                 if isinstance(parsed, (Created, IdempotentReplay)):
                     self._create_2xx_body = body if isinstance(body, dict) else None
                     return parsed
@@ -620,7 +622,8 @@ class ZernioPoster:
             post = led.posts[post_id]
             post.submission_id = result.post_id
             if self._create_2xx_body is not None:
-                post.public_url = safe_public_url(_extract_zernio_permalink(self._create_2xx_body)) or post.public_url
+                post.public_url = (safe_public_url(_extract_zernio_permalink(self._create_2xx_body))
+                                   or safe_public_url(post.public_url))
             self._create_2xx_body = None
             if isinstance(result, IdempotentReplay):
                 # The ONLY behavioral difference from Created: an audit trail. A replay means a send DID

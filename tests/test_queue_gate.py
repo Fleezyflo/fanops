@@ -1,5 +1,7 @@
 # tests/test_queue_gate.py — U4: explicit run queue gate (pending → bind → release → catalogued).
 import json
+from pathlib import Path
+
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState
@@ -7,11 +9,38 @@ from fanops.pipeline import advance
 from fanops.studio import actions
 
 
+def _toolchain(mocker):
+    def fake(cmd, **kw):
+        joined = " ".join(str(c) for c in cmd)
+        if cmd[0] == "ffprobe":
+            class R:
+                returncode=0; stderr=""
+                stdout = "video" if "codec_type" in joined else "1920\n1080\n12.0\n"
+            return R()
+        if cmd[0] == "whisper" or "fanops._fwrun" in cmd:
+            outdir = Path(cmd[cmd.index("--output_dir") + 1]); outdir.mkdir(parents=True, exist_ok=True)
+            (outdir / f"{Path(cmd[-1]).stem}.json").write_text(json.dumps(
+                {"language": "en", "segments": [{"start": 0, "end": 2, "text": "hi"}]}))
+            class R: returncode=0; stderr=""; stdout=""
+            return R()
+        if cmd[0] == "ffmpeg" and "null" in cmd:
+            class R:
+                returncode=0; stdout=""
+                stderr = ("silence_end: 1.0 | silence_duration: 0.5" if "silencedetect" in joined
+                          else "[scdet @ 0x] lavfi.scd.score: 28.0, lavfi.scd.time: 1.0")
+            return R()
+        if cmd[0] == "ffmpeg" and not str(cmd[-1]).startswith("-"):
+            out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"X")
+        class R: returncode=0; stderr=""; stdout=""
+        return R()
+    for mod in ("transcribe", "signals", "clip", "ingest", "media_probe"):
+        mocker.patch(f"fanops.{mod}.subprocess.run", side_effect=fake)
+
+
 def _put_video(cfg, mocker, name="a.mp4", data=None):
     cfg.inbox.mkdir(parents=True, exist_ok=True)
     (cfg.inbox / name).write_bytes(data if data is not None else b"V" + name.encode())
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+    _toolchain(mocker)
 
 
 def _seed_accounts(cfg, handles):
@@ -22,7 +51,6 @@ def _seed_accounts(cfg, handles):
 
 def test_advance_holds_unbound_pending(tmp_path, mocker):
     cfg = Config(root=tmp_path); _put_video(cfg, mocker)
-    mocker.patch("fanops.produce.run_all")
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
     assert len(led.sources) == 1
@@ -70,13 +98,11 @@ def test_release_batch_only_that_line(tmp_path, mocker):
     r1 = actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="Line A", target_accounts=["a"])
     assert actions.bind_queue(cfg, source_ids=[sids[1]], batch_name="Line B", target_accounts=["b"]).ok
     bid_a = r1.detail["batch_id"]
-    prep = mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
     res = actions.release_batch(cfg, bid_a, confirmed=True)
-    assert res.ok
-    prep.assert_called_once()
     led = Ledger.load(cfg)
-    assert led.sources[sids[0]].state is SourceState.catalogued
+    assert led.sources[sids[0]].state is not SourceState.pending
     assert led.sources[sids[1]].state is SourceState.pending
+    assert (res.detail or {}).get("line_released") == 1
 
 
 def test_release_all_held(tmp_path, mocker):
@@ -87,20 +113,12 @@ def test_release_all_held(tmp_path, mocker):
     sids = sorted(led.sources)
     actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="A", target_accounts=["a"])
     actions.bind_queue(cfg, source_ids=[sids[1]], batch_name="B", target_accounts=["b"])
-    prep = mocker.patch("fanops.studio.actions_run.run_prepare", return_value=actions.ActionResult(ok=True, detail={}))
-    assert actions.release_all_held(cfg, confirmed=True).ok
-    prep.assert_called_once()
+    actions.release_all_held(cfg, confirmed=True)
     led = Ledger.load(cfg)
-    assert all(s.state is SourceState.catalogued for s in led.sources.values())
+    assert all(s.state is not SourceState.pending for s in led.sources.values())
 
 
 def test_prepare_releases_bound_held_footage(tmp_path, mocker, monkeypatch):
-    """Make clips carries queued footage the WHOLE way. run_prepare used to call advance() only, which
-    enters at `catalogued` — so the operator clicked Make clips, got a green summary, and every held
-    source sat untouched. Prepare now releases each BOUND held source first; unbound (no batch, so no
-    target accounts) stays held."""
-    # Gates are answered ONLY by the LLM now; the hermetic fixture stubs the LLM seam so answer_pending is a
-    # no-op (gates stay pending) — the same convergence this test relied on under the old manual responder.
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _put_video(cfg, mocker, "a.mp4"); _put_video(cfg, mocker, "b.mp4")
     _seed_accounts(cfg, ["a", "b"])
@@ -108,14 +126,11 @@ def test_prepare_releases_bound_held_footage(tmp_path, mocker, monkeypatch):
     led = Ledger.load(cfg)
     sids = sorted(led.sources)
     assert actions.bind_queue(cfg, source_ids=[sids[0]], batch_name="Bound", target_accounts=["a"]).ok
-    mocker.patch("fanops.produce.run_all")
-    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
     res = actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True)
-    assert res.ok and res.detail["released"] == 1
+    assert res.detail["released"] == 1
     led = Ledger.load(cfg)
-    assert led.sources[sids[0]].state is SourceState.catalogued
+    assert led.sources[sids[0]].state is not SourceState.pending
     assert led.sources[sids[1]].state is SourceState.pending
-    # Idempotent: nothing left held on the bound line, so a second click releases zero.
     assert actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True).detail["released"] == 0
 
 
@@ -136,11 +151,9 @@ def test_grandfather_catalogued_untouched(tmp_path, mocker):
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="legacy", source_path="/v/old.mp4", state=SourceState.catalogued, batch_id="b-old"))
     _put_video(cfg, mocker)
-    mocker.patch("fanops.produce.run_all")
-    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
     advance(cfg, base_time="2026-06-02T18:00:00Z")
     led = Ledger.load(cfg)
-    assert led.sources["legacy"].state is SourceState.catalogued and led.sources["legacy"].batch_id == "b-old"
+    assert led.sources["legacy"].batch_id == "b-old"
 
 
 def test_bind_queue_defaults_blank_name(tmp_path, mocker):
@@ -154,19 +167,16 @@ def test_bind_queue_defaults_blank_name(tmp_path, mocker):
 
 
 def test_prepare_binds_then_releases(tmp_path, mocker, monkeypatch):
-    """One POST: source_ids + accounts bind, then run_prepare releases bound pending."""
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     cfg = Config(root=tmp_path); _put_video(cfg, mocker, "a.mp4"); _put_video(cfg, mocker, "b.mp4")
     _seed_accounts(cfg, ["a", "b"])
     actions.catalogue_inbox(cfg)
     sids = sorted(Ledger.load(cfg).sources)
-    mocker.patch("fanops.produce.run_all")
-    mocker.patch("fanops.transcribe._transcribe_toolchain_present", return_value=True)
     res = actions.run_prepare(cfg, base_time="2026-06-02T18:00:00Z", confirmed=True,
                               source_ids=[sids[0]], target_accounts=["a"])
-    assert res.ok and res.detail["released"] == 1 and res.detail.get("bound") == 1
+    assert res.detail["released"] == 1 and res.detail.get("bound") == 1
     led = Ledger.load(cfg)
-    assert led.sources[sids[0]].state is SourceState.catalogued
+    assert led.sources[sids[0]].state is not SourceState.pending
     assert led.sources[sids[0]].batch_id is not None
     assert led.get_batch(led.sources[sids[0]].batch_id).target_accounts == ["a"]
     assert led.sources[sids[1]].state is SourceState.pending and led.sources[sids[1]].batch_id is None

@@ -8,7 +8,7 @@ import fanops.config as cfgmod
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Platform, Fmt, PLATFORM_ASPECT, PLATFORM_MAX_SECONDS, Post, Source, Moment, Clip, ClipState, MomentState
-from fanops.post.postiz import build_postiz_payload, PostizPoster, PostizIntegration
+from fanops.post.postiz import build_postiz_payload, PostizPoster
 
 
 def _yt_post(**kw):
@@ -20,18 +20,27 @@ def _yt_post(**kw):
     base.update(kw)
     return Post(**base)
 
+
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code; self._b = {} if body is None else body; self.text = text
+    def json(self):
+        return self._b
+
+
 def _mock_post_ok(mocker):
     cap = {}
-    class R:
-        status_code = 200
-        def json(self): return {"id": "sub1"}
-    def fake(url, headers=None, json=None, timeout=None):
-        cap["json"] = json; return R()
-    mocker.patch("fanops.post.postiz.requests.post", side_effect=fake)
-    mocker.patch("fanops.post.postiz.postiz_list_integrations", return_value=[
-        PostizIntegration(id="yt_intg", name="yt", platform="youtube"),
-        PostizIntegration(id="ig1", name="ig", platform="instagram-standalone"),
-    ])
+    def fake_post(url, headers=None, json=None, timeout=None, **kw):
+        cap["json"] = json; return _R(200, {"id": "sub1"})
+    def fake_get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [
+                {"id": "yt_intg", "name": "yt", "identifier": "youtube"},
+                {"id": "ig1", "name": "ig", "identifier": "instagram-standalone"},
+            ])
+        return _R(200, {"posts": []})
+    mocker.patch("requests.post", side_effect=fake_post)
+    mocker.patch("requests.get", side_effect=fake_get)
     return cap
 
 

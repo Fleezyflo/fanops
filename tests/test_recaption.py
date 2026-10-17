@@ -11,6 +11,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import (CaptionItem, CaptionSet, Clip, ClipState, Moment, MomentState,
                            Platform, Post, PostState, Source)
+from fanops.caption_compose import posted_text_for
 from fanops.recaption import _journal_path, run_recaption
 from fanops.source_tags import source_tag_locks_path
 from fanops.timeutil import iso_z
@@ -85,7 +86,7 @@ def test_dry_run_lists_targets_and_writes_nothing(tmp_path):
     cfg = Config(root=tmp_path); led = _seed(cfg)
     led.add_post(Post(id="p_pub", parent_id="clip_1", account="a", account_id="1",
                       platform=Platform.instagram, caption="x", state=PostState.published,
-                      public_url="dryrun://p_pub",   # R1: a published Post requires a public_url at construction
+                      public_url="https://www.instagram.com/p/p_pub/",   # R1: a published Post requires a public_url at construction
                       created_at="2026-07-01T12:00:00+00:00"))
     led.save()
     s = run_recaption(cfg, apply=False, now=NOW)
@@ -118,6 +119,10 @@ def test_apply_syncs_posts_and_restores_clip_state(tmp_path):
     assert p.caption == "fresh" and 0 < len(p.hashtags) <= 4   # model sentence, tags stay the vetted array
     assert "#slept" in p.hashtags                                  # lock member survives the vet
     assert "#junkjunkjunk" not in p.hashtags                        # junk cannot reach a post
+    text = posted_text_for(cfg, led, p)
+    assert text.startswith("fresh")
+    assert "#slept" in text
+    assert "#junkjunkjunk" not in text
     assert p.state is PostState.awaiting_approval                   # approval lifecycle untouched
     assert p.edited_at
     clip = led.clips["clip_1"]

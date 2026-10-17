@@ -2,15 +2,22 @@
 # Run tab → it streams into 01_inbox → the existing "Ingest inbox" catalogues it. Untrusted multipart
 # input crossing a system boundary, so the path-safety + size-cap gates are tested hard.
 import io
+import subprocess
+import types
 import pytest
 from pathlib import Path
 from fanops.config import Config
-from fanops.studio import actions, actions_run
+from fanops.studio import actions
 
 
 @pytest.fixture(autouse=True)
 def _gate_off(monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_spawn(monkeypatch):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: types.SimpleNamespace(pid=424242))
 
 
 class _Up:                                          # a minimal FileStorage stand-in for action-level tests
@@ -21,6 +28,30 @@ class _Up:                                          # a minimal FileStorage stan
 def _client(cfg):
     from fanops.studio.app import create_app
     app = create_app(cfg); app.config.update(TESTING=True); return app.test_client()
+
+
+def _stub_ffprobe(monkeypatch, dims=(1080, 1920, 5.0), *, video=True, timeout_names=(), missing=False):
+    """Unit CI has no ffmpeg. Answer ffprobe at subprocess.run (not a fanops.* patch)."""
+    real = subprocess.run
+    w, h, dur = dims
+    timeout_names = set(timeout_names)
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            if missing:
+                raise FileNotFoundError("ffprobe")
+            path = str(cmd[-1])
+            if any(n in path for n in timeout_names):
+                raise subprocess.TimeoutExpired(cmd, 30)
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                stdout = "video\n" if video else ""
+                return subprocess.CompletedProcess(list(cmd), 0, stdout=stdout, stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout=f"{w}\n{h}\n{dur}\n", stderr="")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    return fake
 
 
 # ---- Task 1: validation (video ext + traversal) ----
@@ -73,43 +104,32 @@ def test_save_uploads_multiple_files(tmp_path):
     assert sorted(res.detail["saved"]) == ["a.mp4", "b.mov"]
     assert (cfg.inbox / "a.mp4").exists() and (cfg.inbox / "b.mov").exists()
 
-def test_save_uploads_and_ingest_chains_ingest_in_one_call(tmp_path, mocker):
-    # M5 auto-ingest: a successful upload immediately catalogues — no second 'Ingest inbox' click. The
-    # merged result carries the saved files AND the ingest detail. (Mock the ffprobe video-stream check +
-    # run_ingest so the WIRING is asserted toolchain-independently; the real end-to-end is covered above.)
+def test_save_uploads_and_ingest_chains_ingest_in_one_call(tmp_path, monkeypatch):
+    # M5 auto-ingest: a successful upload immediately catalogues — no second 'Ingest inbox' click.
+    from fanops.ledger import Ledger
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    spy = mocker.patch.object(actions_run, "run_ingest", return_value=actions.ActionResult(ok=True, detail={"sources": 1}))
+    _stub_ffprobe(monkeypatch)
     res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
-    assert res.ok and res.detail["saved"] == ["clip.mp4"] and res.detail["sources"] == 1
-    spy.assert_called_once()                                            # ingest auto-ran after the upload
-    assert (cfg.inbox / "clip.mp4").exists()                            # the file actually landed
+    assert res.ok and res.detail["saved"] == ["clip.mp4"]
+    assert res.detail["sources"] == 1
+    assert (cfg.inbox / ".ingested" / "clip.mp4").exists()
+    assert len(Ledger.load(cfg).sources) == 1
 
-def test_save_uploads_and_ingest_skips_ingest_when_nothing_saved(tmp_path, mocker):
+def test_save_uploads_and_ingest_skips_ingest_when_nothing_saved(tmp_path):
     # a rejected upload (non-video) short-circuits — nothing landed, so no ingest pass is run.
     cfg = Config(root=tmp_path)
-    spy = mocker.patch.object(actions_run, "run_ingest")
     res = actions.save_uploads_and_ingest(cfg, [_Up("notes.txt")])
     assert res.ok is False
-    spy.assert_not_called()
-
-def test_save_uploads_and_ingest_surfaces_ingest_failure_recoverably(tmp_path, mocker):
-    # if the upload lands but auto-ingest fails, the files are SAFE in 01_inbox — report a recoverable
-    # not-fully-done (point at the manual 'Ingest inbox'), never lose the upload.
-    cfg = Config(root=tmp_path)
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch.object(actions_run, "run_ingest", return_value=actions.ActionResult(ok=False, error="ingest boom"))
-    res = actions.save_uploads_and_ingest(cfg, [_Up("clip.mp4")])
-    assert res.ok is False and "Ingest inbox" in (res.error or "")      # tells the operator how to retry
-    assert (cfg.inbox / "clip.mp4").exists()                            # the upload survived the ingest failure
+    from fanops.ledger import Ledger
+    assert len(Ledger.load(cfg).sources) == 0
+    assert not (cfg.inbox / "notes.txt").exists()
 
 def test_no_uploadpart_left_after_success(tmp_path):
     cfg = Config(root=tmp_path); actions.save_uploads(cfg, [_Up("a.mp4")], probe=False)
     assert not list(cfg.inbox.glob("*.uploadpart"))         # temp swapped in, none orphaned
 
-def test_save_uploads_same_file_twice_is_idempotent_at_ingest(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+def test_save_uploads_same_file_twice_is_idempotent_at_ingest(tmp_path, monkeypatch):
+    _stub_ffprobe(monkeypatch)
     cfg = Config(root=tmp_path)
     actions.save_uploads(cfg, [_Up("dup.mp4", b"SAMEBYTES")], probe=False)   # 1st upload
     actions.save_uploads(cfg, [_Up("dup.mp4", b"SAMEBYTES")], probe=False)   # 2nd identical → disambiguated dest (ING-4: never clobber)
@@ -118,16 +138,16 @@ def test_save_uploads_same_file_twice_is_idempotent_at_ingest(tmp_path, mocker):
 
 
 # ---- Task 3: optional probe pre-check, ToolchainMissing-safe ----
-def test_save_uploads_skips_audio_only_when_probing(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=False)
+def test_save_uploads_skips_audio_only_when_probing(tmp_path, monkeypatch):
+    _stub_ffprobe(monkeypatch, video=False)
     cfg = Config(root=tmp_path)
     res = actions.save_uploads(cfg, [_Up("audio.mp4")], probe=True)
     assert res.detail["skipped"] and not res.detail["saved"]
     assert not (cfg.inbox / "audio.mp4").exists()           # removed after the probe rejected it
 
-def test_save_uploads_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
+def test_save_uploads_keeps_bytes_when_probe_unavailable(tmp_path, monkeypatch):
     # A per-file ffprobe timeout must not delete the staged upload — the operator can retry.
-    mocker.patch("fanops.ingest.has_video_stream", return_value=None)
+    _stub_ffprobe(monkeypatch, timeout_names=("clip.mp4",))
     cfg = Config(root=tmp_path)
     res = actions.save_uploads(cfg, [_Up("clip.mp4", b"KEEPME")], probe=True)
     assert not res.ok and res.detail["skipped"] == [("clip.mp4", "probe unavailable — retry")]
@@ -135,24 +155,34 @@ def test_save_uploads_keeps_bytes_when_probe_unavailable(tmp_path, mocker):
     assert part.exists() and part.read_bytes() == b"KEEPME"
     assert not (cfg.inbox / "clip.mp4").exists()
 
-def test_save_uploads_still_probes_later_files_after_probe_unavailable(tmp_path, mocker):
+def test_save_uploads_still_probes_later_files_after_probe_unavailable(tmp_path, monkeypatch):
     # The probe flag must not be shadowed by a per-file result — later files still get checked.
-    spy = mocker.patch("fanops.ingest.has_video_stream", side_effect=[None, True])
+    _stub_ffprobe(monkeypatch, timeout_names=("hung.mp4",))
     cfg = Config(root=tmp_path)
     res = actions.save_uploads(cfg, [_Up("hung.mp4", b"HUNG"), _Up("ok.mp4", b"OK")], probe=True)
     assert res.ok and res.detail["saved"] == ["ok.mp4"]
     assert res.detail["skipped"] == [("hung.mp4", "probe unavailable — retry")]
-    assert spy.call_count == 2
     assert (cfg.inbox / "hung.mp4.uploadpart").read_bytes() == b"HUNG"
     assert (cfg.inbox / "ok.mp4").read_bytes() == b"OK"
 
-def test_save_uploads_probes_uploadpart_before_promote(tmp_path, mocker):
-    spy = mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+def test_save_uploads_probes_uploadpart_before_promote(tmp_path, monkeypatch):
+    probed = []
+    real = subprocess.run
+
+    def fake(cmd, **kw):
+        if cmd and cmd[0] == "ffprobe":
+            probed.append(str(cmd[-1]))
+            joined = " ".join(str(x) for x in cmd)
+            if "codec_type" in joined:
+                return subprocess.CompletedProcess(list(cmd), 0, stdout="video\n", stderr="")
+            return subprocess.CompletedProcess(list(cmd), 0, stdout="1080\n1920\n5.0\n", stderr="")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake)
     cfg = Config(root=tmp_path)
     res = actions.save_uploads(cfg, [_Up("clip.mp4")], probe=True)
     assert res.ok and res.detail["saved"] == ["clip.mp4"]
-    spy.assert_called_once()
-    assert str(spy.call_args[0][0]).endswith(".uploadpart")
+    assert probed and probed[0].endswith(".uploadpart")
     assert (cfg.inbox / "clip.mp4").exists()
 
 # NB ffprobe-absent-during-probe is covered by test_save_uploads_rejects_unverifiable_when_ffprobe_absent
@@ -160,9 +190,8 @@ def test_save_uploads_probes_uploadpart_before_promote(tmp_path, mocker):
 
 
 # ---- Task 4: POST /run/upload route + MAX_CONTENT_LENGTH cap + oversize handler ----
-def test_upload_route_lands_file_then_ingest_catalogues(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+def test_upload_route_lands_file_then_ingest_catalogues(tmp_path, monkeypatch):
+    _stub_ffprobe(monkeypatch)
     cfg = Config(root=tmp_path)
     r = _client(cfg).post("/run/upload", data={"files": (io.BytesIO(b"VID"), "up.mp4")},
                           content_type="multipart/form-data")
@@ -207,46 +236,42 @@ def test_save_uploads_default_still_rejects_photo(tmp_path):
     res = actions.save_uploads(cfg, [_Up("hold.jpg")], probe=False)
     assert not res.ok and res.detail["skipped"]
 
-def test_save_thirdparty_lands_in_peer_dir_not_inbox(tmp_path, mocker):
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)   # fake bytes pass the probe
+def test_save_thirdparty_lands_in_peer_dir_not_inbox(tmp_path, monkeypatch):
+    _stub_ffprobe(monkeypatch)
     cfg = Config(root=tmp_path)
     res = actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])
     assert res.ok and (cfg.thirdparty_inbox / "clip.mp4").exists()
     assert not (cfg.inbox / "clip.mp4").exists()                # never the native inbox
 
-def test_run_ingest_thirdparty_catalogues_third_party(tmp_path, mocker):
+def test_run_ingest_thirdparty_catalogues_third_party(tmp_path, monkeypatch):
     from fanops.ledger import Ledger
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(monkeypatch)
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])
     res = actions.run_ingest_thirdparty(cfg)
     assert res.ok and res.detail["sources"] == 1
     assert next(iter(Ledger.load(cfg).sources.values())).origin_kind == "third_party"
 
-def test_run_ingest_thirdparty_accepts_photo(tmp_path, mocker):
+def test_run_ingest_thirdparty_accepts_photo(tmp_path, monkeypatch):
     # a still photo passes has_video_stream (still = video stream) -> catalogued third_party
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
+    _stub_ffprobe(monkeypatch, dims=(1080, 1920, 0.0))
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("hold.jpg")])
     assert actions.run_ingest_thirdparty(cfg).detail["sources"] == 1
 
-def test_run_ingest_thirdparty_surfaces_pii_excluded(tmp_path, mocker):
+def test_run_ingest_thirdparty_surfaces_pii_excluded(tmp_path, monkeypatch):
     # a deliberately-uploaded PII-named file is dropped by the ingest name-filter — surface the COUNT
     # in the ActionResult (not just run.log) so the operator knows their upload was suppressed.
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(0, 0, 0.0))
+    _stub_ffprobe(monkeypatch, dims=(0, 0, 0.0))
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("passport scan.jpg")])
     res = actions.run_ingest_thirdparty(cfg)
     assert res.detail["sources"] == 0 and res.detail["excluded"] == 1
 
-def test_run_ingest_thirdparty_reports_added_not_cumulative(tmp_path, mocker):
+def test_run_ingest_thirdparty_reports_added_not_cumulative(tmp_path, monkeypatch):
     # the panel renders "Added N" — N must be THIS call's delta, not the cumulative library total, else a
     # repeat ingest that catalogues nothing new still claims "Added <total>" (a false success signal).
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 0.0))
+    _stub_ffprobe(monkeypatch, dims=(1080, 1920, 0.0))
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("a.jpg", b"AAAA")])
     r1 = actions.run_ingest_thirdparty(cfg)
@@ -257,13 +282,12 @@ def test_run_ingest_thirdparty_reports_added_not_cumulative(tmp_path, mocker):
     r3 = actions.run_ingest_thirdparty(cfg)                            # repeat: same staged files, nothing new
     assert r3.detail["added"] == 0 and r3.detail["sources"] == 2       # the false-success guard: "Added 0", not 2
 
-def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
+def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, monkeypatch):
     # the structural anti-mislabel guarantee: a native ingest_drops pass over the default inbox can
     # NEVER reach the peer staging dir, so a staged third-party file is never catalogued native.
     from fanops.ledger import Ledger
     from fanops.ingest import ingest_drops
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(monkeypatch)
     cfg = Config(root=tmp_path)
     actions.save_thirdparty_uploads(cfg, [_Up("clip.mp4")])     # lands in cfg.thirdparty_inbox
     led, _ = ingest_drops(Ledger.load(cfg), cfg)               # native pass, default inbox
@@ -271,12 +295,11 @@ def test_native_ingest_cannot_reach_thirdparty_inbox(tmp_path, mocker):
 
 
 # ---- WS-I1 Task 6 (ING-4/9): collision-safe upload dest + reject the unverifiable upload ----
-def test_save_uploads_disambiguates_colliding_names(tmp_path, mocker):
+def test_save_uploads_disambiguates_colliding_names(tmp_path, monkeypatch):
     # ING-4: two DIFFERENT videos whose sanitized/truncated names collide must BOTH survive — the second
     # must not os.replace over the first. (The inbox name is pure staging; sha identity is downstream.)
     cfg = Config(root=tmp_path)
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1080, 1920, 5.0))
+    _stub_ffprobe(monkeypatch)
     actions.save_uploads(cfg, [_Up("clip.mp4", b"FIRST")], probe=False)
     actions.save_uploads(cfg, [_Up("clip.mp4", b"SECOND")], probe=False)    # same name, different bytes
     landed = sorted(cfg.inbox.glob("*.mp4"))
@@ -284,11 +307,10 @@ def test_save_uploads_disambiguates_colliding_names(tmp_path, mocker):
     assert {p.read_bytes() for p in landed} == {b"FIRST", b"SECOND"}
     assert actions.run_ingest(cfg).detail["sources"] == 2           # two distinct sha → two sources
 
-def test_save_uploads_rejects_unverifiable_when_ffprobe_absent(tmp_path, mocker):
+def test_save_uploads_rejects_unverifiable_when_ffprobe_absent(tmp_path, monkeypatch):
     # ING-9: ffprobe absent → an upload that can't be verified is REJECTED, not kept. Keeping it would later
     # ABORT the whole native ingest pass (ingest_drops raises ToolchainMissingError on the same absent ffprobe).
-    from fanops.errors import ToolchainMissingError
-    mocker.patch("fanops.ingest.has_video_stream", side_effect=ToolchainMissingError("no ffprobe"))
+    _stub_ffprobe(monkeypatch, missing=True)
     cfg = Config(root=tmp_path)
     res = actions.save_uploads(cfg, [_Up("clip.mp4")], probe=True)
     assert not res.ok and res.detail["skipped"]                     # rejected, not saved

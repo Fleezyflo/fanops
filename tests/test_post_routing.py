@@ -111,12 +111,22 @@ def test_get_media_uploader_explicit_backend(tmp_path, monkeypatch):
 
 
 # ---- the payoff: publish_due routes EACH post to its own backend in one run ----
+class _R:
+    def __init__(self, code, body=None, text=""):
+        self.status_code = code
+        self._b = {} if body is None else body
+        self.text = text
+    def json(self):
+        return self._b
+
+
 def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
-    # global = postiz; @tk/tiktok overridden to zernio. One run must send the IG post through 'postiz'
-    # and the TikTok post through 'zernio' — proving simultaneous mixed-backend publishing.
+    # global = postiz; @tk/tiktok overridden to zernio. One run must POST IG to Postiz and TikTok to
+    # Zernio. Leftover dryrun:// is not a permalink.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("ZERNIO_API_KEY", "k")   # RC-3b: publishing needs
-    cfg = Config(root=tmp_path)                                                            # a live-READY channel (creds)
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("ZERNIO_API_KEY", "k")
+    cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [
         {"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"},
         {"handle": "@tk", "account_id": "acc_abc", "platforms": ["tiktok"], "status": "active",
@@ -124,43 +134,58 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
     with Ledger.transaction(cfg) as led:
         _lineage(led, "c1", "c2")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
-                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+                          caption="ig-cap", state=PostState.queued, post_type="post",
+                          media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
         led.add_post(Post(id="ptk", parent_id="c2", account="tk", account_id="acc_abc", platform=Platform.tiktok,
-                          caption="c", state=PostState.queued, media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://ptk"))
-
-    seen = {}
-    class _FakePoster:
-        def __init__(self, backend): self.backend = backend
-        def publish(self, led, pid):
-            seen[pid] = self.backend
-            led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted})
-            return led
-    def _fake_get_poster(c, backend=None):
-        backend = backend or c.poster_backend
-        return _FakePoster(backend)
-    mocker.patch("fanops.post.run.get_poster", side_effect=_fake_get_poster)
-
+                          caption="tk-cap", state=PostState.queued, created_at="2026-07-16T13:31:00Z",
+                          media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://ptk"))
+    backends = []
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "ig_1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        u = str(url)
+        if "zernio.com" in u:
+            backends.append("zernio"); return _R(201, {"_id": "z_1"})
+        if "/posts" in u:
+            backends.append("postiz"); return _R(201, {"id": "postiz_1"})
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
     from fanops.post.run import publish_due
     publish_due(cfg)
-    assert seen["pig"] == "postiz"        # IG (no override) -> global
-    assert seen["ptk"] == "zernio"        # TikTok -> per-account override, SAME run
+    assert "postiz" in backends and "zernio" in backends
+    led = Ledger.load(cfg)
+    assert led.posts["pig"].state is not PostState.published
+    assert led.posts["ptk"].state is not PostState.published
 
 def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
-    # byte-identical: with no backends override, every post uses the global backend
+    # with no backends override, every post uses the global backend. Leftover dryrun:// is not a permalink.
     monkeypatch.setenv("FANOPS_POSTER", "postiz")
-    monkeypatch.setenv("POSTIZ_API_KEY", "k")   # RC-3b: publishing requires the channel to be live-READY (creds)
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
     cfg = Config(root=tmp_path)
     _accounts_json(tmp_path, [{"handle": "@ig", "account_id": "ig_1", "platforms": ["instagram"], "status": "active"}])
     with Ledger.transaction(cfg) as led:
         _lineage(led, "c1")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
-                          caption="c", state=PostState.queued, media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
-    seen = {}
-    class _FakePoster:
-        def __init__(self, backend): self.backend = backend
-        def publish(self, led, pid):
-            seen[pid] = self.backend; led.posts[pid] = led.posts[pid].model_copy(update={"state": PostState.submitted}); return led
-    mocker.patch("fanops.post.run.get_poster", side_effect=lambda c, backend=None: _FakePoster(backend or c.poster_backend))
+                          caption="c", state=PostState.queued, post_type="post",
+                          media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+    backends = []
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "ig_1", "name": "ig", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+    def _post(url, **kw):
+        u = str(url)
+        if "/posts" in u:
+            backends.append("zernio" if "zernio.com" in u else "postiz")
+            return _R(201, {"id": "postiz_1"})
+        return _R(201, {"id": "img1", "path": "https://uploads.postiz.com/v.mp4"})
+    mocker.patch("requests.get", side_effect=_get)
+    mocker.patch("requests.post", side_effect=_post)
     from fanops.post.run import publish_due
     publish_due(cfg)
-    assert seen["pig"] == "postiz"
+    assert backends == ["postiz"]
+    assert Ledger.load(cfg).posts["pig"].state is not PostState.published

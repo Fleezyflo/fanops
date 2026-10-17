@@ -122,7 +122,7 @@ re-requests every tick with no operator-visible terminal). That class is now nam
 
 ## C10 — Studio views
 
-- `views.py:173` `run_next_step`, `:528` `zero_post_clips`, `:547` `metrics_stale_hint` — zero-caller flags. `zero_post_clips` is wired: `studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)`. The 2026-07-11 unwired / real-bug sentence (referenced by `home.html` but never passed by the view) is stale. The other two likely template-only, not separately confirmed.
+- `views.run_next_step` and `views.metrics_stale_hint` — zero-caller flags; likely template-only, not separately confirmed. `views.zero_post_clips` is wired: `app_routes_home.index` passes `zero_post_clips=views.zero_post_clips(cfg)` to `render_template` for `home.html`.
 - `views_common.py:74` `accounts_in`, `:68` `term_def` — zero-caller flags; `term_def` explicitly documented as a Jinja-macro-only consumer.
 - `views_results.py:422` `operator_error`, `:621` `bar_pct` — zero-caller flags; plausibly template-only (`bar_pct` almost certainly is), `operator_error` possibly superseded by `failure_label`.
 - `views_review.py` `provenance_chips`, `group_review_by_batch` — zero-caller AST flags; both are live Jinja consumers (`app.jinja_env.globals` / `.filters`). `group_review_by_account_surface` — **REMOVED** (no longer in `src/`).
@@ -142,7 +142,7 @@ after an alias-and-lazy-import sweep — see the note below the table).
 | Confirmed false-positive dead-code flags (dispatch-table / default-param / Jinja-filter / **aliased-or-lazy-import** blind spots) | 16 |
 | Plausible-but-unconfirmed (likely template-only) | 10 |
 | Unlogged silent exception swallows | 9 |
-| Real logic/wiring bugs | 0 open for `views.zero_post_clips` — `studio/app_routes_home.py` passes the kwarg; the 2026-07-11 count of 1 is a stale unwired claim |
+| Real logic/wiring bugs | 0 (`app_routes_home.index` passes `views.zero_post_clips(cfg)`) |
 | Documentation staleness items | 1 (Go-Live `FANOPS_POSTER` claim in CLAUDE.md) |
 | Design notes flagged for visibility (not bugs) | 3 (hashtag cap-window floor logic, `_JITTER_MAX` comment-only invariant, `_postiz_permalink` two-phase-commit dependency) |
 | Safety-critical invariants checked | 10 — **"all HOLD" as of 2026-07-11; SUPERSEDED** — wipe-confirmation did *not* hold (RC-4/RC-5 restore race, fixed #653/#654). See the correction above; current verdict lives in `tools/arch` + `INVARIANT_AUDIT.md` |
@@ -158,17 +158,3 @@ genuinely dead: `persist_post_shrink` (lazy import at `studio/actions.py:396`) a
 `ensure_channel` / `set_status` / `set_ig_user_id` (aliased `_accounts_*` imports in
 `studio/golive.py`). All are corrected above. The remaining 10 dead-code entries were re-verified
 by grepping for both the bare name and every `<name> as <alias>` binding across the tree.
-
-## Re-verification 2026-09-12
-
-Production audit pass re-read live `src/fanops/` against this frozen ledger and `docs/CODEMAPS/partition.json` (196 modules, C1–C10 operator map). Authority for publish/wipe/dryrun invariants remains `tools/arch` + `.reports/architecture/INVARIANT_AUDIT.md`, not this file.
-`ledger_wipe.snapshot_is_restorable` still logs via stdlib `logging`, not surfaced `get_logger` — C1-F01 unchanged; wipe-guard mis-surfacing is open.
-`persona_directives.persona_facts` now logs on store load failure (C4 anomalies entry stale); reclassify as fixed for surfacing, broad catch remains a low-severity note.
-`meta_graph._read_queries` corrupt-file path still returns `None` without a log line — C7-F01 unchanged.
-`studio/app_routes_home.py` passes `zero_post_clips=views.zero_post_clips(cfg)` — the C10 wiring bug cited in Summary counts is **closed**; anomalies bullets referencing `views.py`-only wiring are stale.
-`responder.py` ValidationError infinite-pending gate fixed per MOL-254/W5; C6 bullet is historical — guarded by `tests/test_responder.py`.
-`build_system_strip` sub-read failures now log via `get_logger` (MOL-123) — prior C10 “silent nav strip” gap is closed in code; trace docs may still describe the old behavior.
-New modules since 2026-07 (health_*, cli_*, ledger_sqlite, reframe_*, source_tags_*, canary_*, etc.) had no row in the frozen cluster table; partition.json assigns them by stem heuristics + import-graph vote — operator map is current, semantic traces are not.
-ARCH-001 S-subsystem totality in `derived/modules.json` is orthogonal to C-cluster coverage; both must stay in sync via their respective gates (`python -m tools.arch ci` vs `test_live_partition_covers_every_module`).
-Install extras ([asr], [framing], [studio]) documented in `docs/CONFIG.md` with failure posture; doctor/transcribe/studio import paths spot-checked against cited symbols.
-Pack findings in `docs/audit/packs/` supersede per-cluster severity prose here when they disagree on open vs closed status.

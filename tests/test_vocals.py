@@ -17,7 +17,9 @@ def test_isolate_vocals_returns_vocals_path_on_success(tmp_path, mocker):
     # demucs writes <out>/<model>/<stem>/vocals.mp3 -> isolate_vocals returns THAT path
     src = tmp_path / "src_1.mp4"; src.write_bytes(b"VID")
     out = tmp_path / "work"
+    captured = {}
     def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
         stem = Path(cmd[-1]).stem
         d = out / "htdemucs" / stem; d.mkdir(parents=True, exist_ok=True)
         (d / "vocals.mp3").write_bytes(b"VOCALS")
@@ -25,6 +27,9 @@ def test_isolate_vocals_returns_vocals_path_on_success(tmp_path, mocker):
         return R()
     mocker.patch("fanops.vocals.subprocess.run", side_effect=fake_run)
     got = isolate_vocals(str(src), str(out))
+    assert captured["cmd"][:3] == [sys.executable, "-m", "demucs"]
+    assert "--two-stems=vocals" in captured["cmd"] and "--mp3" in captured["cmd"]
+    assert captured["cmd"][-1] == str(src)
     assert got.endswith("htdemucs/src_1/vocals.mp3") and Path(got).exists()
 
 def test_isolate_vocals_failopen_when_demucs_absent(tmp_path, mocker):

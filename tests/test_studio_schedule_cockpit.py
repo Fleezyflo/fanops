@@ -31,7 +31,7 @@ def _seed(cfg, *, pid="p1", state=PostState.queued, account_id="ig_integ_1", whe
                               reason="r", state=MomentState.clipped))
         led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c/clip_1.mp4", aspect=Fmt.r9x16, state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id="clip_1", account="a", account_id=account_id,
-                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="dryrun://clip_1"))
+                          platform=Platform.instagram, caption="fire", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/clip_1/"))
 
 
 # ---- ScheduleRow carries the integration id ----
@@ -63,10 +63,11 @@ def test_reschedule_bucket_ignores_awaiting_and_published(tmp_path):
 
 
 # ---- routes ----
-def test_get_schedule_shows_integration_publish_sendback_respread(tmp_path):
+def test_get_schedule_shows_publish_sendback_respread(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", account_id="ig_integ_1")
     html = _client(cfg).get("/schedule").data
-    assert b"schedule-guard" in html            # dryrun guard, no integration ids
+    assert b"schedule-guard" in html
+    assert b"ig_integ_1" not in html       # schedule HTML does not render the integration id
     assert b"Publish" in html              # ship from the bucket
     assert b"Review" in html                # un-approve
     assert b"Re-spread" in html           # routine respread
@@ -81,8 +82,11 @@ def test_schedule_row_renders_lazy_clip_preview(tmp_path):
 
 def test_schedule_respread_route_moves_posts(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", when=_z(_NOW + timedelta(hours=9)))
+    before = Ledger.load(cfg).posts["p1"].scheduled_time
     r = _client(cfg).post("/schedule/respread")
     assert r.status_code == 200
+    after = Ledger.load(cfg).posts["p1"].scheduled_time
+    assert after and after != before
 
 def test_schedule_unapprove_route_sends_back_to_review(tmp_path):
     cfg = Config(root=tmp_path); _seed(cfg, pid="p1", state=PostState.queued)
@@ -113,7 +117,7 @@ def test_due_publish_plan_estimates_postiz_rate(tmp_path, monkeypatch):
         for i in range(1, 8):
             led.add_post(Post(id=f"p{i}", parent_id="clip_1", account="a", account_id="ig_integ_1",
                               platform=Platform.instagram, caption="fire", state=PostState.queued,
-                              scheduled_time=past, public_url="dryrun://clip_1"))
+                              scheduled_time=past, public_url="https://www.instagram.com/p/clip_1/"))
     plan = views.due_publish_plan(cfg, now=_NOW)
     assert plan.due == 8 and plan.postiz_due == 8
     assert plan.rate_per_min == cfg.postiz_publish_per_min

@@ -13,43 +13,46 @@ def _gate_off(monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")
 
 
-def _put_video(p, mocker):
-    """Land a fake video file + stub the ffprobe gates so ingest catalogues it."""
-    p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"V")
-    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
-    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 12.0))
+class _Proc:
+    def __init__(self, rc=0, stdout="", stderr=""):
+        self.returncode = rc; self.stdout = stdout; self.stderr = stderr
+
+
+def _put_video(p, mocker, body=b"V"):
+    """Land a fake video file + stub ffprobe at the OS edge so ingest catalogues it."""
+    p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(body)
+    def run(cmd, **kw):
+        joined = " ".join(str(c) for c in cmd)
+        if "codec_type" in joined:
+            return _Proc(stdout="video\n")
+        return _Proc(stdout="1920\n1080\n12.0\n")
+    mocker.patch("fanops.media_probe.subprocess.run", side_effect=run)
 
 
 def test_unbatched_ingest_mints_drop_batch_and_stamps_source(tmp_path, mocker):
-    # The pre-fix bug: ingest_drops(led, cfg) — no batch_id — left every Source.batch_id None, and every
-    # downstream Post inherited that None and rendered under Studio Review's "Ungrouped" group. The fix:
-    # the SAME call now mints a deterministic per-day drop-batch and stamps it onto the new Source.
-    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker)
+    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker, b"A")
     led, counts = ingest_drops(Ledger.load(cfg), cfg)
     assert counts.added == 1
     src = next(iter(led.sources.values()))
     assert src.batch_id is not None, "unbatched ingest left Source.batch_id None — root contract violated"
     b = led.get_batch(src.batch_id)
     assert b is not None and b.name.startswith("drop-")
-    assert b.target_accounts == []        # ALL-sentinel: byte-identical fan-out to today's behaviour
+    assert b.target_accounts == []
 
 
 def test_unbatched_ingest_same_day_reuses_drop_batch(tmp_path, mocker):
-    # A second pass on the same day must REUSE the day's drop-batch (idempotent on date) — otherwise
-    # every pass would spawn a new batch and the Review grouper would shatter the day into many groups.
-    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker)
+    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker, b"A")
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
-    _put_video(cfg.inbox / "b.mp4", mocker)
+    _put_video(cfg.inbox / "b.mp4", mocker, b"B")
     led, _ = ingest_drops(led, cfg)
     bids = {s.batch_id for s in led.sources.values()}
+    assert len(led.sources) == 2
     assert len(bids) == 1, f"second-pass ingest minted a new batch instead of reusing the day's drop-batch: {bids}"
     assert len(led.batches) == 1
 
 
 def test_caller_supplied_batch_is_honoured(tmp_path, mocker):
-    # The Studio "Add video" form (named-batch path) still wins: an explicit batch_id is passed through
-    # verbatim — the auto-resolver only runs when the caller passed None.
-    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker)
+    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker, b"A")
     led = Ledger.load(cfg)
     from fanops.batches import create_batch
     b = create_batch(led, name="Launch week", target_accounts=["markmakmouly"],
@@ -60,20 +63,15 @@ def test_caller_supplied_batch_is_honoured(tmp_path, mocker):
 
 
 def test_drop_batch_date_is_resolver_clock_not_fixed(tmp_path, mocker):
-    # Pin "deterministic per-day": the drop-batch name is `drop-{YYYY-MM-DD}` derived from the resolver's
-    # clock. We stub the resolver clock to verify the date appears in the batch name verbatim.
-    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker)
-    fixed = _dt.datetime(2026, 6, 28, 12, 0, 0, tzinfo=_dt.timezone.utc)
-    mocker.patch("fanops.batches._resolver_now_utc", return_value=fixed)
+    cfg = Config(root=tmp_path); _put_video(cfg.inbox / "a.mp4", mocker, b"A")
     led, _ = ingest_drops(Ledger.load(cfg), cfg)
     src = next(iter(led.sources.values()))
     b = led.get_batch(src.batch_id)
-    assert b.name == "drop-2026-06-28"
+    day = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    assert b.name == f"drop-{day}"
 
 
 def test_empty_inbox_does_not_mint_a_batch(tmp_path):
-    # No new files → no batch needed. Don't litter the ledger with empty daily batches just because the
-    # daemon ticked — the resolver fires inside the per-file path, after the inbox-walk has found work.
     cfg = Config(root=tmp_path); cfg.inbox.mkdir(parents=True, exist_ok=True)
     led, counts = ingest_drops(Ledger.load(cfg), cfg)
     assert counts.added == 0 and len(led.batches) == 0

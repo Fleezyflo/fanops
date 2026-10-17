@@ -49,12 +49,12 @@ def hook_quality(led: Ledger) -> dict:
     """Read-only hook scoreboard (Task 9) over the decided moments — no LLM, no network, no ledger
     write/flock. Reports `viewer_pov_rate` from narration_signature: a shipped hook counts against the
     rate if it reads as third-person narration, so the meter measures hook quality directly off the
-    final on-screen text. viewer_pov_rate is 1.0 when no hook shipped (vacuously full POV, and no
-    division by zero)."""
+    final on-screen text. viewer_pov_rate is 0.0 when no hook shipped (no POV evidence, and no
+    division by zero) — an empty scoreboard is not a perfect rate."""
     decided = [m for m in led.moments.values() if m.state is MomentState.decided]
     with_hook = [m for m in decided if m.hook]
     narrated = [m for m in with_hook if narration_signature(m.hook)]
-    pov = 1.0 - (len(narrated) / len(with_hook)) if with_hook else 1.0
+    pov = 1.0 - (len(narrated) / len(with_hook)) if with_hook else 0.0
     return {"decided": len(decided), "with_hook": len(with_hook),
             "null": len(decided) - len(with_hook), "viewer_pov_rate": pov}
 

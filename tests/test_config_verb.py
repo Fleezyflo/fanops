@@ -1,6 +1,6 @@
 """MOL-294: fanops config introspection verb."""
 from fanops.config import Config
-from fanops.config_introspect import config_rows, format_config_report
+from fanops.config_introspect import _display_value, config_rows, format_config_report
 from fanops.settings import Settings
 from tests.keyring_fake import install_mem_keyring
 
@@ -45,7 +45,7 @@ def test_config_row_studio_settable_flag(tmp_path, monkeypatch):
     transport = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_LLM_TRANSPORT")
     assert resp["studio"] is False
     assert whisper["studio"] is False
-    assert transport["studio"] is True
+    assert transport["studio"] is False
 
 
 def test_format_config_report_header(tmp_path, monkeypatch):
@@ -117,3 +117,21 @@ def test_config_row_infra_keys_non_studio_with_kind(tmp_path, monkeypatch):
     assert rows["FANOPS_STUDIO_GENERATION"]["kind"] == "process" and rows["FANOPS_STUDIO_GENERATION"]["studio"] is False
     assert rows["META_GRAPH_TOKEN"]["dynamic"] is True
     assert rows["FANOPS_IG_SCRAPE_PASSWORD"]["dynamic"] is True
+
+
+def test_format_config_report_masks_ig_scrape_password(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("fanops.secret_provider.get_secret", lambda *_a, **_k: None)
+    monkeypatch.setattr("fanops.config_introspect.get_secret", lambda *_a, **_k: None)
+    marker = "marker-ig-scrape-absent-from-report"
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_PASSWORD", marker)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "visible-scrape-user")
+    cfg = Config(root=tmp_path)
+    row = next(r for r in config_rows(cfg) if r["name"] == "FANOPS_IG_SCRAPE_PASSWORD")
+    assert row["effective"] == "(set)"
+    assert marker not in row["effective"]
+    assert marker not in row["default"]
+    report = format_config_report(cfg)
+    assert marker not in report
+    assert "visible-scrape-user" in report
+    assert _display_value("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE", marker) == "(set)"

@@ -278,11 +278,13 @@ def test_write_ass_writes_file(tmp_path):
 
 def test_burn_hook_only_builds_hook_ass_and_cmd(tmp_path, mocker):
     import fanops.overlay as overlay
-    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
     captured = {}
     def fake_run(cmd, **kw):
+        if "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n subtitles\n drawtext\n"; stderr = ""
+            return R()
         captured["cmd"] = cmd
         # the .ass exists DURING the ffmpeg run; capture its content here (ECC fix #8 unlinks it after)
         ass = list(tmp_path.glob("*.ass"))
@@ -307,10 +309,12 @@ def test_burn_hook_only_atomic_no_partial_on_crash(tmp_path, mocker):
     # A crash mid-ffmpeg (the subprocess raises after writing a PARTIAL .part) must NEVER leave a
     # half-written file at out_path — the serve route would otherwise stream a truncated mp4.
     import fanops.overlay as overlay
-    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
     def boom(cmd, **kw):
+        if "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n subtitles\n"; stderr = ""
+            return R()
         Path(cmd[-1]).write_bytes(b"PARTIAL")          # a truncated temp was written...
         raise OSError("ffmpeg crashed")                 # ...then the process dies mid-write
     mocker.patch("fanops.overlay.subprocess.run", side_effect=boom)
@@ -321,18 +325,24 @@ def test_burn_hook_only_atomic_no_partial_on_crash(tmp_path, mocker):
 
 def test_burn_hook_only_failopen_when_no_textfilter(tmp_path, mocker):
     import fanops.overlay as overlay
-    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=False)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
-    ran = mocker.patch("fanops.overlay.subprocess.run")
+    encodes = []
+    def fake_run(cmd, **kw):
+        if "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n scale\n"; stderr = ""
+            return R()
+        encodes.append(cmd)
+        class R: returncode = 0; stdout = ""; stderr = ""
+        return R()
+    mocker.patch("fanops.overlay.subprocess.run", side_effect=fake_run)
     ok = overlay.burn_hook_only(str(base), str(out), "WATCH THIS", width=1080, height=1920)
     assert ok is False                              # fail-open: signalled no burn
     assert out.exists() and out.read_bytes() == b"BASE"   # output is a copy of the base, unchanged
-    ran.assert_not_called()                         # no ffmpeg invoked
+    assert encodes == []                            # probe only — no encode invoked
 
 def test_burn_hook_only_failopen_when_hook_empty(tmp_path, mocker):
     import fanops.overlay as overlay
-    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
     ran = mocker.patch("fanops.overlay.subprocess.run")
@@ -345,11 +355,13 @@ def test_burn_hook_only_failopen_on_timeout(tmp_path, mocker):
     # clip is byte-copied to out_path (the caller still gets a usable per-account file, just
     # hookless) and False is returned — never a raise out of the variation pass.
     import fanops.overlay as overlay
-    mocker.patch("fanops.overlay.ffmpeg_has_textfilter", return_value=True)
     base = tmp_path / "base.mp4"; base.write_bytes(b"BASE")
     out = tmp_path / "variant.mp4"
     seen = {}
     def hung(cmd, **kw):
+        if "-filters" in cmd:
+            class R: returncode = 0; stdout = "Filters:\n subtitles\n"; stderr = ""
+            return R()
         seen.update(kw)
         raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
     mocker.patch("fanops.overlay.subprocess.run", side_effect=hung)

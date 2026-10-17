@@ -13,8 +13,6 @@ from fanops.models import ClipState, MomentState, PostState, RenderState, Source
 
 ExitRef = tuple[str, str, str]  # (module, symbol, note)
 
-RENDER_STATE_EXEMPT = True
-
 TERMINAL: dict[type[Enum], frozenset[Enum]] = {
     SourceState: frozenset((
         SourceState.retired,
@@ -34,6 +32,8 @@ TERMINAL: dict[type[Enum], frozenset[Enum]] = {
         PostState.rejected,
         PostState.retired,
     )),
+    # Reserved artifact pointer (CULM-9): no advancer exists, so every member is terminal until one is wired.
+    RenderState: frozenset(RenderState),
 }
 
 EXITS: dict[type[Enum], dict[Enum, list[ExitRef]]] = {
@@ -146,6 +146,7 @@ EXITS: dict[type[Enum], dict[Enum, list[ExitRef]]] = {
             ("fanops.reconcile", "reconcile_due", "due reconcile pass"),
         ],
     },
+    RenderState: {},
 }
 
 GLOBAL_UNWEDGERS: list[ExitRef] = [
@@ -167,7 +168,7 @@ CLI_VERBS: dict[str, str] = {
     "promote-source": "SourceState.discovered",
 }
 
-_CONTRACT_ENUMS = (SourceState, MomentState, ClipState, PostState)
+_CONTRACT_ENUMS = (SourceState, MomentState, ClipState, PostState, RenderState)
 
 
 def _resolve(mod: str, sym: str):
@@ -195,13 +196,6 @@ def test_every_enum_member_classified(enum_cls: type[Enum]) -> None:
     covered = terminal | set(exits.keys())
     assert covered == members, f"{enum_cls.__name__}: missing={members - covered} extra={covered - members}"
     assert terminal.isdisjoint(exits.keys()), f"{enum_cls.__name__}: terminal states must not have EXITS"
-
-
-def test_render_state_exempt() -> None:
-    assert RENDER_STATE_EXEMPT
-    assert RenderState not in TERMINAL
-    assert RenderState not in EXITS
-    pytest.skip("CULM-9: RenderState reserved, no advancer")
 
 
 @pytest.mark.parametrize("mod,sym,_note", _all_exit_refs(), ids=[f"{m}:{s}" for m, s, _ in _all_exit_refs()])

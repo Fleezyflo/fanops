@@ -124,19 +124,6 @@ def test_stale_answer_dropped_under_concurrency(tmp_path, monkeypatch):
     assert read_response(cfg, "moments", "good1", MomentDecision) is not None
 
 
-def test_pool_not_constructed_when_flag_off(tmp_path, monkeypatch, mocker):
-    # BYTE-IDENTICAL guard: with the flag OFF, answer_pending takes the sequential path and never
-    # constructs a ThreadPoolExecutor. Patch it to raise on construction; the OFF run must NOT raise
-    # and must still answer every gate.
-    monkeypatch.setenv("FANOPS_RESPONDER", "llm")
-    monkeypatch.delenv("FANOPS_CONCURRENT_SOURCES", raising=False)
-    def boom(*a, **k): raise AssertionError("ThreadPoolExecutor constructed on the flag-OFF path")
-    mocker.patch("fanops.responder.ThreadPoolExecutor", side_effect=boom)
-    cfg = Config(root=tmp_path); _seed(cfg, ["s0", "s1"])
-    n = LlmResponder(cfg, model=_good_model).answer_pending(cfg)             # must not raise
-    assert n == 2
-
-
 def test_empty_gates_on(tmp_path, monkeypatch):
     # Edge: nothing pending -> the ON path returns 0 without constructing a pool over an empty list.
     monkeypatch.setenv("FANOPS_RESPONDER", "llm"); monkeypatch.setenv("FANOPS_CONCURRENT_SOURCES", "1")

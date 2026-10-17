@@ -33,7 +33,7 @@ def _win_surface(led, account, platform, hook="WIN", *, n=3, win=90.0, lose=10.0
         clip = Clip(id=cid, parent_id=mid, path=f"{cid}.mp4")
         post = Post(id=f"{pid}{i}", parent_id=cid, account=account, account_id="x",
                     platform=platform, caption="x", state=PostState.analyzed,
-                    metrics={"lift_score": lift}, public_url="dryrun://clip_1")
+                    metrics={"lift_score": lift}, public_url="https://www.instagram.com/p/clip_1/")
         led.add_moment(moment); led.add_clip(clip); led.add_post(post)
 
 
@@ -122,7 +122,7 @@ def test_donor_below_v2_gate_contributes_nothing(tmp_path):
             led.add_moment(moment); led.add_clip(clip)
             led.add_post(Post(id=f"{acct}{i}", parent_id=cid, account=acct, account_id="x",
                               platform=Platform.instagram, caption="x", state=PostState.analyzed,
-                              metrics={"lift_score": 90.0}, public_url="dryrun://clip_1"))
+                              metrics={"lift_score": 90.0}, public_url="https://www.instagram.com/p/clip_1/"))
     assert transferred_hooks(led, cfg, accts, "c", Platform.instagram) == []
 
 

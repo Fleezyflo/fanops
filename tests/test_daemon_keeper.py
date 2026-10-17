@@ -31,6 +31,8 @@ def test_ensure_noop_when_pump_loaded(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda cfg: "same")
     monkeypatch.setattr(daemon, "_version_signal", lambda cfg: ("same", "git-head"))
     cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("same", "git-head"))
 
     res = daemon.ensure(cfg)
 
@@ -65,6 +67,7 @@ def test_ensure_bootstraps_when_pump_absent(tmp_path, monkeypatch):
     assert res["loaded"] is True
     assert res["action"] == "bootstrap"
     assert ["launchctl", "bootstrap", f"gui/{uid}", str(daemon.plist_path())] in fake.calls
+    assert not any(c[1] == "kickstart" for c in fake.calls)
 
 
 def test_ensure_rewrites_stale_plist_when_loaded(tmp_path, monkeypatch):

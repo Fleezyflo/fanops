@@ -21,7 +21,7 @@ from fanops.stitch_render import (mine_suggestions, render_approved_stitches,
 from fanops.intro_match import request_intro_match, ingest_intro_match
 from fanops.clip import render_aspects_for
 from fanops.caption import request_captions, ingest_captions, caption_request_stale
-from fanops.caption_compose import _source_lock_completed, _tags_off_lock
+from fanops.caption_compose import _source_lock_completed, _source_lock_tags, _tags_off_lock
 from fanops.crosspost import crosspost_clips, owner_caption_surfaces
 from fanops.post.run import publish_due
 from fanops.reconcile import reconcile_due
@@ -290,8 +290,18 @@ def _stage_refresh_caption_requests(led: Ledger, cfg: Config, accts: Accounts, l
             _tags_off_lock(cfg, src, (c.meta_captions or {}).get(s, {}).get("hashtags") or [])
             for s in need if isinstance((c.meta_captions or {}).get(s), dict)
         )
+        lock_now = _source_lock_tags(cfg, src) if _source_lock_completed(cfg, src) else []
+        stored_empty = True
+        for s in need:
+            rec = (c.meta_captions or {}).get(s)
+            tags = rec.get("hashtags") if isinstance(rec, dict) else None
+            if tags:
+                stored_empty = False
+                break
         if c.state in (ClipState.captioned, ClipState.queued) and need <= have and not off_lock:
-            continue
+            if not (lock_now and stored_empty):
+                continue
+        # else fall through to request_captions
         try:
             led = request_captions(led, cfg, c.id, want, accounts=accts)
             log("captions", c.id, "request_refreshed", surfaces=len(want), missing=len(need - have))

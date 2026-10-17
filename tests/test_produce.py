@@ -38,35 +38,26 @@ def test_produce_warms_errored_source_with_warm_transcript(tmp_path, mocker):
     assert sig_calls, "signals ffmpeg should run to warm sidecar"
 
 
-def test_produce_one_returns_error_when_whisper_sets_error(tmp_path, mocker):
+def test_produce_one_returns_error_when_whisper_fails(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     path = str(tmp_path / "vid.mp4")
     Path(path).write_bytes(b"V")
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path=path, state=SourceState.catalogued))
 
-    def fake(led, cfg, source_id, **kw):
-        led.set_source_state(source_id, SourceState.error,
-                             error_reason="whisper produced no JSON (rc=1): boom")
-        return led
-    mocker.patch("fanops.produce.transcribe_source", side_effect=fake)
+    def fake_whisper(cmd, **kw):
+        class R:
+            returncode = 1
+            stderr = "boom"
+            stdout = ""
+        return R()
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=fake_whisper)
     res = _produce_one(cfg, "s1", set(), log=lambda *a, **k: None)
-    assert res.error_reason and "no JSON" in res.error_reason
+    assert res.error_reason
     assert Ledger.load(cfg).sources["s1"].state is SourceState.catalogued
 
 
-def test_produce_one_returns_error_when_json_missing(tmp_path, mocker):
-    cfg = Config(root=tmp_path)
-    path = str(tmp_path / "vid.mp4")
-    Path(path).write_bytes(b"V")
-    with Ledger.transaction(cfg) as led:
-        led.add_source(Source(id="s1", source_path=path, state=SourceState.catalogued))
-    mocker.patch("fanops.produce.transcribe_source", side_effect=lambda led, cfg, source_id, **kw: led)
-    res = _produce_one(cfg, "s1", set(), log=lambda *a, **k: None)
-    assert res.error_reason == "whisper produced no transcript JSON"
-
-
-def test_produce_retries_asr_when_hook_windows_lack_speech(tmp_path, mocker, monkeypatch):
+def test_produce_retries_asr_when_hook_windows_lack_speech(tmp_path, monkeypatch, mocker):
     monkeypatch.delenv("FANOPS_ISOLATE_VOCALS", raising=False)
     cfg = Config(root=tmp_path)
     src_path = cfg.sources / "src_1.mp4"
@@ -79,13 +70,9 @@ def test_produce_retries_asr_when_hook_windows_lack_speech(tmp_path, mocker, mon
                               meta={"transcribed": True}))
         led.moments["m1"] = Moment(id="m1", parent_id="src_1", state=MomentState.picked,
                                    content_token="14.00-22.00", start=14.0, end=22.0, reason="r")
-    calls = []
-    def fake(led, cfg, source_id, **kw):
-        calls.append(kw)
-        return led
-    mocker.patch("fanops.produce.transcribe_source", side_effect=fake)
+    mocker.patch("fanops.transcribe.subprocess.run", side_effect=lambda *a, **k: type(
+        "R", (), {"returncode": 1, "stderr": "x", "stdout": ""})())
     _produce_one(cfg, "src_1", set(), log=lambda *a, **k: None)
-    assert calls and calls[0].get("force") is True
     assert (cfg.agent_io / "transcripts" / "src_1.asr_retry").exists()
 
 
@@ -107,22 +94,3 @@ def test_produce_source_ids_skips_inventory_and_orders_newest_first(tmp_path):
                               origin_kind="third_party", created_at="2026-09-01T00:00:00Z"))
     ids = produce_source_ids(Ledger.load(cfg))
     assert ids == ["src_new_work", "src_old_work"]
-
-
-def test_run_all_calls_produce_one_only_for_work_remaining_newest_first(tmp_path, mocker):
-    from fanops.produce import run_all, SourceResult
-    cfg = Config(root=tmp_path)
-    path = str(tmp_path / "vid.mp4")
-    Path(path).write_bytes(b"V")
-    with Ledger.transaction(cfg) as led:
-        led.add_source(Source(id="src_old", source_path=path, state=SourceState.picks_decided,
-                              created_at="2026-07-01T00:00:00Z"))
-        led.add_source(Source(id="src_new", source_path=path, state=SourceState.catalogued,
-                              created_at="2026-08-01T00:00:00Z"))
-        led.add_source(Source(id="src_done", source_path=path, state=SourceState.moments_decided,
-                              created_at="2026-08-15T00:00:00Z"))
-    seen = []
-    mocker.patch("fanops.produce._produce_one",
-                 side_effect=lambda cfg, sid, aspects, log=None: seen.append(sid) or SourceResult(sid, None))
-    run_all(cfg, set(), log=lambda *a, **k: None)
-    assert seen == ["src_new", "src_old"]

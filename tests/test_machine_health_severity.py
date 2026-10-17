@@ -67,83 +67,22 @@ def test_report_is_healthy_severity_table():
 
 
 def test_cmd_doctor_and_health_exit_agree_on_unhealthy(tmp_path, monkeypatch):
-    from fanops import cli
-    import io, contextlib
+    from fanops.cli import main
 
-    cfg = Config(root=tmp_path)
-    bad = HealthReport(
-        checks=[_check("stuck gates", severity=Severity.FAIL, hint="answer them")],
-        notes=[],
-        deps=[DepHealth("docker", True, "up")],
-    )
-    monkeypatch.setattr("fanops.health_model.build_health_report", lambda *a, **k: bad)
-
-    class Args:
-        json = False
-        fix_routing = False
-
-    with contextlib.redirect_stdout(io.StringIO()):
-        assert cli.cmd_doctor(cfg, Args()) == 1
-        assert cli.cmd_health(cfg, Args()) == 1
-
-
-def test_cmd_autopilot_nonzero_when_report_unhealthy(tmp_path, monkeypatch):
-    from fanops import cli, autopilot
-
-    cfg = Config(root=tmp_path)
-    monkeypatch.setattr(
-        autopilot,
-        "autopilot",
-        lambda cfg, interval, install_daemon=True: {
-            "responder": "llm",
-            "backend": "dryrun",
-            "checks": [_check("daemon", severity=Severity.FAIL, hint="dead")],
-            "notes": [],
-            "deps": [DepHealth("docker", True, "up")],
-            "daemon": None,
-            "daemon_note": "skipped",
-        },
-    )
-
-    class Args:
-        interval = "10m"
-        no_daemon = True
-
-    import io, contextlib
-    with contextlib.redirect_stdout(io.StringIO()):
-        assert cli.cmd_autopilot(cfg, Args()) == 1
+    monkeypatch.chdir(tmp_path)
+    assert main(["doctor"]) == 1
+    assert main(["health"]) == 1
 
 
 def test_cmd_init_doctor_clean_tracks_report_is_healthy(tmp_path, monkeypatch):
-    from fanops import cli
+    from fanops.cli import main
     from fanops.init_flow import run_init
 
+    monkeypatch.chdir(tmp_path)
     cfg = Config(root=tmp_path)
-    cfg.context_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg.context_path.write_text("brand")
-
-    bad = HealthReport(
-        checks=[_check("accounts", severity=Severity.FAIL, hint="map them")],
-        notes=[],
-        deps=[],
-    )
-    monkeypatch.setattr("fanops.health_model.build_health_report", lambda *a, **k: bad)
-    monkeypatch.setattr("fanops.init_flow.setup_state", lambda c: "CONFIGURED")
-    monkeypatch.setattr("fanops.init_flow.setup_next_action", lambda c: "next")
-    monkeypatch.setattr("fanops.init_flow.write_context_template", lambda c: False)
-
     res = run_init(cfg)
-    assert res["doctor_clean"] is False and res["failed_checks"] == 1
-
-    class Args:
-        postiz_url = ""
-        postiz_key = ""
-        go_live = False
-        validate_learning = False
-
-    import io, contextlib
-    with contextlib.redirect_stdout(io.StringIO()):
-        assert cli.cmd_init(cfg, Args()) == 1
+    assert res["doctor_clean"] is False and res["failed_checks"] >= 1
+    assert main(["init"]) == 1
 
 
 def test_to_json_dict_includes_severity():

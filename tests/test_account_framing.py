@@ -97,37 +97,36 @@ def _seed_clip(led, cfg, *, m_hook=None, m_framing=None, m_profile=None, surface
     clip.meta_captions = {s: {"caption": f"cap {s}", "hashtags": ["#x"]} for s in surfaces}
     led.add_clip(clip)
 
-def _run(cfg, mocker):
-    rendered = Clip(id="clip_mom_1_9x16", parent_id="mom_1", path=str(cfg.clips / "clip_mom_1_9x16.mp4"),
-                    aspect=Fmt.r9x16, state=ClipState.rendered)
-    mocker.patch("fanops.crosspost.render_moment", return_value=(Ledger.load(cfg), rendered))
+def _run(cfg):
+    # Real crosspost mint — the 9x16 captioned seed is reused (no render_moment). top_bias is stamped
+    # on the Post from moment.framing / the global aware_reframe fallback.
     led = crosspost_clips(Ledger.load(cfg), cfg, Accounts.load(cfg), base_time="2026-06-02T18:00:00Z")
     led.save()
     return Ledger.load(cfg)
 
-def test_moment_framing_top_stamps_top_bias(tmp_path, mocker):
+def test_moment_framing_top_stamps_top_bias(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [_acct("a", framing="top")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", m_framing="top", surfaces=("a/instagram",)); led.save()
-    led = _run(cfg, mocker)
+    led = _run(cfg)
     assert next(iter(led.posts.values())).top_bias is True
 
-def test_moment_framing_none_inherits_global(tmp_path, mocker):
+def test_moment_framing_none_inherits_global(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [_acct("a")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", surfaces=("a/instagram",)); led.save()
-    led = _run(cfg, mocker)
+    led = _run(cfg)
     assert next(iter(led.posts.values())).top_bias is False
 
-def test_moment_framing_center_overrides_global_on(tmp_path, monkeypatch, mocker):
+def test_moment_framing_center_overrides_global_on(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
     cfg = Config(root=tmp_path)
     _seed(cfg, [_acct("c", framing="center")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", m_framing="center", surfaces=("c/instagram",)); led.save()
-    led = _run(cfg, mocker)
+    led = _run(cfg)
     assert next(iter(led.posts.values())).top_bias is False
 
 def test_render_spec_distinct_framing_ids(tmp_path):
@@ -138,21 +137,21 @@ def test_render_spec_distinct_framing_ids(tmp_path):
     rid_ctr, _, _, tb_ctr = render_spec(cfg, clip=clip, hook="SAME", moment=Moment(id="mom_1", parent_id="s", start=0, end=7, reason="r", framing="center"))
     assert rid_top != rid_ctr and tb_top is True and tb_ctr is False
 
-def test_moment_framing_top_matches_global_on(tmp_path, monkeypatch, mocker):
+def test_moment_framing_top_matches_global_on(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_AWARE_REFRAME", "1")
     cfg = Config(root=tmp_path)
     _seed(cfg, [_acct("top", framing="top")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="H", m_framing="top", surfaces=("top/instagram",)); led.save()
-    led = _run(cfg, mocker)
+    led = _run(cfg)
     assert next(iter(led.posts.values())).top_bias is True
 
-def test_moment_profile_long_stamped_on_post(tmp_path, mocker):
+def test_moment_profile_long_stamped_on_post(tmp_path):
     cfg = Config(root=tmp_path)
     _seed(cfg, [_acct("bandonly", clip_profile="long"), _acct("both", account_id="2", clip_profile="long", framing="top")])
     led = Ledger.load(cfg)
     _seed_clip(led, cfg, m_hook="SAME", m_profile="long", surfaces=("bandonly/instagram",)); led.save()
-    led = _run(cfg, mocker)
+    led = _run(cfg)
     assert next(iter(led.posts.values())).clip_profile == "long"
 
 def test_render_spec_band_and_framing_compose(tmp_path):
