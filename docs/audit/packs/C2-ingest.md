@@ -6,7 +6,7 @@
 |----|----------|-------|----------|----------|----------|
 | C2-F01 | low | swallow | closed on this tree | `vocals._demucs_env` returns `certifi_ssl_env` and does not catch | `vocals._demucs_env` |
 | C2-F02 | high | dead-resume | closed on this tree | A transcript sidecar counts as a finished stage only when it is adoptable (`_cache_is_quality_complete` plus finalize). Later disk stages do not resume past transcribe without that. A legacy segments list, even beside a signals sidecar, rewinds a transient error to `catalogued` so the next pass re-runs ASR. | `artifacts._valid_transcript_json` |
-| C2-F03 | low | doc-rot | closed on this tree | `config.isolate_vocals` states that a missing, timed-out, nonzero, or stem-less Demucs raises. The source is set to error. The mix is not transcribed | `config.isolate_vocals` |
+| C2-F03 | low | doc-rot | closed on this tree | `vocals.isolate_vocals` logs `fail-closed` and raises `ToolchainMissingError` when Demucs is missing, times out, exits nonzero, or leaves no stem. The source is set to error. The mix is not transcribed. `config.isolate_vocals` matches that posture | `vocals.isolate_vocals` |
 | C2-F04 | high | scan-leak | closed on this tree | Native `stage_inbox_candidates` skips a child `.pull` (the URL stage and its `.ingested`). A stranded pull and a disposed pull archive are not minted `source_origin=drop` and are not moved into `01_inbox/.ingested`. A scan whose inbox is `.pull` still catalogues that stage. | `ingest.stage_inbox_candidates` |
 
 ## Evidence commands run
@@ -21,7 +21,7 @@ tests/test_ingest.py tests/test_transcribe.py
 
 Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. C2 sources matched HEAD (`git diff --stat HEAD` empty on the fourteen module paths) except the C2-F02 edit in `artifacts.py` after the read. `config.py` matches HEAD. `doctor.py` is dirty; the toolchain lines below are from `git show HEAD:src/fanops/doctor.py`. No aliases for these symbols in `src/fanops/CLAUDE.md`. Nothing deleted.
 
-Verdict: a fresh inbox drop still reaches a transcript when ffmpeg, ffprobe, faster-whisper, and demucs are present. C2-F01 stays closed. C2-F02 was a dead resume and is fixed in the working tree. C2-F03 is closed: the `config.isolate_vocals` docstring matches the raise.
+Verdict: a fresh inbox drop still reaches a transcript when ffmpeg, ffprobe, faster-whisper, and demucs are present. C2-F01 stays closed. C2-F02 was a dead resume and is fixed in the working tree. C2-F03 is closed: `vocals.isolate_vocals` logs `fail-closed` and raises `ToolchainMissingError`. `config.isolate_vocals` matches that posture.
 
 ### Routes / entry points
 
@@ -86,7 +86,7 @@ Verdict: a fresh inbox drop still reaches a transcript when ffmpeg, ffprobe, fas
 
 C2-F02 on HEAD: `_valid_transcript_json` treated any `segments` list as done. `_adopt_cached_transcript` refuses a list whose text has no `avg_logprob` / `compression_ratio`. `reconcile_source_progress` then promoted the row to `transcribed` or `signalled` with an empty transcript, and later passes never called ASR. Working tree: the sidecar must be adoptable, and later disk stages do not count without it. Repro (not pytest): legacy JSON plus a v3 signals sidecar → `infer_resume_stage` is `None`, state `catalogued`, transcript `None`. The same row with `talk_seg` still infers `signalled`.
 
-C2-F03 is closed. `config.isolate_vocals` now states that a missing, timed-out, nonzero, or stem-less Demucs raises `ToolchainMissingError`, the source is set to error, and the mix is not transcribed. `vocals.isolate_vocals` still logs the historical token `fail-open` and then raises. `tests/test_vocals.py` expects `ToolchainMissingError` and pins that log token. `vocals.py` was not edited.
+C2-F03 is closed. `vocals.isolate_vocals` logs `isolate_vocals fail-closed` and raises `ToolchainMissingError` when Demucs is missing, times out, exits nonzero, or leaves no stem. The source is set to error. The mix is not transcribed. `config.isolate_vocals` matches that posture. `tests/test_vocals.py` expects `ToolchainMissingError` and the `fail-closed` breadcrumb.
 
 ### Commands run
 
@@ -111,7 +111,7 @@ ffmpeg 9.0.2 stream-copy probe: 6s lavfi source, shard_file shape `-ss 3 -i -to 
 
 Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audit-2026-09`. Lane diff vs HEAD at the start of this pass was `src/fanops/artifacts.py` only (the C2-F02 adoptable-sidecar gate). `ingest.py`, `vocals.py`, and `transcribe.py` matched HEAD. `config.py` was not edited. No `stage_inbox_candidates as` / `_inbox_media as` aliases. Nothing deleted. pytest was not run.
 
-C2-F01 stays closed: `vocals._demucs_env` returns `certifi_ssl_env` and has no `except`. C2-F02 stays closed: `_valid_transcript_json` requires `_cache_is_quality_complete` plus `_finalize_segments`, and `_disk_stages` returns no later stage without that. C2-F03 is closed: `config.isolate_vocals` matches the raise. The log line in `vocals.isolate_vocals` still contains the token `fail-open`; the function raises, and `tests/test_vocals.py` pins that token. Not a second finding.
+C2-F01 stays closed: `vocals._demucs_env` returns `certifi_ssl_env` and has no `except`. C2-F02 stays closed: `_valid_transcript_json` requires `_cache_is_quality_complete` plus `_finalize_segments`, and `_disk_stages` returns no later stage without that. C2-F03 is closed: `vocals.isolate_vocals` logs `fail-closed` and raises `ToolchainMissingError`. `config.isolate_vocals` matches that posture.
 
 C2-F04 was wrong on this tree. `.venv` is Python 3.12.8 and `Path.rglob("*")` matches `.pull` and `.ingested`. Native `ingest_drops` (the `advance` / `cmd_ingest` scan of `01_inbox`) minted three sources, all `source_origin=drop`: the manual drop, `01_inbox/.pull/stranded.mp4`, and `01_inbox/.pull/.ingested/done.mp4`, and moved all three into `01_inbox/.ingested`. `source_origin` is write-once, so a later pull only logs `origin_path_conflict`. Fix: skip a child `.pull` the same way `.ingested` is skipped. When the scan box is the pull stage, that skip is a nested `box/.pull` and the pull's own files still match. After the fix the same repro added 1 (`drop`, 6 bytes); stranded and the disposed archive stayed put; a pull-stage scan then added 1 (`url`, 8 bytes) and left `done.mp4` in `.pull/.ingested`.
 

@@ -6,15 +6,15 @@ Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Product behaviour below is f
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C3-F01 | low | cost | accepted — second grid still reachable | `_compute_track` stays one `extract_frames_grid` call. Do not fuse it with `detect_window` | `framing._compute_track`; `keyframes._window_cache_key` |
+| C3-F01 | low | cost | closed — one real 9fps ffmpeg on the CT_MULTI path | `detect_window`, `_compute_track`, and `motion_saliency` call `extract_frames_grid` at `_FRAMING_GRID_FPS` | `tests/test_framing_grid_fusion.py` `test_ct_multi_resolve_one_real_ffmpeg` |
 | C3-F02 | medium | wrong | closed in this pass | Supercut concat emits `-fps_mode cfr` after the maps, same slot as `ffmpeg_segments_cmd` | `clip_ffmpeg.ffmpeg_supercut_cmd` |
 | C3-F03 | high | wrong | closed in this pass | rc 0 with an empty or missing temp is not a publish. `render_reframed` and `render_supercut_reframed` return rc 1 and leave a pre-existing dst untouched, so `render_moment` does not stamp the new fingerprint on the old bytes | `clip_ffmpeg._finish_publish` |
 
-C3-F01 was closed on the working-tree row as "one pass, shared with `detect_window`". That share is false. `_compute_track` calls `extract_frames_grid` once, at `_ASD_FPS` 9. `detect_window` already called it at `_DETECT_FPS` 4. The cache key is `sha256(source_id, start, end, fps, width)`, so the 9fps call misses and shells ffmpeg again. `_resolve` reaches that call for `CT_MULTI`. `docs/CODEMAPS/anomalies.md` already marks the pair a bounded mouth-motion cost. No code change. Not a second call inside `_compute_track`.
+C3-F01 is closed. `test_ct_multi_resolve_one_real_ffmpeg` drives `clip._resolve_framing` through CT_MULTI on a generated mp4 and counts one real `subprocess.run` at `framing._FRAMING_GRID_FPS` (9.0). The detector is stubbed as two faces. `clip.py` was not edited.
 
 ## Full checklist 2026-10-17
 
-Launch path can produce a clip. C3-F02 and C3-F03 are fixed in this tree. The 2-shot second grid stays the accepted cost above. No clip.py edit.
+Launch path can produce a clip. C3-F01, C3-F02, and C3-F03 are closed in this tree. No clip.py edit.
 
 ### Entry symbols
 
@@ -26,7 +26,7 @@ Launch path can produce a clip. C3-F02 and C3-F03 are fixed in this tree. The 2-
 | `clip.render_aspects_for` / `clip.render_moment` | One mp4 per aspect. Supercut when `moment.segments` is set; else `fit_window` then reframe |
 | `clip._resolve_framing` | `cfg.smart_framing` off → `(None, None, None)`. On → `framing._resolve(...).as_tuple()` |
 | `framing._resolve` | `detect_window`, then speaker track, subject focus, or motion saliency |
-| `framing._compute_track` | One `extract_frames_grid` at 9fps, then `_track_observe`, `_assemble_track` |
+| `framing._compute_track` | `extract_frames_grid` at `_FRAMING_GRID_FPS`, shared with `detect_window` and `motion_saliency`, then `_track_observe`, `_assemble_track` |
 | `keyframes.extract_frames_grid` | Cache hit or one `_run_grid_extract` |
 | `clip_ffmpeg.render_reframed` | Stack, else segment concat, else single-pass crop. Atomic publish |
 | `clip_ffmpeg.render_supercut_reframed` | Supercut atomic publish. Fail-open caller is `render_moment` |
@@ -135,7 +135,7 @@ pytest was not run.
 
 Subject remains `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. This pass edited `src/fanops/clip_ffmpeg.py` and `tests/test_render_atomicity.py`. `clip.py` was not edited. Nothing was deleted. No `as` alias for `ffmpeg_supercut_cmd`, `render_supercut_reframed`, or `_finish_publish` under `src/fanops`.
 
-C3-F01 stays accepted. A second `extract_frames_grid` is still reachable. `detect_window` calls it at `_DETECT_FPS` 4. `_compute_track` calls it at `_ASD_FPS` 9. `motion_saliency` also uses 9. The cache key includes fps, so the 9fps call misses. Not fused.
+C3-F01 is closed. `test_ct_multi_resolve_one_real_ffmpeg` counts one real ffmpeg at `framing._FRAMING_GRID_FPS` (9.0) on the CT_MULTI path. `keyframes._window_cache_key` was not changed.
 
 C3-F02 stays closed. `ffmpeg_supercut_cmd` still places `-fps_mode cfr` after both `-map` options.
 
@@ -148,6 +148,6 @@ git rev-parse HEAD
 git diff --stat -- src/fanops/clip_ffmpeg.py tests/test_render_atomicity.py
 rg -n "extract_frames_grid\(|fps=_DETECT_FPS|fps=_ASD_FPS" src/fanops/framing.py
 rg -n "ffmpeg_supercut_cmd as |render_supercut_reframed as |_finish_publish as " src/fanops
-PYTHONPATH=src python3  # inline: empty and missing temp return rc 1 and keep prior bytes; nonempty rc 0 publishes; supercut -fps_mode cfr sits after -map; _DETECT_FPS 4.0 != _ASD_FPS 9.0
+PYTHONPATH=src python3  # inline, pre-fusion: empty and missing temp return rc 1 and keep prior bytes; nonempty rc 0 publishes; supercut -fps_mode cfr sits after -map. That pass still saw _DETECT_FPS 4.0. _DETECT_FPS is gone; the grid rate is _FRAMING_GRID_FPS.
 PYTHONPATH=src python3  # inline render_moment re-render: ClipState.error, moment decided, no render.json, prior bytes kept; error_reason starts "ffmpeg rc=1"
 ```

@@ -85,12 +85,14 @@ OWN error: one unreadable plane must never report another as clean, which is how
   probe is an explicit `[SKIP]` — never a pass. `--require-live` deliberately does NOT escalate it:
   a read the workflow token cannot make measures the token, not the setting. A divergence it CAN
   see still blocks.
-- **DC-3: live branch protection vs the registry context list** — same job. `reconcile` (the Monday
-  schedule and `workflow_dispatch`) passes `secrets.GH_DEPLOYED_PROBE_PAT` as `GH_TOKEN`. That
-  secret needs Administration: Read. An empty secret fails the step before the probe. An HTTP 403
-  under `--require-live` fails and names `GH_DEPLOYED_PROBE_PAT`. A protection payload that WAS
-  read fails when its required contexts differ from `required_contexts`, or when
-  `required_status_checks.strict` is not true. Negative controls: `NC-DC3-drift`, `NC-DC3-strict`.
+- **DC-3: live branch protection vs the registry context list** — same job. `reconcile` /
+  `workflow_dispatch` use the workflow `GITHUB_TOKEN` only (`contents: read`, `actions: read`).
+  Branch protection is not readable on that token, so an HTTP 403 / unreadable protection probe is
+  an explicit non-authoritative `[SKIP]` — never a pass, and not a reconcile failure.
+  `--require-live` deliberately does NOT escalate it: a read the workflow token cannot make measures
+  the token, not the protection. A protection payload that WAS read fails when its required contexts
+  differ from `required_contexts`, or when `required_status_checks.strict` is not true. Negative
+  controls: `NC-DC3-drift`, `NC-DC3-strict`.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on

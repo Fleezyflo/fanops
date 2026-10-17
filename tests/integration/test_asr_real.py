@@ -5,6 +5,7 @@ by the PR unit/e2e jobs and this file is EXCLUDED from them (the `asr` marker is
 nightly workflow (.github/workflows/nightly.yml) installs `[asr]` and runs `-m "integration and asr"` with
 FANOPS_REQUIRE_E2E=1, so any skip here becomes a failure — proving the heavy toolchain actually installs and
 the vocal-isolation entry point is wired, which was never verified in CI before.
+asr-smoke caches ~/.cache/huggingface and pre-fetches faster-whisper tiny before the smoke step.
 """
 import sys
 

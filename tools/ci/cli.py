@@ -52,21 +52,20 @@ def cmd_deployed(require_live: bool) -> int:
                                    workflow_error=wf_err, security_settings=settings,
                                    security_error=sec_err)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
-    # --require-live escalates an unreadable probe to a FAILURE only where the read failing is
-    # itself the defect. DC-8 needs `actions: read`, which the job's token is granted — an
-    # unreadable workflow list means that grant broke, and fails.
+    # --require-live fails an unreadable probe only where this job can authenticate the read.
+    # DC-8 needs `actions: read`, which the workflow token is granted — an unreadable workflow
+    # list means that grant broke, and fails.
     #
-    # DC-3 needs Administration read. The workflow token cannot grant that, so --require-live
-    # fails an unreadable protection probe and names secrets.GH_DEPLOYED_PROBE_PAT. DC-9 stays
-    # a SKIP. A protection payload that was read and disagrees with required_contexts still fails.
-    hard = [("DC-8", wf_err), ("DC-3", err)]
+    # DC-3 and DC-9 unreadable never escalate, including under --require-live. The workflow
+    # GITHUB_TOKEN cannot read branch protection or `security_and_analysis`, and no permissions
+    # block can grant `administration`. checks.dc3_deployed_state still renders that SKIP. A
+    # payload that WAS read fails in the findings above when contexts differ from
+    # required_contexts or strict is not true.
+    hard = [("DC-8", wf_err)]
     failed = [(dc, e) for dc, e in hard if e]
     if failed and require_live:
         for dc, e in failed:
-            extra = ""
-            if dc == "DC-3":
-                extra = " Set secrets.GH_DEPLOYED_PROBE_PAT with Administration: Read."
-            print(f"  [FAIL] {dc} · - : --require-live set but the live probe failed ({e}).{extra}")
+            print(f"  [FAIL] {dc} · - : --require-live set but the live probe failed ({e})")
         return 1
     return rc
 

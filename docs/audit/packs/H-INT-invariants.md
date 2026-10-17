@@ -1,12 +1,12 @@
 # Pack: H-INT — invariant authority
 
-Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. H-INT-F01 stays accepted. No retag.
+Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. H-INT-F01 is resolved. No retag.
 
 ## Findings
 
 | ID | Severity | Class | Status | Observed | Required | Evidence |
 |----|----------|-------|--------|----------|----------|----------|
-| H-INT-F01 | low | taxonomy | accepted | ARCH-001 remains the S-subsystem totality rule (`Rule` title "The subsystem partition is TOTAL"; `kb/subsystems.json` vs `derived/modules.json`, `partition_is_total`). `partition.json` is the operator C-map and must stay C1–C10. reconcile.py is C7 in partition.json and C6 for operator remediation (publish lane owns the file). post/metrics/* is C6 in partition.json and C7 for operator audit. | Document the dual map. Do not merge the partitions. Do not add X-keys. | `tools/arch/policy/rules.py` ARCH-001; `docs/CODEMAPS/partition.json`; `tests/test_production_audit_gates.py` `test_live_partition_covers_every_module`; `docs/audit/AUDIT_MODULE_INDEX.md`; `.agents/lanes.json` |
+| H-INT-F01 | low | taxonomy | resolved | Operator edits of reconcile.py are C6. `partition.json` keeps reconcile.py in C7 and `post/metrics/*` in C6. No retag. ARCH-001 stays the totality rule. | Dual map kept. Do not merge the partitions. Do not add X-keys. | `tools/arch/policy/rules.py` ARCH-001; `docs/CODEMAPS/partition.json`; `docs/audit/OPEN_GAPS.md` |
 
 ## Split
 

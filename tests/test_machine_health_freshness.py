@@ -97,6 +97,7 @@ def test_daemon_liveness_snapshot_unknown_is_severity_unknown_not_no_heartbeat(t
 
 
 def test_postiz_snapshot_unknown_is_severity_unknown(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000")
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
     cfg = _cfg(tmp_path, monkeypatch)

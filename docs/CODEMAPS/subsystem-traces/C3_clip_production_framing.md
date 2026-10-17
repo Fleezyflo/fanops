@@ -40,8 +40,10 @@ Cross-checked against `.reports/call_graph.json` (every function below cites rea
 clip._resolve_framing(cfg, src, cs, ce)     [gated on cfg.smart_framing; OFF -> (None,None,None) byte-identical]
   │
   ├─► framing.detect_window(cfg, src, start=cs, end=ce)
-  │      ONE grid pass (keyframes.extract_frames_grid @ _DETECT_FPS=4.0fps, width=_KF_WIDTH=960)
-  │      -> YuNet face boxes per frame, cached <agent_io>/framing/<source_id>.detect.json (_DETECT_V=1)
+  │      ONE physical grid (keyframes.extract_frames_grid @ _FRAMING_GRID_FPS=_ASD_FPS=9.0,
+  │      width=_KF_WIDTH, source_id, cfg). keyframes._window_cache_key hashes those inputs.
+  │      Face stats land in <agent_io>/framing/<source_id>.detect.json. _DETECT_V=4 drops a
+  │      v3 sidecar (the old 4fps stats shape) and the recompute uses this same grid.
   │      per-(framing, source_id) stage_lock guards concurrent producers
   │      fail-open -> None (no [framing] extra / no detector / no frames / any error)
   │
@@ -54,13 +56,15 @@ clip._resolve_framing(cfg, src, cs, ce)     [gated on cfg.smart_framing; OFF -> 
   │        face, no speech, no vocals        -> CT_SILENT    ("silent")
   │
   ├─ if CT_MULTI:
-  │     framing.speaker_track(cfg, src, start=cs, end=ce, src_w, src_h)
-  │       -> OWN grid pass @ _ASD_FPS=9.0fps (finer than the 4fps classify grid — mouth-motion needs it)
-  │       -> _track_observe (per-frame L/R mouth-ROI motion) -> _assemble_track (hysteresis commit,
-  │          _ASD_HOLD_S=0.35s dwell) -> _merge_brief_segments (absorb shots < _ASD_MIN_SEG_S=1.5s)
-  │       -> list of (t0,t1,fx,fy,fh,ey) segments, cached <source_id>.track.json (_SIDECAR_V=5)
+  │     framing.speaker_track → _compute_track
+  │       -> same extract_frames_grid call (_FRAMING_GRID_FPS, _KF_WIDTH, source_id, cfg)
+  │          so _window_cache_key hits. Mouth motion reads those jpegs (_track_observe).
+  │          No second fps and no second ffmpeg for this (source_id, window).
+  │       -> _assemble_track (hysteresis commit, _ASD_HOLD_S=0.35s dwell)
+  │          -> _merge_brief_segments (absorb shots < _ASD_MIN_SEG_S=1.5s)
+  │       -> list of (t0,t1,fx,fy,fh,ey) segments, cached <source_id>.track.json
   │       track found  -> return (None, track, "multi-speaker-talk")   [routes to SEGMENT-CONCAT render]
-  │       track empty  -> falls through, reclassified as CT_SINGLE (not a real 2-shot)
+  │       track empty  -> centre / subject-aware fallback (not a 1-person lock)
   │
   ├─ if CT_SINGLE / CT_MUSIC / CT_SILENT:
   │     framing.subject_focus(cfg, src, start=cs, end=ce)
@@ -71,7 +75,9 @@ clip._resolve_framing(cfg, src, cs, ce)     [gated on cfg.smart_framing; OFF -> 
   │
   ├─ if CT_MUSIC / CT_SILENT / CT_NOPEOPLE (still unresolved):
   │     framing.motion_saliency(cfg, src, start=cs, end=ce)
-  │       -> OWN grid pass @ _ASD_FPS -> inter-frame pixel-diff centroid (_saliency_centroid)
+  │       -> same extract_frames_grid call (_FRAMING_GRID_FPS, _KF_WIDTH, source_id, cfg);
+  │          cache hit when detect_window already filled this window
+  │       -> inter-frame pixel-diff centroid (_saliency_centroid)
   │       -> (fx,fy) 2-tuple (NO face height -> NEVER zooms) or None, cached <source_id>.saliency.json
   │       found -> return (sal_2tuple, None, None)                 [routes to SINGLE-PASS pan-only render]
   │
@@ -228,11 +234,11 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_MIN_CONF = 0.34` (framing.py:19) — `subject_focus` needs a face in ≥34% of sampled frames (≥2 of 5), else fail-open to centered crop.
 - `_SCORE_THRESH = 0.6` (framing.py:20) — YuNet confidence floor (proven 6/6 detection on real interview footage at this threshold).
 - `_MODEL = "yunet_2023mar.onnx"` (framing.py:21) — vendored YuNet face detector (opencv_zoo, 232KB), shipped in `src/fanops/data/`.
-- `_DETECT_V = 1` (framing.py:64) — detect-grid sidecar schema version.
-- `_DETECT_FPS = 4.0` (framing.py:65) — grid sampling rate for `detect_window`/classification (cheap, sufficient for ~1s decisions).
+- `_DETECT_V = 4` — detect sidecar schema. A v3 file (the old 4fps stats shape) is discarded and recomputed on the shared grid.
+- `_FRAMING_GRID_FPS = _ASD_FPS` (9.0) — the one extract rate for `detect_window`, `_compute_track`, and `motion_saliency`.
 - `CT_MULTI = "multi-speaker-talk"`, `CT_SINGLE = "single-speaker-talk"`, `CT_MUSIC = "music"`, `CT_SILENT = "silent"`, `CT_NOPEOPLE = "no-people"` (framing.py:179-183) — the five content-type classification strings.
 - `_SPEECH_MIN_WORDS = 2` (transcribe.py:219) — ≥2 alphabetic word tokens in **full-trust** segments overlapping the window (`window_has_trusted_speech`; NOT `real_transcript_signal`, which is E2E-only with a ≥4-word total-text bar).
-- `_ASD_FPS = 9.0` (framing.py:224) — per-frame active-speaker-detection sampling rate; finer than the 4fps classify grid because mouth-motion needs it (resolves "who's talking" to ~0.1s).
+- `_ASD_FPS = 9.0` — active-speaker sample rate. `_FRAMING_GRID_FPS` is this value, so classify and track share one grid. Mouth motion reads those jpegs.
 - `_ASD_HOLD_S = 0.35` (framing.py:226) — minimum dwell before the committed speaker switches (anti-flicker hysteresis; was 0.8s, then ~4s before that — now lands cuts within ~0.45s of the real turn).
 - `_ASD_RATIO = 1.2` (framing.py:228) — the talker's mouth-motion must exceed the other side's by this factor to be the instantaneous speaker.
 - `_ASD_SAME_TOL = 0.08` (framing.py:229) — two centroids within this normalized x are treated as "the same shot" and merged.
@@ -248,7 +254,7 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_detect_faces(cv2, det, img_path)` (framing.py:67) — every face in one frame as normalized `(cx, cy, fh, ey)` (centroid, face-box height, eye-line y); fail-open `[]` on any read/detect error, `ey=cy` fallback if eye landmarks are absent. Called by `detect_window`.
 - `_detect_sidecar(cfg, source_id)` (framing.py:92) — pure path builder: `<agent_io>/framing/<source_id>.detect.json`. Called by `detect_window`.
 - `_load_detect_cache(path)` (framing.py:95) — like `_load_cache` but for the detect-grid sidecar (`_DETECT_V`). Called by `detect_window`.
-- `detect_window(cfg, src, *, start, end)` (framing.py:104) — **THE single detection pass**: one grid extraction over `[start,end)`, caching every face's `(cx,cy,fh,ey)` per frame to `<source_id>.detect.json`; feeds `classify_window`, `subject_focus`, and (indirectly, via the same on-disk cache being consulted first) is the fast-path check for `speaker_track`/`motion_saliency`'s own grid passes. Bracketed by a per-`(framing, source_id)` `stage_lock` so two concurrent callers don't race the sidecar; cache is checked both before and after lock acquisition. Returns `None` on every fail-open path. **Shells ffmpeg** (via `keyframes.extract_frames_grid`), writes a sidecar. Called by `clip._resolve_framing`, `subject_focus`.
+- `detect_window(cfg, src, *, start, end)` — **THE single detection pass**: one `extract_frames_grid` at `_FRAMING_GRID_FPS` over `[start,end)`, face stats cached in `<source_id>.detect.json` (`_DETECT_V`). `speaker_track` / `motion_saliency` reuse those jpegs through `keyframes._window_cache_key`. Bracketed by a per-`(framing, source_id)` `stage_lock`. Returns `None` on every fail-open path. Writes the detect sidecar. Called from `framing._resolve` and `subject_focus`.
 - `window_has_trusted_speech(src, start, end)` (transcribe.py:258; framing.py:14 imported as `_window_has_speech`) — pure: `True` if full-trust transcript segments overlapping the window carry ≥`_SPEECH_MIN_WORDS` alphabetic tokens. Called by `classify_window`.
 - `_face_count(stats)` (framing.py:201) — pure: median per-frame face count from detect stats (a liberal estimate — `speaker_track` still requires two stable positions to actually switch). Called by `classify_window`.
 - `classify_window(cfg, src, *, start, end, stats)` (framing.py:211) — **pure routing function**, no ffmpeg/cv2: maps face-count + speech + vocals-isolated meta to one of the five `CT_*` strings. Called by `clip._resolve_framing`.
@@ -258,13 +264,13 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `_pctl(vals, q)` (framing.py:294) — pure: nearest-rank q-quantile on a sorted copy; used for per-segment face height (p75 — the clearest full-face detection, not the median, which an occlusion/profile-turn would drag down). Called by `_assemble_track`.
 - `_merge_brief_segments(segs)` (framing.py:304) — pure: absorbs any shot shorter than `_ASD_MIN_SEG_S` into a neighbour, then re-coalesces adjacent same-position shots. Called by `_assemble_track`.
 - `_assemble_track(obs, fps)` (framing.py:324) — **pure reduction**: per-frame observations → active-speaker segments `[t0,t1,fx,fy,fh,ey]` via louder-mouth instantaneous talker + hysteresis-dwell commit + segment grouping + coalescing + brief-segment merge; `None` if only one position exists (static path is identical + cheaper). Called by `_compute_track`.
-- `speaker_track(cfg, src, *, start, end, src_w, src_h)` (framing.py:376) — the active-speaker segment list or `None` (fail-open signal to use static `subject_focus`); cached per `(source, window)`. **Shells ffmpeg** (its own grid pass at `_ASD_FPS`, separate from `detect_window`'s 4fps grid), writes a sidecar. Called by `clip._resolve_framing`.
-- `_compute_track(cv2, det, cfg, src, start, end)` (framing.py:407) — `speaker_track`'s detection body: grid extraction → `_track_observe` → `_assemble_track`; snaps the first/last segment to `[0, dur]` so the render's time-expression covers the whole clip. Called by `speaker_track`.
+- `speaker_track(cfg, src, *, start, end, src_w, src_h)` — the active-speaker segment list or `None`; cached per `(source, window)`. Reads the shared `_FRAMING_GRID_FPS` jpegs via `_compute_track` (cache hit after `detect_window`), writes a sidecar. Called from `framing._resolve` on CT_MULTI.
+- `_compute_track(cv2, det, cfg, src, start, end)` — `speaker_track`'s detection body: the shared grid → `_track_observe` (mouth pixels on those jpegs) → `_assemble_track`; snaps the first/last segment to `[0, dur]`. Called by `speaker_track`.
 - `_median_face(stats)` (framing.py:435) — pure: dominant (largest-fh) face per frame, reduced to median `(fx,fy,fh,ey)` + detection confidence over the window. Called by `subject_focus`.
 - `subject_focus(cfg, src, *, start, end)` (framing.py:448) — the dominant subject as `(fx,fy,fh,ey)`, reduced from the SAME `detect_window` grid pass (no separate probe); `None` if confidence `< _MIN_CONF`. Called by `clip._resolve_framing`.
 - `_saliency_centroid(cv2, frames)` (framing.py:460) — pure/fail-open: normalized centroid of inter-frame pixel change across the grid; `None` if no usable motion. Called by `motion_saliency`.
 - `_saliency_sidecar(cfg, source_id)` (framing.py:486) — pure path builder: `<agent_io>/framing/<source_id>.saliency.json`. Called by `motion_saliency`.
-- `motion_saliency(cfg, src, *, start, end)` (framing.py:489) — for music/silent/no-people windows with no face: the motion centroid `(fx,fy)` (never carries a face height, so it never zooms — pan-only); cached per `(source, window)`. **Shells ffmpeg** (its own grid pass). Called by `clip._resolve_framing`.
+- `motion_saliency(cfg, src, *, start, end)` — for music/silent/no-people windows with no face: the motion centroid `(fx,fy)` (never carries a face height, so it never zooms — pan-only); cached per `(source, window)`. Uses the same `extract_frames_grid` inputs as `detect_window`, so a warm window does not spawn a second ffmpeg. Called from `framing._resolve`.
 
 ### `keyframes.py` — still-frame extraction for hook authoring + face detection (145 lines)
 
@@ -414,7 +420,8 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 - `clip.py:504` `_REFRAME_GEOM_V = 4`
 - `framing.py:19` `_MIN_CONF = 0.34`
 - `framing.py:20` `_SCORE_THRESH = 0.6`
-- `framing.py:65` `_DETECT_FPS = 4.0`
+- `framing._FRAMING_GRID_FPS` equals `framing._ASD_FPS` (9.0)
+- `framing._DETECT_V = 4`
 - `transcribe.py:219` `_SPEECH_MIN_WORDS = 2`
 - `framing.py:224` `_ASD_FPS = 9.0`
 - `framing.py:226` `_ASD_HOLD_S = 0.35`
@@ -448,6 +455,6 @@ compose.compose_clip(base, out, TemplateSpec) -> cli.cmd_compose  [operator-run 
 
 **No bare `except:`** anywhere in the 8 files — every handler is typed `except Exception` or narrower (e.g. `except (FileNotFoundError, OSError, subprocess.TimeoutExpired)`), consistent with the discipline observed in C2/C4.
 
-**Two independently-timed grid extraction passes per multi-speaker window** (not a bug, but a real per-clip cost worth flagging): `framing.detect_window` runs its own grid pass at `_DETECT_FPS=4.0` to classify the window, and — only when classification lands on `CT_MULTI` — `framing.speaker_track` runs a SECOND, independent grid pass at `_ASD_FPS=9.0` (finer, because mouth-motion detection needs it) via its own call into `keyframes.extract_frames_grid`. The two passes are NOT shared even though they sample the same window, because they need different fps and `_track_observe` needs raw pixels (mouth-ROI motion) that the JSON-cached `detect_window` stats don't carry. This is explicitly acknowledged in `framing._compute_track`'s docstring ("The active-speaker decision needs PIXELS... only multi-speaker windows pay it") — a deliberate, bounded, and self-documented cost rather than an oversight, but it does mean every real 2-shot clip pays for two ffmpeg grid extractions instead of one.
+**One grid extract per `(source_id, window)`.** `detect_window`, `_compute_track` (CT_MULTI via `speaker_track`), and `motion_saliency` call `keyframes.extract_frames_grid` at `framing._FRAMING_GRID_FPS` (`_ASD_FPS`, 9.0) with the same `_KF_WIDTH`, `source_id`, and `cfg`. `keyframes._window_cache_key` includes fps, so the second and third callers hit the directory the first caller filled and do not spawn another ffmpeg. Mouth motion reads those jpegs (`_compute_track`). `_DETECT_V` 4 invalidates a v3 detect sidecar and the recompute uses that same grid. There is no second fps.
 
 **Silent-except style difference from C2/C4**: unlike `vocals._demucs_env`'s narrow `except Exception: pass` (flagged in C2 as slightly overbroad but low-risk) or `persona_directives.persona_facts`'s untraced `except Exception: store = None` (flagged in C4 as the one un-logged swallow), every broad-except in this cluster (framing.py's nine sites, stitch_render.py's four, produce.py's six) either returns a well-understood fail-open sentinel with a code comment explaining the contract, or explicitly logs via `log(...)`/`get_logger(...)` before swallowing. No un-logged silent swallow was found in C3 — this cluster is more disciplined on that axis than either C2 or C4's single flagged instance.

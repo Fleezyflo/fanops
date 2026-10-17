@@ -18,8 +18,8 @@ Assessed 2026-10-17. The remediated tree sits on base `d2cded31e29e027e4ed55bfdb
 |-----------|-------------------|------------------------|
 | U0 structural delta | closed by stale mark | not re-audited; Studio serves this SHA |
 | C1 data model | closed — `get_logger` on the wipe path | not re-audited |
-| C2 ingest | C2-F01 and C2-F02 closed. C2-F04 closed: native scan skips a child `.pull`. C2-F03 open: `config.isolate_vocals` docstring, `config.py` not edited | not re-audited |
-| C3 clip production | C3-F01 accepted (second grid still reachable). C3-F02 closed. C3-F03 closed: empty rc-0 temp does not publish over the prior mp4 | not re-audited |
+| C2 ingest | C2-F01 through C2-F04 closed. C2-F03 closed: `vocals.isolate_vocals` logs fail-closed and raises `ToolchainMissingError` (mix not transcribed) | not re-audited |
+| C3 clip production | C3-F01 closed (`test_ct_multi_resolve_one_real_ffmpeg`, one real 9fps ffmpeg on CT_MULTI). C3-F02 closed. C3-F03 closed: empty rc-0 temp does not publish over the prior mp4 | not re-audited |
 | C4 moments/personas | C4-F01 through C4-F04 closed. Ingest and studio `regenerate_hook` share `_hook_script_mismatch` | not re-audited |
 | C5 caption/hashtags | C5-F01 closed. C5-F02 closed: a miss-only scrape pass writes the sidecar. Hook prompt still says “SEE them” | not re-audited |
 | C6 crosspost/publish | C6-F01 and C6-F02 closed. Dirty-tree pass found no C6-F03. Dry-run does not POST | not re-audited |
@@ -29,10 +29,10 @@ Assessed 2026-10-17. The remediated tree sits on base `d2cded31e29e027e4ed55bfdb
 | C10 studio views | C10-F01 through C10-F04 closed. A failed card or feed swap re-renders the card with the error inside it | not re-audited |
 | H-CI gates | closed — `tests/test_production_audit_gates.py` | not re-audited |
 | H-DOCS drift | closed by `subsystem-traces/STALE.md` | not re-audited |
-| H-INT invariants | accepted — ARCH-001 vs C-map; `reconcile.py` is C7 in `partition.json` and C6 for edits | not re-audited |
+| H-INT invariants | resolved — operator edits of `reconcile.py` are C6; `partition.json` keeps C7. No retag | not re-audited |
 | X-SEC | closed — SEC-IGPW, SEC-ENV | not re-audited |
-| X-DEP | OPS-ZERNIO closed; OPS-POSTIZ and OPS-QUEUE deferred to the operator | not re-probed |
-| X-REL | OPS-SHA closed on doctor and `daemon.ensure`; REL-PROT and REL-CI-E2E closed on the 2026-10-17 re-read; REL-UNDEPLOYED, REL-CI-ASR, REL-CI-ARCH deferred to the operator | this column is that deploy |
+| X-DEP | OPS-ZERNIO closed; OPS-POSTIZ and OPS-QUEUE open ([OPEN_GAPS.md](OPEN_GAPS.md)) | not re-probed |
+| X-REL | OPS-SHA closed on doctor and `daemon.ensure`; REL-PROT and REL-CI-E2E closed on the 2026-10-17 re-read; REL-UNDEPLOYED, REL-CI-ASR, REL-CI-ARCH open ([OPEN_GAPS.md](OPEN_GAPS.md)) | this column is that deploy |
 | X-DATA | closed — preview token and `snapshot_is_restorable` before wipe | not re-audited |
 
 `partition.json` was not given X-keys. Publish owns `reconcile.py`. This pass did not edit it.

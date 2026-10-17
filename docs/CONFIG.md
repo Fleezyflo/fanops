@@ -151,6 +151,8 @@ Speech-trust filtering is **invariant always-on** — there is no env switch for
 
 When `FANOPS_POSTIZ_ONDEMAND` is set but points at a missing script, `fanops doctor` adds an informational note (the on-demand plane is a `fanops up` bring-up concern, not a publish gate).
 
+Resting state is Docker and the local Postiz stack **down** after the reaper's idle stop. `postiz_lifecycle.ensure_up` (a due Postiz publish or reconcile) and `fanops up` start them by running `postiz-ondemand.sh ensure` — that script starts Docker; FanOps does not bring Docker up itself. A Zernio-only live deployment (Postiz credentials may exist, but no channel routes to Postiz) skips the Postiz plane and does not start Docker or Postiz. `fanops daemon install` installs the `com.fanops.postiz-reaper` launchd poll-timer (idle stop) when that on-demand script exists and `POSTIZ_URL` is local.
+
 **Machine health:** primary operator channel is `fanops doctor` over `build_health_report`. Studio Home /
 Go-Live / `/metrics` are projections of that report. `/healthz` is process liveness only; `fanops up`
 is bring-up, not machine-healthy. Channel registry + CI ratchets: [MACHINE_HEALTH.md](MACHINE_HEALTH.md).

@@ -16,9 +16,6 @@ from fanops.models import PostState, MomentState, display_origin  # MOL-808: per
 from fanops.personas import casting_directive
 from fanops.bands import band_for
 from fanops.timeutil import parse_iso
-from fanops.caption_compose import (send_caption, split_posted_caption, _hashtag_metrics_for,
-                                   _source_lock_measurements, _source_lock_tags)
-from fanops.hashtags import norm_tag
 from fanops.post.media import resolve_media_path
 from fanops.studio.preview_media import media_path_for_post
 from fanops.studio.views_common import PREPARABLE_STATES, RECENT_WINDOW_HOURS, REVIEW_FEED_SLICE, GridPage, _imminent, paginate, suggest_time
@@ -266,6 +263,8 @@ def _post_source_id(led: Ledger, post) -> str:
 
 def _metric_key(tag: str, meas: dict) -> str:
     """Lock measurements are keyed `#…`. A bare YouTube label resolves to that key."""
+    # ARCH-007: hashtags is an upward edge. It stays at call time.
+    from fanops.hashtags import norm_tag
     key = norm_tag(tag) if isinstance(tag, str) else ""
     if key and key in meas:
         return key
@@ -276,6 +275,8 @@ def _metric_key(tag: str, meas: dict) -> str:
 
 def _tag_metric_rows(meas: dict, tags: list[str]) -> list[TagMetric]:
     """Play counts from the lock row (`_hashtag_metrics_for`), one entry per tag, input order."""
+    # ARCH-007: caption_compose is an upward edge. It stays at call time.
+    from fanops.caption_compose import _hashtag_metrics_for
     table = meas if isinstance(meas, dict) else {}
     keys = [_metric_key(t, table) for t in tags]
     found = _hashtag_metrics_for(table, [k for k in keys if k])
@@ -316,6 +317,8 @@ def _send_tag_sources(tags, entry, *, youtube: bool) -> dict:
 
 def _caption_corpus_stale(cfg: Config, led: Ledger, post, locks=None) -> bool:
     """True when a completed source lock exists and a tag `send_caption` will send is not on it. No lock → False."""
+    # ARCH-007: caption_compose and hashtags stay at call time.
+    from fanops.caption_compose import send_caption
     from fanops.hashtags import _dedupe_norm
     from fanops.source_tags import load_source_tag_locks
     sid = _post_source_id(led, post)
@@ -437,6 +440,10 @@ def _surface(post, *, persona, now: datetime, cfg: Config, led: Ledger, acct=Non
     _clip = led.clips.get(post.parent_id)
     _mom = led.moments.get(_clip.parent_id) if _clip is not None else None
     _phr = (_mom.hook_removed if _mom is not None else None)
+    # ARCH-007: caption_compose is an upward edge. It stays at call time.
+    from fanops.caption_compose import (
+        send_caption, split_posted_caption, _source_lock_measurements, _source_lock_tags,
+    )
     # Chips, hashtags, and approve_caption are what send_caption will send.
     # The operator caption is the sentence (_lineage_bits / Post.caption, or the
     # seed sentence when the post line is tags-only) — not the composed wire.

@@ -213,19 +213,15 @@ jobs:
       - name: Negative controls (the validators still work)
         run: python -m tools.arch selftest
 
-      # DC-3 uses secrets.GH_DEPLOYED_PROBE_PAT (Administration: Read). An empty secret fails
-      # this step. An HTTP 403 under --require-live fails and names that secret. DC-9 may [SKIP].
+      # Reconcile uses the job GITHUB_TOKEN only. DC-8 is authoritative on this schedule.
+      # DC-3 (branch protection) and DC-9 (`security_and_analysis`) may [SKIP] when the token
+      # cannot read those APIs. A DC-3 HTTP 403 is that SKIP, not a reconcile failure. No
+      # repository secret and no operator PAT.
       # tools/ci needs BOTH: PyYAML to read the registry, jsonschema to validate its shape. The
       # jsonschema import is at module scope ON PURPOSE (tools/ci/registry.py) so an absent
       # validator is an ImportError, not silent non-validation — install it or this step dies on
       # import, before it can probe anything. This workflow is otherwise stdlib-only (header).
       - name: Deployed-state reconciliation (registry vs live GitHub settings)
-        env:
-          GH_TOKEN: ${{ secrets.GH_DEPLOYED_PROBE_PAT }}
         run: |
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "REL-CI-ARCH: secrets.GH_DEPLOYED_PROBE_PAT is empty. DC-3 needs a fine-grained PAT with Administration: Read."
-            exit 1
-          fi
           python -m pip install --quiet pyyaml jsonschema
           python -m tools.ci deployed --require-live

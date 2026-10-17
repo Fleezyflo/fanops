@@ -116,6 +116,62 @@ def test_install_installs_keeper_plist_and_loads(tmp_path, monkeypatch):
     assert res["keeper_plist"] == str(kp)
 
 
+def test_install_loads_postiz_reaper_when_local_script_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    script = tmp_path / "postiz-ondemand.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(script))
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007")
+    fake = _fake_launchctl(bootout=(1, ""), bootstrap=(0, ""))
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+    uid = os.getuid()
+
+    res = daemon.install(cfg, interval=600)
+
+    pp = daemon.sibling_plist_path("com.fanops.postiz-reaper")
+    assert pp.exists()
+    pl = plistlib.loads(pp.read_bytes())
+    assert pl["ProgramArguments"] == ["bash", str(script), "reap"]
+    assert pl["StartInterval"] == daemon.SIBLING_POLL_INTERVAL_S
+    assert ["launchctl", "bootstrap", f"gui/{uid}", str(pp)] in fake.calls
+    assert res["reaper_loaded"] is True
+    assert res["reaper_plist"] == str(pp)
+
+
+def test_install_skips_postiz_reaper_without_ondemand_script(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    monkeypatch.delenv("FANOPS_POSTIZ_ONDEMAND", raising=False)
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007")
+    fake = _fake_launchctl(bootout=(1, ""), bootstrap=(0, ""))
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    cfg = Config(root=tmp_path)
+
+    res = daemon.install(cfg, interval=600)
+
+    assert not daemon.sibling_plist_path("com.fanops.postiz-reaper").exists()
+    assert "reaper_loaded" not in res
+    assert not any("postiz-reaper" in " ".join(c) for c in fake.calls)
+
+
+def test_install_skips_postiz_reaper_when_postiz_url_is_remote(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    script = tmp_path / "postiz-ondemand.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(script))
+    monkeypatch.setenv("POSTIZ_URL", "https://api.postiz.com")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(bootout=(1, ""), bootstrap=(0, "")))
+    cfg = Config(root=tmp_path)
+
+    res = daemon.install(cfg, interval=600)
+
+    assert not daemon.sibling_plist_path("com.fanops.postiz-reaper").exists()
+    assert "reaper_loaded" not in res
+
+
 def test_keeper_in_sibling_agents_status(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")

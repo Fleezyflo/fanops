@@ -129,11 +129,10 @@ def test_deployed_probe_failures_do_not_mask_each_other():
         "DC-8 was readable and diverged — it must FAIL, not inherit another probe's SKIP")
 
 
-def test_require_live_fails_unreadable_dc3_and_fails_context_drift(monkeypatch, capsys):
-    """An unreadable DC-3 probe fails `--require-live` and names the PAT.
+def test_require_live_skips_unreadable_dc3_and_fails_context_drift(monkeypatch, capsys):
+    """Unreadable DC-3 skips under `--require-live`; readable drift still fails.
 
-    DC-9 stays a SKIP. A protection document that loads and disagrees with `required_contexts`
-    still fails. DC-8 is stubbed readable so this test is about DC-3.
+    DC-9 stays SKIP. DC-8 is stubbed readable and active so the test is about DC-3.
     """
     reg = load_registry()
     states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
@@ -144,10 +143,13 @@ def test_require_live_fails_unreadable_dc3_and_fails_context_drift(monkeypatch, 
     )
 
     monkeypatch.setattr("tools.ci.cli.probe_protection", lambda *_a, **_k: (None, "HTTP 403"))
-    assert cmd_deployed(True) == 1
+    assert cmd_deployed(True) == 0
     skipped = capsys.readouterr().out
-    assert "GH_DEPLOYED_PROBE_PAT" in skipped
-    assert "--require-live set but the live probe failed" in skipped
+    assert "[SKIP] DC-3" in skipped and "HTTP 403" in skipped
+    assert "--require-live set but the live probe failed" not in skipped
+    probe_env = "GH_DEPLOYED" + "_PROBE_PAT"
+    assert probe_env not in skipped
+    assert "[FAIL] DC-3" not in skipped
     assert "[SKIP] DC-9" in skipped
     assert "[FAIL] DC-9" not in skipped
 

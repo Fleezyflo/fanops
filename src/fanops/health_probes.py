@@ -10,6 +10,7 @@ from fanops.health_types import (
     DepHealth,
     Severity,
 )
+from fanops.postiz_lifecycle import _backend_is_postiz
 
 _log = logging.getLogger("fanops.health")
 
@@ -40,6 +41,8 @@ def postiz_dep_health(cfg: Config, *, probe=None) -> DepHealth:
     """Map the unified Postiz probe to a DepHealth row (system_health / Studio strip)."""
     if not cfg.backend_has_creds("postiz"):
         return DepHealth("postiz", True, "skipped (not configured)")
+    if not _backend_is_postiz(cfg):
+        return DepHealth("postiz", True, "skipped (not routed live)")
     if not (cfg.postiz_url or "").strip():
         return DepHealth("postiz", False, "not configured")
     try:
@@ -76,10 +79,15 @@ def zernio_dep_health(cfg: Config) -> DepHealth:
 
 
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
-    """Runtime dependency rows — docker via health._docker_health when available (test patch compat)."""
+    """Runtime dependency rows — docker via health._docker_health when available (test patch compat).
+
+    Docker is the local Postiz stack's engine. No live Postiz-routed channel → skip it (a
+    Zernio-only deployment must not FAIL doctor because Docker Desktop is stopped)."""
     from fanops import health as health_mod
     from fanops.health import _postiz_compose_dir
-    if _postiz_compose_dir(cfg) is not None:
+    if not _backend_is_postiz(cfg):
+        docker = DepHealth("docker", True, "skipped (not routed live)")
+    elif _postiz_compose_dir(cfg) is not None:
         docker = health_mod._docker_health() if hasattr(health_mod, "_docker_health") else _docker_dep()
     else:
         docker = DepHealth("docker", True, "skipped (not configured)")
@@ -89,6 +97,8 @@ def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
 def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
     """Doctor-shaped check from the SAME Postiz probe (replaces doctor._postiz_reach_check duplicate)."""
     if not cfg.backend_has_creds("postiz"):
+        return None
+    if not _backend_is_postiz(cfg):
         return None
     try:
         h = _postiz_probe(cfg, probe=probe)

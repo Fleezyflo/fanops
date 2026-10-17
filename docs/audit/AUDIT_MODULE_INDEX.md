@@ -2,7 +2,7 @@
 
 Subject of this index is the head of pull request #1316 on branch `audit/production-audit-2026-09`. The remediation commit is `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67`. The scored base before that commit was `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Measured 2026-10-17 from `/Users/molhamhomsi/Moh Flow Fanops`. `GET http://127.0.0.1:8787/_fingerprint` is still `f65411d5806cce087a475261bf4c96c98f0bcf97` (pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00`).
 
-Finalize is complete against the register on this commit. Every row is closed, accepted, or deferred with an owner. C2–C10 packs carry a Full checklist 2026-10-17. Deferred rows that remain are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. REL-UNDEPLOYED closes when #1316 merges and the fingerprint equals that merge SHA.
+Finalize is complete against the register on this commit. Every row is closed, resolved, or open with a subsection in [OPEN_GAPS.md](OPEN_GAPS.md). C2–C10 packs carry a Full checklist 2026-10-17. Open rows are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. REL-UNDEPLOYED closes when #1316 merges and the fingerprint equals that merge SHA.
 
 | Plane | SHA | Relation to the subject |
 |-------|-----|-------------------------|
@@ -29,9 +29,9 @@ One finding, one owner path, on a lane-respecting branch. A hot file in `.agents
 
 ### Finalize
 
-Parent pass after the module gates exist. Merge rows into `docs/audit/WEAKNESS_REGISTER.md` so every ID on this index is present. Refresh `docs/audit/MASTER_MAP.md` component verdicts for this HEAD (the live fingerprint SHA is a separate column, already measured as `f65411d5`). Re-score `docs/audit/PRODUCTION_SCORE.md` from the closed and deferred rows. `H-CI` lands last so `tests/test_production_audit_gates.py` encodes the closed findings.
+Parent pass after the module gates exist. Merge rows into `docs/audit/WEAKNESS_REGISTER.md` so every ID on this index is present. Refresh `docs/audit/MASTER_MAP.md` component verdicts for this HEAD (the live fingerprint SHA is a separate column, already measured as `f65411d5`). Re-score `docs/audit/PRODUCTION_SCORE.md` from the closed and open rows. `H-CI` lands last so `tests/test_production_audit_gates.py` encodes the closed findings.
 
-**All gaps finalized.** Every row in the working-tree `WEAKNESS_REGISTER.md` is closed with a symbol, accepted with the dual-map citation, or deferred with an owner. Deferred rows are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. C2-F03 is closed. Live machine facts stay deferred because this checkout is not fingerprint `f65411d5`.
+**All gaps finalized.** Every row in the working-tree `WEAKNESS_REGISTER.md` is closed with a symbol, resolved with the dual-map citation, or open in [OPEN_GAPS.md](OPEN_GAPS.md). Open rows are OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH. C2-F03 is closed. Live machine facts stay open because this checkout is not fingerprint `f65411d5`.
 
 ### Dispatch order
 
@@ -71,9 +71,9 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 |----|-------|------|-----------------|----------------|
 | U0 | Codemap / partition / stem drift | [U0-structural-delta.md](packs/U0-structural-delta.md) | **U0-F01 closed** (stale mark, traces not regenerated) | None in product code. Do not treat the stale mark as a regenerated trace |
 | C1 | Data model and persistence | [C1-data-model.md](packs/C1-data-model.md) | **C1-F01 closed** (`get_logger` on the unrestorable wipe path) | `config.py` stays on publish. No C1 code wave in this pass |
-| C2 | Ingest | [C2-ingest.md](packs/C2-ingest.md) | **C2-F01 closed**, **C2-F02 closed**, **C2-F03 closed**, **C2-F04 closed** | None. `config.isolate_vocals` matches the raise. `vocals.py` was not edited |
+| C2 | Ingest | [C2-ingest.md](packs/C2-ingest.md) | **C2-F01 closed**, **C2-F02 closed**, **C2-F03 closed**, **C2-F04 closed** | None. `vocals.isolate_vocals` logs fail-closed and raises |
 | C5 | Caption, hooks, hashtags | [C5-caption-hashtags.md](packs/C5-caption-hashtags.md) | **C5-F01 closed**, **C5-F02 closed** | A miss-only scrape pass now writes the sidecar, so the next tick does not research the same names. The hook prompt still says “SEE them”. `prompts.py` was not edited |
-| C3 | Clip production | [C3-clip-production.md](packs/C3-clip-production.md) | **C3-F01 accepted**, **C3-F02 closed**, **C3-F03 closed** | An empty rc-0 re-render no longer stamps the old mp4. A second `extract_frames_grid` pass is still reachable. `clip.py` was not edited |
+| C3 | Clip production | [C3-clip-production.md](packs/C3-clip-production.md) | **C3-F01 closed**, **C3-F02 closed**, **C3-F03 closed** | An empty rc-0 re-render no longer stamps the old mp4. `test_ct_multi_resolve_one_real_ffmpeg` counts one real 9fps ffmpeg on CT_MULTI. `clip.py` was not edited |
 | C4 | Moments and personas | [C4-moments-personas.md](packs/C4-moments-personas.md) | **C4-F01 closed**, **C4-F02 closed**, **C4-F03 closed**, **C4-F04 closed** | Studio `regenerate_hook` uses the same script check as ingest. `prompts.py` is with C5 |
 | C9 | Studio backend | [C9-studio-backend.md](packs/C9-studio-backend.md) | **C9-F01 closed**, **C9-F02 closed**, **C9-F03 closed** | A queued post that becomes imminent during hook regeneration is refused before `render_moment`. Repeated approve does not rewrite queued times |
 | C10 | Studio views and templates | [C10-studio-views.md](packs/C10-studio-views.md) | **C10-F01 closed**, **C10-F02 closed**, **C10-F03 closed**, **C10-F04 closed** | A failed card or feed swap re-renders the card with the error inside it. `schedule.js` still re-reads `#schedule-body` |
@@ -82,10 +82,10 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` (`daemon.py:393`) matches the doctor miss-or-mismatch rule. Launchd policy was not changed |
 | H-CI | Gates | [H-CI-gates.md](packs/H-CI-gates.md) | **H-CI-F01 closed** | Parent extends `tests/test_production_audit_gates.py` only for new pack finding IDs, last |
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
-| H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 closed** | `partition.json` is the only C-map. `reconcile.py` is C7. Publish owns the file |
+| H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 resolved** | `partition.json` stays C1–C10. Operator edits of `reconcile.py` are C6; the partition keeps C7. No retag |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
-| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO closed**. **OPS-POSTIZ** and **OPS-QUEUE** deferred | 2026-10-17 `uv run fanops doctor` exit 1: docker down, Postiz unreachable, 5 drainable past-due (463.5h), 851 queued |
-| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** deferred | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. Architecture schedule run `38253871938` failed DC-3 with `gh` HTTP 403. That row is not the 84 cap. REL-UNDEPLOYED stays open until #1316 merges and the fingerprint equals the merge SHA |
+| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO closed**. **OPS-POSTIZ** and **OPS-QUEUE** open | 2026-10-17 `uv run fanops doctor` exit 1: docker down, Postiz unreachable, 5 drainable past-due (463.5h), 851 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT** and **REL-CI-E2E** closed. **REL-UNDEPLOYED**, **REL-CI-ASR**, **REL-CI-ARCH** open | Protection re-read matches `unit (fast, no toolchain)`. ASR run `38868030626` failed. REL-CI-ARCH is open: run `38253871938` failed the old 403 hard-fail, and no new dispatch transcript exists. Not the 84 cap. REL-UNDEPLOYED is open until #1316 merges and the fingerprint equals the merge SHA. [OPEN_GAPS.md](OPEN_GAPS.md) |
 | X-DATA | Ledger immutability | [X-DATA-ledger.md](packs/X-DATA-ledger.md) | **X-DATA-F01 closed** | Ledger was not wiped. Do not edit `ledger.py` |
 
 Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) on this working tree. The committed 2026-09-12 register on `d2cded31` is the baseline those bullets replaced.
@@ -115,21 +115,21 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `ingest.py` (`stage_inbox_candidates`, `ingest_drops`, `download_url`), `ingest_shard.py`, `discover.py`, `transcribe.py`, `transcribe_engine.py`, `vocals.py` (`_demucs_env`, `isolate_vocals`), `media_probe.py`, `frames.py`, `audio_energy.py`, `bands.py`, `intro_match.py`, `speech_trust.py`, `adjust.py`, `artifacts.py`.
 - **Pack.** [packs/C2-ingest.md](packs/C2-ingest.md).
-- **Register.** **C2-F01 closed** (`vocals._demucs_env`). **C2-F02 closed** (`artifacts._valid_transcript_json`). **C2-F03 closed** (`config.isolate_vocals` matches the raise). **C2-F04 closed** (`ingest.stage_inbox_candidates` skips a child `.pull`).
+- **Register.** **C2-F01 closed** (`vocals._demucs_env`). **C2-F02 closed** (`artifacts._valid_transcript_json`). **C2-F03 closed** (`vocals.isolate_vocals` logs fail-closed and raises). **C2-F04 closed** (`ingest.stage_inbox_candidates` skips a child `.pull`).
 - **Lane.** Unrestricted.
 - **Audit.** Confirm the demucs env path, inbox staging, and the ASR failure posture (`no_video_stream`, missing transcript). The dirty register’s REL-CI-ASR nightly failure is a live CI fact on `088702ca`, not a C2 code verdict on this HEAD.
 - **Remediate.** Register and pack status only, unless the audit finds a new swallow. No code change required for C2-F01.
-- **Finalize.** C2-F01 through C2-F04 are closed. `vocals.py` was not edited.
+- **Finalize.** C2-F01 through C2-F04 are closed. C2-F03 is `vocals.isolate_vocals` (fail-closed log and raise).
 
 ## C3 — clip production
 
 - **Paths.** `clip.py`, `clip_ffmpeg.py`, `framing.py` (`_compute_track`, `extract_frames_grid`), `framing_outcomes.py`, `keyframes.py`, `produce.py`, `compose.py`, `overlay.py`, `overlay_reburn.py`, `reframe.py`, `reframe_apply.py`, `reframe_vf.py`, `impact_cut.py`, `stitch_render.py`, `render_fingerprint.py`, `visual_start.py`, `window_math.py`, `apply_common.py`.
 - **Pack.** [packs/C3-clip-production.md](packs/C3-clip-production.md).
-- **Register.** **C3-F01 accepted.** The second `extract_frames_grid` pass is still reachable because the cache key includes fps. **C3-F02 closed** (`clip_ffmpeg.ffmpeg_supercut_cmd` emits `-fps_mode cfr`). **C3-F03 closed** (`clip_ffmpeg._finish_publish` does not adopt an empty rc-0 file). `clip.py` was not edited.
+- **Register.** **C3-F01 closed.** `test_ct_multi_resolve_one_real_ffmpeg` counts one real ffmpeg at `framing._FRAMING_GRID_FPS` (9.0) on the CT_MULTI path through `clip._resolve_framing`. **C3-F02 closed** (`clip_ffmpeg.ffmpeg_supercut_cmd` emits `-fps_mode cfr`). **C3-F03 closed** (`clip_ffmpeg._finish_publish` does not adopt an empty rc-0 file). `clip.py` was not edited.
 - **Lane.** picking (`clip.py`).
 - **Audit.** Framing cost claim against `_compute_track`. ffmpeg invocation boundary in `clip_ffmpeg.py`. Fail-closed vs fail-open on missing frames.
-- **Remediate.** Docs: pack and register. Code only if a second grid pass is still reachable from another symbol.
-- **Finalize.** C3-F01 stays accepted. C3-F02 and C3-F03 are closed.
+- **Remediate.** `framing.py` only. `clip.py` stays untouched.
+- **Finalize.** C3-F01, C3-F02, and C3-F03 are closed.
 
 ## C4 — moments and personas
 
@@ -225,11 +225,11 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `tools/arch/policy/rules.py` (`ARCH-001`, “The subsystem partition is TOTAL”), `tools/arch/cli.py`, `.reports/architecture/derived/` (regen output; dirty in this working tree), `docs/CODEMAPS/partition.json`.
 - **Pack.** [packs/H-INT-invariants.md](packs/H-INT-invariants.md).
-- **Register.** **H-INT-F01 closed.** `partition.json` is the only C-map. `reconcile.py` is C7 there. Publish owns edits to that file in `.agents/lanes.json`. Operator prose does not keep a second map.
+- **Register.** **H-INT-F01 resolved.** Operator edits of `reconcile.py` are C6; `partition.json` keeps it in C7. `post/metrics/*` is C6 there and C7 for operator audit. No X-keys. No retag.
 - **Lane.** ci.
 - **Audit.** State both maps and the two disagreements this index cares about: `reconcile.py` is C7 in `partition.json` and C6 in the operator brief; `post/metrics/*` is C6 in `partition.json` and C7 here. X-modules must stay overlays. Confirm a scanned-source edit path is `python -m tools.arch regen` plus the architecture workflow.
 - **Remediate.** Document the dual map and the C6/C7 file split in the pack. Do not merge the partitions and do not add X-keys.
-- **Finalize.** H-INT-F01 closed. `partition.json` is the C-map. Publish owns `reconcile.py` edits.
+- **Finalize.** H-INT-F01 is resolved. `partition.json` was not retagged. Publish owns `reconcile.py` edits.
 
 ## X-SEC — secrets and config introspection
 
@@ -245,21 +245,21 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `health_probes.py` (`postiz_dep_health`, `postiz_doctor_check`, `zernio_dep_health`, `_http_reachable`, `dep_health_list`), `doctor.py` (`_postiz_reach_check`, `_zernio_reach_check`, `_daemon_liveness_check`), `post/postiz.py`, `post/zernio.py`, `docs/POSTIZ_OPS.md`, `docs/POSTIZ_SETUP.md`. Overlaps C6 and C8.
 - **Pack.** None.
-- **Register.** **OPS-ZERNIO closed.** **OPS-POSTIZ deferred**, owner operator. **OPS-QUEUE deferred**, owner operator. 2026-10-17 doctor: docker down, Postiz unreachable, 5 drainable past-due, 851 queued. Ledger was not drained.
+- **Register.** **OPS-ZERNIO closed.** **OPS-POSTIZ open.** **OPS-QUEUE open.** 2026-10-17 doctor: docker down, Postiz unreachable, 5 drainable past-due, 851 queued. Ledger +0. [OPEN_GAPS.md](OPEN_GAPS.md).
 - **Lane.** publish for `postiz.py` and `zernio.py`. `doctor.py` and `health_probes.py` are unrestricted.
 - **Audit.** After C6: what “drainable” means in `_daemon_liveness_check` versus `publish_due`, and which errors are Postiz-local versus code. Probe status-code handling for Zernio. Do not start docker or drain the ledger.
-- **Remediate.** `fix-defect` for OPS-ZERNIO on `health_probes._http_reachable` / `zernio_dep_health`. OPS-POSTIZ process recovery is an operator action, deferred with owner “operator”, unless the audit finds the probe itself is wrong.
-- **Finalize.** OPS-ZERNIO closed. OPS-POSTIZ and OPS-QUEUE stay deferred to the operator. X-DEP was not re-opened after C6.
+- **Remediate.** `fix-defect` for OPS-ZERNIO on `health_probes._http_reachable` / `zernio_dep_health`. OPS-POSTIZ process recovery is the operator closure in [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). The probe itself is not the open defect.
+- **Finalize.** OPS-ZERNIO closed. OPS-POSTIZ and OPS-QUEUE stay open. X-DEP was not re-opened after C6.
 
 ## X-REL — deploy protection, rollback, undeployed gap
 
 - **Paths.** `docs/GOLIVE.md` section “Rollback / safety”, `.github/ci-control-registry.yml` `required_contexts`, `tools/ci/live.py`, `doctor.py` `_deploy_code_check`, `daemon.py` `ensure`. Workflows listed on H-CI.
 - **Pack.** None.
-- **Register.** **OPS-SHA closed** on `doctor._deploy_code_check` and `daemon.ensure`. **REL-PROT closed.** **REL-CI-E2E closed.** **REL-UNDEPLOYED**, **REL-CI-ASR**, and **REL-CI-ARCH** are deferred to the operator.
+- **Register.** **OPS-SHA closed** on `doctor._deploy_code_check` and `daemon.ensure`. **REL-PROT closed.** **REL-CI-E2E closed.** **REL-UNDEPLOYED**, **REL-CI-ASR**, and **REL-CI-ARCH** are open. Closure steps are [OPEN_GAPS.md](OPEN_GAPS.md). REL-CI-ARCH is a `workflow_dispatch` transcript, not a PAT.
 - **Lane.** ci for the registry and workflows. `doctor.py` is unrestricted.
 - **Audit.** Rollback section present. Required context list. Undeployed relation of this HEAD to the fingerprint. Deploy-code miss path. Do not change branch protection.
 - **Remediate.** OPS-SHA is closed on `doctor._deploy_code_check` and `daemon.ensure`. Protection and scheduled-CI redness stay operator or ci-lane settings.
-- **Finalize.** OPS-SHA, REL-PROT, and REL-CI-E2E are closed. REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH stay deferred. The 84 cap still binds.
+- **Finalize.** OPS-SHA, REL-PROT, and REL-CI-E2E are closed. REL-UNDEPLOYED, REL-CI-ASR, and REL-CI-ARCH stay open. The 84 cap still binds.
 
 ## X-DATA — ledger immutability
 

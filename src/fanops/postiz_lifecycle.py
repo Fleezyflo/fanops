@@ -11,9 +11,11 @@ Safe by construction — ensure_up() does NOTHING unless ALL hold:
   * the active poster backend is 'postiz',
   * POSTIZ_URL points at a LOCAL stack (localhost/127.0.0.1) — a hosted/remote Postiz is
     not ours to start,
-  * the on-demand script exists on disk.
-Any failure is swallowed-then-returned (fail-open): a still-down Postiz then surfaces through
-the normal connection error in the poster, exactly as before this module existed.
+  * the on-demand script exists (`_ondemand_script`: FANOPS_POSTIZ_ONDEMAND, else
+    ~/postiz-selfhost/postiz-ondemand.sh) and `docker` is on PATH.
+A stopped Docker daemon is not a skip: the script's `ensure` is what starts Docker. Any failure
+is swallowed-then-returned (fail-open): a still-down Postiz then surfaces through the normal
+connection error in the poster, exactly as before this module existed.
 """
 import logging
 import os
@@ -27,8 +29,14 @@ from pathlib import Path
 
 _log = logging.getLogger("fanops.postiz_lifecycle")
 
-_SCRIPT = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _WAIT_S = 150
+
+
+def _ondemand_script() -> Path:
+    """Path to the self-hosted Postiz on-demand script. FANOPS_POSTIZ_ONDEMAND overrides; else
+    ~/postiz-selfhost/postiz-ondemand.sh (same resolution as daemon._ondemand_script)."""
+    v = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
+    return Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-ondemand.sh")
 
 
 def _is_local(url: str) -> bool:
@@ -61,21 +69,17 @@ def _should_autostart(cfg) -> bool:
         return False
     if not _is_local(cfg.postiz_url or ""):
         return False
-    return _SCRIPT.exists() and shutil.which("docker") is not None
+    return _ondemand_script().exists() and shutil.which("docker") is not None
 
 
 def ensure_up(cfg) -> None:
     """Best-effort: bring the local Postiz stack up (and wait until its API answers) before a
-    publish/reconcile that needs it. No-op unless _should_autostart(cfg). Never raises."""
+    publish/reconcile that needs it. No-op unless _should_autostart(cfg). Never raises.
+    Does not pre-check the Docker daemon — `postiz-ondemand.sh ensure` starts Docker itself."""
     if not _should_autostart(cfg):
         return
-    from fanops.health import _docker_health
-    dh = _docker_health()
-    if not dh.ok:
-        _log.warning("ensure_up skipped (docker not ok): %s", dh.detail)
-        return
     try:
-        p = subprocess.Popen(["bash", str(_SCRIPT), "ensure"], start_new_session=True,
+        p = subprocess.Popen(["bash", str(_ondemand_script()), "ensure"], start_new_session=True,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             p.communicate(timeout=_WAIT_S)

@@ -39,7 +39,7 @@ Subject `d2cded31`. Product reads are `git show HEAD:path`. Working-tree diffs o
 
 ### Persona facts
 
-HEAD `persona_facts` returns `length_band=""`, derived `framing`, `lead_tags=[]`, and `terms` from `persona_terms` (`niche` bodies only). It does not catch. `cfg` on `persona_terms` is unread. C4-F01 stays closed. `docs/CODEMAPS/anomalies.md` still describes the old `except Exception` on this function; that prose is stale against this SHA.
+HEAD `persona_facts` returns `length_band=""`, derived `framing`, `lead_tags=[]`, and `terms` from `persona_terms` (`niche` bodies only). It does not catch. `cfg` on `persona_terms` is unread. C4-F01 stays closed. `docs/CODEMAPS/anomalies.md` records that return. The old `except Exception: store = None` sentence is gone.
 
 ### Data writes
 

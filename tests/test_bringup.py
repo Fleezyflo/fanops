@@ -10,19 +10,11 @@ daemon freshness restart, the honest verdict, idempotent re-run, and the non-dar
 
 os.environ / HOME are sandboxed per test via monkeypatch (clean teardown; no leak — tests/CLAUDE.md)."""
 from __future__ import annotations
-import os, socket, subprocess
+import os, subprocess
 from datetime import datetime, timedelta, timezone
 
 from fanops.config import Config
 from fanops import daemon
-
-
-def _listen_studio():
-    srv = socket.socket()
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((daemon.STUDIO_DEFAULT_HOST, daemon.STUDIO_DEFAULT_PORT))
-    srv.listen(1)
-    return srv
 
 
 def _stub_answering_fingerprint(monkeypatch, cfg):
@@ -123,6 +115,7 @@ def test_git_plane_fetch_failure_is_still_advisory(tmp_path, monkeypatch):
 # ── postiz plane: shells out to the on-demand script; honest gate ─────────────────────────────
 
 def test_postiz_plane_ready_on_script_exit_0(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     _point_ondemand_at_real_file(tmp_path, monkeypatch)
     ran: list[list[str]] = []
     def fake_run(cmd, *a, **k):
@@ -138,6 +131,7 @@ def test_postiz_plane_ready_on_script_exit_0(tmp_path, monkeypatch):
 
 
 def test_postiz_plane_notready_on_nonzero_surfaces_stderr_tail(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     _point_ondemand_at_real_file(tmp_path, monkeypatch)
     def fake_run(cmd, *a, **k):
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="postiz: WARNING backend did not answer\nMASTRA...\n")
@@ -151,12 +145,56 @@ def test_postiz_plane_notready_on_nonzero_surfaces_stderr_tail(tmp_path, monkeyp
 
 
 def test_postiz_plane_notready_when_script_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("FANOPS_POSTIZ_ONDEMAND", raising=False)   # default path, which does not exist
     cfg = Config(root=tmp_path)
     plane = daemon._plane_postiz(cfg)
     assert plane["ok"] is False
     assert "postiz-ondemand.sh" in plane["detail"]                # names the missing script, does not crash
+
+
+def test_up_zernio_only_skips_postiz_and_reaches_ready(tmp_path, monkeypatch):
+    """Live Zernio, Postiz creds present, no Postiz-routed channel: up does not shell ensure,
+    postiz is [skip], and daemon/studio are still reached (READY, no first_fail)."""
+    import json
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    script = tmp_path / "postiz-ondemand.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n")
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(script))
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+         "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}]}))
+    bash: list = []
+
+    def run(cmd, *a, **k):
+        argv = list(cmd)
+        if argv[:1] == ["bash"]:
+            bash.append(argv)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(daemon.subprocess, "run", run)
+    monkeypatch.setattr(daemon, "_plane_git", lambda c: {"plane": "git", "ok": True, "detail": "advisory"})
+    monkeypatch.setattr(daemon, "_plane_daemon", lambda c, **k: {"plane": "daemon", "ok": True, "detail": "up"})
+    monkeypatch.setattr(daemon, "_plane_studio",
+                        lambda c: {"plane": "studio", "ok": True, "report_only": True, "detail": "up"})
+
+    res = daemon.up(cfg)
+
+    assert bash == []
+    assert res["ready"] is True and res["first_fail"] is None
+    assert res["postiz"]["ok"] is True and res["postiz"]["skipped"] is True
+    assert "deferred" in res["postiz"]["detail"]
+    assert res["daemon"] is not None and res["studio"] is not None
+    report = daemon.format_up_report(res)
+    assert any(line.startswith("  [skip] postiz:") for line in report)
+    assert report[-1] == "READY"
 
 
 # ── daemon plane: freshness restart when already running ──────────────────────────────────────
@@ -304,17 +342,15 @@ def test_daemon_plane_off_darwin_typed_skip_no_exception(tmp_path, monkeypatch):
 
 def test_studio_plane_reports_up_when_port_answers(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    srv = _listen_studio()
-    try:
-        plane = daemon._plane_studio(Config(root=tmp_path))
-        assert plane["ok"] is True
-        assert plane["report_only"] is True
-    finally:
-        srv.close()
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *_a, **_k: True)
+    plane = daemon._plane_studio(Config(root=tmp_path))
+    assert plane["ok"] is True
+    assert plane["report_only"] is True
 
 
 def test_studio_plane_reports_down_with_launch_command(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *_a, **_k: False)
     plane = daemon._plane_studio(Config(root=tmp_path))
     assert plane["ok"] is False
     assert plane["report_only"] is True
@@ -328,17 +364,14 @@ def test_studio_plane_kickstarts_when_plist_present(tmp_path, monkeypatch):
     pp.write_text("<plist/>")
     fake = _fake_launchctl(kickstart=(0, ""))
     monkeypatch.setattr(daemon.subprocess, "run", fake)
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *_a, **_k: True)
     cfg = Config(root=tmp_path)
     _stub_answering_fingerprint(monkeypatch, cfg)
-    srv = _listen_studio()
-    try:
-        plane = daemon._plane_studio(cfg)
-        assert plane["ok"] is True and plane["report_only"] is True
-        assert "cycled onto current code" in plane["detail"]
-        assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
-                   for c in fake.calls)
-    finally:
-        srv.close()
+    plane = daemon._plane_studio(cfg)
+    assert plane["ok"] is True and plane["report_only"] is True
+    assert "cycled onto current code" in plane["detail"]
+    assert any(c[:3] == ["launchctl", "kickstart", "-k"] and c[-1].endswith(daemon.STUDIO_LABEL)
+               for c in fake.calls)
 
 
 def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monkeypatch):
@@ -349,23 +382,20 @@ def test_studio_plane_waits_for_port_to_come_back_after_kickstart(tmp_path, monk
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(kickstart=(0, "")))
     cfg = Config(root=tmp_path)
     _stub_answering_fingerprint(monkeypatch, cfg)
-    srv = {"s": None}
     n = {"i": 0}
+
+    def answers(*_a, **_k):
+        return n["i"] >= 2
 
     def sleep(_s):
         n["i"] += 1
-        if n["i"] == 2 and srv["s"] is None:
-            srv["s"] = _listen_studio()
 
+    monkeypatch.setattr(daemon, "_studio_port_answers", answers)
     monkeypatch.setattr(daemon.time, "sleep", sleep)
-    try:
-        plane = daemon._plane_studio(cfg)
-        assert plane["ok"] is True and plane["report_only"] is True
-        assert "cycled onto current code" in plane["detail"]
-        assert n["i"] >= 2
-    finally:
-        if srv["s"] is not None:
-            srv["s"].close()
+    plane = daemon._plane_studio(cfg)
+    assert plane["ok"] is True and plane["report_only"] is True
+    assert "cycled onto current code" in plane["detail"]
+    assert n["i"] >= 2
 
 
 def test_keeper_studio_redeploy_probes_once_and_never_polls(tmp_path, monkeypatch):

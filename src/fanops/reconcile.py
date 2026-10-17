@@ -334,7 +334,7 @@ def _zernio_row_matches_url(row: dict, want_url: str) -> bool:
 
 def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Optional[str]) -> set[str]:
     """Merge URL + caption list hits; capped pagination per strategy."""
-    from fanops.caption_compose import caption_shown
+    from fanops.caption_compose import posted_text_for
     from fanops.post.metrics.zernio_read import zernio_list_posts
     account_id = (post.account_id or "").strip()
     if not account_id:
@@ -363,7 +363,7 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
             total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
             if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
                 break
-    search = (caption_shown(cfg, led, post) or "")[:80].strip()
+    search = (posted_text_for(cfg, led, post) or "")[:80].strip()
     if search:
         for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
             try:

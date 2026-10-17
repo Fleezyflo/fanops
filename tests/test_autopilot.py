@@ -261,6 +261,7 @@ def test_autopilot_reports_dryrun_and_no_blotato_requirement(tmp_path, monkeypat
 def test_main_autopilot_nonzero_when_fixture_unhealthy(tmp_path, monkeypatch, capsys):
     # MOL-965 WP1: exit honesty — incomplete tmp fixture → report_is_healthy false → nonzero.
     # Soft-lie "always 0" retired; healthy-path 0 covered by constructing a healthy report below.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops.cli import main
@@ -273,6 +274,7 @@ def test_main_autopilot_nonzero_when_fixture_unhealthy(tmp_path, monkeypatch, ca
 
 def test_main_autopilot_returns_0_when_healthy(tmp_path, monkeypatch, capsys):
     # Construct a healthy autopilot result so exit-0 path stays covered under severity honesty.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops import autopilot
@@ -299,6 +301,7 @@ def test_main_autopilot_returns_0_when_healthy(tmp_path, monkeypatch, capsys):
 def test_main_autopilot_bad_responder_exits_2(tmp_path, monkeypatch, capsys):
     # A bad FANOPS_RESPONDER is a HARD REFUSE (cfg.responder_mode raises ValueError) — cmd_autopilot must
     # degrade to one clean stderr line + exit 2, never a traceback.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "bogus")
     from fanops.cli import main
