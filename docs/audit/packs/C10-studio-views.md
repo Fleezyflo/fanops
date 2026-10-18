@@ -1,13 +1,18 @@
 # Pack: C10 — studio views
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `app_routes_home` `zero_post_clips`, `schedule.js` `document.addEventListener`, `_posted_panel.html` Show more, `app_routes_review._render_swap_target`. `views_common.py` was not edited. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
 | C10-F01 | low | doc-rot | closed on this tree | `app_routes_home` passes `zero_post_clips`. The frozen unwired claim in `full-trace-index.md` and `anomalies.md` is marked stale | `app_routes_home` |
-| C10-F02 | medium | dead-after-swap | closed on this tree | `schedule.js` listens on `document` and re-reads `#schedule-body` per event. Binding the dialog and drag handlers to that node dies on the htmx `outerHTML` swap | `static/schedule.js` `panel()` |
-| C10-F03 | medium | pagination | closed on this tree | Posted Show more keeps `source`, `delivery`, and `failure`, and is omitted when `next_offset` is none | `_posted_panel.html` |
-| C10-F04 | medium | error-state | closed on this tree | A failed re-burn, regenerate-hook, or tag swap with `swap=card` or `swap=feed` re-renders that card and shows the error inside it | `app_routes_review._render_swap_target` |
+| C10-F02 | medium | dead-after-swap | closed on origin/main | `schedule.js` listens on `document` and re-reads `#schedule-body` per event. Binding the dialog and drag handlers to that node dies on the htmx `outerHTML` swap | `static/schedule.js` `document.addEventListener`; `panel()` re-reads `#schedule-body` |
+| C10-F03 | medium | pagination | closed on origin/main | Posted Show more keeps `source`, `delivery`, and `failure`, and is omitted when `next_offset` is none | `_posted_panel.html` Show more passes `source`, `delivery`, and `failure`, and is omitted when `page.next_offset` is none |
+| C10-F04 | medium | error-state | closed on origin/main | A failed re-burn, regenerate-hook, or tag swap with `swap=card` or `swap=feed` re-renders that card and shows the error inside it | `app_routes_review._render_swap_target` passes `mutation_error` when `result.ok` is false |
 
 ## Evidence commands run
 

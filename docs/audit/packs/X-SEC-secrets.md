@@ -1,5 +1,10 @@
 # Pack: X-SEC — secrets
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `secret_provider._SECRET_KEYS` includes `FANOPS_IG_SCRAPE_PASSWORD`; `autopilot.set_env_var` holds `ledger._file_lock`. `config.py` was not edited. The 69 cap does not bind. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Closed
 
 | ID | Status | Symbols |

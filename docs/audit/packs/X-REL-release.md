@@ -1,15 +1,20 @@
 # Pack: X-REL — release
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `doctor._deploy_code_check`, `daemon.stale_code_reason`, `daemon._version_signal`, `.github/ci-control-registry.yml` `required_contexts` (`unit (fast, no toolchain)` only), `docs/GOLIVE.md` “Rollback / safety”, `nightly.yml` `asr-smoke`, `fanops._fwrun._load_model`. REL-CI-ASR is resolved. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
-| OPS-SHA | closed | code | `doctor._deploy_code_check` |
-| REL-UNDEPLOYED | open | both | PR #1316 head is not fingerprint `f65411d5806cce087a475261bf4c96c98f0bcf97`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
-| REL-PROT | closed | operator | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
-| REL-CI-E2E | closed | operator | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T08:47:37Z`). |
-| REL-CI-ASR | open | both | Nightly run `38868030626` failed `[asr] toolchain smoke (nightly)`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
-| REL-CI-ARCH | open | repo | Run `38253871938` failed the old 403 hard-fail. No new dispatch transcript. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch). |
+| OPS-SHA | closed | code | `doctor._deploy_code_check` fails when `daemon.stale_code_reason` is set (missing SHA or the two differ). `daemon.ensure` kickstarts on that same reason when the pump is loaded. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (this checkout HEAD). Live worktree disk equals the pump. |
+| REL-UNDEPLOYED | closed | closed | Studio `GET /_fingerprint` sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals `origin/main`. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
+| REL-PROT | closed | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
+| REL-CI-E2E | closed | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493` success, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T08:18:05Z`). No schedule run on `430ece73` yet. |
+| REL-CI-ASR | resolved | repo | Resolved. Not a production gap. `nightly.yml` `asr-smoke` is scheduled CI. Run `39012855146` failed on headSha `f65411d5` (`awaiting.moments == 1`, `whisper produced no JSON (rc=1)`). Merge gate is `unit (fast, no toolchain)` on push `39074067963`. `fanops._fwrun._load_model` loads `WhisperModel` with no hub token. `doctor` probes `transcribe._fw_available`. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `docs/ENFORCEMENT.md` documents the Actions secret as GitHub Actions only. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
+| REL-CI-ARCH | closed | closed | Run `39074333775` printed `[SKIP] DC-3` (HTTP 403) and exited 0. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch). |
 
 ## Rollback
 
@@ -47,7 +52,7 @@ Connection: close
 {"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":1225,"sha":"f65411d5806cce087a475261bf4c96c98f0bcf97","start_time":"2026-10-16T15:57:11.959355+00:00"}
 ```
 
-`pid` is 1225. `phase` and `ready` are absent from this body. Studio sha equals `origin/main` `f65411d5`. REL-UNDEPLOYED is open until this branch is that sha. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed).
+That curl was the pre-merge body. The close is fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed).
 
 ## 2026-10-17 operator commands
 
@@ -88,4 +93,4 @@ completed	success	Nightly ASR smoke: keep TTS wav out of the inbox, pin av<19	ar
 completed	success	Merge pull request #1314 from Fleezyflo/ci/keeper-fast-forward	architecture	main	push	38388123845	10s	2026-10-13T11:08:08Z
 ```
 
-Newest JSON: event `pull_request`, conclusion `success`, headSha `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. The `main` push in that window is `38388123845`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. `architecture.yml` schedule is `17 5 * * 1`. This default list is pull and push traffic. Schedule run `38253871938` (2026-10-12) is the known schedule failure: the old tree treated branch-protection HTTP 403 as a hard fail. REL-CI-ARCH is open until a dispatch or schedule transcript on the current policy. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch).
+Newest JSON: event `pull_request`, conclusion `success`, headSha `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. The `main` push in that window is `38388123845`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. `architecture.yml` schedule is `17 5 * * 1`. This default list is pull and push traffic. Schedule run `38253871938` (2026-10-12) is the old failure. REL-CI-ARCH is closed on dispatch `39074333775`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch).

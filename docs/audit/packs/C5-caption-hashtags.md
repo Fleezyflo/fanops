@@ -1,11 +1,16 @@
 # Pack: C5 — caption, hooks & hashtags
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `hashtags.ship_from_lock`, `source_tags_scrape.ensure_source_lock`, `prompts.py` “SEE them”. `vet_hashtags` is absent. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C5-F01 | low | design-note | closed on this tree | `vet_hashtags` is absent. `ship_from_lock` is picks ∩ lock, cap n, no floors, no backfill | `hashtags.ship_from_lock` |
-| C5-F02 | high | stall | fixed on this working tree | A pass of only exact misses writes `exact_miss` and `remaining`. The next tick searches the rest of the catalog and does not re-research. | `source_tags_scrape.ensure_source_lock` |
+| C5-F01 | low | design-note | closed on origin/main | `vet_hashtags` is absent. `ship_from_lock` is picks ∩ lock, cap n, no floors, no backfill | `hashtags.ship_from_lock`: empty lock returns `[]`. `git grep vet_hashtags origin/main -- src` is empty. `prompts.py` still says “SEE them” |
+| C5-F02 | high | stall | closed on origin/main | A pass of only exact misses writes `exact_miss` and `remaining`. The next tick searches the rest of the catalog and does not re-research. | `source_tags_scrape.ensure_source_lock` writes `exact_miss` on a miss-only pass |
 
 ## Evidence commands run
 

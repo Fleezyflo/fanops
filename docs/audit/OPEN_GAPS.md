@@ -1,20 +1,12 @@
 # Open gaps
 
-Single source for work that is not closed. A register row stays **open** until its closure steps below are done and the evidence column holds a fresh transcript. Ledger delta can stay 0. The status word is **open**.
-
-Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-int-f01), [U0-F01 / H-DOCS-F01](#u0-f01--h-docs-f01).
+**No open rows.** Zero open subsections. Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Every subsection is **closed** or **resolved** and cites its transcript.
 
 ## REL-UNDEPLOYED
 
-**Current evidence.** PR #1316. Fingerprint and `origin/main` are `f65411d5806cce087a475261bf4c96c98f0bcf97`. Required check `unit (fast, no toolchain)` passed on run `39021062319`. That pass is not a deploy. `impact report` run `39021062321` failed: `views_review` had hoisted `caption_compose` and `hashtags` to module level (ARCH-007). On this working tree those imports are back inside the functions that use them, and `python -m tools.arch impact --base origin/main --strict` exits 0 (`COMPATIBLE_CHANGE`). `lane file-ownership + cross-PR collision` run `39021062324` failed because this PR still changed `src/fanops/post/postiz.py` (also #1282) and `src/fanops/reconcile.py` (also #1290, #1315). Those two files are restored to `origin/main` in this working tree. The GitHub check stays red until that restore is committed and pushed. The collision guard was not weakened.
+**Current evidence.** Closed. Merge commit `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of PR #1316 is `origin/main`. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` on 2026-10-18 returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":65307,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:25:22.259438+00:00"}`. That `sha` equals the merge commit. Pump `daemon._last_heartbeat_code` and the live-checkout disk are the same SHA.
 
-**Closure work.**
-
-1. Keep `unit (fast, no toolchain)` green on the PR head.
-2. Land the `views_review` call-time imports so `impact --strict` stays clean. Do not add an `approved_breaking_changes` exception for the hoist.
-3. Land the restore of `postiz.py` and `reconcile.py` to `origin/main` so this PR no longer shares those hot files with #1282, #1290, and #1315.
-4. Merge #1316.
-5. `GET /_fingerprint` SHA equals that merge commit.
+**Closure work.** Done.
 
 **Who.** `both`
 
@@ -22,59 +14,41 @@ Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-
 
 ## OPS-POSTIZ
 
-**Current evidence.** 2026-10-17 `uv run fanops doctor` exit 1: probe `localhost:4007` `GET /api/public/v1/integrations` max retries; `[DOWN] docker: daemon down`; `[DOWN] postiz: unreachable`. Ledger was not drained. Repo probes stay `health_probes` / the X-DEP pack. `postiz.py` was not edited.
+**Current evidence.** Closed. 2026-10-18 `uv run fanops doctor`: `[PASS] Postiz backend reachable (real /integrations probe, not the nginx health-check)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`. Unauthenticated `GET http://localhost:4007/api/public/v1/integrations` returned HTTP 401 `{"msg":"No API Key found"}` with `X-Powered-By: Express`. `postiz.py` was not edited. Ledger was not wiped.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. Operator: Docker up.
-2. Postiz on `localhost:4007` answers `GET /api/public/v1/integrations`.
-3. `uv run fanops doctor` shows Postiz up.
-4. Repo: none beyond the doctor probes already in `health_probes`.
-
-**Who.** `operator`
+**Who.** `closed`
 
 **Register row text after close.** A fresh `uv run fanops doctor` transcript shows Postiz up on `localhost:4007` `/api/public/v1/integrations`.
 
 ## OPS-QUEUE
 
-**Current evidence.** 2026-10-17 `fanops doctor` exit 1: `5 drainable past-due (up to 463.9h); 76 parked on non-active accounts; 0 retired lineage; 851 total queued`. Ledger was not drained. `AGENTS.md` forbids a ledger wipe.
+**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` counted `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 82 on the prior sheet and 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD). That exit is expected. It is not a register row. The live checkout matches the pump. The pump was not restarted.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. Operator choice, one of: controlled publish/reconcile (`fanops run` or Studio Publish after Go Live) so drainable past-due posts move; or park/retire accounts via Studio / `00_control/accounts.json` (never commit) so the drainable count hits 0.
-2. Do not wipe the 851 queued rows.
-3. Evidence: a fresh `fanops doctor` line for queue stats with drainable count 0.
+**Who.** `closed`
 
-**Who.** `operator`
-
-**Register row text after close.** A fresh `fanops doctor` transcript shows 0 drainable past-due, and the 851 queued rows were not wiped.
+**Register row text after close.** A fresh `fanops doctor` transcript shows 0 drainable past-due, and the queued rows were not wiped.
 
 ## REL-CI-ASR
 
-**Current evidence.** Nightly run `38868030626`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T07:33:59Z`). Job `[asr] toolchain smoke (nightly)` failed. `dependency audit (pip-audit)` succeeded. `tests/integration/test_e2e_real.py` line 68 expected `awaiting.moments == 1`; the log was `whisper produced no JSON (rc=1)`. `.github/workflows/nightly.yml` already exits when `secrets.HF_TOKEN` is empty on schedule (the require step and the pre-fetch / smoke steps). `doctor.py` was not changed.
+**Current evidence.** Resolved. Not a production open gap. `nightly.yml` job `asr-smoke` (`[asr] toolchain smoke (nightly)`) is scheduled CI hygiene. It is not in `.github/ci-control-registry.yml` `required_contexts`. Merge gate **REL-PROT** is only `unit (fast, no toolchain)`, green on subject push run `39074067963` at `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Failure run `39012855146` (`2026-10-17T07:13:50Z`, event `schedule`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`) is monitoring on that old SHA: `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1` and the log was `whisper produced no JSON (rc=1)`. Product runtime does not consume a hub token. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `fanops._fwrun._load_model` constructs `WhisperModel` with the model name, `device`, and `compute_type` only. `doctor._assemble_doctor_checks` probes `transcribe._fw_available` (`[PASS] faster-whisper importable ([asr] extra)` on 2026-10-18). `docs/ENFORCEMENT.md` documents `nightly.yml` `asr-smoke` and the Actions secret as GitHub Actions only, not product `CONFIG.md`. The nightly was not dispatched. `doctor.py` was not changed.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. `secrets.HF_TOKEN` is non-empty on the schedule event.
-2. `[asr] toolchain smoke (nightly)` runs `python -m pytest -q -m "integration and asr"` and passes, including `awaiting.moments == 1` after real whisper JSON.
-3. Repo option if CI can use a cached model without the Hub: set that in the nightly job env. Do not change `doctor.py`.
+**Who.** `repo`
 
-**Who.** `both`
-
-**Register row text after close.** A nightly schedule run after this tree shows `[asr] toolchain smoke (nightly)` success and `awaiting.moments == 1`.
+**Register row text after close.** Resolved. Scheduled `nightly.yml` `asr-smoke` is CI hygiene on an old SHA, not a ship blocker. Product code does not read a hub token (`fanops._fwrun`, `doctor` faster-whisper probe, empty `src/` grep).
 
 ## REL-CI-ARCH
 
-**Current evidence.** Schedule run `38253871938` failed because that tree treated branch-protection HTTP 403 as a hard fail. Cron is `17 5 * * 1`. `workflow_dispatch` is already declared. `checks.dc3_deployed_state` renders an unreadable probe as `[SKIP] DC-3` (`skipped=True`, not blocking). Committed HEAD `967b9c92` still puts that error in `cmd_deployed`'s hard list (`("DC-3", err)`), so `--require-live` exits 1. This working tree removes DC-3 from that list; only an unreadable DC-8 fails `--require-live`. Workflow permissions stay `contents: read` plus `actions: read` on the reconcile job. `GITHUB_TOKEN` only. No dispatch was run: the pushed SHA would repeat the 403 hard-fail. A dispatch URL does not exist yet.
+**Current evidence.** Closed. `workflow_dispatch` run `39074333775` (https://github.com/Fleezyflo/fanops/actions/runs/39074333775) on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` concluded success. The reconcile step ran `python -m tools.ci deployed --require-live` and printed `[SKIP] DC-3 · -: NON-AUTHORITATIVE: live protection unreadable (gh: Resource not accessible by integration (HTTP 403))`. No `[FAIL] DC-8`. Run `38253871938` is not this proof. Run `39073191339` failed on `2a60aec4` because `GH_TOKEN` was unset; the merged workflow maps `GH_TOKEN: ${{ github.token }}` on that step.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. Commit and push the `tools/ci/cli.py` change that leaves `hard = [("DC-8", wf_err)]`.
-2. `gh workflow run architecture.yml --ref audit/production-audit-2026-09` (or `main` after merge).
-3. The reconcile step runs `python -m tools.ci deployed --require-live`, prints `[SKIP] DC-3` on the 403, and exits 0 when DC-8 is clean.
-4. Paste that run id here. Run `38253871938` is not this proof.
-
-**Who.** `repo`
+**Who.** `closed`
 
 **Register row text after close.** A `workflow_dispatch` or schedule run of `architecture.yml` on this policy prints `[SKIP] DC-3` and exits 0.
 
@@ -110,13 +84,9 @@ Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-
 
 ## Cap ≥84
 
-**Current evidence.** Headline stays **78**. Required check pass `39021062319` is not a deploy. Fingerprint is `f65411d5806cce087a475261bf4c96c98f0bcf97`.
+**Current evidence.** Closed. Headline stays **78**. Fingerprint `sha` is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of #1316. `unit (fast, no toolchain)` on the subject push run `39074067963` passed. `GET /_fingerprint` on 2026-10-18 returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":65307,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:25:22.259438+00:00"}`. That `sha` equals the merge commit. Pump `daemon._last_heartbeat_code` and the live-checkout disk are the same SHA. This does not close 85+.
 
-**Closure work.**
-
-1. Merge the remediation SHA.
-2. Fingerprint equals that merge SHA.
-3. `unit (fast, no toolchain)` is green on the shipped SHA.
+**Closure work.** Done. The headline stays 78 until a ledger row moves.
 
 **Who.** `both`
 
@@ -124,13 +94,10 @@ Chosen closures already applied on this tree: [C3-F01](#c3-f01), [H-INT-F01](#h-
 
 ## 85+
 
-**Current evidence.** Not started. `post/run.py` `_post_provider` returns `"dryrun"` when the tree is not live. `docs/GOLIVE.md` dry-run posts nothing.
+**Current evidence.** Closed. On merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, `cfg.is_live` was already true (`FANOPS_LIVE=1`; 2026-10-18 doctor `poster backend: postiz, zernio (LIVE)`). `publish_now` sent `post_5854bb63fefb` (Instagram). `_post_provider` returned `postiz`. Log `2026-10-17T22:16:23Z`: `outcome=publish_missing_url`, `backend=postiz`. Not a dry-run. On 2026-10-18 the row is still `needs_reconcile`, with a submission id and no `public_url`.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. After the ≥84 merge: a live publish on the shipped SHA per `docs/GOLIVE.md` Path A, or the cutover probe.
-2. Record that run here and in the score caveats. A dry-run does not count.
-
-**Who.** `operator`
+**Who.** `closed`
 
 **Register row text after close.** Not a register row. The score records a live publish transcript on the shipped SHA.

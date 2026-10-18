@@ -1,13 +1,18 @@
 # Pack: C4 — moments, casting & personas
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `persona_directives.persona_facts`, `moments._hook_script_mismatch`, `actions_edit.regenerate_hook`. `prompts.py` was not edited. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C4-F01 | low | swallow | closed on this tree | `persona_facts` returns `persona_terms` and does not catch | `persona_directives.persona_facts` |
-| C4-F02 | low | wrong-output | fixed on this working tree | `archetype_crosswalk_rows` keeps `content_focus` as one free-text item; `list(str)` is gone | `lever_docs.archetype_crosswalk_rows` |
-| C4-F03 | medium | wrong-output | fixed on this working tree | a non-Arabic hook is kept when the source language is outside `{en, ar}`; `en`/`ar` mismatches still null | `moments._hook_script_mismatch` |
-| C4-F04 | low | wrong-output | closed on this tree | `regenerate_hook` uses `_hook_script_mismatch`. A Latin hook on a non-en/ar source is kept | `studio/actions_edit.py` regenerate_hook |
+| C4-F01 | low | swallow | closed on origin/main | `persona_facts` returns `persona_terms` and does not catch | `persona_directives.persona_facts` returns `persona_terms(p, cfg)` with no try/except |
+| C4-F02 | low | wrong-output | closed on origin/main | `archetype_crosswalk_rows` keeps `content_focus` as one free-text item; `list(str)` is gone | `lever_docs.archetype_crosswalk_rows` |
+| C4-F03 | medium | wrong-output | closed on origin/main | a non-Arabic hook is kept when the source language is outside `{en, ar}`; `en`/`ar` mismatches still null | `moments._hook_script_mismatch` |
+| C4-F04 | low | wrong-output | closed on origin/main | `regenerate_hook` uses `_hook_script_mismatch`. A Latin hook on a non-en/ar source is kept | `actions_edit.regenerate_hook` calls `moments._hook_script_mismatch` and returns before `reburn_hook` on a mismatch |
 
 ## Evidence commands run
 

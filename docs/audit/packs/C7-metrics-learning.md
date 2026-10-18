@@ -1,11 +1,16 @@
 # Pack: C7 — metrics, reconcile & learning
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `meta_graph._read_queries` absent, `timing_bias.timing_bias_hour_for` returns None unless `cfg.timing_bias`. `reconcile.py` was not edited. `partition.json` keeps `reconcile.py` in C7 and `post/metrics/*` in C6. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C7-F01 | medium | silent-fail | closed on this tree | `meta_graph._read_queries` is absent. Successor: none | `meta_graph.py` |
-| C7-F02 | high | kill-switch | closed on this tree | `timing_bias_hour_for` returns None unless `cfg.timing_bias`. Crosspost applies that return and does not check the flag | `timing_bias.timing_bias_hour_for` |
+| C7-F01 | medium | silent-fail | closed on origin/main | `meta_graph._read_queries` is absent. Successor: none | `git grep _read_queries origin/main -- src/fanops/meta_graph.py` is empty |
+| C7-F02 | high | kill-switch | closed on origin/main | `timing_bias_hour_for` returns None unless `cfg.timing_bias`. Crosspost applies that return and does not check the flag | `timing_bias.timing_bias_hour_for` returns None when `not cfg.timing_bias` |
 
 ## Evidence commands run
 
