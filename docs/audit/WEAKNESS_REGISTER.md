@@ -1,6 +1,6 @@
 # Weakness register
 
-Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of PR #1316). `src/` on this branch matches that SHA. Studio `GET /_fingerprint`, the pump heartbeat, and the live-checkout disk are that SHA. The ledger was not modified. The only open row is REL-CI-ASR.
+Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of PR #1316). `src/` on this branch matches that SHA. Studio `GET /_fingerprint`, the pump heartbeat, and the live-checkout disk are that SHA. Doctor disk on this branch is `aab9de18879d29166c219191ef45b65cac15e4d9`. The ledger was not modified. Zero open rows. Every row is closed or resolved.
 
 ## Rows
 
@@ -41,12 +41,12 @@ Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c
 | OPS-ZERNIO | closed | `health_probes.zernio_dep_health` calls `_http_reachable` with `require_2xx=True`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped. |
 | OPS-SHA | closed | `doctor._deploy_code_check` fails when the daemon is loaded and either SHA is missing or the two differ. Unloaded stays N/A. Both present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump is loaded. |
 | OPS-POSTIZ | closed | 2026-10-18 doctor: `[ok] postiz: reachable`, `[ok] docker: daemon up`, `[PASS] Postiz backend reachable`. `GET localhost:4007/api/public/v1/integrations` HTTP 401 from Express. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). |
-| OPS-QUEUE | closed | 2026-10-18: `[PASS] publish daemon alive + queue draining`. `0 drainable past-due (up to 0.0h); 82 parked on non-active accounts; 0 retired lineage; 837 total queued`. Ledger not wiped. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue). |
+| OPS-QUEUE | closed | 2026-10-18: `[PASS] publish daemon alive + queue draining`. `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Ledger not wiped. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue). |
 | REL-UNDEPLOYED | closed | Merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of #1316. Unit push run `39074067963` passed on that SHA. `GET /_fingerprint` sha equals that merge commit. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
 | REL-PROT | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-17T08:18:05Z`. No schedule run on the subject SHA yet. |
-| REL-CI-ASR | open | Nightly run `39012855146` failed `[asr] toolchain smoke (nightly)` (`whisper produced no JSON (rc=1)`, `test_e2e_real.py` `awaiting.moments == 1`) on headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. 2026-10-18 `gh secret list` has no `HF_TOKEN`. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr). |
+| REL-CI-ASR | resolved | Scheduled `nightly.yml` `asr-smoke` is CI hygiene, not a merge gate. Run `39012855146` failed on headSha `f65411d5`, not on the subject. `fanops._fwrun._load_model` does not read a hub token. `doctor` probes `transcribe._fw_available`. `git grep` of `src/` for `HF_TOKEN` and `huggingface` is empty. `docs/ENFORCEMENT.md` keeps that secret on GitHub Actions. Not a production open gap. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr). |
 | REL-CI-ARCH | closed | `workflow_dispatch` run `39074333775` on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` printed `[SKIP] DC-3` (HTTP 403) and exited 0 with no `[FAIL] DC-8`. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-arch). |
 | X-DATA-F01 | closed | Wipe stays operator-gated: preview token, then `snapshot_is_restorable`, then `execute_wipe`. `AGENTS.md` forbids wipe-as-repair. No script under `scripts/` resets the ledger. |
 
-A row is finished when it is closed with a symbol on this tree, resolved with the dual-map citation, or open with a subsection in [OPEN_GAPS.md](OPEN_GAPS.md).
+A row is finished when it is closed with a symbol on this tree or resolved with the citation in [OPEN_GAPS.md](OPEN_GAPS.md). There is no open row.

@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `tools/arch/policy/rules.py` ARCH-001 (“The subsystem partition is TOTAL”). `partition.json` keeps `reconcile.py` in C7 and `post/metrics/*` in C6. No retag. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. H-INT-F01 is resolved. No retag.

@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `actions_wipe.confirm_wipe` refuses an empty or stale preview token before `execute_wipe`. `snapshot_is_restorable` is required. No `scripts/` path resets the ledger. The ledger was not wiped. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings

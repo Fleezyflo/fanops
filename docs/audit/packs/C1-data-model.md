@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `ledger_wipe.snapshot_is_restorable` calls `get_logger(cfg)` with outcome `snapshot_unrestorable`. `ledger.py` was not edited. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings

@@ -2,18 +2,18 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `doctor._deploy_code_check`, `daemon.stale_code_reason`, `daemon._version_signal`, `.github/ci-control-registry.yml` `required_contexts` (`unit (fast, no toolchain)` only), `docs/GOLIVE.md` “Rollback / safety”, `nightly.yml` `asr-smoke`, `fanops._fwrun._load_model`. REL-CI-ASR is resolved. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings
 
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
-| OPS-SHA | closed | code | `doctor._deploy_code_check` / `daemon.stale_code_reason`. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568`. Live worktree disk equals the pump. |
+| OPS-SHA | closed | code | `doctor._deploy_code_check` fails when `daemon.stale_code_reason` is set (missing SHA or the two differ). `daemon.ensure` kickstarts on that same reason when the pump is loaded. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `aab9de18879d29166c219191ef45b65cac15e4d9`. Live worktree disk equals the pump. |
 | REL-UNDEPLOYED | closed | closed | Studio `GET /_fingerprint` sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals `origin/main`. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
 | REL-PROT | closed | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493` success, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T08:18:05Z`). No schedule run on `430ece73` yet. |
-| REL-CI-ASR | open | open | Latest nightly `39012855146` (`2026-10-17T07:13:50Z`) failed `[asr] toolchain smoke` on headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`: `tests/integration/test_e2e_real.py` `awaiting.moments == 1`, log `whisper produced no JSON (rc=1)` (unauthenticated HF Hub). 2026-10-18 `gh secret list` has no `HF_TOKEN`. No nightly on `430ece73`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
+| REL-CI-ASR | resolved | repo | Resolved. Not a production gap. `nightly.yml` `asr-smoke` is scheduled CI. Run `39012855146` failed on headSha `f65411d5` (`awaiting.moments == 1`, `whisper produced no JSON (rc=1)`). Merge gate is `unit (fast, no toolchain)` on push `39074067963`. `fanops._fwrun._load_model` loads `WhisperModel` with no hub token. `doctor` probes `transcribe._fw_available`. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `docs/ENFORCEMENT.md` documents the Actions secret as GitHub Actions only. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
 | REL-CI-ARCH | closed | closed | Run `39074333775` printed `[SKIP] DC-3` (HTTP 403) and exited 0. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch). |
 
 ## Rollback

@@ -1,6 +1,6 @@
 # FanOps production audit — master map
 
-Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch is `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568`. Component verdicts are the subject. The fingerprint column is that deploy SHA.
+Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch, measured before this correction commit, is `aab9de18879d29166c219191ef45b65cac15e4d9`. Component verdicts are the subject. The fingerprint column is that deploy SHA.
 
 ## This assessment
 
@@ -31,8 +31,8 @@ Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78
 | H-DOCS drift | closed by `subsystem-traces/STALE.md` | same SHA |
 | H-INT invariants | resolved — operator edits of `reconcile.py` are C6; `partition.json` keeps C7. No retag | same SHA |
 | X-SEC | closed — SEC-IGPW, SEC-ENV. 69 cap does not bind | same SHA |
-| X-DEP | OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE closed ([OPEN_GAPS.md](OPEN_GAPS.md)) | 2026-10-18 doctor: 0 drainable, 837 queued |
-| X-REL | OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH closed. REL-CI-ASR open (`HF_TOKEN` absent). ([OPEN_GAPS.md](OPEN_GAPS.md)) | fingerprint equals this SHA. Nightly `39012855146` failed on `f65411d5` |
+| X-DEP | OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE closed ([OPEN_GAPS.md](OPEN_GAPS.md)) | 2026-10-18 doctor: 0 drainable, 83 parked, 837 queued |
+| X-REL | OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH closed. REL-CI-ASR resolved (scheduled CI hygiene, not a product gap). ([OPEN_GAPS.md](OPEN_GAPS.md)) | fingerprint equals this SHA. Scheduled e2e and nightly transcripts are still on `f65411d5`. `post_5854bb63fefb` is `needs_reconcile` with no `public_url` |
 | X-DATA | closed — preview token and `snapshot_is_restorable` before wipe | same SHA |
 
 `partition.json` was not given X-keys. Publish owns `reconcile.py`. This pass did not edit it.

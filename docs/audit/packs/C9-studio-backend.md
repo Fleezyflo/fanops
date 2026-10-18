@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `actions_wipe.confirm_wipe`, `actions_approve._approve_ids_with_render`, `actions_edit.regenerate_hook`. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings
@@ -11,7 +11,7 @@ Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff o
 |----|----------|-------|----------|----------|----------|
 | C9-F01 | medium | guard-gap | closed on this tree | `confirm_wipe` refuses a missing or stale `preview_token`. `do_wipe_confirm` passes the token | `actions_wipe.confirm_wipe` |
 | C9-F02 | medium | guard-gap | closed on this tree | `_approve_ids_with_render` skips a post that is not `awaiting_approval` before the count and the account respread. A repeated approve does not rewrite queued times | `actions_approve._approve_ids_with_render` |
-| C9-F03 | medium | guard-gap | closed on this tree | `regenerate_hook` reads the clock again after the model call and passes that clock into `reburn_hook`. A queued post that becomes imminent during the call is refused before `render_moment` | `actions_edit.regenerate_hook` |
+| C9-F03 | medium | guard-gap | closed on origin/main | `regenerate_hook` reads the clock again after the model call and passes that clock into `reburn_hook`. A queued post that becomes imminent during the call is refused before `render_moment` | `actions_edit.regenerate_hook` calls `_actions._now(None)` and `_guard_editable_post` and returns before `reburn_hook` |
 
 ## Evidence commands run
 

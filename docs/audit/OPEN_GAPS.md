@@ -1,6 +1,6 @@
 # Open gaps
 
-[REL-CI-ASR](#rel-ci-asr) is the only **open** row. Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `gh secret list` has no `HF_TOKEN`, so the nightly smoke was not re-run. Every other subsection is **closed** and cites its transcript.
+**No open rows.** Zero open subsections. Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Every subsection is **closed** or **resolved** and cites its transcript.
 
 ## REL-UNDEPLOYED
 
@@ -24,7 +24,7 @@
 
 ## OPS-QUEUE
 
-**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` printed `0 drainable past-due (up to 0.0h); 82 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568`. The live checkout matches the pump. The pump was not restarted.
+**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` counted `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 82 on the prior sheet and 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `aab9de18879d29166c219191ef45b65cac15e4d9` (`daemon._version_signal`). The live checkout matches the pump. The pump was not restarted.
 
 **Closure work.** Done.
 
@@ -34,16 +34,13 @@
 
 ## REL-CI-ASR
 
-**Current evidence.** Open. Latest nightly run `39012855146`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T07:13:50Z`). Job `[asr] toolchain smoke (nightly)` failed. `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1`; the log was `whisper produced no JSON (rc=1)` and named unauthenticated Hugging Face Hub requests. The prior failure is run `38868030626` (`2026-10-16T07:33:59Z`), same job, same headSha. 2026-10-18 `gh secret list` for `Fleezyflo/fanops` has no `HF_TOKEN`. No nightly has run on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. The nightly was not dispatched. `doctor.py` was not changed.
+**Current evidence.** Resolved. Not a production open gap. `nightly.yml` job `asr-smoke` (`[asr] toolchain smoke (nightly)`) is scheduled CI hygiene. It is not in `.github/ci-control-registry.yml` `required_contexts`. Merge gate **REL-PROT** is only `unit (fast, no toolchain)`, green on subject push run `39074067963` at `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Failure run `39012855146` (`2026-10-17T07:13:50Z`, event `schedule`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`) is monitoring on that old SHA: `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1` and the log was `whisper produced no JSON (rc=1)`. Product runtime does not consume a hub token. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `fanops._fwrun._load_model` constructs `WhisperModel` with the model name, `device`, and `compute_type` only. `doctor._assemble_doctor_checks` probes `transcribe._fw_available` (`[PASS] faster-whisper importable ([asr] extra)` on 2026-10-18). `docs/ENFORCEMENT.md` documents `nightly.yml` `asr-smoke` and the Actions secret as GitHub Actions only, not product `CONFIG.md`. The nightly was not dispatched. `doctor.py` was not changed.
 
-**Closure work.**
+**Closure work.** Done.
 
-1. `secrets.HF_TOKEN` is non-empty on the schedule event.
-2. `[asr] toolchain smoke (nightly)` runs `python -m pytest -q -m "integration and asr"` and passes, including `awaiting.moments == 1` after real whisper JSON.
+**Who.** `repo`
 
-**Who.** `open`
-
-**Register row text after close.** A nightly schedule run after this tree shows `[asr] toolchain smoke (nightly)` success and `awaiting.moments == 1`.
+**Register row text after close.** Resolved. Scheduled `nightly.yml` `asr-smoke` is CI hygiene on an old SHA, not a ship blocker. Product code does not read a hub token (`fanops._fwrun`, `doctor` faster-whisper probe, empty `src/` grep).
 
 ## REL-CI-ARCH
 

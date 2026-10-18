@@ -2,15 +2,15 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `crosspost` assert `_JITTER_MAX < _STEP_MIN`, `post/run.py` `_NET_POST_FIELDS` and `_publish_one`, `postiz.py` YouTube `Post.caption` versus `posted_text_for`, `zernio.py` `posted_text_for`. `postiz.py` and `reconcile.py` were not edited. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C6-F01 | low | invariant | closed on this tree | Module-level `assert _JITTER_MAX < _STEP_MIN` | `crosspost.py` |
-| C6-F02 | medium | persistence | closed on this tree | Immediate `submitted`→`published` promotion persists `publish_hour` and `publish_dow` through `_NET_POST_FIELDS` | `post/run.py` `_publish_one` |
+| C6-F01 | low | invariant | closed on origin/main | Module-level `assert _JITTER_MAX < _STEP_MIN` | `crosspost.py` module-level `assert _JITTER_MAX < _STEP_MIN` |
+| C6-F02 | medium | persistence | closed on origin/main | Immediate `submitted`→`published` promotion persists `publish_hour` and `publish_dow` through `_NET_POST_FIELDS` | `post/run.py` `_NET_POST_FIELDS` includes `publish_hour` and `publish_dow`. Dry-run calls `_handle_dryrun_boundary` and does not POST. Postiz IG/TT and Zernio `content` are `posted_text_for`. Postiz YouTube `content` is `Post.caption` |
 
 ## Evidence commands run
 

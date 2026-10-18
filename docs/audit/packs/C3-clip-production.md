@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `clip_ffmpeg._finish_publish` refuses an empty rc-0 temp; `ffmpeg_supercut_cmd` emits `-fps_mode cfr`. `clip.py` was not edited. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Product behaviour below is from `git show HEAD:path` plus the one supercut edit in this pass. `clip.py` was not edited (picking).

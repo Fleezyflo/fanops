@@ -2,7 +2,7 @@
 
 ## Re-verified 2026-10-18
 
-Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `vocals._demucs_env` returns `certifi_ssl_env` and does not catch; `vocals.isolate_vocals` logs `isolate_vocals fail-closed` and raises `ToolchainMissingError`; `artifacts._valid_transcript_json`; `ingest.stage_inbox_candidates` skips a child `.pull`. `fanops._fwrun._load_model` does not read a hub token. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
 
 
 ## Findings
