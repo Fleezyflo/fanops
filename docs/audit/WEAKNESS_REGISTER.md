@@ -1,13 +1,13 @@
-# Weakness register (working tree on `d2cded31`)
+# Weakness register
 
-Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audit-2026-09`. The rows below cite symbols in this working tree after the remediate program. They replace the committed 2026-09-12 register and the uncommitted re-verdict of `088702ca`. Studio `GET /_fingerprint` sha is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of PR #1316 and `origin/main` at that poll. The ledger was not modified.
+Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of PR #1316). `src/` on this branch matches that SHA. Studio `GET /_fingerprint`, the pump heartbeat, and the live-checkout disk are that SHA. The ledger was not modified. The only open row is REL-CI-ASR.
 
 ## Rows
 
 | ID | Status | Evidence on this working tree |
 |----|--------|-------------------------------|
 | U0-F01 | closed | Closed by the stale mark in `subsystem-traces/STALE.md`. Live count 196, indexed stems 124. Traces were not regenerated. See [OPEN_GAPS.md](OPEN_GAPS.md#u0-f01--h-docs-f01). |
-| C1-F01 | closed | `execute_wipe` passes `cfg` into `snapshot_is_restorable`. The unrestorable path calls `get_logger(cfg)` with outcome `snapshot_unrestorable`. The manifest failure calls `get_logger(cfg)` with outcome `wipe_manifest_unwritten`. `cli.cmd_retire_source` and `actions_wipe.confirm_wipe` pass `cfg` as well. |
+| C1-F01 | closed | `execute_wipe` passes `cfg` into `snapshot_is_restorable`. The unrestorable path calls `get_logger(cfg)` with outcome `snapshot_unrestorable`. A manifest write failure uses `logger.warning` and the wipe proceeds. There is no `wipe_manifest_unwritten` outcome. `cli.cmd_retire_source` and `actions_wipe.confirm_wipe` pass `cfg` as well. |
 | C2-F01 | closed | `vocals._demucs_env` returns `certifi_ssl_env` and does not catch. |
 | C2-F02 | closed | `artifacts._valid_transcript_json` requires an adoptable sidecar. A legacy segments list with no ASR quality keys does not resume as transcribed. |
 | C2-F03 | closed | `vocals.isolate_vocals` logs `isolate_vocals fail-closed` and raises `ToolchainMissingError` when Demucs is missing, times out, exits nonzero, or leaves no stem. The source is set to error. The mix is not transcribed. `config.isolate_vocals` states the same posture. |
@@ -26,7 +26,7 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | C7-F01 | closed | `meta_graph._read_queries` is absent. No successor. |
 | C7-F02 | closed | `timing_bias.timing_bias_hour_for` returns None unless `FANOPS_TIMING_BIAS` is on. Crosspost applies that return and does not check the flag itself. `reconcile.py` was not edited. |
 | C8-F01 | closed | `health_projectors.half_live_state` returns a surfaced hint on compute failure. Doctor emits that check. |
-| C9-F01 | closed | `actions_wipe.confirm_wipe` refuses a missing or stale `preview_token`. `do_wipe_confirm` passes the token. |
+| C9-F01 | closed | `actions_wipe.confirm_wipe` refuses an empty or stale `token`. `app_routes_live.do_wipe_confirm` passes form field `preview_token` into that argument. |
 | C9-F02 | closed | `actions_approve._approve_ids_with_render` skips a post that is not `awaiting_approval` before the count and the account respread. A repeated approve does not rewrite queued times. |
 | C9-F03 | closed | `actions_edit.regenerate_hook` reads the clock after the model call and passes it into `reburn_hook`. A queued post that becomes imminent during the call is refused before `render_moment`. `tests/test_studio_regenerate_hook.py` `test_regenerate_hook_refuses_before_render_when_queued_post_becomes_imminent`. |
 | C10-F01 | closed | `app_routes_home` passes `zero_post_clips`. The unwired claim in `full-trace-index.md` and `anomalies.md` is marked stale. |
@@ -40,12 +40,12 @@ Base commit `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e` on `audit/production-audi
 | SEC-ENV | closed | `autopilot.set_env_var` and `unset_env_var` hold `ledger._file_lock` on `<name>.lock` around the read-modify-replace. A lock timeout surfaces as `OSError`. `ledger.py` was not edited. |
 | OPS-ZERNIO | closed | `health_probes.zernio_dep_health` calls `_http_reachable` with `require_2xx=True`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped. |
 | OPS-SHA | closed | `doctor._deploy_code_check` fails when the daemon is loaded and either SHA is missing or the two differ. Unloaded stays N/A. Both present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump is loaded. |
-| OPS-POSTIZ | closed | 2026-10-17 doctor: `[ok] postiz: reachable`, `[ok] docker: daemon up`, `[PASS] Postiz backend reachable`. `GET localhost:4007/api/public/v1/integrations` HTTP 401 from Express. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). |
-| OPS-QUEUE | closed | 2026-10-17T22:18Z doctor: `[PASS] publish daemon alive + queue draining`. `0 drainable past-due (up to 0.0h); 81 parked on non-active accounts; 0 retired lineage; 837 total queued`. Ledger not wiped. `markmakmouly` and `cisumwolfhom` set to `planned` locally. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue). |
-| REL-UNDEPLOYED | closed | Merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of #1316. Unit run `39073814011`, impact run `39073814128`, and lane-guard run `39073814368` passed on `6f355d09b2dea3275101434d8c03c96bc7692d08`. `GET /_fingerprint` sha equals that merge commit. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
-| REL-PROT | closed | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
-| REL-CI-E2E | closed | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-16T08:47:37Z`. |
-| REL-CI-ASR | open | Nightly run `38868030626` failed `[asr] toolchain smoke (nightly)` (`whisper produced no JSON (rc=1)`, `test_e2e_real.py` moments `0 == 1`). 2026-10-18 `gh secret list` has no `HF_TOKEN`. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr). |
+| OPS-POSTIZ | closed | 2026-10-18 doctor: `[ok] postiz: reachable`, `[ok] docker: daemon up`, `[PASS] Postiz backend reachable`. `GET localhost:4007/api/public/v1/integrations` HTTP 401 from Express. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). |
+| OPS-QUEUE | closed | 2026-10-18: `[PASS] publish daemon alive + queue draining`. `0 drainable past-due (up to 0.0h); 82 parked on non-active accounts; 0 retired lineage; 837 total queued`. Ledger not wiped. See [OPEN_GAPS.md](OPEN_GAPS.md#ops-queue). |
+| REL-UNDEPLOYED | closed | Merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of #1316. Unit push run `39074067963` passed on that SHA. `GET /_fingerprint` sha equals that merge commit. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed). |
+| REL-PROT | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
+| REL-CI-E2E | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`, created `2026-10-17T08:18:05Z`. No schedule run on the subject SHA yet. |
+| REL-CI-ASR | open | Nightly run `39012855146` failed `[asr] toolchain smoke (nightly)` (`whisper produced no JSON (rc=1)`, `test_e2e_real.py` `awaiting.moments == 1`) on headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. 2026-10-18 `gh secret list` has no `HF_TOKEN`. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr). |
 | REL-CI-ARCH | closed | `workflow_dispatch` run `39074333775` on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` printed `[SKIP] DC-3` (HTTP 403) and exited 0 with no `[FAIL] DC-8`. See [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-arch). |
 | X-DATA-F01 | closed | Wipe stays operator-gated: preview token, then `snapshot_is_restorable`, then `execute_wipe`. `AGENTS.md` forbids wipe-as-repair. No script under `scripts/` resets the ledger. |
 

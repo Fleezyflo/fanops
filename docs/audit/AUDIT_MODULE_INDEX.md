@@ -1,19 +1,20 @@
 # Audit module index
 
-Subject of this index is the head of pull request #1316 on branch `audit/production-audit-2026-09`. The remediation commit is `f19d7e5e97f1a10bf4925a0bc4a5f38a1a078a67`. The scored base before that commit was `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Measured 2026-10-17 from `/Users/molhamhomsi/Moh Flow Fanops`. `GET http://127.0.0.1:8787/_fingerprint` is still `f65411d5806cce087a475261bf4c96c98f0bcf97` (pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00`).
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of #1316). Assessment date 2026-10-18. Measured from `/Users/molhamhomsi/Moh Flow Fanops` on `audit/production-audit-2026-09-close`. `src/` matches that SHA.
 
-Finalize is complete against the register on this commit. Every row is closed, resolved, or open with a subsection in [OPEN_GAPS.md](OPEN_GAPS.md). The open row is REL-CI-ASR. OPS-POSTIZ, OPS-QUEUE, REL-UNDEPLOYED, and REL-CI-ARCH are closed. Fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals the merge of #1316.
+Every register row is closed, resolved, or open in [OPEN_GAPS.md](OPEN_GAPS.md). The open row is REL-CI-ASR.
 
 | Plane | SHA | Relation to the subject |
 |-------|-----|-------------------------|
-| HEAD (audit subject) | PR #1316 | Remediation `f19d7e5e`. Scored base `d2cded31`. Fingerprint is `origin/main` |
-| `origin/main` | `f65411d5806cce087a475261bf4c96c98f0bcf97` (merge of #1314) | Neither ancestor of HEAD nor descendant of HEAD |
-| Studio `GET http://127.0.0.1:8787/_fingerprint` | `f65411d5806cce087a475261bf4c96c98f0bcf97` | Equals `origin/main`. pid 1225, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-16T15:57:11.959355+00:00` |
-| `088702ca3ef4048e217befbb703443d6c1f5fde9` | ancestor of `origin/main` | Not this score. Studio is not serving it |
+| Audit subject `origin/main` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Merge of #1316 |
+| Studio `GET http://127.0.0.1:8787/_fingerprint` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00` |
+| Pump `daemon._last_heartbeat_code` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject |
+| Live-checkout disk | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | `.worktrees/live-origin-main`. Equals the pump |
+| Doctor disk, this branch | `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568` | Docs ahead of the subject. `doctor._deploy_code_check` fails on that difference. The pump was not restarted |
 
-The committed score on this branch is **78/100**. The score on `d2cded31` was 72/100. See the score ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Cap rationale: [Why capped at 84](GAP_CLOSURE_PLAN.md#why-capped-at-84). Studio’s fingerprint equals `origin/main`, not this branch.
+The score is **78/100**, Launchable With Caveats. The score on `d2cded31` was 72/100. See the ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Cap rationale: [Why capped at 84](GAP_CLOSURE_PLAN.md#why-capped-at-84).
 
-The working tree is the audit subject for the Wave 1–2 re-audit. Dirty product files are in scope. `088702ca` is an ancestor of `origin/main` and is not this score. `partition.json` assigns every `src/fanops/**/*.py` path to C1–C10 only (`live_py_count` 196). X-modules overlap those files; they do not get a third key unless `tests/test_production_audit_gates.py` `test_live_partition_covers_every_module` is changed on purpose.
+`partition.json` assigns every `src/fanops/**/*.py` path to C1–C10 only (`live_py_count` 196). It has no `indexed_cluster_stems` field. 2026-10-18 cluster counts: C1 15, C2 14, C3 18, C4 10, C5 25, C6 32, C7 16, C8 25, C9 29, C10 12. The stale mark still records 124 indexed stems. X-modules overlap those files; they do not get a third key unless `tests/test_production_audit_gates.py` `test_live_partition_covers_every_module` is changed on purpose.
 
 ## Workflow
 
@@ -21,7 +22,7 @@ Three phases. A module is done only when its finalization gate exists on the aud
 
 ### Audit
 
-Read-only evidence on `d2cded31`. Update the linked pack findings table, or append a findings table when the module has no pack (X-SEC, X-DEP, X-REL, X-DATA). Collect the production-audit checklist slice named on the module row: routes, auth, data writes, external calls, jobs, env, health, rollback, and the user path that module owns. Record the commands run. Do not edit product code. Do not treat the dirty working-tree audit docs as the subject.
+Read-only evidence on `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Update the linked pack findings table when status or evidence changed. Collect the production-audit checklist slice named on the module row: routes, auth, data writes, external calls, jobs, env, health, rollback, and the user path that module owns. Record the commands run. Do not edit product code unless a new symbol-level defect forces it.
 
 ### Remediate
 
@@ -29,7 +30,7 @@ One finding, one owner path, on a lane-respecting branch. A hot file in `.agents
 
 ### Finalize
 
-Parent pass after the module gates exist. Merge rows into `docs/audit/WEAKNESS_REGISTER.md` so every ID on this index is present. Refresh `docs/audit/MASTER_MAP.md` component verdicts for this HEAD (the live fingerprint SHA is a separate column, already measured as `f65411d5`). Re-score `docs/audit/PRODUCTION_SCORE.md` from the closed and open rows. `H-CI` lands last so `tests/test_production_audit_gates.py` encodes the closed findings.
+Parent pass after the module gates exist. Merge rows into `docs/audit/WEAKNESS_REGISTER.md` so every ID on this index is present. Refresh `docs/audit/MASTER_MAP.md` component verdicts for `origin/main`. The Studio fingerprint, the pump SHA, and the live-checkout disk are separate from doctor’s disk SHA on this branch. Re-score `docs/audit/PRODUCTION_SCORE.md` from the closed and open rows. `H-CI` lands last so `tests/test_production_audit_gates.py` encodes the closed findings.
 
 **All gaps finalized.** Every row in the working-tree `WEAKNESS_REGISTER.md` is closed with a symbol, resolved with the dual-map citation, or open in [OPEN_GAPS.md](OPEN_GAPS.md). The open row is REL-CI-ASR. C2-F03 is closed. Studio fingerprint sha is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`.
 
@@ -52,7 +53,7 @@ Dependencies first. Audit may fan out after U0’s file list is trusted. Remedia
 Skill: production-audit
 Phase: Audit | Remediate | Finalize
 Module: <ID> — <title>
-Subject: d2cded31e29e027e4ed55bfdb99b9a93ac4f024e (branch audit/production-audit-2026-09)
+Subject: origin/main 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
 Paths: <primary paths>
 Entry symbols: <symbols>
 Pack: <docs/audit/packs/….md or none>
@@ -65,7 +66,7 @@ Remediate units swap the first line to `Skill: fix-defect`.
 
 ## Executive table
 
-Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17 working tree. “Remaining work” is this wave, not the pre-remediate snapshot. A pack section titled “Full checklist 2026-10-17” is a symbol pass. It is not a substitute for re-reading the dirty files against `origin/main`.
+Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of 2026-10-18 on `origin/main`. “Remaining work” is what is still open, which is REL-CI-ASR. A pack section titled “Full checklist 2026-10-17” is an earlier symbol pass. The 2026-10-18 re-verify headers are the current pass.
 
 | ID | Title | Pack | Register status | Remaining work |
 |----|-------|------|-----------------|----------------|
@@ -77,25 +78,25 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of the 2026-10-17
 | C4 | Moments and personas | [C4-moments-personas.md](packs/C4-moments-personas.md) | **C4-F01 closed**, **C4-F02 closed**, **C4-F03 closed**, **C4-F04 closed** | Studio `regenerate_hook` uses the same script check as ingest. `prompts.py` is with C5 |
 | C9 | Studio backend | [C9-studio-backend.md](packs/C9-studio-backend.md) | **C9-F01 closed**, **C9-F02 closed**, **C9-F03 closed** | A queued post that becomes imminent during hook regeneration is refused before `render_moment`. Repeated approve does not rewrite queued times |
 | C10 | Studio views and templates | [C10-studio-views.md](packs/C10-studio-views.md) | **C10-F01 closed**, **C10-F02 closed**, **C10-F03 closed**, **C10-F04 closed** | A failed card or feed swap re-renders the card with the error inside it. `schedule.js` still re-reads `#schedule-body` |
-| C6 | Crosspost and publish | [C6-crosspost-publish.md](packs/C6-crosspost-publish.md) | **C6-F01 closed**, **C6-F02 closed** | Dirty-tree pass found no C6-F03. Dry-run does not POST. IG/TT and Zernio `content` are `posted_text_for`; Postiz YouTube `content` is `Post.caption` |
-| C7 | Metrics and learning | [C7-metrics-learning.md](packs/C7-metrics-learning.md) | **C7-F01 closed**, **C7-F02 closed** | Dirty-tree pass found no C7-F03. `_read_queries` has no successor. `reconcile.py` was not edited |
-| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` (`daemon.py:393`) matches the doctor miss-or-mismatch rule. Launchd policy was not changed |
+| C6 | Crosspost and publish | [C6-crosspost-publish.md](packs/C6-crosspost-publish.md) | **C6-F01 closed**, **C6-F02 closed** | 2026-10-18 re-read found no C6-F03. Dry-run does not POST. IG/TT and Zernio `content` are `posted_text_for`; Postiz YouTube `content` is `Post.caption` |
+| C7 | Metrics and learning | [C7-metrics-learning.md](packs/C7-metrics-learning.md) | **C7-F01 closed**, **C7-F02 closed** | 2026-10-18 re-read found no C7-F03. `_read_queries` has no successor. `reconcile.py` was not edited |
+| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` matches the doctor miss-or-mismatch rule. 2026-10-18 doctor exit 1 is this branch’s disk versus the pump. Launchd was not restarted |
 | H-CI | Gates | [H-CI-gates.md](packs/H-CI-gates.md) | **H-CI-F01 closed** | Parent extends `tests/test_production_audit_gates.py` only for new pack finding IDs, last |
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
 | H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 resolved** | `partition.json` stays C1–C10. Operator edits of `reconcile.py` are C6; the partition keeps C7. No retag |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
-| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed | 2026-10-17 doctor: Postiz reachable, `0 drainable past-due`, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
-| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, and **REL-CI-ARCH** closed. **REL-CI-ASR** open | Fingerprint `430ece73`. ASR run `38868030626` failed. REL-CI-ARCH run `39074333775` succeeded. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed | 2026-10-18 doctor: Postiz reachable, docker up, `0 drainable past-due`, 82 parked, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, and **REL-CI-ARCH** closed. **REL-CI-ASR** open | Fingerprint `430ece73`. Nightly `39012855146` failed. `HF_TOKEN` absent. REL-CI-ARCH run `39074333775` succeeded. [OPEN_GAPS.md](OPEN_GAPS.md) |
 | X-DATA | Ledger immutability | [X-DATA-ledger.md](packs/X-DATA-ledger.md) | **X-DATA-F01 closed** | Ledger was not wiped. Do not edit `ledger.py` |
 
 Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) on this working tree. The committed 2026-09-12 register on `d2cded31` is the baseline those bullets replaced.
 
 ## U0 — codemap / partition / stem drift
 
-- **Paths.** `docs/CODEMAPS/partition.json`, `docs/CODEMAPS/full-trace-index.md`, `docs/CODEMAPS/anomalies.md`, `scripts/codemap_extract/ast_extract.py`, `scripts/codemap_extract/build_graphs.py`. 196 `src/fanops/**/*.py` files on HEAD. `partition.json` keys equal that set (`live_py_count` 196, `indexed_cluster_stems` 124, `assigned_stale` empty). Cluster counts: C1 15, C2 14, C3 18, C4 10, C5 25, C6 32, C7 15, C8 25, C9 29, C10 13. Templates (71), `studio/static/`, `tools/`, `scripts/`, `.githooks/`, and `.github/workflows/` are outside the Python totality gate.
+- **Paths.** `docs/CODEMAPS/partition.json`, `docs/CODEMAPS/full-trace-index.md`, `docs/CODEMAPS/anomalies.md`, `scripts/codemap_extract/ast_extract.py`, `scripts/codemap_extract/build_graphs.py`. 196 `src/fanops/**/*.py` files on `origin/main`. `partition.json` keys equal that set (`live_py_count` 196). It has no `indexed_cluster_stems` field. Cluster counts: C1 15, C2 14, C3 18, C4 10, C5 25, C6 32, C7 16, C8 25, C9 29, C10 12. The stale mark still says 124 indexed stems. Templates, `studio/static/`, `tools/`, `scripts/`, `.githooks/`, and `.github/workflows/` are outside the Python totality gate.
 - **Entry symbols.** `partition.json` `modules`; `test_live_partition_covers_every_module`.
 - **Pack.** [packs/U0-structural-delta.md](packs/U0-structural-delta.md).
-- **Register.** **U0-F01 closed.** The 2026-10-17 banner marks the 2026-07-11 trace ledger stale. Live count 196. `partition.json` `live_py_count` 196, `indexed_cluster_stems` 124. Prose was not regenerated.
+- **Register.** **U0-F01 closed.** The stale mark records the 2026-07-11 trace ledger. Live count 196. `partition.json` `live_py_count` 196. Prose was not regenerated.
 - **Lane.** Unrestricted.
 - **Audit.** Diff the frozen cluster table against `partition.json` `modules`. List Python paths the trace index does not name. Confirm `git ls-files 'src/fanops/**/*.py'` is 196 on this SHA.
 - **Remediate.** Doc path only: refresh or explicitly mark the frozen index. One owner. No product behaviour change in this module.
@@ -234,7 +235,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 ## X-SEC — secrets and config introspection
 
 - **Paths.** `secret_provider.py` (`_SECRET_KEYS`, `is_secret_env_key`, `get_secret`), `config_introspect.py` (`_is_secret`, `_SECRET_SUFFIX`), `settings.py` (`FANOPS_IG_SCRAPE_PASSWORD`), `autopilot.py` (`set_env_var`, `unset_env_var`), `docs/CONFIG.md`, `scripts/scan-secrets.sh`. Overlaps C1 (`config_introspect`, `settings`) and C8 (`secret_provider`).
-- **Pack.** None. Append a findings table under this heading or add `docs/audit/packs/X-SEC-secrets.md` in the audit phase.
+- **Pack.** [packs/X-SEC-secrets.md](packs/X-SEC-secrets.md).
 - **Register.** **SEC-IGPW closed.** **SEC-ENV closed.** `config.py` was not edited for these rows.
 - **Lane.** Unrestricted unless the fix edits `config.py` (publish).
 - **Audit.** Secret suffix list versus Settings fields that hold credentials. Confirm the value is absent from `studio/static` and templates. Confirm `docs/CONFIG.md` write-only claim against `_is_secret`. No secret values in the findings table.
@@ -244,8 +245,8 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 ## X-DEP — external deps as doctor exercises them
 
 - **Paths.** `health_probes.py` (`postiz_dep_health`, `postiz_doctor_check`, `zernio_dep_health`, `_http_reachable`, `dep_health_list`), `doctor.py` (`_postiz_reach_check`, `_zernio_reach_check`, `_daemon_liveness_check`), `post/postiz.py`, `post/zernio.py`, `docs/POSTIZ_OPS.md`, `docs/POSTIZ_SETUP.md`. Overlaps C6 and C8.
-- **Pack.** None.
-- **Register.** **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed. 2026-10-17 doctor: Postiz reachable, `0 drainable past-due`, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md).
+- **Pack.** [packs/X-DEP-deps.md](packs/X-DEP-deps.md).
+- **Register.** **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed. 2026-10-18 doctor: Postiz reachable, docker up, `0 drainable past-due`, 82 parked, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md).
 - **Lane.** publish for `postiz.py` and `zernio.py`. `doctor.py` and `health_probes.py` are unrestricted.
 - **Audit.** After C6: what “drainable” means in `_daemon_liveness_check` versus `publish_due`, and which errors are Postiz-local versus code. Probe status-code handling for Zernio. Do not start docker or drain the ledger.
 - **Remediate.** `fix-defect` for OPS-ZERNIO on `health_probes._http_reachable` / `zernio_dep_health`. OPS-POSTIZ process recovery is the operator closure in [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). The probe itself is not the open defect.
@@ -254,7 +255,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 ## X-REL — deploy protection, rollback, undeployed gap
 
 - **Paths.** `docs/GOLIVE.md` section “Rollback / safety”, `.github/ci-control-registry.yml` `required_contexts`, `tools/ci/live.py`, `doctor.py` `_deploy_code_check`, `daemon.py` `ensure`. Workflows listed on H-CI.
-- **Pack.** None.
+- **Pack.** [packs/X-REL-release.md](packs/X-REL-release.md).
 - **Register.** **OPS-SHA**, **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, and **REL-CI-ARCH** are closed. **REL-CI-ASR** is open. Closure steps are [OPEN_GAPS.md](OPEN_GAPS.md). REL-CI-ARCH is run `39074333775`.
 - **Lane.** ci for the registry and workflows. `doctor.py` is unrestricted.
 - **Audit.** Rollback section present. Required context list. Undeployed relation of this HEAD to the fingerprint. Deploy-code miss path. Do not change branch protection.
@@ -264,7 +265,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 ## X-DATA — ledger immutability
 
 - **Paths.** `AGENTS.md` guardrail “Never wipe or reset the ledger”, `ledger.py`, `ledger_wipe.py`, `studio/actions_wipe.py` (`confirm_wipe`), `cli.py` `cmd_wipe` / `cmd_restore`. Overlaps C1 and C9.
-- **Pack.** None.
+- **Pack.** [packs/X-DATA-ledger.md](packs/X-DATA-ledger.md).
 - **Register.** **X-DATA-F01 closed.** Wipe stays operator-gated: preview token, then `snapshot_is_restorable`, then `execute_wipe`. `ledger.py` was not edited.
 - **Lane.** picking (`ledger.py`). Wipe UI files are unrestricted.
 - **Audit.** Agent-facing docs refuse wipe-as-repair. Operator wipe still requires the preview token C9 already enforces. No script in `scripts/` resets ledger state. Snapshots from `ledger_wipe` remain restorable (`snapshot_is_restorable`).

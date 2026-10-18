@@ -1,10 +1,19 @@
 # Pack: C8 — ops, CLI & daemon
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
 | C8-F01 | low | mis-report | closed on this tree | `half_live_state` surfaces a compute failure in the hint. Doctor emits that check | `health_projectors.half_live_state` |
+
+2026-10-18 `uv run fanops doctor` from this branch exited 1. The queue check passed. The failing check is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568` (`daemon._version_signal` on this branch). The live checkout `.worktrees/live-origin-main` is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the same SHA as the pump and as Studio `GET /_fingerprint`. The pump was not restarted.
+
+`doctor._sibling_launchd_checks` labels every sibling, including the keeper, with `daemon.SIBLING_POLL_INTERVAL_S` (300). `daemon_siblings.KEEPER_POLL_INTERVAL_S` is 120, and the installed `com.fanops.keeper` plist `StartInterval` is 120. The keeper check passed. That label is not a new register row.
 
 ## Evidence commands run
 

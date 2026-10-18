@@ -1,10 +1,10 @@
 # Open gaps
 
-[REL-CI-ASR](#rel-ci-asr) is the only **open** row. `gh secret list` on 2026-10-18 has no `HF_TOKEN`, so the nightly smoke was not re-run. Every other subsection is **closed** and cites its transcript.
+[REL-CI-ASR](#rel-ci-asr) is the only **open** row. Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `gh secret list` has no `HF_TOKEN`, so the nightly smoke was not re-run. Every other subsection is **closed** and cites its transcript.
 
 ## REL-UNDEPLOYED
 
-**Current evidence.** Closed. Merge commit `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of PR #1316 is `origin/main`. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":20339,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:13:09.098405+00:00"}`. That `sha` equals the merge commit.
+**Current evidence.** Closed. Merge commit `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` of PR #1316 is `origin/main`. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` on 2026-10-18 returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":65307,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:25:22.259438+00:00"}`. That `sha` equals the merge commit. Pump `daemon._last_heartbeat_code` and the live-checkout disk are the same SHA.
 
 **Closure work.** Done.
 
@@ -14,7 +14,7 @@
 
 ## OPS-POSTIZ
 
-**Current evidence.** Closed. 2026-10-17 `postiz-ondemand.sh ensure` exit 0 (`postiz: already up`) on `FANOPS_ROOT` `/Users/molhamhomsi/FanOps`. Unauthenticated `GET http://localhost:4007/api/public/v1/integrations` returned HTTP 401 `{"msg":"No API Key found"}` with `X-Powered-By: Express`. `uv run fanops doctor`: `[PASS] Postiz backend reachable (real /integrations probe, not the nginx health-check)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`. `postiz.py` was not edited. Ledger was not wiped.
+**Current evidence.** Closed. 2026-10-18 `uv run fanops doctor`: `[PASS] Postiz backend reachable (real /integrations probe, not the nginx health-check)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`. Unauthenticated `GET http://localhost:4007/api/public/v1/integrations` returned HTTP 401 `{"msg":"No API Key found"}` with `X-Powered-By: Express`. `postiz.py` was not edited. Ledger was not wiped.
 
 **Closure work.** Done.
 
@@ -24,7 +24,7 @@
 
 ## OPS-QUEUE
 
-**Current evidence.** Closed. 2026-10-17T22:18Z `uv run fanops doctor` on `/Users/molhamhomsi/FanOps`: `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. The same drainable loop doctor uses: `0 drainable past-due (up to 0.0h); 81 parked on non-active accounts; 0 retired lineage; 837 total queued`. Before that doctor the line was `3 drainable past-due (up to 485.9h); 78 parked on non-active accounts; 0 retired lineage; 838 total queued`. The three stale rows (`post_507a879b8b49`, `post_613357845954`, `post_10e9099dc150`) were not mass-published. `markmakmouly` and `cisumwolfhom` went from `active` to `planned` in local `00_control/accounts.json` (not committed). Queued rows were not deleted. 837 remains. Rollback is those two statuses back to `active`. Doctor still exits 1 on the daemon SHA check (`f65411d5806c` vs disk `94bdd3e53d32`). That check was not restarted.
+**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` printed `0 drainable past-due (up to 0.0h); 82 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568`. The live checkout matches the pump. The pump was not restarted.
 
 **Closure work.** Done.
 
@@ -34,7 +34,7 @@
 
 ## REL-CI-ASR
 
-**Current evidence.** Open. Nightly run `38868030626`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T07:33:59Z`). Job `[asr] toolchain smoke (nightly)` failed. `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1`; the log was `whisper produced no JSON (rc=1)`. 2026-10-18 `gh secret list` for `Fleezyflo/fanops` has no `HF_TOKEN`. The nightly was not dispatched. `doctor.py` was not changed.
+**Current evidence.** Open. Latest nightly run `39012855146`, event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T07:13:50Z`). Job `[asr] toolchain smoke (nightly)` failed. `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1`; the log was `whisper produced no JSON (rc=1)` and named unauthenticated Hugging Face Hub requests. The prior failure is run `38868030626` (`2026-10-16T07:33:59Z`), same job, same headSha. 2026-10-18 `gh secret list` for `Fleezyflo/fanops` has no `HF_TOKEN`. No nightly has run on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. The nightly was not dispatched. `doctor.py` was not changed.
 
 **Closure work.**
 
@@ -87,7 +87,7 @@
 
 ## Cap ≥84
 
-**Current evidence.** Closed. Headline stays **78**. Fingerprint `sha` is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of #1316. On head `6f355d09b2dea3275101434d8c03c96bc7692d08`, which that merge contains, `unit (fast, no toolchain)` run `39073814011` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814011/job/117516718718), `impact report` run `39073814128` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814128/job/117516719132), and `lane file-ownership + cross-PR collision` run `39073814368` passed (https://github.com/Fleezyflo/fanops/actions/runs/39073814368/job/117516720083). `GET /_fingerprint` returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":20339,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:13:09.098405+00:00"}`. That `sha` equals the merge commit. This does not close 85+.
+**Current evidence.** Closed. Headline stays **78**. Fingerprint `sha` is `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the merge commit of #1316. `unit (fast, no toolchain)` on the subject push run `39074067963` passed. `GET /_fingerprint` on 2026-10-18 returned `{"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":65307,"sha":"430ece7377bf33cc5c5e72876c13d6b78b8e6ca9","start_time":"2026-10-17T22:25:22.259438+00:00"}`. That `sha` equals the merge commit. Pump `daemon._last_heartbeat_code` and the live-checkout disk are the same SHA. This does not close 85+.
 
 **Closure work.** Done. The headline stays 78 until a ledger row moves.
 
@@ -97,7 +97,7 @@
 
 ## 85+
 
-**Current evidence.** Closed. On merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, `cfg.is_live` was already true (`FANOPS_LIVE=1`; doctor `poster backend: postiz, zernio (LIVE)`). `publish_now` sent `post_5854bb63fefb` (Instagram, `markmakmouly`). `_post_provider` returned `postiz`. Postiz accepted it at `2026-10-17T22:16:23Z` as `needs_reconcile` / submission `cmvcyhksd0008ld7veu7hchr9`. Log: `outcome=publish_missing_url`, `backend=postiz`. Not a dry-run.
+**Current evidence.** Closed. On merge `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, `cfg.is_live` was already true (`FANOPS_LIVE=1`; 2026-10-18 doctor `poster backend: postiz, zernio (LIVE)`). `publish_now` sent `post_5854bb63fefb` (Instagram). `_post_provider` returned `postiz`. Log `2026-10-17T22:16:23Z`: `outcome=publish_missing_url`, `backend=postiz`. Not a dry-run. On 2026-10-18 the row is still `needs_reconcile`, with a submission id and no `public_url`.
 
 **Closure work.** Done.
 

@@ -1,14 +1,19 @@
 # Pack: X-REL — release
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
-| OPS-SHA | closed | code | `doctor._deploy_code_check` |
-| REL-UNDEPLOYED | closed | closed | Fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals the merge of #1316. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
-| REL-PROT | closed | operator | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
-| REL-CI-E2E | closed | operator | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T08:47:37Z`). |
-| REL-CI-ASR | open | open | Nightly run `38868030626` failed `[asr] toolchain smoke (nightly)`. `HF_TOKEN` is absent. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
+| OPS-SHA | closed | code | `doctor._deploy_code_check` / `daemon.stale_code_reason`. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `c3ad57a4567720fa35afc9fc4bd29d5f89fc2568`. Live worktree disk equals the pump. |
+| REL-UNDEPLOYED | closed | closed | Studio `GET /_fingerprint` sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals `origin/main`. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
+| REL-PROT | closed | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
+| REL-CI-E2E | closed | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493` success, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T08:18:05Z`). No schedule run on `430ece73` yet. |
+| REL-CI-ASR | open | open | Latest nightly `39012855146` (`2026-10-17T07:13:50Z`) failed `[asr] toolchain smoke` on headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`: `tests/integration/test_e2e_real.py` `awaiting.moments == 1`, log `whisper produced no JSON (rc=1)` (unauthenticated HF Hub). 2026-10-18 `gh secret list` has no `HF_TOKEN`. No nightly on `430ece73`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
 | REL-CI-ARCH | closed | closed | Run `39074333775` printed `[SKIP] DC-3` (HTTP 403) and exited 0. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch). |
 
 ## Rollback

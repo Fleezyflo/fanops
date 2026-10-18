@@ -1,18 +1,23 @@
 # Pack: X-DEP — external deps
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Finding status below is unchanged. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
-| OPS-ZERNIO | closed | code | `health_probes.zernio_dep_health`. 2026-10-17 `uv run fanops doctor`: `[PASS] Zernio backend auth ok`; `[ok] zernio: reachable`. |
-| OPS-POSTIZ | closed | closed | 2026-10-17 doctor: `[ok] postiz: reachable`, `[ok] docker: daemon up`. Integrations probe HTTP 401 from Express. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-postiz). |
-| OPS-QUEUE | closed | closed | 2026-10-17T22:18Z: `0 drainable past-due`; 837 queued, not wiped. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-queue). |
+| OPS-ZERNIO | closed | code | `health_probes.zernio_dep_health` (`require_2xx=True`). 2026-10-18 `uv run fanops doctor`: `[PASS] Zernio backend auth ok`; `[ok] zernio: reachable`. |
+| OPS-POSTIZ | closed | closed | 2026-10-18 doctor: `[PASS] Postiz backend reachable`, `[ok] postiz: reachable`, `[ok] docker: daemon up`. `GET http://localhost:4007/api/public/v1/integrations` HTTP 401 `{"msg":"No API Key found"}`, `X-Powered-By: Express`. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-postiz). |
+| OPS-QUEUE | closed | closed | 2026-10-18 same drainable loop as `doctor._daemon_liveness_check`: `0 drainable past-due (up to 0.0h); 82 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor queue check `[PASS]`. Ledger not wiped. [OPEN_GAPS.md](../OPEN_GAPS.md#ops-queue). |
 
 ## Audit
 
 `zernio_dep_health` uses `_http_reachable(..., require_2xx=True)`. A 2xx is up. 401 and 5xx are down. A connection error is unreachable. No creds stays skipped.
 
-OPS-POSTIZ and OPS-QUEUE are closed. The 2026-10-17 doctor transcript is [OPEN_GAPS.md](../OPEN_GAPS.md). The block below is the earlier down transcript, not the close.
+OPS-POSTIZ and OPS-QUEUE are closed on the 2026-10-18 doctor in the table above. The block below is an earlier down transcript, not the close.
 
 ```
 Postiz health probe failed (treating as unhealthy): ConnectionError: HTTPConnectionPool(host='localhost', port=4007): Max retries exceeded with url: /api/public/v1/integrations (Caused by NewConnectionError("H
