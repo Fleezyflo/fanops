@@ -64,11 +64,12 @@ CI, latest three each, then the subject push:
 
 ```
 ci.yml
-39121976415 success pull_request audit/production-audit-2026-09-close headSha 8bf1d6104fea38f32c001444a4609a5107e0fa00
+39122317624 success pull_request audit/production-audit-2026-09-close headSha 492aec649857f0c856b438dfc290219a508fd0b6
+  unit (fast, no toolchain) success
+39121976415 success pull_request headSha 8bf1d6104fea38f32c001444a4609a5107e0fa00
   unit (fast, no toolchain) success
 39121565097 failure pull_request headSha a473ff9676d7d2daf51d26a9b63a1c4d9ddd6e39
   unit (fast, no toolchain) failure — tests/test_fanops_hashtags.py::test_refresh_store_if_due_corrupt_personas_does_not_abort
-39107647451 failure pull_request headSha bd0a88ac5ca1aa43c52b346fbec8975155789ae2
 
 ci.yml --branch main
 39074067963 success push headSha 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
