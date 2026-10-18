@@ -9,7 +9,7 @@ Re-measured 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6
 | Studio `GET /_fingerprint` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00` |
 | Pump `daemon._last_heartbeat_code` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` |
 | Live-checkout disk | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (`.worktrees/live-origin-main`) |
-| Doctor disk, this branch | `aab9de18879d29166c219191ef45b65cac15e4d9` (`daemon._version_signal`, before this correction commit) |
+| Doctor disk, this branch | `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD) |
 | Doctor | Exit 1 on that SHA difference only. Queue check passed. Docker up. Postiz reachable. Zernio auth ok. faster-whisper importable |
 | Queue | `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued` |
 | Unit on the subject | Run `39074067963` success, push, headSha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, job `unit (fast, no toolchain)` success |
@@ -35,7 +35,7 @@ This pass does not wipe the ledger, restart launchd, or dispatch workflows.
 | Cap | **69** and **84** | No. 78 stays. | [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md) ledger |
 | Closed, ledger delta 0 | **REL-UNDEPLOYED** | No | Fingerprint equals the subject. [OPEN_GAPS.md](OPEN_GAPS.md#rel-undeployed) |
 | Closed, ledger delta 0 | **OPS-POSTIZ** | No | 2026-10-18 doctor: Postiz reachable, docker up |
-| Closed, ledger delta 0 | **OPS-QUEUE** | No | `0 drainable past-due`; 837 queued, not wiped. Parked 82 |
+| Closed, ledger delta 0 | **OPS-QUEUE** | No | `0 drainable past-due`; 837 queued, not wiped. Parked 83 |
 | Resolved, ledger delta 0 | **REL-CI-ASR** | No | Nightly `asr-smoke` is CI hygiene. Run `39012855146` is on `f65411d5`. Product code does not read a hub token |
 | Closed, ledger delta 0 | **REL-CI-ARCH** | No | Run `39074333775` printed `[SKIP] DC-3` and exited 0 |
 | Closed | **C3-F01** | No | `test_ct_multi_resolve_one_real_ffmpeg`. `clip.py` was not edited |

@@ -10,7 +10,7 @@ Every register row is closed or resolved in [OPEN_GAPS.md](OPEN_GAPS.md). Zero o
 | Studio `GET http://127.0.0.1:8787/_fingerprint` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00` |
 | Pump `daemon._last_heartbeat_code` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject |
 | Live-checkout disk | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | `.worktrees/live-origin-main`. Equals the pump |
-| Doctor disk, this branch | `aab9de18879d29166c219191ef45b65cac15e4d9` | `daemon._version_signal` at re-measure, before this correction commit. Docs ahead of the subject. `doctor._deploy_code_check` fails on that difference. The pump was not restarted |
+| Doctor disk, this branch | `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` | This checkout HEAD via `daemon._version_signal`. Docs ahead of the subject. `doctor._deploy_code_check` fails on that difference. The pump was not restarted |
 
 The score is **78/100**, Launchable With Caveats. The score on `d2cded31` was 72/100. See the ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Cap rationale: [Why capped at 84](GAP_CLOSURE_PLAN.md#why-capped-at-84).
 
@@ -80,7 +80,7 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of 2026-10-18 on 
 | C10 | Studio views and templates | [C10-studio-views.md](packs/C10-studio-views.md) | **C10-F01 closed**, **C10-F02 closed**, **C10-F03 closed**, **C10-F04 closed** | A failed card or feed swap re-renders the card with the error inside it. `schedule.js` still re-reads `#schedule-body` |
 | C6 | Crosspost and publish | [C6-crosspost-publish.md](packs/C6-crosspost-publish.md) | **C6-F01 closed**, **C6-F02 closed** | 2026-10-18 re-read found no C6-F03. Dry-run does not POST. IG/TT and Zernio `content` are `posted_text_for`; Postiz YouTube `content` is `Post.caption` |
 | C7 | Metrics and learning | [C7-metrics-learning.md](packs/C7-metrics-learning.md) | **C7-F01 closed**, **C7-F02 closed** | 2026-10-18 re-read found no C7-F03. `_read_queries` has no successor. `reconcile.py` was not edited |
-| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` matches the doctor miss-or-mismatch rule. 2026-10-18 doctor exit 1 is this branch’s disk `aab9de18879d` versus the pump. Launchd was not restarted |
+| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` matches the doctor miss-or-mismatch rule. 2026-10-18 doctor exit 1 is this branch’s disk `bd0a88ac5ca1` versus the pump. Launchd was not restarted |
 | H-CI | Gates | [H-CI-gates.md](packs/H-CI-gates.md) | **H-CI-F01 closed** | Parent extends `tests/test_production_audit_gates.py` only for new pack finding IDs, last |
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
 | H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 resolved** | `partition.json` stays C1–C10. Operator edits of `reconcile.py` are C6; the partition keeps C7. No retag |

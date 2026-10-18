@@ -1,6 +1,6 @@
 # FanOps production audit — master map
 
-Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch, measured before this correction commit, is `aab9de18879d29166c219191ef45b65cac15e4d9`. Component verdicts are the subject. The fingerprint column is that deploy SHA.
+Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch is `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD). Component verdicts are the subject. The fingerprint column is that deploy SHA.
 
 ## This assessment
 

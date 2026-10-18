@@ -47,10 +47,10 @@ live worktree .worktrees/live-origin-main git rev-parse HEAD
 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
 
 doctor disk daemon._version_signal from this branch
-aab9de18879d29166c219191ef45b65cac15e4d9
+bd0a88ac5ca1aa43c52b346fbec8975155789ae2
 ```
 
-`uv run fanops doctor` exit 1. The queue check passed (`[PASS] publish daemon alive + queue draining`). The failing line is `doctor._deploy_code_check`: pump `430ece7377bf` versus this branch’s disk `aab9de18879d` (`daemon._version_signal`, source `git-head`). That SHA is this branch HEAD at the re-measure, before this correction commit; a later commit on this branch moves the disk SHA again. The live checkout matches the pump. The pump was not restarted. Also `[PASS] faster-whisper importable ([asr] extra)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`, `[PASS] Zernio backend auth ok`, `poster backend: postiz, zernio (LIVE)`.
+`uv run fanops doctor` exit 1. The queue check passed (`[PASS] publish daemon alive + queue draining`). The failing line is `doctor._deploy_code_check`: pump `430ece7377bf` versus this checkout HEAD `bd0a88ac5ca1` (`daemon._version_signal`, source `git-head`). That exit is expected operational evidence. It is not a register row. The live checkout matches the pump. The pump was not restarted. Also `[PASS] faster-whisper importable ([asr] extra)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`, `[PASS] Zernio backend auth ok`, `poster backend: postiz, zernio (LIVE)`.
 
 Queue, same counters as `doctor._daemon_liveness_check`: `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Drainable stays 0. Queued stays 837. Parked was 82 on the prior sheet and 81 on 2026-10-17. The ledger was not wiped.
 

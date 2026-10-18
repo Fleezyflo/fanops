@@ -9,7 +9,7 @@ Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff o
 
 | ID | Status | Owner | Evidence |
 |----|--------|-------|----------|
-| OPS-SHA | closed | code | `doctor._deploy_code_check` fails when `daemon.stale_code_reason` is set (missing SHA or the two differ). `daemon.ensure` kickstarts on that same reason when the pump is loaded. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `aab9de18879d29166c219191ef45b65cac15e4d9`. Live worktree disk equals the pump. |
+| OPS-SHA | closed | code | `doctor._deploy_code_check` fails when `daemon.stale_code_reason` is set (missing SHA or the two differ). `daemon.ensure` kickstarts on that same reason when the pump is loaded. 2026-10-18 doctor from this branch: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (this checkout HEAD). Live worktree disk equals the pump. |
 | REL-UNDEPLOYED | closed | closed | Studio `GET /_fingerprint` sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` equals `origin/main`. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
 | REL-PROT | closed | closed | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
 | REL-CI-E2E | closed | closed | 2026-10-18 latest `ci-e2e.yml` schedule run `39016845493` success, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-17T08:18:05Z`). No schedule run on `430ece73` yet. |

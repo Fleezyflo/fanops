@@ -1,6 +1,6 @@
 # Weakness register
 
-Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of PR #1316). `src/` on this branch matches that SHA. Studio `GET /_fingerprint`, the pump heartbeat, and the live-checkout disk are that SHA. Doctor disk on this branch is `aab9de18879d29166c219191ef45b65cac15e4d9`. The ledger was not modified. Zero open rows. Every row is closed or resolved.
+Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of PR #1316). `src/` on this branch matches that SHA. Studio `GET /_fingerprint`, the pump heartbeat, and the live-checkout disk are that SHA. Doctor disk on this branch is `bd0a88ac5ca1aa43c52b346fbec8975155789ae2`. The ledger was not modified. Zero open rows. Every row is closed or resolved.
 
 ## Rows
 

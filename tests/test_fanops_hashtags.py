@@ -1530,7 +1530,7 @@ def test_refresh_store_absent_personas_is_not_an_abort(tmp_path, monkeypatch):
 
 def test_refresh_store_if_due_corrupt_personas_does_not_abort(tmp_path, monkeypatch):
     """HV1-PR4: the tick remesures sidecar names and does not load personas.json."""
-    from fanops.fanops_hashtags import refresh_store_if_due
+    from fanops.fanops_hashtags import refresh_store_if_due, reset_safari_tick_slot
     cfg = Config(root=tmp_path)
     _write_sidecar(cfg, ["#beta"])
     cfg.hashtags_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1538,6 +1538,7 @@ def test_refresh_store_if_due_corrupt_personas_does_not_abort(tmp_path, monkeypa
                                         "measured_at": "2026-07-20T00:00:00+00:00"}}, indent=2)
     cfg.hashtags_path.write_text(accrued)
     _write_corrupt_personas(cfg)
+    reset_safari_tick_slot()
     r = refresh_store_if_due(cfg, max_age_s=10, scrape_client=_FakeClient({"#beta": 900}))
     assert r.get("aborted") != "corrupt_personas"
     assert r["refreshed"] is True

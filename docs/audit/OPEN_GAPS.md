@@ -24,7 +24,7 @@
 
 ## OPS-QUEUE
 
-**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` counted `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 82 on the prior sheet and 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `aab9de18879d29166c219191ef45b65cac15e4d9` (`daemon._version_signal`). The live checkout matches the pump. The pump was not restarted.
+**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` counted `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 82 on the prior sheet and 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD). That exit is expected. It is not a register row. The live checkout matches the pump. The pump was not restarted.
 
 **Closure work.** Done.
 
