@@ -1,4 +1,4 @@
-import json, shutil, subprocess
+import json, shutil, subprocess, tempfile
 import pytest
 from pathlib import Path
 from fanops.config import Config
@@ -11,7 +11,7 @@ from fanops.transcribe import real_transcript_signal
 pytestmark = [pytest.mark.integration, pytest.mark.asr]
 
 # Whisper model this test pins itself to (see _make_spoken_sample / the monkeypatch below).
-# `tiny` is the smallest checkpoint and the one cached in the dev/CI image; pinning it in-test
+# `tiny` is the smallest checkpoint (nightly fetches it from the HF Hub at run time); pinning it in-test
 # means the golden path no longer depends on the operator remembering `FANOPS_WHISPER_MODEL=tiny`
 # on the command line — forgetting it would let the default `turbo` try a >1GB download that
 # fails on offline / air-gapped / TLS-proxied hosts, silently erroring the source and failing
@@ -25,25 +25,30 @@ def _skip_or_fail(reason: str) -> None:
 def _have(*bins): return all(shutil.which(b) for b in bins)
 
 def _make_spoken_sample(dst: Path) -> bool:
-    """Render a short clip with REAL speech so whisper has something to transcribe."""
+    """Render a short clip with REAL speech so whisper has something to transcribe.
+
+    The TTS wav stays in a temp directory, not beside `dst`. A sibling sample.wav in the
+    inbox is audio-only: ingest skips it (`no_video_stream`) and no moment is opened.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
-    wav = dst.with_suffix(".wav")
-    if shutil.which("say"):            # macOS
-        subprocess.run(["say", "-o", str(wav), "--data-format=LEF32@22050",
-                        "they slept on me. not anymore."], check=False)
-    elif shutil.which("espeak"):
-        subprocess.run(["espeak", "-w", str(wav), "they slept on me. not anymore."], check=False)
-    else:
-        return False
-    if not wav.exists():
-        return False
-    # wide source so the 9:16 crop path is exercised
-    # Full 8s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
-    # validates. -shortest would clamp the clip to the ~1.6s TTS and make a 4s pick out-of-bounds.
-    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=8:size=1280x720:rate=30",
-                    "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "8", str(dst)],
-                   check=False, capture_output=True)
-    return dst.exists()
+    with tempfile.TemporaryDirectory(prefix="fanops-spoken-") as td:
+        wav = Path(td) / "speech.wav"
+        if shutil.which("say"):            # macOS
+            subprocess.run(["say", "-o", str(wav), "--data-format=LEF32@22050",
+                            "they slept on me. not anymore."], check=False)
+        elif shutil.which("espeak"):
+            subprocess.run(["espeak", "-w", str(wav), "they slept on me. not anymore."], check=False)
+        else:
+            return False
+        if not wav.exists():
+            return False
+        # wide source so the 9:16 crop path is exercised
+        # Full 8s video (audio is shorter; trailing video is silent) so an in-bounds moment pick
+        # validates. -shortest would clamp the clip to the ~1.6s TTS and make a 4s pick out-of-bounds.
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=8:size=1280x720:rate=30",
+                        "-i", str(wav), "-c:v", "libx264", "-c:a", "aac", "-t", "8", str(dst)],
+                       check=False, capture_output=True)
+        return dst.exists()
 
 def test_real_transcript_drives_moment_and_real_clip_renders(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_QUEUE_GATE", "0")   # pipeline must catalogue+advance, not hold pending
