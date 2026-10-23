@@ -107,26 +107,39 @@ def test_concurrent_reader_sees_committed_while_writer_holds_txn(tmp_path):
 
 
 def test_killed_mid_write_recovers_prior_commit(tmp_path):
-    """Uncommitted txn rolled back on close — WAL reader still sees last COMMIT (no flock orphan)."""
+    """Commit doc_a, then tear the in-flight WAL (truncated frames + garbage) as the on-disk
+    crash image. Ledger.load must recover doc_a. Fail if the WAL never received the mutation.
+    No multiprocessing / fork / os._exit — those contaminate the rest of the suite."""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc_a = _populated_ledger(cfg)._to_doc()
-    doc_b = dict(doc_a)
-    doc_b["variant_streaks"] = {"x|y": {"hook": "z", "fingerprint": "f", "streak": 9}}
     with store.lock():
         store.write_raw(doc_a)
-    conn = sqlite3.connect(store.db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
+    wal = store.db_path.with_name(store.db_path.name + "-wal")
+    shm = store.db_path.with_name(store.db_path.name + "-shm")
+    conn = sqlite3.connect(store.db_path, isolation_level=None)
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA wal_autocheckpoint=0")
         conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM ledger_meta")
         conn.execute("DELETE FROM ledger_rows")
         conn.execute("INSERT INTO ledger_meta(key, value) VALUES('schema_version', '99')")
-        conn.close()  # implicit ROLLBACK — simulates kill mid-write
-    except Exception:
+        ver = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
+        assert ver == ("99",), "tear did not happen: writer never mutated"
+        assert wal.exists() and wal.stat().st_size > 32, "tear did not happen: WAL has no in-flight frames"
+        torn_wal = wal.read_bytes()[:-64] + b"\xff" * 24
+        assert len(torn_wal) > 32, "tear did not happen: captured WAL too small to truncate"
+    finally:
         conn.close()
+    if shm.exists():
+        shm.unlink()
+    wal.write_bytes(torn_wal)
+    assert wal.exists() and wal.stat().st_size > 32, "tear did not happen: crash image missing"
+    led = Ledger.load(cfg)
     assert store.read_raw() == doc_a
-    wal = store.db_path.with_name(store.db_path.name + "-wal")
-    assert wal.exists() or store.db_path.exists()
+    assert "src1" in led.sources
 
 
 def test_snapshot_restore_round_trip(tmp_path):
