@@ -89,6 +89,28 @@ def test_sibling_agents_status_covers_fleet(tmp_path, monkeypatch):
         assert r["poll_interval_s"] == expected[r["label"]]
 
 
+def test_render_postiz_reaper_plist_reaps_on_interval(tmp_path, monkeypatch):
+    from pathlib import Path
+    script = tmp_path / "postiz-ondemand.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(script))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+
+    pl = plistlib.loads(daemon.render_postiz_reaper_plist(cfg).encode())
+
+    assert pl["Label"] == "com.fanops.postiz-reaper"
+    assert any(s["label"] == pl["Label"] for s in daemon.SIBLING_POLL_AGENTS)
+    assert pl["ProgramArguments"] == ["bash", str(script), "reap"]
+    assert pl["StartInterval"] == daemon.SIBLING_POLL_INTERVAL_S
+    assert "KeepAlive" not in pl
+    assert pl["WorkingDirectory"] == str(cfg.root)
+    assert pl["StandardOutPath"] == str(cfg.reports / "postiz-reaper.out")
+    assert pl["StandardErrorPath"] == str(cfg.reports / "postiz-reaper.err")
+    assert pl["EnvironmentVariables"]["HOME"] == str(Path.home())
+    assert pl["EnvironmentVariables"]["PATH"]
+
+
 def test_poll_timer_rationale_documents_why_not_keepalive():
     assert "poll-timer" in daemon.SIBLING_POLL_TIMERS_RATIONALE.lower()
     assert "postiz-reaper" in daemon.SIBLING_POLL_TIMERS_RATIONALE

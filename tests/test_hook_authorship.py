@@ -29,7 +29,7 @@ def _seed_src(cfg, dur=60.0):
 def _pick(led, cfg, owner=None):
     request_moments(led, cfg, "src_1")
     rid = latest_request_id(cfg, "moments", "src_1")
-    pick = MomentPick(start=10, end=28, reason="r")
+    pick = MomentPick(start=10, end=28, reason="replay")
     if owner: pick = pick.model_copy(update={"personas": [owner]})
     response_path(cfg, "moments", "src_1").write_text(MomentDecision(
         source_id="src_1", request_id=rid, picks=[pick]).model_dump_json())

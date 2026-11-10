@@ -3,7 +3,7 @@
 # awaiting_approval are promoted/rejected here; publish_now stays queued-only (the gate).
 import pytest
 pytest.importorskip("flask")
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, ClipState, Fmt, Moment, MomentState, Post, Platform, PostState, Source
@@ -44,6 +44,26 @@ def test_approve_posts_empty_ids_is_ok_noop(tmp_path):
     cfg = Config(root=tmp_path)
     r = actions.approve_posts(cfg, [], now=_NOW)
     assert r.ok and r.detail["approved"] == 0
+
+
+def test_approve_posts_repeat_does_not_respread(tmp_path):
+    # approve_post no-ops once the post is queued. A second approve of that id must not
+    # report a promotion or re-spread the account — including a sibling already queued.
+    cfg = Config(root=tmp_path); _seed(cfg, "p1")
+    with Ledger.transaction(cfg) as led:
+        led.add_post(Post(id="q1", parent_id="c1", account="a", account_id="1",
+                          platform=Platform.instagram, caption="queued", state=PostState.queued,
+                          scheduled_time="2099-06-01T00:00:00Z", public_url="dryrun://q1"))
+    r1 = actions.approve_posts(cfg, ["p1"], now=_NOW)
+    assert r1.ok and r1.detail["approved"] == 1
+    led = Ledger.load(cfg)
+    p_time, q_time = led.posts["p1"].scheduled_time, led.posts["q1"].scheduled_time
+    r2 = actions.approve_posts(cfg, ["p1"], now=_NOW + timedelta(hours=3))
+    assert r2.ok and r2.detail["approved"] == 0
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.queued
+    assert led.posts["p1"].scheduled_time == p_time
+    assert led.posts["q1"].scheduled_time == q_time
 
 
 def test_reject_posts_marks_rejected(tmp_path):

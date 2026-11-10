@@ -124,8 +124,8 @@ def _caption_entry(tags: list, hashtags_raw: list, *, caption: str, fallback: bo
     the moment gate owns m.hook). They stay on the persisted entry as the dormant variant-A/B
     contract (variant_amplify/digest read entry.get("hook"); crosspost reads cap.get("axis")).
     `fallback` is not a license to manufacture caption = join(tags).
-    `tag_sources` is the per-tag provenance ({tag: source}) — every shipped tag traces to a real
-    signal (content|corpus|region|graph-reach|discovery|genre-floor); Review renders it. Absent -> {}."""
+    `tag_sources` is per-tag provenance ({tag: source}). Ingest writes `"lock"` for each
+    shipped tag — membership is the source lock. Review renders it. Absent -> {}."""
     entry = {"caption": (caption or "").strip(), "hashtags": tags, "hashtags_raw": hashtags_raw,
              "hook": None, "axis": None, "rationale": None, "tag_sources": tag_sources or {}}
     if fallback:

@@ -1203,7 +1203,7 @@ def cmd_retire_source(cfg: Config, args) -> int:
         line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
     else:
         snap = Ledger.snapshot(cfg)
-        if not ledger_wipe.snapshot_is_restorable(snap):
+        if not ledger_wipe.snapshot_is_restorable(snap, cfg):
             get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
                             snapshot=str(snap))
             return 2

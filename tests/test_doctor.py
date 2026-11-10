@@ -265,6 +265,37 @@ def test_doctor_zernio_auth_ok_and_fail(tmp_path, monkeypatch):
     assert zc3 is not None and zc3["ok"] is False
 
 
+def test_doctor_zernio_only_skips_postiz_dep_and_still_checks_zernio(tmp_path, monkeypatch):
+    """Postiz creds with no live Postiz route: reach check omitted, dep row skipped, Zernio still runs.
+    A compose dir on disk must not make doctor probe (and FAIL) a stopped Docker daemon."""
+    from fanops import health
+    compose = tmp_path / "compose"
+    compose.mkdir()
+    monkeypatch.setenv("FANOPS_POSTIZ_COMPOSE_DIR", str(compose))
+    monkeypatch.setenv("POSTIZ_API_KEY", _KEY)
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007/api")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk-not-a-secret")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+         "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}]}))
+
+    def boom(*a, **k):
+        raise AssertionError("postiz/docker probe must not run on a Zernio-only live deployment")
+
+    monkeypatch.setattr(health, "_docker_health", boom)
+    rep = doctor.doctor_report(cfg, postiz_probe=boom, zernio_auth=lambda c: True)
+    assert _postiz_check(rep) is None
+    zc = _zernio_check(rep)
+    assert zc is not None and zc["ok"] is True
+    deps = {d["name"]: d for d in rep["deps"]}
+    assert deps["postiz"]["ok"] is True and deps["postiz"]["detail"] == "skipped (not routed live)"
+    assert deps["docker"]["ok"] is True and deps["docker"]["detail"] == "skipped (not routed live)"
+
+
 # --- T12: permanent daemon-liveness + past-due-backlog guard (fail-closed) ---
 
 def _daemon_check(rep):
@@ -354,6 +385,23 @@ def test_deploy_code_check_passes_when_shas_match(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_version_signal", lambda c: (sha, "git-head"))
     row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
     assert row is not None and row["ok"] is True
+
+
+def test_deploy_code_check_fails_when_either_sha_missing(tmp_path, monkeypatch):
+    """A loaded pump with a missing heartbeat SHA or a missing disk SHA fails the deploy gate."""
+    from fanops import daemon
+    cfg = Config(root=tmp_path)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: None)
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: ("bbb222cafef00d", "git-head"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "heartbeat SHA" in row["hint"]
+
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda c: "aaa111deadbeef")
+    monkeypatch.setattr(daemon, "_version_signal", lambda c: (None, "unavailable"))
+    row = doctor._deploy_code_check(cfg, daemon_status=_fresh_daemon_reader)
+    assert row is not None and row["ok"] is False
+    assert "disk SHA" in row["hint"]
 
 
 def test_deploy_code_check_omitted_when_daemon_not_loaded(tmp_path):
@@ -739,7 +787,7 @@ def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
         def state_histogram(self, **k):
             return {PostState.awaiting_approval: 3}
     monkeypatch.setattr("fanops.ledger.Ledger.load", classmethod(lambda cls, c: _Led()))
-    notes = doctor._doctor_notes(cfg)
+    notes = doctor._doctor_notes(cfg, [])
     assert any("approval backlog" in n.lower() and "3" in n for n in notes)
     # ...and it is NOT emitted as an operational (warn) sensor.
     assert not any("approval" in c["label"].lower() for c in doctor._operational_sensor_checks(cfg))
@@ -749,5 +797,48 @@ def test_postiz_ondemand_missing_script_is_an_info_note(tmp_path, monkeypatch):
     """FANOPS_POSTIZ_ONDEMAND is a bootstrap-only path override. If set to a missing script, doctor emits
     a lean INFO note (a `fanops up` bring-up concern) — not a publish-path failure."""
     monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(tmp_path / "nope" / "postiz-ondemand.sh"))
-    notes = doctor._doctor_notes(Config(root=tmp_path))
+    notes = doctor._doctor_notes(Config(root=tmp_path), [])
     assert any("FANOPS_POSTIZ_ONDEMAND" in n and "does not exist" in n for n in notes)
+
+
+def _routed_live(tmp_path, monkeypatch):
+    """Live per-channel routing with the legacy FANOPS_POSTER unset (resolves to dryrun)."""
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:5000"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk")
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active",
+         "backends": {"instagram": "postiz"}, "integrations": {"instagram": "1"}},
+        {"handle": "@tk", "account_id": "2", "platforms": ["tiktok"], "status": "active",
+         "backends": {"tiktok": "zernio"}, "integrations": {"tiktok": "2"}}]}))
+    return cfg
+
+
+def test_doctor_note_names_the_routed_backend_not_legacy_dryrun(tmp_path, monkeypatch):
+    """is_live with FANOPS_POSTER unset: the note names what sends (postiz, zernio), never 'dryrun (LIVE)'."""
+    from fanops.health_types import DepHealth
+    cfg = _routed_live(tmp_path, monkeypatch)
+    assert cfg.poster_backend == "dryrun" and cfg.is_live
+    deps = [DepHealth("postiz", True, "reachable"), DepHealth("zernio", True, "reachable")]
+    assert doctor._doctor_notes(cfg, deps)[0] == "poster backend: postiz, zernio (LIVE)"
+
+
+def test_doctor_note_carries_the_sending_dep_detail(tmp_path, monkeypatch):
+    """A sending provider whose DepHealth row is not ok shows that row's detail; a snapshot-unknown
+    `deps` row annotates every sending provider."""
+    from fanops.health_types import DepHealth, Severity
+    cfg = _routed_live(tmp_path, monkeypatch)
+    down = [DepHealth("postiz", False, "unreachable"), DepHealth("zernio", True, "reachable")]
+    assert doctor._doctor_notes(cfg, down)[0] == "poster backend: postiz (unreachable), zernio (LIVE)"
+    unknown = [DepHealth("deps", False, "deps unknown (snapshot stale)", severity=Severity.UNKNOWN)]
+    assert doctor._doctor_notes(cfg, unknown)[0] == (
+        "poster backend: postiz (deps unknown (snapshot stale)), zernio (deps unknown (snapshot stale)) (LIVE)")
+
+
+def test_doctor_note_dryrun_when_not_live(tmp_path, monkeypatch):
+    monkeypatch.delenv("FANOPS_LIVE", raising=False); monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    note = doctor._doctor_notes(Config(root=tmp_path), [])[0]
+    assert note == "poster backend: dryrun (dryrun — writes payloads, posts nothing)"

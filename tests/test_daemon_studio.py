@@ -121,6 +121,31 @@ def test_stop_studio_remove_unlinks_plist(tmp_path, monkeypatch):
     assert not pp.exists()
 
 
+def _stub_poll(monkeypatch, fingerprints):
+    """Port accepts; /_fingerprint yields `fingerprints` in order; sleep is a no-op that counts."""
+    reads, sleeps = [], []
+    seq = iter(fingerprints)
+    monkeypatch.setattr(daemon, "_studio_port_answers", lambda *a, **k: True)
+    monkeypatch.setattr(daemon, "_studio_get_fingerprint", lambda *a, **k: reads.append(1) or next(seq))
+    monkeypatch.setattr(daemon.time, "sleep", lambda s: sleeps.append(s))
+    return reads, sleeps
+
+
+def test_studio_poll_expected_generation_never_answers_is_false(monkeypatch):
+    reads, sleeps = _stub_poll(monkeypatch, [None] * 5)
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=5, step=2.0) is False
+    assert len(reads) == 5
+    assert sleeps == [2.0] * 4
+
+
+def test_studio_poll_expected_generation_answers_on_third_try(monkeypatch):
+    fp = {"pid": 9, "generation": "gen-B", "sha": "sha-X"}
+    reads, sleeps = _stub_poll(monkeypatch, [None, None, fp, fp, fp])
+    assert daemon._studio_port_answers_within(expect_gen="gen-B", tries=5, step=2.0) is True
+    assert len(reads) == 3
+    assert sleeps == [2.0] * 2
+
+
 def test_install_studio_raises_on_non_darwin(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.sys, "platform", "linux")
     cfg = Config(root=tmp_path)
