@@ -107,26 +107,39 @@ def test_concurrent_reader_sees_committed_while_writer_holds_txn(tmp_path):
 
 
 def test_killed_mid_write_recovers_prior_commit(tmp_path):
-    """Uncommitted txn rolled back on close — WAL reader still sees last COMMIT (no flock orphan)."""
+    """A writer killed while its COMMIT is being appended to the WAL leaves a torn tail: frames on
+    disk, no commit frame. The next open must read doc_a, never the half-written mutation. SQLite
+    keeps a txn this small in its page cache until COMMIT, so the frames reach the WAL only then —
+    the crash image is that real WAL cut short, over the db file as it stood at the kill. The same
+    image left whole replays the mutation, which proves the tear (not an ignored WAL) decides the
+    outcome. No multiprocessing / fork / os._exit — those contaminate the rest of the suite."""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc_a = _populated_ledger(cfg)._to_doc()
-    doc_b = dict(doc_a)
-    doc_b["variant_streaks"] = {"x|y": {"hook": "z", "fingerprint": "f", "streak": 9}}
     with store.lock():
         store.write_raw(doc_a)
-    conn = sqlite3.connect(store.db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
+    wal = store.db_path.with_name(store.db_path.name + "-wal")
+    shm = store.db_path.with_name(store.db_path.name + "-shm")
+    conn = sqlite3.connect(store.db_path, isolation_level=None)
     try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA wal_autocheckpoint=0")             # the commit stays in the WAL, out of the db file
         conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM ledger_meta")
         conn.execute("DELETE FROM ledger_rows")
         conn.execute("INSERT INTO ledger_meta(key, value) VALUES('schema_version', '99')")
-        conn.close()  # implicit ROLLBACK — simulates kill mid-write
-    except Exception:
+        conn.execute("COMMIT")
+        db_at_kill, whole_wal = store.db_path.read_bytes(), wal.read_bytes()
+    finally:
         conn.close()
+    # the crash image is what the next process finds on disk: the db file as it stood at the kill, plus the WAL
+    store.db_path.write_bytes(db_at_kill); shm.unlink(missing_ok=True); wal.write_bytes(whole_wal)
+    assert store.read_raw()["schema_version"] == 99, "tear did not happen: the WAL never carried the mutation"
+    store.db_path.write_bytes(db_at_kill); shm.unlink(missing_ok=True); wal.write_bytes(whole_wal[:-64] + b"\xff" * 24)
+    led = Ledger.load(cfg)
     assert store.read_raw() == doc_a
-    wal = store.db_path.with_name(store.db_path.name + "-wal")
-    assert wal.exists() or store.db_path.exists()
+    assert "src1" in led.sources
 
 
 def test_snapshot_restore_round_trip(tmp_path):
