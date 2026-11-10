@@ -1301,7 +1301,7 @@ def test_reconcile_reads_puts_zernio_fanops_token_on_token_only_never_polled(tmp
     assert mirrored == []
 
 
-def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="wahed_bared"):
+def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="wahed_bared", seen=None):
     from types import SimpleNamespace
     lists = [] if lists is None else lists
     monkeypatch.setenv("ZERNIO_API_KEY", "sk")
@@ -1315,6 +1315,8 @@ def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="w
         if params.get("accountId") or "search" in params or params.get("page"):
             if list_boom:
                 raise AssertionError("zernio_list_posts must not run when candidate auto-bind succeeds")
+            if seen is not None:
+                seen.append(dict(params))
             payload = {"posts": lists, "pagination": {"page": 1, "totalPages": 1}}
             return SimpleNamespace(status_code=200, text="{}", json=lambda: payload)
         sid = u.rstrip("/").rsplit("/", 1)[-1]
@@ -1525,16 +1527,17 @@ def test_vendor_lookup_search_ignores_rows_that_are_not_this_caption(tmp_path, m
     assert p.submission_id == "z_mine"
 
 
-def test_vendor_lookup_search_without_parsed_caption_does_not_promote(tmp_path, monkeypatch):
+@pytest.mark.parametrize("extra", [{}, {"caption": "unique caption for vendor lookup test"}])
+def test_vendor_lookup_search_without_parsed_caption_does_not_promote(tmp_path, monkeypatch, extra):
+    # ONE hit, published on this account, with nothing under `content` (bare, or the text under
+    # another key). A second row would refuse as ambiguous and never reach the caption read.
     from fanops import reconcile as rec_mod
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
     cap = "unique caption for vendor lookup test"
     _tiktok_unbound(led, "pv", caption=cap)
-    _zernio_reads(monkeypatch, bodies={"z_vendor": _zernio_published_body()}, lists=[
-        {"_id": "z_bare"},
-        {"_id": "z_alias", "caption": cap},
-    ])
+    _zernio_reads(monkeypatch, bodies={"z_vendor": _zernio_published_body()},
+                  lists=[{"_id": "z_vendor", **extra}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     p = out.posts["pv"]
     assert p.state is PostState.needs_reconcile
@@ -1564,6 +1567,28 @@ def test_vendor_lookup_wrong_caption_does_not_promote(tmp_path, monkeypatch):
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
     assert out.posts["pv"].state is PostState.needs_reconcile
     assert out.posts["pv"].submission_id == "fanops_tok"
+
+
+def test_vendor_lookup_searches_and_matches_sent_content_over_the_current_caption(tmp_path, monkeypatch):
+    # Zernio holds what was sent. The caption moved after the send: the row carrying the moved
+    # caption is another post, the row carrying the stamped sent_content is this one.
+    from fanops import reconcile as rec_mod
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    sent, moved = "what zernio was sent #fyp", "caption edited after the send"
+    _tiktok_unbound(led, "pv", caption=moved)
+    led.posts["pv"] = led.posts["pv"].model_copy(update={"sent_content": sent})
+    mine, other = "https://www.tiktok.com/@wahed_bared/video/9", "https://www.tiktok.com/@wahed_bared/video/8"
+    seen = []
+    _zernio_reads(monkeypatch, seen=seen,
+                  bodies={"z_sent": _zernio_published_body(mine), "z_moved": _zernio_published_body(other)},
+                  lists=[{"_id": "z_moved", "content": moved}, {"_id": "z_sent", "content": sent}])
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    p = out.posts["pv"]
+    assert p.state is PostState.published
+    assert p.submission_id == "z_sent"
+    assert p.public_url == mine
+    assert {q.get("search") for q in seen} == {sent}
 
 
 def test_vendor_lookup_does_not_promote_id_another_post_holds(tmp_path, monkeypatch):

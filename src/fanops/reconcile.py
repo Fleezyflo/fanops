@@ -230,8 +230,8 @@ def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *
     if _submission_held_by_other(led, post.id, new_sub):
         return False
     if search_row is not None:
-        from fanops.caption_compose import posted_text_for
-        if not _search_row_is_this_post(search_row, posted_text_for(cfg, led, post) or ""):
+        from fanops.caption_compose import caption_shown
+        if not _search_row_is_this_post(search_row, caption_shown(cfg, led, post) or ""):
             return False
     upd = {"public_url": captured_url, "submission_id": new_sub, "reconcile_candidate_id": None,
            "ig_confirm_failopen_count": 0}
@@ -388,12 +388,13 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                                  ) -> tuple[set[str], dict[str, dict]]:
     """Merge URL + caption list hits; capped pagination per strategy.
 
-    Returns (ids, search_rows). Permalink URL hits stay in `ids` only. A search row is
-    admitted only when its parsed caption equals this post's posted text; those ids map
+    Returns (ids, search_rows). Permalink URL hits stay in `ids` only. The search text is
+    `caption_shown`: `Post.sent_content` when the send stamped it, else the send text. A
+    search row is admitted only when its parsed caption equals that text; those ids map
     to the row in `search_rows` so promote can refuse a hit that failed the check.
     A search row with no parsed caption is not this post and is not admitted. len>1
     still returns immediately (ambiguous)."""
-    from fanops.caption_compose import posted_text_for
+    from fanops.caption_compose import caption_shown
     from fanops.post.metrics.zernio_read import zernio_list_posts
     account_id = (post.account_id or "").strip()
     if not account_id:
@@ -423,7 +424,7 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
             total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
             if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
                 break
-    posted = (posted_text_for(cfg, led, post) or "").strip()
+    posted = (caption_shown(cfg, led, post) or "").strip()
     search = posted[:80].strip()
     if search:
         for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
@@ -574,11 +575,12 @@ def _apply_age_terminal(post, now) -> dict | None:
 
       not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
           (submitting/submitted)
-          -> needs_reconcile, error_kind cleared to None (never ErrorKind.unknown —
-             that kind sits in Studio recover's rearm bucket, which clears
-             submission_id into a second create). The birth token stays. A birth
-             token cannot be polled; already-parked needs_reconcile is not rewritten
-             so auto-heal can still bind. needs_reconcile is not re-queueable.
+          -> needs_reconcile, never failed: Studio recover re-arms a failed row of
+             kind unknown (or no kind) by clearing submission_id into a second
+             create. error_kind is cleared to None so the park carries no failure
+             kind. The birth token stays. A birth token cannot be polled;
+             already-parked needs_reconcile is not rewritten so auto-heal can
+             still bind. needs_reconcile is not re-queueable.
 
       remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
           -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
