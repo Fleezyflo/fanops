@@ -14,7 +14,7 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, ctypes, json, logging, os, plistlib, re, shutil, subprocess, sys, time
+import contextlib, ctypes, fcntl, json, logging, os, plistlib, re, shutil, subprocess, sys, time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -434,24 +434,33 @@ def launchd_fd_is_append(pid: int, fd: int, path: Path) -> bool:
 
 
 def _copytruncate(path: Path, size: int) -> bool:
-    """Copy `path` to `path.1`, then truncate it. A failed copy leaves the live file alone."""
+    """Copy `path` to `path.1`, then truncate it. A failed copy leaves the live file alone.
+
+    One rotator at a time: `ensure` runs from the keeper and from `fanops up`, and a second copy
+    racing the first one's truncate would put a partial `path.1` over an emptied log. The loser of
+    the flock returns without touching the copy in flight."""
     inode = path.stat().st_ino
     tmp = path.with_name(path.name + ".1.tmp")
     dest = path.with_name(path.name + ".1")
-    try:
-        shutil.copyfile(path, tmp)
-        if tmp.stat().st_size < size or path.stat().st_ino != inode:
-            return False
-        os.replace(tmp, dest)
-        if path.stat().st_ino != inode:
-            return False
-        os.truncate(path, 0)
-        return True
-    finally:
+    with open(path, "rb") as held:                        # closing it drops the flock
         try:
-            tmp.unlink(missing_ok=True)
-        except OSError as exc:
-            _log.warning("rotate temp unlink %s failed: %s", tmp, exc)
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        try:
+            shutil.copyfile(path, tmp)
+            if tmp.stat().st_size < size or path.stat().st_ino != inode:
+                return False
+            os.replace(tmp, dest)
+            if path.stat().st_ino != inode:
+                return False
+            os.truncate(path, 0)
+            return True
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError as exc:
+                _log.warning("rotate temp unlink %s failed: %s", tmp, exc)
 
 
 def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
@@ -483,6 +492,8 @@ def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
                          "(pid=%s) — leaving it", name, size, fd, use_pid)
             continue
         if _copytruncate(path, size):
+            _log.warning("rotate_launchd_logs: %s reached %s bytes — copied to %s.1 and truncated",
+                         name, size, name)
             rotated.append(name)
     return rotated
 

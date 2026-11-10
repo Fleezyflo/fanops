@@ -4,6 +4,7 @@ Truncation is allowed only when the pump fd for that path is O_APPEND. The suite
 opens the live logs and never calls launchctl.
 """
 from __future__ import annotations
+import fcntl
 import os
 import subprocess
 
@@ -118,6 +119,47 @@ def test_copytruncate_when_append_proven(tmp_path):
     assert not (cfg.reports / "daemon.out.1").exists()
 
 
+def test_crash_loop_tail_survives_rotation_and_the_next_write_starts_the_file(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "daemon.err"
+    refusal = b"preflight: refusing to run\n  - `grok` is not on PATH\n"
+    writer = os.open(err, os.O_WRONLY | os.O_CREAT | os.O_APPEND)   # how launchd holds StandardErrorPath
+    try:
+        os.write(writer, b"older output\n" * 64 + refusal)
+        before = err.read_bytes()
+        rotated = daemon.rotate_launchd_logs(cfg, pid=4, minimum_bytes=len(before),
+                                             fd_is_append=lambda *a: True)
+        assert rotated == ["daemon.err"]
+        archived = (cfg.reports / "daemon.err.1").read_bytes()
+        assert archived == before
+        assert archived.endswith(refusal)
+        os.write(writer, refusal)                                   # the next crash, same descriptor
+        assert err.read_bytes() == refusal                          # offset 0: no hole before it
+    finally:
+        os.close(writer)
+
+
+def test_second_rotator_leaves_the_log_to_the_flock_holder(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "daemon.err"
+    err.write_bytes(b"keep-me")
+    in_flight = cfg.reports / "daemon.err.1.tmp"
+    in_flight.write_bytes(b"keep")
+    held = os.open(err, os.O_RDONLY)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        assert daemon.rotate_launchd_logs(cfg, pid=4, minimum_bytes=1, fd_is_append=lambda *a: True) == []
+        assert err.read_bytes() == b"keep-me"
+        assert in_flight.read_bytes() == b"keep"
+        assert not (cfg.reports / "daemon.err.1").exists()
+    finally:
+        os.close(held)
+    assert daemon.rotate_launchd_logs(cfg, pid=4, minimum_bytes=1, fd_is_append=lambda *a: True) == ["daemon.err"]
+    assert (cfg.reports / "daemon.err.1").read_bytes() == b"keep-me"
+    assert err.read_bytes() == b""
+    assert not in_flight.exists()
+
+
 def test_symlink_log_is_not_truncated(tmp_path):
     cfg = _cfg(tmp_path)
     target = tmp_path / "real-log"
@@ -134,13 +176,46 @@ def test_symlink_log_is_not_truncated(tmp_path):
 def test_ensure_continues_when_rotate_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    attempts = []
 
     def boom(cfg, **kwargs):
+        attempts.append(cfg)
         raise OSError("full")
 
     monkeypatch.setattr(daemon, "rotate_launchd_logs", boom)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "same")     # pump is on disk code:
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("same", "git-head"))   # nothing to adopt
     uid = os.getuid()
     main_print = f"gui/{uid}/{daemon.LABEL}"
     monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(**{main_print: (0, "")}))
     res = daemon.ensure(Config(root=tmp_path))
+    assert len(attempts) == 1
     assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
+
+
+def test_ensure_rotates_an_over_cap_log_and_decides_as_before(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(daemon.sys, "platform", "darwin")
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "daemon.err"
+    err.write_bytes(b"ERR-BEFORE\n")
+    probed = []
+
+    def probe(pid, fd, log_path):
+        probed.append((pid, fd, log_path.name))
+        return True
+
+    monkeypatch.setattr(daemon, "LAUNCHD_LOG_ROTATE_BYTES", 8)
+    monkeypatch.setattr(daemon, "launchd_fd_is_append", probe)
+    monkeypatch.setattr(daemon, "_last_heartbeat_code", lambda _c: "same")
+    monkeypatch.setattr(daemon, "_version_signal", lambda _c: ("same", "git-head"))
+    uid = os.getuid()
+    main_print = f"gui/{uid}/{daemon.LABEL}"
+    fake = _fake_launchctl(**{main_print: (0, ""), "list": (0, '"PID" = 4321;')})
+    monkeypatch.setattr(daemon.subprocess, "run", fake)
+    res = daemon.ensure(cfg)
+    assert probed == [(4321, 2, "daemon.err")]
+    assert (cfg.reports / "daemon.err.1").read_bytes() == b"ERR-BEFORE\n"
+    assert err.read_bytes() == b""
+    assert res == {"label": daemon.LABEL, "loaded": True, "action": "none"}
+    assert not any(c[1] in ("kickstart", "bootstrap", "bootout") for c in fake.calls)
