@@ -1,11 +1,15 @@
 # tests/test_ci_asr_hf_prewarm.py — REL-CI-ASR.
 #
-# Nightly run 38868030626 died in [asr] toolchain smoke: faster-whisper cold-started `tiny` from the
-# Hugging Face Hub with no hub cache, no prewarm, and no HF_TOKEN, so fanops._fwrun exited 1 and
-# transcribe_engine parked the source (`whisper produced no JSON (rc=1)`). The moments gate never
-# opened. ci-e2e.yml already caches openai-whisper under ~/.cache/whisper; nightly only cached
-# Demucs under ~/.cache/torch. This pins the asr-smoke contract: hub cache + a prewarm of the same
-# model string tests/integration/test_e2e_real.py pins, before the smoke step.
+# Nightly runs 38868030626 and 39012855146 died in [asr] toolchain smoke: fanops._fwrun exited 1,
+# transcribe_engine parked the source (`whisper produced no JSON (rc=1)`), and the moments gate never
+# opened. The cause was PyAV 19: faster-whisper 1.2.1 decode_audio calls av.open(metadata_errors=...),
+# which PyAV 19 removed, so every transcription raised before writing JSON. pyproject.toml [asr] now
+# bounds av<19. The Hugging Face "unauthenticated requests" text that opened the logged stderr is a
+# warning printed while the model loads, not the error. A token requirement built on that reading
+# failed every schedule from 2026-10-18 on a secret the repo never had. The product fetches the
+# model anonymously (fanops._fwrun._load_model passes no token), so the smoke does too. This pins
+# the asr-smoke contract: a hub cache and a prewarm of the model string
+# tests/integration/test_e2e_real.py pins, both before the smoke step, and no credential in the job.
 from __future__ import annotations
 
 import ast
@@ -18,7 +22,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 _NIGHTLY = _ROOT / ".github" / "workflows" / "nightly.yml"
 _E2E_REAL = _ROOT / "tests" / "integration" / "test_e2e_real.py"
 _SMOKE = "ASR smoke (must run, not skip)"
-_HF_TOKEN = "${{ secrets.HF_TOKEN }}"
+# Any secret, or the env names huggingface_hub reads a token from, means the job needs a credential.
+_CREDENTIAL = ("secrets.", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
 
 
 def _pinned_whisper_model() -> str:
@@ -34,11 +39,11 @@ def _pinned_whisper_model() -> str:
     raise AssertionError("_PINNED_WHISPER_MODEL missing from tests/integration/test_e2e_real.py")
 
 
-def _asr_steps() -> list[dict]:
+def _asr_job() -> tuple[dict, dict]:
     doc = yaml.safe_load(_NIGHTLY.read_text(encoding="utf-8")) or {}
     job = (doc.get("jobs") or {}).get("asr-smoke")
     assert isinstance(job, dict), "job asr-smoke vanished from nightly.yml"
-    return [s for s in (job.get("steps") or []) if isinstance(s, dict)]
+    return doc, job
 
 
 def _named(steps: list[dict], name: str) -> tuple[int, dict]:
@@ -49,9 +54,10 @@ def _named(steps: list[dict], name: str) -> tuple[int, dict]:
 
 
 def test_asr_smoke_caches_hf_hub_and_prewarms_pinned_model():
-    """Hub cache + prewarm of _PINNED_WHISPER_MODEL before the smoke; blank HF_TOKEN stays anonymous."""
+    """Hub cache + prewarm of _PINNED_WHISPER_MODEL before the smoke; no step needs or refuses a token."""
     model = _pinned_whisper_model()
-    steps = _asr_steps()
+    doc, job = _asr_job()
+    steps = [s for s in (job.get("steps") or []) if isinstance(s, dict)]
     smoke_i, smoke = _named(steps, _SMOKE)
 
     caches = [s for s in steps if str(s.get("uses") or "").startswith("actions/cache")]
@@ -82,14 +88,10 @@ def test_asr_smoke_caches_hf_hub_and_prewarms_pinned_model():
     assert re.search(r"device\s*=\s*['\"]cpu['\"]", run)
     assert re.search(r"compute_type\s*=\s*['\"]int8['\"]", run)
 
-    for step in (pre, smoke):
-        assert (step.get("env") or {}).get("HF_TOKEN") == _HF_TOKEN, (
-            f"{step.get('name')!r} must pass HF_TOKEN from secrets.HF_TOKEN")
-        assert "unset HF_TOKEN" not in (step.get("run") or ""), (
-            f"{step.get('name')!r} must not fall back to anonymous Hub access")
-        assert "secrets.HF_TOKEN is empty" in (step.get("run") or "")
-    assert any(s.get("name") == "Require HF_TOKEN on schedule" for s in steps)
+    # The smoke fetches the model the way production does: anonymously. Workflow env + the whole job
+    # (env, if:, every step) carry no secret and no Hub token name, so no step can need or refuse one.
+    job_view = yaml.safe_dump({"env": doc.get("env"), "job": job})
+    for needle in _CREDENTIAL:
+        assert needle not in job_view, f"asr-smoke must not pass or require a Hub credential: found {needle!r}"
     assert (smoke.get("env") or {}).get("FANOPS_REQUIRE_E2E") == "1"
     assert 'python -m pytest -q -m "integration and asr" -rs' in (smoke.get("run") or "")
-    raw = _NIGHTLY.read_text(encoding="utf-8")
-    assert "not fetched anonymously" in raw
