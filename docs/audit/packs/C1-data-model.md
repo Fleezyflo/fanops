@@ -14,7 +14,11 @@ Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff o
 ## Evidence commands run
 
 ```
-rg 'snapshot_is_restorable' src/fanops/ledger_wipe.py
-rg 'get_logger' src/fanops/ledger_wipe.py
-tests/test_ledger.py tests/test_studio_wipe.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/ledger_wipe.py  # snapshot_is_restorable, execute_wipe
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/ledger.py  # _migrate, _MIGRATIONS, _file_lock, Ledger.transaction
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/ledger_sqlite.py  # SqliteLedgerStore.lock -> _file_lock
+rg 'snapshot_is_restorable|get_logger' src/fanops/ledger_wipe.py
+rg -n 'SCHEMA_VERSION|_MIGRATIONS|_file_lock' src/fanops/ledger.py
+git diff origin/main -- src  # empty at re-verify
+tests/test_ledger_wipe_log.py
 ```

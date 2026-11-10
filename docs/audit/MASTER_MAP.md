@@ -1,6 +1,6 @@
 # FanOps production audit — master map
 
-Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch is `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD). Component verdicts are the subject. The fingerprint column is that deploy SHA.
+Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Studio `GET http://127.0.0.1:8787/_fingerprint` returned that SHA (pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`). The pump heartbeat and the live-checkout disk are the same SHA. Doctor’s disk SHA on this branch is `7aa5d3239a1c61f54613d03d864375ba4420cadf` (`daemon._version_signal`, this checkout HEAD). Component verdicts are the subject. The fingerprint column is that deploy SHA.
 
 ## This assessment
 
@@ -8,6 +8,7 @@ Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78
 |----------|------|
 | Ship score | [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md) |
 | Weakness register | [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) |
+| Remaining weaknesses & gaps | [REMAINING_WEAKNESSES_AND_GAPS.md](REMAINING_WEAKNESSES_AND_GAPS.md) |
 | Module index | [AUDIT_MODULE_INDEX.md](AUDIT_MODULE_INDEX.md) |
 | Rollback | [docs/GOLIVE.md](../GOLIVE.md) section “Rollback / safety” |
 | Protection registry | `.github/ci-control-registry.yml` `required_contexts` on this tree: `unit (fast, no toolchain)` |
@@ -31,8 +32,8 @@ Assessed 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78
 | H-DOCS drift | closed by `subsystem-traces/STALE.md` | same SHA |
 | H-INT invariants | resolved — operator edits of `reconcile.py` are C6; `partition.json` keeps C7. No retag | same SHA |
 | X-SEC | closed — SEC-IGPW, SEC-ENV. 69 cap does not bind | same SHA |
-| X-DEP | OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE closed ([OPEN_GAPS.md](OPEN_GAPS.md)) | 2026-10-18 doctor: 0 drainable, 83 parked, 837 queued |
-| X-REL | OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH closed. REL-CI-ASR resolved (scheduled CI hygiene, not a product gap). ([OPEN_GAPS.md](OPEN_GAPS.md)) | fingerprint equals this SHA. Scheduled e2e and nightly transcripts are still on `f65411d5`. `post_5854bb63fefb` is `needs_reconcile` with no `public_url` |
+| X-DEP | OPS-ZERNIO, OPS-POSTIZ, and OPS-QUEUE closed ([OPEN_GAPS.md](OPEN_GAPS.md)) | 2026-10-18: 0 drainable, 86 parked, 831 queued, 4 needs_reconcile; bounded Postiz/Zernio probes reachable |
+| X-REL | OPS-SHA, REL-PROT, REL-CI-E2E, REL-UNDEPLOYED, and REL-CI-ARCH closed. REL-CI-ASR resolved (scheduled CI hygiene, not a product gap). ([OPEN_GAPS.md](OPEN_GAPS.md)) | fingerprint equals this SHA. Scheduled e2e `39112132315` is green on the subject; nightly `asr-smoke` `39107733972` failed on the subject (REL-CI-ASR resolved). `post_5854bb63fefb` is `needs_reconcile` with no `public_url` |
 | X-DATA | closed — preview token and `snapshot_is_restorable` before wipe | same SHA |
 
 `partition.json` was not given X-keys. Publish owns `reconcile.py`. This pass did not edit it.

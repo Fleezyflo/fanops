@@ -14,14 +14,21 @@ Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff o
 
 ## Evidence commands run
 
+Re-verify subject `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (2026-10-18):
+
 ```
-git rev-parse HEAD
-git diff --stat -- src/fanops/meta_graph.py src/fanops/timing_bias.py
+git rev-parse 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
+git grep -n '_read_queries' 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 -- src/fanops/
+git grep -n 'hashtag_budget|budget_remaining|record_query' 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 -- src/fanops/
 git log -S '_read_queries' --oneline -- src/fanops/meta_graph.py
-git show 19053e44 -- src/fanops/meta_graph.py
-rg '_read_queries|hashtag_budget' src/fanops
-rg 'timing_bias_hour_for|timing_bias_path|cfg.timing_bias' src/fanops
-rg -n 'timing_bias|p4_dim_bias|variant_amplify|validation_gate' src/fanops/CLAUDE.md
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/timing_bias.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/crosspost.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/meta_graph.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/post/metrics/postiz_read.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/post/metrics/zernio_read.py
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/validation_gate.py
+git diff 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 -- src/
+rg '_read_queries|hashtag_budget|budget_remaining|record_query' src/fanops/
 ```
 
 No pytest (FanOps: CI runs the new tests).

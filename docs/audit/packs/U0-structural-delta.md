@@ -14,10 +14,14 @@ Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff o
 ## Evidence commands run
 
 ```
-git rev-parse HEAD
+git rev-parse 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
+git diff 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 -- src
 git ls-files ':(glob)src/fanops/**/*.py' | wc -l
-git ls-files src/fanops | grep -c '\.py$'
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:docs/CODEMAPS/partition.json  # live_py_count, modules len, cluster counts
+python3  # partition modules keys vs git ls-files set; cluster (N) vs partition; stems named in full-trace-index
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:docs/CODEMAPS/full-trace-index.md | head -5
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:docs/CODEMAPS/subsystem-traces/STALE.md
 git log -1 --format='%H %ci' -- docs/CODEMAPS/subsystem-traces
 ```
 
-`git rev-parse HEAD` is `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. Both live-count commands print 196. Bare `git ls-files 'src/fanops/**/*.py'` prints 58: without `:(glob)`, `**` does not match top-level `src/fanops/*.py`. Subsystem traces last commit is `f11d0af7` (2026-09-09).
+Subject `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` resolves cleanly; `git diff 430ece73 -- src` is empty. Live Python count is 196 (`:(glob)`); `partition.json` `live_py_count` 196 with 196 `modules` keys matching that set exactly. Frozen cluster table `(N)` counts match partition per cluster (C1 15 … C10 12; sum 196); zero partition paths unnamed in `full-trace-index.md`. No `indexed_cluster_stems` key in `partition.json`. Stale banner plus `subsystem-traces/STALE.md` present on subject SHA. Subsystem traces last commit is `f11d0af7` (2026-09-09).

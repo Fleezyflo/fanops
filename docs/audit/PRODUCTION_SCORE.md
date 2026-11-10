@@ -1,12 +1,12 @@
 # FanOps production score
 
-Production audit: 78/100, Launchable With Caveats. Scheduled `ci-e2e.yml` and `nightly.yml` transcripts are still headSha `f65411d5`, not `430ece73`. `post_5854bb63fefb` is still `needs_reconcile` with no `public_url`.
+Production audit: 78/100, Launchable With Caveats. The scheduled `ci-e2e.yml` run `39112132315` is green on the subject SHA `430ece73` (2026-10-18); the scheduled `nightly.yml` `asr-smoke` run `39107733972` failed on the subject (REL-CI-ASR resolved — CI hygiene). `post_5854bb63fefb` is still `needs_reconcile` with no `public_url`.
 
-Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of #1316). The ledger below is the only arithmetic. It stays **78**. Zero open register rows. REL-CI-ASR is resolved and is ledger delta 0. The band stays Launchable With Caveats because the ledger is 78 and those two operational caveats are still true.
+Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (merge of #1316). The ledger below is the only arithmetic. It stays **78**. Zero open register rows. REL-CI-ASR is resolved and is ledger delta 0. The band stays Launchable With Caveats because the ledger is 78. The e2e caveat cleared — schedule `39112132315` is green on the subject — and the standing operational caveat is `post_5854bb63fefb` still `needs_reconcile`, plus the resolved nightly `asr-smoke` redness.
 
 The 69 cap does not bind. `FANOPS_IG_SCRAPE_PASSWORD` is masked by `config_introspect._is_secret` (`_PASSWORD` suffix) and `secret_provider.is_secret_env_key`. This pass did not find that value in a client bundle, a log, or a committed file. Studio listens on `127.0.0.1`. Publish idempotency stays `_publish_one` (claim before POST) plus Zernio `x-request-id`. Rollback remains the “Rollback / safety” section in `docs/GOLIVE.md`. There is no payment webhook.
 
-The 84 cap is not a subtraction. `unit (fast, no toolchain)` on the subject push is green (run `39074067963`). One live Postiz send of `post_5854bb63fefb` exists on that SHA. The scheduled e2e and nightly transcripts are still headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`.
+The 84 cap is not a subtraction. `unit (fast, no toolchain)` on the subject push is green (run `39074067963`). One live Postiz send of `post_5854bb63fefb` exists on that SHA. The scheduled e2e transcript is now on the subject (`39112132315`, green); the nightly `asr-smoke` `39107733972` failed on the subject (resolved).
 
 ## Blockers
 
@@ -14,7 +14,7 @@ None on the shipped SHA. The merge is what production runs. Studio `GET /_finger
 
 ## High-value fixes
 
-- Let the next `ci-e2e.yml` and `nightly.yml` schedules run on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Neither has a transcript on that SHA yet. Do not dispatch them.
+- The `ci-e2e.yml` schedule now has a green transcript on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (`39112132315`); the `nightly.yml` `asr-smoke` `39107733972` failed on that SHA (resolved, CI hygiene). Do not dispatch them.
 - `post_5854bb63fefb` is still `needs_reconcile` with no `public_url`. Reconcile has not promoted it. Do not wipe the ledger.
 
 ## Evidence checked
@@ -47,12 +47,12 @@ live worktree .worktrees/live-origin-main git rev-parse HEAD
 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
 
 doctor disk daemon._version_signal from this branch
-bd0a88ac5ca1aa43c52b346fbec8975155789ae2
+7aa5d3239a1c61f54613d03d864375ba4420cadf
 ```
 
-`uv run fanops doctor` exit 1. The queue check passed (`[PASS] publish daemon alive + queue draining`). The failing line is `doctor._deploy_code_check`: pump `430ece7377bf` versus this checkout HEAD `bd0a88ac5ca1` (`daemon._version_signal`, source `git-head`). That exit is expected operational evidence. It is not a register row. The live checkout matches the pump. The pump was not restarted. Also `[PASS] faster-whisper importable ([asr] extra)`, `[ok] docker: daemon up`, `[ok] postiz: reachable`, `[PASS] Zernio backend auth ok`, `poster backend: postiz, zernio (LIVE)`.
+`uv run fanops doctor` completed in ~5 min (exit 1). The sole FAIL is `publish daemon running current code`: pump `430ece7377bf` vs this checkout disk `7aa5d3239a1c` (`daemon._version_signal`, `git-head`) — expected (release = merge → `git pull --ff-only` → `fanops up`); the live checkout matches the pump; the pump was not restarted. It is not a register row. Every other check PASS: Postiz reachable, Zernio auth ok, docker up, faster-whisper importable, `publish daemon alive + queue draining`, poster backend postiz/zernio (LIVE); 16 posts awaiting approval in Review.
 
-Queue, same counters as `doctor._daemon_liveness_check`: `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Drainable stays 0. Queued stays 837. Parked was 82 on the prior sheet and 81 on 2026-10-17. The ledger was not wiped.
+Queue, from `doctor._daemon_liveness_check`'s drainable predicate + `Ledger.posts_in_state`: `0 drainable past-due; 86 parked on non-active accounts; 0 retired lineage; 831 queued; 4 needs_reconcile`. Drainable stays 0. Parked was 83 on the prior sheet. The ledger was not wiped.
 
 `GET http://localhost:4007/api/public/v1/integrations` returned HTTP 401 `{"msg":"No API Key found"}` with `X-Powered-By: Express`.
 
@@ -82,18 +82,18 @@ architecture.yml
   [SKIP] DC-3 · HTTP 403, job success, no [FAIL] DC-8
 
 ci-e2e.yml
+39112132315 success schedule headSha 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 2026-10-18T08:36:59Z
 39016845493 success schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-17T08:18:05Z
 38876056441 success schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-16T08:47:37Z
-38709140058 success schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-15T08:55:22Z
 
 nightly.yml
-39012855146 failure schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-17T07:13:50Z
+39107733972 failure schedule headSha 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9 2026-10-18T07:27:35Z
   CI monitoring only. Not a ship blocker. REL-CI-ASR is resolved.
   [asr] toolchain smoke failure; dependency audit success
   tests/integration/test_e2e_real.py awaiting.moments == 1
   whisper produced no JSON (rc=1), unauthenticated HF Hub
+39012855146 failure schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-17T07:13:50Z
 38868030626 failure schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-16T07:33:59Z
-38700956871 failure schedule headSha f65411d5806cce087a475261bf4c96c98f0bcf97 2026-10-15T07:45:54Z
 ```
 
 Branch protection on 2026-10-18: `strict` true, contexts `["unit (fast, no toolchain)"]`.
@@ -103,12 +103,12 @@ Closed symbols re-read on this tree (it matches `origin/main` for `src/`): `ledg
 ## Evidence missing
 
 - Pytest was not run locally. CI on the PR is the test run.
-- No `nightly.yml` or `ci-e2e.yml` schedule transcript on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`.
+- The `ci-e2e.yml` schedule now has a green transcript on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (`39112132315`); `nightly.yml` `asr-smoke` `39107733972` failed on that SHA (resolved).
 - `post_5854bb63fefb` has no `public_url` yet. Reconcile has not promoted it.
 
 ## Next action
 
-Wait for the scheduled `ci-e2e.yml` and `nightly.yml` transcripts on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `post_5854bb63fefb` still has no `public_url`. Do not dispatch workflows. Do not restart launchd. Do not wipe the ledger.
+The scheduled `ci-e2e.yml` transcript on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` is now green (`39112132315`); `nightly.yml` `asr-smoke` is resolved CI hygiene. `post_5854bb63fefb` still has no `public_url`. Do not dispatch workflows. Do not restart launchd. Do not wipe the ledger.
 
 ## Score ledger
 
@@ -141,9 +141,9 @@ Commit `d2cded31` scores **72/100**. This subject scores **78/100**, which is **
 
 ## Caveats that hold the score
 
-- Scheduled e2e `39016845493` is green on `f65411d5`, not on the subject. Nightly `39012855146` failed on that same old SHA. REL-CI-ASR is resolved. [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr).
+- Scheduled e2e `39112132315` is green on the subject SHA. Nightly `asr-smoke` `39107733972` failed on the subject (REL-CI-ASR resolved). [OPEN_GAPS.md](OPEN_GAPS.md#rel-ci-asr).
 - `post_5854bb63fefb` is still `needs_reconcile` with no `public_url`.
-- OPS-POSTIZ and OPS-QUEUE are closed on the 2026-10-18 doctor. 0 drainable, 83 parked, 837 queued. The ledger was not wiped.
+- OPS-POSTIZ and OPS-QUEUE are closed. 0 drainable, 86 parked, 831 queued, 4 needs_reconcile. The ledger was not wiped.
 - U0-F01 and H-DOCS-F01 are closed by the stale mark. Traces were not regenerated.
 - H-INT-F01 is resolved. Operator edits of `reconcile.py` are C6. `partition.json` keeps C7. No retag.
 

@@ -1,5 +1,7 @@
 # Open gaps
 
+> For the full enumeration of caveats and residual work after the 2026-10-18 audit, see [REMAINING_WEAKNESSES_AND_GAPS.md](REMAINING_WEAKNESSES_AND_GAPS.md).
+
 **No open rows.** Zero open subsections. Assessment date 2026-10-18. Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Every subsection is **closed** or **resolved** and cites its transcript.
 
 ## REL-UNDEPLOYED
@@ -24,7 +26,7 @@
 
 ## OPS-QUEUE
 
-**Current evidence.** Closed. 2026-10-18 the drainable loop in `doctor._daemon_liveness_check` counted `0 drainable past-due (up to 0.0h); 83 parked on non-active accounts; 0 retired lineage; 837 total queued`. Doctor’s queue check was `[PASS] publish daemon alive + queue draining (heartbeat + past-due backlog)`. Queued rows were not deleted. 837 remains. Parked was 82 on the prior sheet and 81 on 2026-10-17. Doctor exit 1 is `doctor._deploy_code_check`: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` (`daemon._version_signal`, this checkout HEAD). That exit is expected. It is not a register row. The live checkout matches the pump. The pump was not restarted.
+**Current evidence.** Closed. 2026-10-18 the drainable predicate in `doctor._daemon_liveness_check` with `Ledger.posts_in_state` counted `0 drainable past-due; 86 parked on non-active accounts; 0 retired lineage; 831 queued; 4 needs_reconcile`. `fanops doctor` completed in ~5 min (exit 1): `[PASS] publish daemon alive + queue draining`, Postiz reachable, Zernio auth ok, docker up; its sole FAIL is the deploy-code miss below. Queued rows were not deleted. Parked was 83 on the prior sheet. Doctor `_deploy_code_check` fails: pump `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` versus this branch’s disk `7aa5d3239a1c61f54613d03d864375ba4420cadf` (`daemon._version_signal`, this checkout HEAD). That miss is expected. It is not a register row. The live checkout matches the pump. The pump was not restarted.
 
 **Closure work.** Done.
 
@@ -34,7 +36,7 @@
 
 ## REL-CI-ASR
 
-**Current evidence.** Resolved. Not a production open gap. `nightly.yml` job `asr-smoke` (`[asr] toolchain smoke (nightly)`) is scheduled CI hygiene. It is not in `.github/ci-control-registry.yml` `required_contexts`. Merge gate **REL-PROT** is only `unit (fast, no toolchain)`, green on subject push run `39074067963` at `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Failure run `39012855146` (`2026-10-17T07:13:50Z`, event `schedule`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`) is monitoring on that old SHA: `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1` and the log was `whisper produced no JSON (rc=1)`. Product runtime does not consume a hub token. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `fanops._fwrun._load_model` constructs `WhisperModel` with the model name, `device`, and `compute_type` only. `doctor._assemble_doctor_checks` probes `transcribe._fw_available` (`[PASS] faster-whisper importable ([asr] extra)` on 2026-10-18). `docs/ENFORCEMENT.md` documents `nightly.yml` `asr-smoke` and the Actions secret as GitHub Actions only, not product `CONFIG.md`. The nightly was not dispatched. `doctor.py` was not changed.
+**Current evidence.** Resolved. Not a production open gap. `nightly.yml` job `asr-smoke` (`[asr] toolchain smoke (nightly)`) is scheduled CI hygiene. It is not in `.github/ci-control-registry.yml` `required_contexts`. Merge gate **REL-PROT** is only `unit (fast, no toolchain)`, green on subject push run `39074067963` at `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Failure run `39107733972` (`2026-10-18T07:27:35Z`, event `schedule`, headSha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, the subject) and the earlier `39012855146` on `f65411d5` are monitoring: `tests/integration/test_e2e_real.py` expected `awaiting.moments == 1` and the log was `whisper produced no JSON (rc=1)`. The resolution is SHA-independent: `asr-smoke` is not in `required_contexts`. Product runtime does not consume a hub token. `git grep -E 'HF_TOKEN|huggingface' src/` is empty. `fanops._fwrun._load_model` constructs `WhisperModel` with the model name, `device`, and `compute_type` only. `doctor._assemble_doctor_checks` probes `transcribe._fw_available` (`[PASS] faster-whisper importable ([asr] extra)` on 2026-10-18). `docs/ENFORCEMENT.md` documents `nightly.yml` `asr-smoke` and the Actions secret as GitHub Actions only, not product `CONFIG.md`. The nightly was not dispatched. `doctor.py` was not changed.
 
 **Closure work.** Done.
 

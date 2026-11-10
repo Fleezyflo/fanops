@@ -10,7 +10,7 @@ Every register row is closed or resolved in [OPEN_GAPS.md](OPEN_GAPS.md). Zero o
 | Studio `GET http://127.0.0.1:8787/_fingerprint` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject. pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00` |
 | Pump `daemon._last_heartbeat_code` | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | Equals the subject |
 | Live-checkout disk | `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` | `.worktrees/live-origin-main`. Equals the pump |
-| Doctor disk, this branch | `bd0a88ac5ca1aa43c52b346fbec8975155789ae2` | This checkout HEAD via `daemon._version_signal`. Docs ahead of the subject. `doctor._deploy_code_check` fails on that difference. The pump was not restarted |
+| Doctor disk, this branch | `7aa5d3239a1c61f54613d03d864375ba4420cadf` | This checkout HEAD via `daemon._version_signal`. Docs ahead of the subject. `doctor._deploy_code_check` fails on that difference. The pump was not restarted |
 
 The score is **78/100**, Launchable With Caveats. The score on `d2cded31` was 72/100. See the ledger in [PRODUCTION_SCORE.md](PRODUCTION_SCORE.md). Cap rationale: [Why capped at 84](GAP_CLOSURE_PLAN.md#why-capped-at-84).
 
@@ -49,6 +49,8 @@ Dependencies first. Audit may fan out after U0’s file list is trusted. Remedia
 
 ### Subagent brief template
 
+Parent orchestration is the project skill `fanops-production-audit` (`.cursor/skills/fanops-production-audit/SKILL.md`). Each module Task uses `production-audit` as the child lens.
+
 ```text
 Skill: production-audit
 Phase: Audit | Remediate | Finalize
@@ -80,13 +82,13 @@ Statuses match [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) as of 2026-10-18 on 
 | C10 | Studio views and templates | [C10-studio-views.md](packs/C10-studio-views.md) | **C10-F01 closed**, **C10-F02 closed**, **C10-F03 closed**, **C10-F04 closed** | A failed card or feed swap re-renders the card with the error inside it. `schedule.js` still re-reads `#schedule-body` |
 | C6 | Crosspost and publish | [C6-crosspost-publish.md](packs/C6-crosspost-publish.md) | **C6-F01 closed**, **C6-F02 closed** | 2026-10-18 re-read found no C6-F03. Dry-run does not POST. IG/TT and Zernio `content` are `posted_text_for`; Postiz YouTube `content` is `Post.caption` |
 | C7 | Metrics and learning | [C7-metrics-learning.md](packs/C7-metrics-learning.md) | **C7-F01 closed**, **C7-F02 closed** | 2026-10-18 re-read found no C7-F03. `_read_queries` has no successor. `reconcile.py` was not edited |
-| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` matches the doctor miss-or-mismatch rule. 2026-10-18 doctor exit 1 is this branch’s disk `bd0a88ac5ca1` versus the pump. Launchd was not restarted |
+| C8 | Ops, CLI, daemon, doctor | [C8-ops-cli.md](packs/C8-ops-cli.md) | **C8-F01 closed**. **OPS-SHA** closed. **OPS-SHA-DAEMON** is not a new defect | `daemon.ensure` matches the doctor miss-or-mismatch rule. 2026-10-18 doctor exit 1 is this branch’s disk `7aa5d3239a1c` versus the pump. Launchd was not restarted |
 | H-CI | Gates | [H-CI-gates.md](packs/H-CI-gates.md) | **H-CI-F01 closed** | Parent extends `tests/test_production_audit_gates.py` only for new pack finding IDs, last |
 | H-DOCS | Trace / CODEMAP drift | [H-DOCS-drift.md](packs/H-DOCS-drift.md) | **H-DOCS-F01 closed** by stale mark | Traces were not regenerated. That is not full closure of the 196-vs-124 gap |
 | H-INT | Architecture policy | [H-INT-invariants.md](packs/H-INT-invariants.md) | **H-INT-F01 resolved** | `partition.json` stays C1–C10. Operator edits of `reconcile.py` are C6; the partition keeps C7. No retag |
 | X-SEC | Secrets | [X-SEC-secrets.md](packs/X-SEC-secrets.md) | **SEC-IGPW closed**, **SEC-ENV closed** | 69 cap does not bind. Do not edit `config.py` |
-| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed | 2026-10-18 doctor: Postiz reachable, docker up, `0 drainable past-due`, 83 parked, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md) |
-| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, **REL-CI-ARCH** closed. **REL-CI-ASR** resolved | Fingerprint `430ece73`. Scheduled e2e and nightly transcripts still on `f65411d5`. `post_5854bb63fefb` still `needs_reconcile` with no `public_url`. REL-CI-ARCH run `39074333775` succeeded. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-DEP | External deps | [X-DEP-deps.md](packs/X-DEP-deps.md) | **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed | 2026-10-18: Postiz/Zernio bounded probes reachable, `0 drainable past-due`, 86 parked, 831 queued, 4 needs_reconcile. [OPEN_GAPS.md](OPEN_GAPS.md) |
+| X-REL | Release | [X-REL-release.md](packs/X-REL-release.md) | **REL-PROT**, **REL-CI-E2E**, **REL-UNDEPLOYED**, **REL-CI-ARCH** closed. **REL-CI-ASR** resolved | Fingerprint `430ece73`. Scheduled e2e `39112132315` green on the subject; nightly `asr-smoke` `39107733972` failed on the subject (resolved). `post_5854bb63fefb` still `needs_reconcile` with no `public_url`. REL-CI-ARCH run `39074333775` succeeded. [OPEN_GAPS.md](OPEN_GAPS.md) |
 | X-DATA | Ledger immutability | [X-DATA-ledger.md](packs/X-DATA-ledger.md) | **X-DATA-F01 closed** | Ledger was not wiped. Do not edit `ledger.py` |
 
 Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_REGISTER.md) on this working tree. The committed 2026-09-12 register on `d2cded31` is the baseline those bullets replaced.
@@ -208,7 +210,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 - **Pack.** [packs/H-CI-gates.md](packs/H-CI-gates.md).
 - **Register.** **H-CI-F01 closed.** `tests/test_production_audit_gates.py` requires every pack finding ID to appear in this working-tree register.
 - **Lane.** ci. No `src/fanops` hot files.
-- **Audit.** After the other modules rewrite the register: the gate still sees 14 packs, every finding ID is in the register, and `partition.json` still totals C1–C10. Name the CI check that proves it (`unit (fast, no toolchain)` on the PR). Scheduled jobs are X-REL evidence, not this gate’s required context.
+- **Audit.** After the other modules rewrite the register: the gate still sees 18 packs, every finding ID is in the register, and `partition.json` still totals C1–C10. Name the CI check that proves it (`unit (fast, no toolchain)` on the PR). Scheduled jobs are X-REL evidence, not this gate’s required context.
 - **Remediate.** Extend the gate only for IDs this index adds (X-rows) if Finalize decides they must be machine-checked. Land this module last.
 - **Finalize.** H-CI-F01 stays closed. The gate test is generic. No new assertion was added for the new pack IDs; they are covered because the register lists them.
 
@@ -246,7 +248,7 @@ Each module **Register.** bullet below matches [WEAKNESS_REGISTER.md](WEAKNESS_R
 
 - **Paths.** `health_probes.py` (`postiz_dep_health`, `postiz_doctor_check`, `zernio_dep_health`, `_http_reachable`, `dep_health_list`), `doctor.py` (`_postiz_reach_check`, `_zernio_reach_check`, `_daemon_liveness_check`), `post/postiz.py`, `post/zernio.py`, `docs/POSTIZ_OPS.md`, `docs/POSTIZ_SETUP.md`. Overlaps C6 and C8.
 - **Pack.** [packs/X-DEP-deps.md](packs/X-DEP-deps.md).
-- **Register.** **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed. 2026-10-18 doctor: Postiz reachable, docker up, `0 drainable past-due`, 83 parked, 837 queued. [OPEN_GAPS.md](OPEN_GAPS.md).
+- **Register.** **OPS-ZERNIO**, **OPS-POSTIZ**, and **OPS-QUEUE** closed. 2026-10-18: Postiz/Zernio bounded probes reachable, `0 drainable past-due`, 86 parked, 831 queued, 4 needs_reconcile. [OPEN_GAPS.md](OPEN_GAPS.md).
 - **Lane.** publish for `postiz.py` and `zernio.py`. `doctor.py` and `health_probes.py` are unrestricted.
 - **Audit.** After C6: what “drainable” means in `_daemon_liveness_check` versus `publish_due`, and which errors are Postiz-local versus code. Probe status-code handling for Zernio. Do not start docker or drain the ledger.
 - **Remediate.** `fix-defect` for OPS-ZERNIO on `health_probes._http_reachable` / `zernio_dep_health`. OPS-POSTIZ process recovery is the operator closure in [OPEN_GAPS.md](OPEN_GAPS.md#ops-postiz). The probe itself is not the open defect.
