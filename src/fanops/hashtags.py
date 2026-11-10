@@ -1,11 +1,13 @@
 # src/fanops/hashtags.py
 """Hashtag helpers — caption ship + measurement cache.
 
-Posted tags: `ship_from_lock(picks, lock, n=4)` — picks ∩ source lock, pick
-order, hard cap. No AR floor, no mega slot, no store ∪ corpus, no backfill.
+Posted tags: `ship_from_lock` — picks ∩ source lock, artist norms dropped, cap 4,
+then `play_rank_key`. No AR floor, no mega slot, no store ∪ corpus, no backfill.
 """
 from __future__ import annotations
 import json, re
+
+from fanops.tagging import ARTIST_HANDLE
 
 # The legacy Top-grid MEDIAN fields. Still stored, still enough to admit a row that predates volume
 # collection, but NO LONGER the cross-tag rank — see `size_rank_key` (MOL-692).
@@ -37,6 +39,25 @@ def norm_tag(tag: str) -> str:
     if not tag: return ""
     t = tag.strip().lower().lstrip("#").strip()
     return f"#{t}" if t else ""
+
+
+def artist_tag_norms(artist_name: str | None = None) -> frozenset[str]:
+    """Artist display-name tag and handle tag. Neither is a stranger's search.
+
+    Display name: drop whitespace, then `norm_tag`. `norm_tag` keeps an inner
+    space, so `"Moh Flow"` is not `#mohflow` until the space is removed.
+    Handle: `norm_tag` of `ARTIST_HANDLE` with the leading `@` stripped
+    (`@mohflowmusic` → `#mohflowmusic`).
+    """
+    name = artist_name if isinstance(artist_name, str) else ""
+    collapsed = "".join(name.split())
+    handle = ARTIST_HANDLE.removeprefix("@")
+    out: set[str] = set()
+    for raw in (collapsed, handle):
+        n = norm_tag(raw)
+        if n:
+            out.add(n)
+    return frozenset(out)
 
 
 _norm = norm_tag  # scrape stack + in-module callers; prefer norm_tag at new call sites
@@ -199,8 +220,15 @@ def lock_from_shortlist(names, measurements, n=12) -> list[str]:
     return out
 
 
-def ship_from_lock(picks, lock, n=4) -> list[str]:
-    """Caption ship: picks ∩ lock, pick order, cap n. Empty lock → []. No floors, no backfill."""
+def ship_from_lock(picks, lock, n=4, *, artist_name: str | None = None,
+                   measurements=None) -> list[str]:
+    """Caption ship: picks ∩ lock, cap n, drop artist norms, then `play_rank_key`.
+
+    The cap walks the picks. Artist norms (`artist_tag_norms`) are dropped from
+    that capped list. Survivors are ordered by `play_rank_key` on `measurements`
+    (the lock row). A missing record is the zero key. Empty lock → [].
+    No floors, no backfill.
+    """
     allowed = set(_dedupe_norm(lock))
     out: list[str] = []
     for t in _dedupe_norm(picks):
@@ -208,6 +236,10 @@ def ship_from_lock(picks, lock, n=4) -> list[str]:
             out.append(t)
         if len(out) >= n:
             break
+    banned = artist_tag_norms(artist_name)
+    out = [t for t in out if t not in banned]
+    recs = measurements if isinstance(measurements, dict) else {}
+    out.sort(key=lambda t: play_rank_key(t, recs.get(t)))
     return out
 
 

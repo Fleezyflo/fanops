@@ -167,7 +167,6 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
     checks = _assemble_doctor_checks(
         cfg, get=get, postiz_probe=postiz_probe, zernio_auth=zernio_auth,
         daemon_status=daemon_status, probe_policy=probe_policy)
-    notes = _doctor_notes(cfg)
     if probe_policy == "observe":
         deps = deps_from_snapshot(cfg)
         fshape = None  # no live Postiz list_posts on observe
@@ -176,4 +175,5 @@ def build_health_report(cfg: Config, *, get=None, postiz_probe=None, zernio_auth
     else:
         deps = dep_health_list(cfg, postiz_probe=postiz_probe)
         fshape = build_field_shape(cfg, led=led, list_posts=list_posts)
+    notes = _doctor_notes(cfg, deps)
     return HealthReport(checks=checks, notes=notes, deps=deps, field_shape=fshape)

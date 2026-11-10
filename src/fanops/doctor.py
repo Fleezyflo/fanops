@@ -16,6 +16,8 @@ from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
 from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
+from fanops.health_projectors import sending_backend_label
+from fanops.health_types import DepHealth
 
 
 def _check(label: str, ok: bool = True, hint: str = "", *, severity: str | None = None) -> dict:
@@ -230,9 +232,10 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
 def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     """Deploy gate — the pump's heartbeat `code` must match the code SHA on disk.
 
-    FAIL when the daemon is loaded and the running SHA (_last_heartbeat_code) differs from the
-    deployed SHA (_version_signal). N/A when the daemon is not loaded. Mirrors daemon.ensure's
-    drift branch (keeper kickstart) as an operator-visible doctor check (STD-VER-02)."""
+    FAIL when the daemon is loaded and either SHA is missing, or the running SHA
+    (_last_heartbeat_code) differs from the deployed SHA (_version_signal). N/A when the
+    daemon is not loaded. Mirrors daemon.ensure's adopt branch (keeper kickstart) as an
+    operator-visible doctor check (STD-VER-02)."""
     from fanops import daemon
     lbl = "publish daemon running current code (heartbeat SHA matches disk)"
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
@@ -245,19 +248,17 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
             pass
     if not st or not st.get("loaded"):
         return None                                              # N/A — pump not loaded
-    running = daemon._last_heartbeat_code(cfg)
-    deployed = daemon._version_signal(cfg)[0]
-    if running is not None and deployed is not None and running != deployed:
-        return _check(lbl, False,
-                      f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
-                      f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
+    reason = daemon.stale_code_reason(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg)[0])
+    if reason:
+        return _check(lbl, False, f"{reason} — release = merge → `git pull --ff-only` → `fanops up`; "
+                                  f"verify this check is green")
     return _check(lbl, True, "")
 
 
-def _doctor_notes(cfg: Config) -> list[str]:
+def _doctor_notes(cfg: Config, deps: list[DepHealth]) -> list[str]:
     lv = learning_validated(cfg)
     notes: list[str] = []
-    notes.append(f"poster backend: {cfg.poster_backend}"
+    notes.append(f"poster backend: {sending_backend_label(cfg, deps)}"
                  + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
     if lv:
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")

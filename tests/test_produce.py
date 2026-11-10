@@ -5,7 +5,7 @@ from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, SourceState, Moment, MomentState
 from fanops.produce import _produce_one
-from tests.fixtures.speech_segments import LOW_LOGPROB
+from tests.fixtures.speech_segments import LOW_LOGPROB, talk_seg
 
 
 def test_produce_warms_errored_source_with_warm_transcript(tmp_path, mocker):
@@ -14,7 +14,7 @@ def test_produce_warms_errored_source_with_warm_transcript(tmp_path, mocker):
     Path(path).write_bytes(b"V")
     (cfg.agent_io / "transcripts").mkdir(parents=True)
     (cfg.agent_io / "transcripts" / "vid.json").write_text(json.dumps(
-        {"language": "en", "segments": [{"start": 0, "end": 1, "text": "warm"}]}))
+        {"language": "en", "segments": [talk_seg("warm", start=0, end=1)]}))
     with Ledger.transaction(cfg) as led:
         led.add_source(Source(id="s1", source_path=path, state=SourceState.error,
                               error_reason="TimeoutExpired: ffmpeg hung"))

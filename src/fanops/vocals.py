@@ -54,18 +54,18 @@ def isolate_vocals(audio_path: str, out_dir: str, *, model: str = _DEFAULT_MODEL
                            capture_output=True, text=True, timeout=_DEMUCS_TIMEOUT, env=_demucs_env())
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         # demucs absent / unspawnable / hung — log then refuse (never return the mix).
-        logger.warning("isolate_vocals fail-open (%s): %s: %s — refusing to transcribe the mix",
+        logger.warning("isolate_vocals fail-closed (%s): %s: %s — refusing to transcribe the mix",
                        audio_path, type(exc).__name__, str(exc)[:160])
         raise ToolchainMissingError(
             f"demucs unavailable ({type(exc).__name__}: {str(exc)[:160]})") from exc
     if r.returncode != 0:                    # model fetch blocked / separation failed
         tail = (r.stderr or "")[-300:].strip()
-        logger.warning("isolate_vocals fail-open (%s): demucs rc=%s: %s — refusing to transcribe the mix",
+        logger.warning("isolate_vocals fail-closed (%s): demucs rc=%s: %s — refusing to transcribe the mix",
                        audio_path, r.returncode, tail)
         raise ToolchainMissingError(f"demucs rc={r.returncode}: {tail}")
     vocals = Path(out_dir) / model / Path(audio_path).stem / "vocals.mp3"
     if not vocals.exists():                  # rc 0 but no stem written (schema drift)
-        logger.warning("isolate_vocals fail-open (%s): demucs rc=0 but %s missing — refusing to transcribe the mix",
+        logger.warning("isolate_vocals fail-closed (%s): demucs rc=0 but %s missing — refusing to transcribe the mix",
                        audio_path, vocals)
         raise ToolchainMissingError(f"demucs rc=0 but {vocals} missing")
     return str(vocals)

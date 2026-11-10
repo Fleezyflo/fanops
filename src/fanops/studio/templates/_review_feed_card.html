@@ -1,18 +1,20 @@
 {# U6: one feed card — composite approve-with-edits, per-card reject. #}
 <article class="review-feed-card" id="feed-{{ s.post_id }}">
+  {% if mutation_error is defined and mutation_error %}<div class="result err" role="status">✗ {{ mutation_error | operator_error }}</div>{% endif %}
   <div class="feed-card-head">
     <label class="surface-pick"><input type="checkbox" name="ids" value="{{ s.post_id }}"
       data-source="{{ s.source_key or '' }}" aria-label="select {{ s.account }} {{ s.platform }}"></label>
     {% if s.source_name or s.source_key %}<button type="button" class="chip feed-source-tag" data-review-action="select-source"
       data-source-key="{{ s.source_key or '' }}" title="select every clip from {{ s.source_name or s.source_key }}">{{ s.source_name or s.source_key }}</button>{% endif %}
   </div>
-  <div class="feed-preview clip-frame thumb">
-    <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=s.clip_id) }}" src="{{ s.media_url }}" aria-label="preview {{ s.account }}"></video>
-  </div>
+  {% set _preview_src = s.preview_media_url if s.editable and s.preview_media_url else s.media_url %}
+  {% with preview_class='feed-preview clip-frame thumb', preview_held=false, preview_poster=url_for('clip_thumb', clip_id=s.clip_id), preview_src=_preview_src, preview_label='preview ' ~ s.account, preview_hook_preburn=s.hook_preburn, preview_hook=s.variant_hook %}{% include "_hook_preview.html" %}{% endwith %}
+  {% if s.media_url %}<a class="feed-media" href="{{ s.media_url }}">Open media</a>{% endif %}
   {% if s.reason %}<p class="meta feed-reason">{{ s.reason }}</p>{% endif %}
+  {% with hook_target='#feed-' ~ s.post_id, hook_scope='feed' %}{% include "_hook_edit.html" %}{% endwith %}
+  {% with tag_swap='feed', tag_swap_target='#feed-' ~ s.post_id %}{% include "_tag_selects.html" %}{% endwith %}
   <form class="feed-edit" hx-post="{{ url_for('do_approve_with_edits', post_id=s.post_id, account=feed_account|default(active)) }}" hx-target="#review-body" hx-swap="outerHTML">
     <label class="feed-caption">Caption<textarea name="caption" rows="3">{{ s.caption }}</textarea></label>
-    <label class="feed-hook">Hook<input type="text" name="hook" value="{{ s.variant_hook or '' }}"></label>
     <div class="feed-actions">
       <button type="submit" class="primary">Approve</button>
       <button type="button" class="surface-reject" hx-post="{{ url_for('do_reject_posts', account=feed_account|default(active), offset=feed_page.offset if feed_page else 0) }}" hx-vals='{"ids": "{{ s.post_id }}"}' hx-target="#review-body" hx-swap="outerHTML">Reject</button>

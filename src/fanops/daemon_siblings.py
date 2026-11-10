@@ -34,8 +34,9 @@ SIBLING_POLL_TIMERS_RATIONALE = (
     "Reaper stops idle local Postiz (RAM); media-sync pre-mirrors to R2 (publish path mirrors inline). "
     "M2-C readiness alarms still flag plist-on-disk + not-loaded for every installed sibling."
 )
+_POSTIZ_REAPER_LABEL = "com.fanops.postiz-reaper"
 SIBLING_POLL_AGENTS: tuple[dict[str, str | int], ...] = (
-    {"label": "com.fanops.postiz-reaper", "short": "Postiz reaper"},
+    {"label": _POSTIZ_REAPER_LABEL, "short": "Postiz reaper"},
     {"label": "com.fanops.media-sync", "short": "media-sync"},
     {"label": KEEPER_LABEL, "short": "daemon keeper", "poll_interval_s": KEEPER_POLL_INTERVAL_S},
 )
@@ -73,6 +74,43 @@ def _install_keeper(cfg: Config) -> dict:
     from fanops.controlio import write_text_atomic
     write_text_atomic(kp, render_keeper_plist(cfg))
     return {"keeper_loaded": daemon._load_plist(kp, KEEPER_LABEL), "keeper_plist": str(kp)}
+
+
+def render_postiz_reaper_plist(cfg: Config) -> str:
+    """StartInterval poll-timer: `postiz-ondemand.sh reap` every 300s. Idle-stops local Postiz.
+
+    Not a KeepAlive resident — one bounded reap, then exit, until the next StartInterval.
+    """
+    from fanops import daemon
+    from fanops.postiz_lifecycle import _ondemand_script
+    path = daemon._daemon_path()
+    pl = {
+        "Label": _POSTIZ_REAPER_LABEL,
+        "ProgramArguments": ["bash", str(_ondemand_script()), "reap"],
+        "StartInterval": SIBLING_POLL_INTERVAL_S,
+        "WorkingDirectory": str(cfg.root),
+        "StandardOutPath": str(cfg.reports / "postiz-reaper.out"),
+        "StandardErrorPath": str(cfg.reports / "postiz-reaper.err"),
+        "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+    }
+    return plistlib.dumps(pl).decode()
+
+
+def _install_postiz_reaper(cfg: Config) -> dict | None:
+    """Load com.fanops.postiz-reaper when the on-demand script exists and POSTIZ_URL is local.
+
+    Absent script → no plist (nothing to reap). macOS only (`daemon._require_darwin`)."""
+    from fanops import daemon
+    from fanops.postiz_lifecycle import _is_local, _ondemand_script
+    script = _ondemand_script()
+    if not script.exists() or not _is_local(getattr(cfg, "postiz_url", None) or ""):
+        return None
+    daemon._require_darwin()
+    pp = sibling_plist_path(_POSTIZ_REAPER_LABEL)
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    from fanops.controlio import write_text_atomic
+    write_text_atomic(pp, render_postiz_reaper_plist(cfg))
+    return {"reaper_loaded": daemon._load_plist(pp, _POSTIZ_REAPER_LABEL), "reaper_plist": str(pp)}
 
 
 def ensure_keeper_loaded(cfg: Config) -> bool:

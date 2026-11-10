@@ -11,15 +11,30 @@ dryrun by default (produces fully-scheduled posts, publishes NOTHING). Going liv
 SEPARATE, deliberate step via Postiz (self-hosted) or the manual publish-queue — never assumed here.
 This module wires autonomy of the per-clip WORK; it never publishes and never edits the ledger."""
 from __future__ import annotations
-import os
 from pathlib import Path
 from fanops.config import Config
-from fanops.ledger import _file_lock
+from fanops.controlio import write_text_atomic
 
 
 def _env_rewrite_lock(env_path: Path):
-    """Exclusive lock for one .env read-modify-write. Not Config.lock_path — that lock is the ledger."""
-    return _file_lock(env_path.with_name(env_path.name + ".lock"))
+    """Exclusive lock for one .env read-modify-write. Not Config.lock_path — that lock is the ledger.
+
+    Looks up `_file_lock` at call time so a test can patch `fanops.ledger._file_lock`. A lock timeout
+    is `LockBusyError` raised from `__enter__`; golive only catches `OSError`, so that timeout is
+    re-raised as `OSError`."""
+    from contextlib import contextmanager
+    from fanops.errors import LockBusyError
+    from fanops.ledger import _file_lock
+
+    @contextmanager
+    def _locked():
+        try:
+            with _file_lock(env_path.with_name(env_path.name + ".lock")):
+                yield
+        except LockBusyError as exc:
+            raise OSError(str(exc)) from exc
+
+    return _locked()
 
 
 def set_env_var(env_path: Path, key: str, value: str) -> None:
@@ -28,9 +43,9 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
     spacing AND a dotenv `export KEY=value` prefix, which it keeps; ignoring a commented `# KEY=...`);
     appends if absent; creates the file if missing. NB: line endings are normalized to `\\n`.
     A value containing a newline is REJECTED (ValueError) — it would inject an arbitrary KEY=VALUE
-    line and could silently overwrite an adjacent secret. The write is ATOMIC (temp + os.replace) so
-    a crash mid-write never truncates the secrets-bearing .env (ecc audit: security + python).
-    The read through os.replace holds `<name>.lock` so a second caller cannot replace a stale read."""
+    line and could silently overwrite an adjacent secret. The write is ATOMIC (controlio.write_text_atomic:
+    unique same-dir mkstemp temp, created 0600, + os.replace) so a crash mid-write never truncates the .env.
+    The read through the write holds `<name>.lock` so a second caller cannot replace a stale read."""
     if "\n" in value or "\r" in value:
         raise ValueError(f"set_env_var: value for {key!r} contains a newline — rejected (would corrupt .env)")
     with _env_rewrite_lock(env_path):
@@ -48,17 +63,14 @@ def set_env_var(env_path: Path, key: str, value: str) -> None:
                 out.append(ln)
         if not found:
             out.append(f"{key}={value}")
-        tmp = env_path.with_name(env_path.name + ".tmp")
-        tmp.write_text("\n".join(out) + "\n")
-        try: os.chmod(tmp, 0o600)                            # owner-only at rest (audit): .env may hold config + residual secrets
-        except OSError: pass
-        os.replace(tmp, env_path)                            # atomic: never a half-written .env (mirrors the atomic accounts.json write)
+        # No mode=: mkstemp already creates the temp 0600, and a chmod that fails on a non-POSIX FS must not block the write.
+        write_text_atomic(env_path, "\n".join(out) + "\n")
 
 
 def unset_env_var(env_path: Path, key: str) -> None:
     """Remove `KEY=...` from a .env file, preserving every other line. No-op when the file or key
-    is absent. Atomic write (temp + os.replace), mirroring set_env_var. The missing-file return
-    sits inside the same `<name>.lock` as the read and os.replace."""
+    is absent. Atomic write (controlio.write_text_atomic), mirroring set_env_var. The missing-file return
+    sits inside the same `<name>.lock` as the read and the write."""
     with _env_rewrite_lock(env_path):
         if not env_path.exists():
             return
@@ -72,11 +84,7 @@ def unset_env_var(env_path: Path, key: str) -> None:
             if stripped and not stripped.startswith("#") and bare_key == key:
                 continue
             out.append(ln)
-        tmp = env_path.with_name(env_path.name + ".tmp")
-        tmp.write_text("\n".join(out) + ("\n" if out else ""))
-        try: os.chmod(tmp, 0o600)                            # owner-only at rest (audit): mirror set_env_var
-        except OSError: pass
-        os.replace(tmp, env_path)
+        write_text_atomic(env_path, "\n".join(out) + ("\n" if out else ""))
 
 
 def autopilot(cfg: Config, *, interval: int, install_daemon: bool = True) -> dict:

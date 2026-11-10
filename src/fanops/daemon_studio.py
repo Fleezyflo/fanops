@@ -177,34 +177,33 @@ def _studio_port_answers_within(host: str = STUDIO_DEFAULT_HOST, port: int = STU
                                 expect_sha: str | None = None,
                                 expect_gen: str | None = None,
                                 old_pid: int | None = None) -> bool:
-    """Poll the Studio port until it ACCEPTS, bounded — the post-RESTART form of _studio_port_answers.
-    MOL-728 verifies replacement (new PID != old_pid) and freshness (sha + generation) on top.
+    """Poll until the port accepts and, when the caller named one, the generation or sha answers.
 
-    LIVENESS and FRESHNESS are polled SEPARATELY. Fused in one loop they broke three ways: a healthy
-    resident whose /_fingerprint was unreachable could never return True, so `fanops up` called a
-    SERVING cockpit DOWN and burned the full ~2min budget doing it; the port probe kept firing long
-    after the port was up, because the loop was really waiting on the fingerprint; and any test of the
-    polling had to stub the fingerprint to get past it.
-
-    An unreachable endpoint is absence of evidence, not evidence of stale code — it does NOT fail here.
-    A REACHABLE endpoint that disagrees is evidence, and it does."""
+    Cold start has no process already bound. One read of /_fingerprint while the new process is
+    still coming up is None — that is not a verdict. Keep reading until the expected generation
+    (or sha, when the caller passed one) answers, or `tries` steps of `step` seconds are spent.
+    None at the end of that budget means the expected process is not loaded: return False when
+    the caller asked for a generation, a sha, or a pid change. A reachable payload that disagrees
+    is not a match either; the same budget is the limit. When nothing was claimed, the port
+    accepting is enough.
+    """
     from fanops import daemon
-    for _ in range(max(1, tries)):
+    asked = expect_sha is not None or expect_gen is not None or old_pid is not None
+    attempts = max(1, tries)
+    for i in range(attempts):
         if daemon._studio_port_answers(host, port):
-            break
-        daemon.time.sleep(step)
-    else:
-        return False                             # never came back inside the budget
-    if expect_sha is None and expect_gen is None and old_pid is None:
-        return True                              # nothing was claimed, so nothing to disprove
-    # ONE read, no retry loop: kickstart -k SIGKILLs the old resident, so whatever is accepting on the
-    # port is already the new process, and create_app registers every route before app.run binds.
-    fp = daemon._studio_get_fingerprint(host, port)
-    if fp is None:
-        return True                              # unreachable -> unproven, NOT failed
-    return ((expect_sha is None or fp.get("sha") == expect_sha)
-            and (expect_gen is None or fp.get("generation") == expect_gen)
-            and (old_pid is None or fp.get("pid") != old_pid))
+            if not asked:
+                return True
+            fp = daemon._studio_get_fingerprint(host, port)
+            if fp is not None and (
+                (expect_sha is None or fp.get("sha") == expect_sha)
+                and (expect_gen is None or fp.get("generation") == expect_gen)
+                and (old_pid is None or fp.get("pid") != old_pid)
+            ):
+                return True
+        if i + 1 < attempts:
+            daemon.time.sleep(step)
+    return False
 
 
 def _studio_get_fingerprint(host: str = STUDIO_DEFAULT_HOST, port: int = STUDIO_DEFAULT_PORT) -> dict | None:
