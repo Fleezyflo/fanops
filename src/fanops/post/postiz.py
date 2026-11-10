@@ -4,7 +4,7 @@ FanOps stays the clip+caption engine; a self-hosted Postiz instance (AGPL, githu
 postiz-app) is the distribution layer. A swappable-poster slot: build the post body,
 POST it, map the response to the ledger's submit/reconcile/fail states with the SAME asymmetric-retry
 safety (a bad key halts by type; a 5xx/timeout after the body was sent parks needs_reconcile, never
-re-POSTs; a 429 adopts a matching row or fails once as rate_limit — no idempotency key, so no second create).
+re-POSTs; a 429 is one POST that adopts a matching row or fails as rate_limit — Postiz has no idempotency key).
 
 REST contract (docs.postiz.com/public-api): Authorization: {apiKey} header; POST /public/v1/upload
 (multipart) -> {id, path@uploads.postiz.com}; POST /public/v1/posts with
@@ -440,81 +440,10 @@ def _row_integration_id(raw: dict) -> str | None:
     return None
 
 
-def _payload_value(obj: dict) -> dict | None:
-    """posts[0].value[0] — the object build_postiz_payload writes content and image onto."""
-    try:
-        value = obj["posts"][0]["value"][0]
-    except (KeyError, IndexError, TypeError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _image_identity(images) -> tuple[tuple[str | None, str | None], ...] | None:
-    """(id, path) pairs. Those are the fields _postiz_image writes onto posts[0].value[0].image."""
-    if not isinstance(images, list):
-        return None
-    out = []
-    for img in images:
-        if not isinstance(img, dict):
-            return None
-        iid, path = img.get("id"), img.get("path")
-        if iid is not None and not isinstance(iid, str):
-            return None
-        if path is not None and not isinstance(path, str):
-            return None
-        out.append((iid, path))
-    return tuple(out)
-
-
-def _row_integration_ids(raw: dict) -> list[str]:
-    """Integration ids the row parser already reads, on the row and on posts[0] (where the payload writes it)."""
-    found: list[str] = []
-    top = _row_integration_id(raw)
-    if top:
-        found.append(top)
-    posts = raw.get("posts")
-    if isinstance(posts, list) and posts and isinstance(posts[0], dict):
-        nested = _row_integration_id(posts[0])
-        if nested:
-            found.append(nested)
-    return found
-
-
-def _row_matches_payload(raw: dict, payload: dict) -> bool:
-    """Caption text plus integration id is not identity.
-
-    Content is posts[0].value[0].content (the field the POST writes), not top-level content.
-    Media is posts[0].value[0].image, compared on id and path only.
-    """
-    if not isinstance(raw, dict) or not isinstance(payload, dict):
-        return False
-    want = _payload_value(payload)
-    got = _payload_value(raw)
-    if want is None or got is None:
-        return False
-    want_content = want.get("content")
-    if not isinstance(want_content, str) or got.get("content") != want_content:
-        return False
-    want_images = _image_identity(want.get("image"))
-    if want_images is None or _image_identity(got.get("image")) != want_images:
-        return False
-    try:
-        want_intg = payload["posts"][0]["integration"]["id"]
-    except (KeyError, IndexError, TypeError):
-        return False
-    if not isinstance(want_intg, str) or not want_intg:
-        return False
-    found = _row_integration_ids(raw)
-    return bool(found) and all(i == want_intg for i in found)
-
-
 def _submission_held_by_other(led: Ledger, sid: str, post_id: str) -> bool:
-    for other in led.posts.values():
-        if other.id == post_id:
-            continue
-        if other.submission_id == sid:
-            return True
-    return False
+    """True when another ledger post already holds this Postiz id. Content + integration is not unique — fan
+    accounts repost the same clip and hashtags-only captions collide — so that row is the other post's create."""
+    return any(p.id != post_id and p.submission_id == sid for p in led.posts.values())
 
 
 def postiz_check_auth(cfg: Config) -> bool:
@@ -554,11 +483,8 @@ class PostizPoster:
                     t = (m.hook or "").strip()
         return t if len(t) >= 2 else self.cfg.artist_name
 
-    def _adopt_submission(self, led: Ledger, post_id: str, sid: str, body=None, payload=None) -> Ledger:
-        raw = body if isinstance(body, dict) else None
-        if payload is None or raw is None or not _row_matches_payload(raw, payload):
-            return led
-        if not isinstance(sid, str) or not sid or _submission_held_by_other(led, sid, post_id):
+    def _adopt_submission(self, led: Ledger, post_id: str, sid: str, body=None) -> Ledger:
+        if _submission_held_by_other(led, sid, post_id):
             return led
         led.set_post_state(post_id, PostState.submitted)
         post = led.posts[post_id]
@@ -568,11 +494,8 @@ class PostizPoster:
         return led
 
     def _existing_submission_for_payload(self, led: Ledger, post, payload: dict) -> tuple[str | None, dict | None]:
-        """Read-before-write: adopt a row only when it is this payload, and the id is free.
-
-        Match posts[0].value[0].content and posts[0].value[0].image (id and path). Top-level
-        content is not identity. Refuse an id another ledger post already holds.
-        """
+        """Read-before-write dedup: GET the posts window and match integration id + content, skipping a row
+        another ledger post already holds."""
         from datetime import timedelta
         from fanops.timeutil import parse_iso
         from fanops.post.metrics.postiz_read import PostizStatusClient
@@ -585,7 +508,10 @@ class PostizPoster:
         else:
             start = now - timedelta(hours=24)
         end = now
-        if _payload_value(payload) is None:
+        try:
+            want_intg = payload["posts"][0]["integration"]["id"]
+            want_content = payload["posts"][0]["value"][0]["content"]
+        except (IndexError, KeyError, TypeError):
             return None, None
         try:
             rows = PostizStatusClient(self.cfg)._fetch_posts(start, end)
@@ -594,13 +520,14 @@ class PostizPoster:
             return None, None
         for sid, rec in rows.items():
             raw = rec.get("raw")
-            if not isinstance(raw, dict) or not isinstance(sid, str) or not sid:
+            if not isinstance(raw, dict):
                 continue
-            if not _row_matches_payload(raw, payload):
+            if raw.get("content") != want_content:
                 continue
-            if _submission_held_by_other(led, sid, post.id):
+            if _row_integration_id(raw) != want_intg:
                 continue
-            return sid, raw
+            if isinstance(sid, str) and sid and not _submission_held_by_other(led, sid, post.id):
+                return sid, raw
         return None, None
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
@@ -643,19 +570,13 @@ class PostizPoster:
                                        title=title, hashtags=post.hashtags)
         existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
         if existing_sid:
-            led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
-            if (led.posts[post_id].state is PostState.submitted
-                    and led.posts[post_id].submission_id == existing_sid):
-                return led
+            return self._adopt_submission(led, post_id, existing_sid, existing_raw)
         try:
             resp = requests.post(f"{self.base}{_PUBLIC}/posts", headers=self.headers, json=payload, timeout=30)
         except requests.exceptions.RequestException as exc:
             existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
             if existing_sid:
-                led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
-                if (led.posts[post_id].state is PostState.submitted
-                        and led.posts[post_id].submission_id == existing_sid):
-                    return led
+                return self._adopt_submission(led, post_id, existing_sid, existing_raw)
             if _is_never_sent_transport(exc):
                 raise
             # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
@@ -691,17 +612,13 @@ class PostizPoster:
                                error_reason=f"postiz {resp.status_code}, may be live (reconcile by hand) — body withheld")  # body may echo the auth header
             return led
         if resp.status_code == 429:
-            # Whether Postiz applied the body before 429 is unproven. There is no idempotency key,
-            # so another create — including sleep-and-continue — is a second post. Adopt a matching
-            # row when the lookup finds one. Otherwise fail once as rate_limit (one POST) so
-            # publish_due's circuit does not claim the next post on this integration.
-            # `_requeue_rate_limited_for_daemon` does not send that row back to queued.
+            # One POST per call. Postiz has no idempotency key, so a re-POST here (the old sleep-and-retry)
+            # is a second live post if the 429'd body was applied. Adopt the row if the create landed;
+            # otherwise fail as rate_limit: publish_due's circuit skips this integration for the rest of the
+            # pass, and _requeue_rate_limited_for_daemon re-queues the row once the Postiz hour has passed.
             existing_sid, existing_raw = self._existing_submission_for_payload(led, post, payload)
             if existing_sid:
-                led = self._adopt_submission(led, post_id, existing_sid, existing_raw, payload)
-                if (led.posts[post_id].state is PostState.submitted
-                        and led.posts[post_id].submission_id == existing_sid):
-                    return led
+                return self._adopt_submission(led, post_id, existing_sid, existing_raw)
         # ECC fix #17 (defensive): never downgrade an ambiguous-live post to `failed` (failed is
         # re-queueable -> double-post risk). 5xx and transport ambiguity return above.
         if led.posts[post_id].state is not PostState.needs_reconcile:
