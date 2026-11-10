@@ -987,3 +987,22 @@ def test_finalize_leaves_a_row_already_past_submitting_unchanged(tmp_path, monke
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.published
     assert p.model_dump() == landed
+
+
+def test_finalize_does_not_downgrade_a_mid_network_park_to_failed(tmp_path, monkeypatch):
+    # heal_stranded_submitting parks the row needs_reconcile during the network phase, then the POST
+    # fails. Finalize must not land `failed` over the park: failed is re-queueable (C1/#17 double-post).
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="p1", cid="c1", when="2020-01-01T00:00:00Z")
+    landed = {}
+
+    def publish(led, post_id):
+        with Ledger.transaction(cfg) as fresh:
+            fresh.set_post_state(post_id, PostState.needs_reconcile, error_reason="healed mid-network")
+        landed.update(Ledger.load(cfg).posts[post_id].model_dump())
+        raise ValueError("no media")
+
+    assert _stub_network(monkeypatch, publish)(cfg, "p1", "postiz") == PostState.failed.value
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.needs_reconcile
+    assert p.model_dump() == landed

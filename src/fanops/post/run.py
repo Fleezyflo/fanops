@@ -239,8 +239,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
       failed (AUDIT C1/#17 — failed is re-queueable => double-post); a FATAL AuthError RE-RAISES (H8).
     FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
       FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). The post fields
-      land only while that row is still 'submitting'. Returns the final post-state value (or None if
-      not claimable)."""
+      land only while that row is still 'submitting'. Returns this attempt's post-state value (or None
+      if not claimable)."""
     # Pre-claim guard (CULM-1): same gate as publish_due — never claim a post we can't address.
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
@@ -400,8 +400,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        # Only while this attempt still owns the row: a concurrent mark_published / reconcile promotion
-        # (and the public_url it landed) must not be overwritten by the stale network snapshot.
+        # Only while this attempt still owns the row: a writer that moved it out of `submitting` mid-network
+        # (a mark_published / apply_published_resolve / reconcile _promote_bound_publish promotion and its
+        # public_url, or a heal_stranded_submitting park) must not be overwritten by the stale network snapshot.
         if p.state is PostState.submitting:
             # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
             upd = {f: v for f, v in net.items()
