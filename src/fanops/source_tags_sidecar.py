@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from fanops.controlio import write_json_atomic
-from fanops.errors import fail_open
-from fanops.hashtags import _norm, _num
+from fanops.controlio import control_file_txn, write_json_atomic
+from fanops.errors import ControlFileError, fail_open, reason
+from fanops.hashtags import _norm, _num, lock_from_pile
 from fanops.timeutil import iso_z
 
 SOURCE_TAG_LOCKS_NAME = "source_tag_locks.json"
@@ -29,17 +29,39 @@ def graph_tag_cache_path(cfg):
 
 
 def load_source_tag_locks(cfg) -> dict:
-    """Read the sidecar. Missing / corrupt / unreadable → {}. Never raises."""
-    table: dict = {}
-    with fail_open("source_tags.load"):
-        if cfg is None:
-            return {}
-        p = source_tag_locks_path(cfg)
-        if not p.exists():
-            return {}
+    """Read the sidecar. Missing file → {}. Corrupt or unreadable raises.
+
+    A torn file must not look like an empty table: callers that ship the stored
+    caption on a missing sidecar must not take that path, and writers must not
+    persist that empty read back over the file.
+    """
+    if cfg is None:
+        return {}
+    p = source_tag_locks_path(cfg)
+    if not p.exists():
+        return {}
+    try:
         raw = json.loads(p.read_text())
-        table = raw if isinstance(raw, dict) else {}
-    return table
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise ControlFileError(f"{p.name} invalid: {reason(exc)}") from exc
+    if not isinstance(raw, dict):
+        raise ControlFileError(
+            f"{p.name} invalid: top-level must be an object, got {type(raw).__name__}")
+    return raw
+
+
+def _source_tag_locks_lock_path(cfg):
+    """Flock sibling of the sidecar. Not a Config field — the JSON itself is replaced."""
+    return source_tag_locks_path(cfg).with_name(SOURCE_TAG_LOCKS_NAME + ".lock")
+
+
+def _persist_source_row(cfg, sid: str, row: dict) -> None:
+    """Merge one source row into the sidecar as it exists now, under the txn."""
+    path = source_tag_locks_path(cfg)
+    with control_file_txn(_source_tag_locks_lock_path(cfg)):
+        latest = load_source_tag_locks(cfg)
+        latest[sid] = row
+        write_json_atomic(path, latest)
 
 
 def load_graph_tag_cache(cfg) -> dict:
@@ -220,7 +242,7 @@ def _write_in_progress(cfg, table, sid, *, pile, verified, measurements, remaini
     if isinstance(at, str) and at.strip():
         row["researched_at"] = at
     table[sid] = row
-    write_json_atomic(source_tag_locks_path(cfg), table)
+    _persist_source_row(cfg, sid, row)
 
 
 def _researched(table, sid: str) -> bool:
@@ -264,6 +286,10 @@ def _union_lock_meters(table: dict, measurements: dict) -> None:
 
 
 def _stamp_source(cfg, table, sid, pile, lock, measurements=None, *, catalog, catalog_at) -> None:
+    prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
+    # Positive play_count, play_rank_key, cap _LOCK_N. A miss has no play_count, so it stays out.
+    if catalog and isinstance(measurements, dict):
+        lock = lock_from_pile(catalog, measurements, _LOCK_N)
     row = {
         "pile": list(pile),
         "lock": list(lock),
@@ -271,12 +297,22 @@ def _stamp_source(cfg, table, sid, pile, lock, measurements=None, *, catalog, ca
         "catalog": list(catalog),
         "catalog_at": catalog_at,
     }
+    raw_miss = prior.get("exact_miss")
+    misses: list[str] = []
+    if isinstance(raw_miss, list):
+        for item in raw_miss:
+            n = _norm(item) if isinstance(item, str) else ""
+            if n and n not in misses:
+                misses.append(n)
+    if misses:
+        row["exact_miss"] = misses
     if isinstance(measurements, dict):
-        snap = _snapshot_meters(measurements, list(lock) or list(pile))
+        names = list(catalog) if catalog else (list(lock) or list(pile))
+        snap = _snapshot_meters(measurements, names)
         if snap:
             row["measurements"] = snap
     table[sid] = row
-    write_json_atomic(source_tag_locks_path(cfg), table)
+    _persist_source_row(cfg, sid, row)
 
 
 def _hydrate_stamp(cfg, table, sid, pile, lock, measurements=None, *, prior=None) -> None:

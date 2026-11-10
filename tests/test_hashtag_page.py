@@ -71,6 +71,7 @@ def test_page_get_is_network_inert(tmp_path, monkeypatch):
 # ── acceptance #3: rotation flags consecutive identical tag lines; green otherwise ──────────────
 
 def _seed_two_posts(cfg, tags_a, tags_b, *, account="a"):
+    from fanops.source_tags import source_tag_locks_path
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
     led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r", state=MomentState.clipped))
@@ -81,6 +82,12 @@ def _seed_two_posts(cfg, tags_a, tags_b, *, account="a"):
     led.add_post(Post(id="p_new", parent_id="clip_1", account=account, account_id="1", platform=Platform.instagram,
                       caption="B", state=PostState.queued, hashtags=tags_b, created_at=_z(now - timedelta(hours=1))))
     led.save()
+    lock = list(dict.fromkeys([*tags_a, *tags_b]))
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "src_1": {"pile": lock, "lock": lock, "researched_at": "2026-08-17T00:00:00Z"},
+    }))
     return led
 
 
@@ -88,7 +95,7 @@ def test_rotation_warns_on_consecutive_dupes(tmp_path):
     cfg = Config(root=tmp_path)
     # two consecutive posts on ONE account carrying the IDENTICAL full tag line -> the pre-S06 failure.
     led = _seed_two_posts(cfg, ["#rap", "#hiphop"], ["#rap", "#hiphop"])
-    rows = views_hashtags.rotation_health(led)
+    rows = views_hashtags.rotation_health(led, cfg)
     row = next(r for r in rows if r.account == "a")
     assert row.warn is True
 
@@ -97,7 +104,7 @@ def test_rotation_reordered_line_is_not_a_dupe(tmp_path):
     cfg = Config(root=tmp_path)
     # a REORDERED line is a different line (rotation IS doing its job) — normalization preserves order.
     led = _seed_two_posts(cfg, ["#rap", "#hiphop"], ["#hiphop", "#rap"])
-    rows = views_hashtags.rotation_health(led)
+    rows = views_hashtags.rotation_health(led, cfg)
     row = next(r for r in rows if r.account == "a")
     assert row.warn is False
 
@@ -105,7 +112,7 @@ def test_rotation_reordered_line_is_not_a_dupe(tmp_path):
 def test_rotation_green_when_rotated(tmp_path):
     cfg = Config(root=tmp_path)
     led = _seed_two_posts(cfg, ["#rap", "#hiphop"], ["#trap", "#bars"])   # adjacent lines differ
-    rows = views_hashtags.rotation_health(led)
+    rows = views_hashtags.rotation_health(led, cfg)
     row = next(r for r in rows if r.account == "a")
     assert row.warn is False
 

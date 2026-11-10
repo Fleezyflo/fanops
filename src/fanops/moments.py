@@ -705,8 +705,18 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         else:
             peaks = env_peaks
         segs = list(m.segments) if m.segments else None
-        excerpt = excerpt_for_window(src, cs, ce)
-        if excerpt and excerpt != (m.transcript_excerpt or ""):
+        # The envelope [start, end] covers the gaps. A supercut renders the spans.
+        rendered = segs if segs and len(segs) >= 2 else None
+        if rendered:
+            excerpt = excerpt_for_window(src, cs, ce, spans=rendered)
+        else:
+            excerpt = excerpt_for_window(src, cs, ce)
+        stored = m.transcript_excerpt or ""
+        if rendered:
+            if excerpt != stored:
+                led.moments[m.id] = m.model_copy(update={"transcript_excerpt": excerpt})
+                m = led.moments[m.id]
+        elif excerpt and excerpt != stored:
             led.moments[m.id] = m.model_copy(update={"transcript_excerpt": excerpt})
             m = led.moments[m.id]
         if not excerpt and retry:
@@ -715,7 +725,7 @@ def request_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None
         personas = _hook_personas_for_moment(m, accounts)
         payload = MomentHookRequest(source_id=source_id, moment_id=m.id, token=m.content_token,
                                     request_id="", start=m.start, end=m.end, reason=m.reason,
-                                    transcript_excerpt=excerpt or m.transcript_excerpt,
+                                    transcript_excerpt=excerpt if rendered else (excerpt or m.transcript_excerpt),
                                     signal_score=m.signal_score,
                                     language=src.language, guidance=guidance,
                                     clip_profile=cfg.clip_profile,
@@ -735,6 +745,23 @@ def _hook_lang_base(text: str) -> str | None:
     if not alpha: return None
     ar = sum(1 for c in text if '\u0600' <= c <= '\u06ff')
     return 'ar' if ar / alpha > 0.4 else 'en'
+
+
+def _hook_script_mismatch(hook: str, src_lang: str) -> bool:
+    """True when the hook script contradicts a source language this detector can name.
+
+    `_hook_lang_base` only splits Arabic vs everything else, and labels the rest `en`.
+    Comparing that label with `!=` to a whisper code (`fr`, `es`, `zh`, …) nulls a Latin
+    hook on every file that is not exactly `en`. `en` and `ar` stay exact. Any other
+    source code: an Arabic-script hook is still a mismatch; a non-Arabic hook is not
+    evidence of English and is kept. A missing source language is handled by the caller."""
+    hook_lang = _hook_lang_base(hook)
+    if hook_lang is None:
+        return False
+    if src_lang in ("ar", "en"):
+        return hook_lang != src_lang
+    return hook_lang == "ar"
+
 
 def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None) -> Ledger:
     """M1b PASS 2 ingest — apply the window-grounded hooks to a source's `picked` moments and promote them
@@ -780,11 +807,9 @@ def ingest_moment_hooks(led: Ledger, cfg: Config, source_id: str, accounts=None)
                      or brand_risk_flag(hook, cfg)):   # HIGH (audit): the burned hook gets the SAME brand-risk screen captions get
             hook_removed = hook
             hook = None                             # ...the clip still ships CLEAN by default
-        if hook:                                    # language gate: hook script must match source language
-            hook_lang = _hook_lang_base(hook)
-            if not src_lang or (hook_lang is not None and hook_lang != src_lang):
-                hook_removed = hook
-                hook = None                         # mismatch or unknown source language → ships CLEAN; Review can restore
+        if hook and (not src_lang or _hook_script_mismatch(hook, src_lang)):
+            hook_removed = hook
+            hook = None                             # unknown language or wrong script → ships CLEAN
         if hook:
             used.add(hook.lower()); cluster_used.add(hook.lower())
             clear_attempts(cfg, "moment_hooks", _hook_gate_key(source_id, m))

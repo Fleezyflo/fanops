@@ -148,6 +148,14 @@ def test_bar_pct_fail_safe():
 
 
 # ── routes render the winner star, lineage chip, delta and micro-bars ──────────────────────────────
+def test_posted_failed_span_shows_error_reason_not_kind_label():
+    from pathlib import Path
+    body = (Path(__file__).resolve().parents[1] / "src/fanops/studio/templates/_posted_panel.html").read_text()
+    assert "operator_error(kind=r.failure_kind)" not in body
+    assert "r.error_reason or 'failed'" in body and "operator_error" in body
+    assert "r.failure_kind | failure_label" in body
+
+
 def test_posted_panel_renders_lineage_and_bars(tmp_path):
     cfg = Config(root=tmp_path)
     _seed_published(cfg, pid="win", clip="clip_1", lift=0.90, hook="SHARED", metrics_extra={"saves": 50})

@@ -5,8 +5,11 @@ import inspect
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from fanops.caption import request_captions
 from fanops.config import Config
+from fanops.errors import ControlFileError
 from fanops.ig_hashtag_scrape import ScrapeUnavailable, search_hashtags_scrape
 from fanops.source_tags import (SOURCE_TAG_LOCKS_NAME, ensure_source_lock, load_source_tag_locks,
                                 lock_ready_sources, source_tag_locks_path)
@@ -71,7 +74,7 @@ def test_siblings_not_on_pile(tmp_path):
     assert not cfg.hashtags_path.exists()
 
 
-def test_produce_lock_caps_twelve_in_shortlist_order(tmp_path):
+def test_produce_lock_caps_twelve_by_play_rank(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     search = {n: [_Hit(n)] for n in names}
@@ -81,14 +84,14 @@ def test_produce_lock_caps_twelve_in_shortlist_order(tmp_path):
                        research_fn=lambda _s, _e: names, **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == [f"#t{i}" for i in range(12)]
-    assert rec["lock"] == [f"#t{i}" for i in range(12)]
+    assert rec["lock"] == [f"#t{i}" for i in range(11, -1, -1)]
     assert rec.get("catalog") == [f"#t{i}" for i in range(12)]
     assert rec.get("catalog_at")
     assert "quality_pass" not in rec
     assert "#t15" not in rec["lock"]
 
 
-def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
+def test_produce_lock_follows_play_rank(tmp_path):
     cfg = _cfg(tmp_path)
     client = _SearchClient(
         {"low": [_Hit("low")], "high": [_Hit("high")]},
@@ -101,7 +104,7 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
                        research_fn=lambda *_a: ["low", "high"],
                        **_ok_graph())
     rec = load_source_tag_locks(cfg)["src_1"]
-    assert rec["lock"] == ["#low", "#high"]
+    assert rec["lock"] == ["#high", "#low"]
     assert rec.get("catalog") == ["#low", "#high"]
     assert rec.get("catalog_at")
     assert "quality_pass" not in rec
@@ -109,7 +112,7 @@ def test_produce_lock_follows_shortlist_order_not_play_rank(tmp_path):
 
 def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
     captured = {}
-    envelope = {"structured_output": {
+    envelope = {"structuredOutput": {
         "keep": ["#hiphop", "#inventedslogan", "#rickross"],
         "reject": ["#fyp"]}, "result": "", "session_id": "s"}
 
@@ -119,7 +122,7 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
         stderr = ""
 
     def fake_run(cmd, **kw):
-        captured["prompt"] = kw.get("input") or ""
+        captured["prompt"] = open(cmd[cmd.index("--prompt-file") + 1]).read()
         if "--json-schema" in cmd:
             captured["schema"] = json.loads(cmd[cmd.index("--json-schema") + 1])
         return R()
@@ -141,7 +144,7 @@ def test_shortlist_drops_off_catalog_and_keeps_catalog_order(tmp_path, mocker):
 
 def test_shortlist_empty_catalog_does_not_invent(mocker):
     """Empty catalog is fail-closed: never invent names (skill: never invent)."""
-    envelope = {"structured_output": {"keep": ["#rickross", "#hiphop"], "reject": []},
+    envelope = {"structuredOutput": {"keep": ["#rickross", "#hiphop"], "reject": []},
                 "result": "", "session_id": "s"}
 
     class R:
@@ -188,7 +191,7 @@ def test_slogan_leftover_without_catalog_is_rejudged(tmp_path):
     rec = load_source_tag_locks(cfg)["src_1"]
     assert calls["n"] == 1
     assert rec["pile"] == ["#rickross", "#hiphop"]
-    assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#hiphop", "#rickross"]
     assert rec.get("catalog") == ["#rickross", "#hiphop"]
     assert rec.get("catalog_at")
     assert "quality_pass" not in rec
@@ -223,7 +226,7 @@ def test_unfinished_with_catalog_does_not_reshortlist(tmp_path):
     assert calls["n"] == 0
     rec = load_source_tag_locks(cfg)["src_1"]
     assert rec["pile"] == ["#rickross", "#hiphop"]
-    assert rec["lock"] == ["#rickross", "#hiphop"]
+    assert rec["lock"] == ["#hiphop", "#rickross"]
     assert rec.get("catalog") == ["#rickross", "#hiphop"]
     assert rec.get("catalog_at")
     assert "quality_pass" not in rec
@@ -260,7 +263,7 @@ def test_researched_without_catalog_rejudges(tmp_path):
 
 
 def test_catalog_search_feeds_judge(tmp_path, mocker):
-    envelope = {"structured_output": {
+    envelope = {"structuredOutput": {
         "keep": ["#rickross"],
         "reject": ["#fyp", "#whichwayamifacing"]}, "result": "", "session_id": "s"}
 
@@ -353,7 +356,8 @@ def test_like_only_and_graph_only_out_of_lock(tmp_path):
 
 def test_second_call_is_noop_when_researched_at_present(tmp_path):
     cfg = _cfg(tmp_path)
-    client = _SearchClient({"music": [_Hit("music", id="1")]})
+    client = _SearchClient({"music": [_Hit("music", id="1")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
     calls = {"n": 0}
 
     def research(_s, _e):
@@ -370,6 +374,70 @@ def test_second_call_is_noop_when_researched_at_present(tmp_path):
     assert calls["n"] == 1
     assert client.search_calls == []
     assert json.loads(source_tag_locks_path(cfg).read_text()) == first
+
+
+def test_researched_catalog_still_searches_unmeasured_names(tmp_path):
+    """researched_at does not skip catalog names that have no scrape number and no exact miss."""
+    cfg = _cfg(tmp_path)
+    wallpaper = ["#mohflow", "#newmusic", "#rapmusic", "#hiphop"]
+    catalog = [
+        "#mohflow", "#arabicrap", "#راب_عربي", "#newmusic",
+        "#arabichiphop", "#arabtrap", "#rapmusic", "#arabicmusic",
+        "#موسيقى_عربية", "#اغاني_راب", "#hiphop", "#musicvideo",
+    ]
+    miss = "#راب_عربي"
+    source_tag_locks_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    source_tag_locks_path(cfg).write_text(json.dumps({
+        "src_1": {
+            "pile": list(catalog),
+            "lock": list(wallpaper),
+            "researched_at": "2026-09-05T21:53:58.349106Z",
+            "catalog": list(catalog),
+            "catalog_at": "2026-09-05T21:53:58.349106Z",
+            "measurements": {t: {"play_count": 10.0} for t in wallpaper},
+        }
+    }, ensure_ascii=False))
+    search = {}
+    media = {}
+    for name in catalog:
+        if name in wallpaper:
+            continue
+        query = name[1:]
+        if name == miss:
+            search[query] = []
+        else:
+            search[query] = [_Hit(query)]
+            media[name] = [_Media(1, "", play_count=8)]
+    client = _SearchClient(search, media_by_tag=media)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        return ["nope"]
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    unmeasured = [n for n in catalog if n not in wallpaper]
+    assert client.search_calls == [n[1:] for n in unmeasured]
+    assert calls["n"] == 0
+    from fanops.hashtags import lock_from_pile
+    admitted = [n for n in catalog if n != miss]
+    assert set(rec["lock"]) == set(admitted)
+    assert rec["lock"] == lock_from_pile(admitted, rec["measurements"])
+    assert rec["lock"] != wallpaper
+    assert all(t in rec["lock"] for t in wallpaper)
+    assert miss not in rec["lock"]
+    assert rec.get("exact_miss") == [miss]
+    assert rec["researched_at"]
+    for name in admitted:
+        assert rec["measurements"][name]["play_count"] > 0
+    assert miss not in rec["measurements"]
+    client.search_calls.clear()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    assert calls["n"] == 0
+    assert client.search_calls == []
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == rec["lock"]
+    assert load_source_tag_locks(cfg)["src_1"].get("exact_miss") == [miss]
 
 
 def test_scrape_unavailable_leaves_sidecar_absent(tmp_path):
@@ -502,12 +570,117 @@ def test_search_hashtags_scrape_maps_incomplete_hits():
     assert all("play_count" not in r for r in rows)
 
 
-def test_search_hashtags_scrape_fail_open():
+def test_search_hashtags_scrape_client_error_raises():
+    """RuntimeError from search_hashtags propagates. Was test_search_hashtags_scrape_fail_open."""
     class _Boom:
         def search_hashtags(self, query):
             raise RuntimeError("network")
 
-    assert search_hashtags_scrape(_Boom(), "music") == []
+    try:
+        search_hashtags_scrape(_Boom(), "music")
+    except RuntimeError as exc:
+        assert str(exc) == "network"
+        return
+    raise AssertionError("RuntimeError must propagate out of search_hashtags_scrape")
+
+
+def test_search_runtime_error_leaves_name_for_later_play_count(tmp_path):
+    cfg = _cfg(tmp_path)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays", "later"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")], "later": [_Hit("later")]},
+                media_by_tag={
+                    "#plays": [_Media(1, "", play_count=1)],
+                    "#later": [_Media(1, "", play_count=90)],
+                },
+            )
+            self._broke = False
+
+        def search_hashtags(self, query):
+            if query == "plays" and not self._broke:
+                self._broke = True
+                self.search_calls.append(query)
+                raise RuntimeError("network")
+            return super().search_hashtags(query)
+
+    client = _Client()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("pile") == ["#plays", "#later"]
+    assert rec.get("verified") == []
+    assert rec.get("remaining") == ["#plays", "#later"]
+    assert rec.get("catalog") == ["#plays", "#later"]
+    assert rec.get("catalog_at")
+    assert "researched_at" not in rec
+    assert calls["n"] == 1
+    assert not cfg.hashtags_path.exists()
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    search_fails = [r for r in logged if r.get("outcome") == "search_fail"]
+    assert len(search_fails) == 1
+    assert search_fails[0]["tag"] == "#plays" and search_fails[0]["err"] == "RuntimeError"
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["lock"] == ["#later", "#plays"]
+    assert rec2["measurements"]["#plays"]["play_count"] == 1.0
+    assert rec2["measurements"]["#later"]["play_count"] == 90.0
+    assert rec2.get("researched_at")
+    assert not cfg.hashtags_path.exists()
+
+
+def test_measure_runtime_error_keeps_name_pending(tmp_path):
+    cfg = _cfg(tmp_path)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")]},
+                media_by_tag={"#plays": [_Media(1, "", play_count=9)]},
+            )
+            self._broke = False
+
+        def hashtag_medias_top(self, name, amount=9):
+            if not self._broke:
+                self._broke = True
+                raise RuntimeError("measure down")
+            return super().hashtag_medias_top(name, amount)
+
+    client = _Client()
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("verified") == ["#plays"]
+    assert rec.get("remaining") == ["#plays"]
+    assert "researched_at" not in rec
+    assert calls["n"] == 1
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    fails = [r for r in logged if r.get("outcome") == "measure_fail"]
+    assert len(fails) == 1
+    assert fails[0]["tag"] == "#plays" and fails[0]["err"] == "RuntimeError"
+    assert not any(r.get("outcome") == "stop_dead" for r in logged)
+
+    ensure_source_lock(cfg, _src(), client=client, research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["lock"] == ["#plays"]
+    assert rec2["measurements"]["#plays"]["play_count"] == 9.0
+    assert rec2.get("researched_at")
 
 
 def test_search_hashtags_scrape_reraises_login_required():
@@ -784,12 +957,39 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
     assert seen == ["mark", "wolf"]
 
 
-def test_lock_default_opener_is_open_client():
-    """Default lock opener (open_client_fn is None) is open_client, not open_web_session."""
+def test_lock_default_opener_is_open_client(tmp_path, monkeypatch):
+    """Default lock opener (open_client_fn is None) is open_web_session. An explicit opener still wins."""
+    import inspect
+    from types import SimpleNamespace
+    import fanops.ig_web_scrape as igw
     import fanops.source_tags as st
+    from fanops.ig_safari_shell import reset_safari_tick_slot
+    from fanops.source_tags import _iter_lock_clients
     src = inspect.getsource(st._iter_lock_clients)
-    assert "open_client" in src
-    assert "open_web_session" not in src
+    assert "open_client_fn or open_web_session" in src
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    cfg = _cfg(tmp_path)
+    seen = []
+
+    def fake_open(_cfg, user=None, **_k):
+        seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user=user)
+
+    monkeypatch.setattr(igw, "open_web_session", fake_open)
+    reset_safari_tick_slot()
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=None))
+    assert seen == ["mark"]
+    assert [c._fanops_scrape_user for c in opened] == ["mark"]
+    seen.clear()
+    reset_safari_tick_slot()
+
+    def explicit(_cfg, user=None, **_k):
+        seen.append(user)
+        return SimpleNamespace(_fanops_scrape_user="explicit")
+
+    opened = list(_iter_lock_clients(cfg, client=None, open_client_fn=explicit))
+    assert seen == ["mark"]
+    assert [c._fanops_scrape_user for c in opened] == ["explicit"]
 
 
 
@@ -812,6 +1012,147 @@ def test_lock_walk_marks_safari_tick_slot(tmp_path, monkeypatch):
     lock_ready_sources(cfg, open_client_fn=lambda c, user=None, **k: client,
                        research_fn=lambda *_a: ["music"], **_ok_graph())
     assert safari_tick_slot_claimed() == "lock"
+
+
+def _lock_ready_ledger(tmp_path, monkeypatch):
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark")
+    monkeypatch.setenv("FANOPS_LOCK_TAGS_PER_PASS", "1")
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_1", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_whisper(cfg, "a")
+    return cfg
+
+
+def test_lock_ready_search_fail_resumes_across_ticks(tmp_path, monkeypatch):
+    """First-name search_fail through lock_ready_sources keeps the pile until play_count lands."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _lock_ready_ledger(tmp_path, monkeypatch)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays", "later"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")], "later": [_Hit("later")]},
+                media_by_tag={
+                    "#plays": [_Media(1, "", play_count=1)],
+                    "#later": [_Media(1, "", play_count=90)],
+                },
+            )
+            self._broke = False
+
+        def search_hashtags(self, query):
+            if query == "plays" and not self._broke:
+                self._broke = True
+                self.search_calls.append(query)
+                raise RuntimeError("network")
+            return super().search_hashtags(query)
+
+    client = _Client()
+
+    def opener(_cfg, user=None, **_k):
+        return client
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("pile") == ["#plays", "#later"]
+    assert rec.get("verified") == []
+    assert rec.get("remaining")[0] == "#plays"
+    assert rec.get("remaining") == ["#plays", "#later"]
+    assert rec.get("catalog") == ["#plays", "#later"]
+    assert rec.get("catalog_at")
+    assert "researched_at" not in rec
+    assert calls["n"] == 1
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [r for r in logged if r.get("outcome") == "search_fail"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["measurements"]["#plays"]["play_count"] == 1.0
+    assert "researched_at" not in rec2
+    assert rec2.get("remaining") == ["#later"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec3 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec3["measurements"]["#plays"]["play_count"] == 1.0
+    assert rec3["measurements"]["#later"]["play_count"] == 90.0
+    assert rec3.get("researched_at")
+    assert rec3["lock"] == ["#later", "#plays"]
+
+
+def test_lock_ready_measure_fail_resumes_across_ticks(tmp_path, monkeypatch):
+    """measure_fail through lock_ready_sources stores play_count on the next tick, then stamps."""
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _lock_ready_ledger(tmp_path, monkeypatch)
+    calls = {"n": 0}
+
+    def research(_s, _e):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return ["other"]
+        return ["plays"]
+
+    class _Client(_SearchClient):
+        def __init__(self):
+            super().__init__(
+                {"plays": [_Hit("plays")]},
+                media_by_tag={"#plays": [_Media(1, "", play_count=9)]},
+            )
+            self._broke = False
+
+        def hashtag_medias_top(self, name, amount=9):
+            if not self._broke:
+                self._broke = True
+                raise RuntimeError("measure down")
+            return super().hashtag_medias_top(name, amount)
+
+    client = _Client()
+
+    def opener(_cfg, user=None, **_k):
+        return client
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert rec.get("pile") == ["#plays"]
+    assert rec.get("remaining")[0] == "#plays"
+    assert rec.get("catalog") == ["#plays"]
+    assert rec.get("catalog_at")
+    assert "researched_at" not in rec
+    assert "play_count" not in (rec.get("measurements") or {}).get("#plays", {})
+    assert calls["n"] == 1
+    logged = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [r for r in logged if r.get("outcome") == "measure_fail"]
+
+    reset_safari_tick_slot()
+    lock_ready_sources(cfg, client=None, open_client_fn=opener,
+                       research_fn=research, **_ok_graph())
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert calls["n"] == 1
+    assert rec2["measurements"]["#plays"]["play_count"] == 9.0
+    assert rec2["lock"] == ["#plays"]
+    assert rec2.get("researched_at")
+
+
 def test_lock_ready_sources_at_most_one(tmp_path):
     from fanops.ledger import Ledger
     from fanops.models import Source, SourceState
@@ -935,7 +1276,7 @@ def test_three_verified_names_six_graph_http(tmp_path):
     assert rec["researched_at"]
 
 
-def test_stop_graph_at_twelve_shortlist_order(tmp_path):
+def test_stop_graph_at_twelve_play_rank_lock(tmp_path):
     cfg = _cfg(tmp_path)
     names = [f"t{i}" for i in range(16)]
     client = _SearchClient(
@@ -946,7 +1287,7 @@ def test_stop_graph_at_twelve_shortlist_order(tmp_path):
     ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: names, **graph)
     assert [_norm_tag(t) for t in resolves] == [f"#t{i}" for i in range(12)]
     assert len(measures) == 12
-    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(12)]
+    assert load_source_tag_locks(cfg)["src_1"]["lock"] == [f"#t{i}" for i in range(11, -1, -1)]
 
 
 def _norm_tag(tag):
@@ -1317,7 +1658,7 @@ def test_graph_refused_does_not_wipe_scrape_admits(tmp_path):
     assert "#likes" not in rec["lock"]
 
 
-def test_request_captions_noops_without_researched_at(tmp_path):
+def test_request_captions_opens_without_researched_at(tmp_path):
     from fanops.agentstep import request_path
     from fanops.ledger import Ledger
     from fanops.models import Clip, ClipState, Moment, MomentState, Platform, Source
@@ -1328,7 +1669,7 @@ def test_request_captions_noops_without_researched_at(tmp_path):
                           reason="r", transcript_excerpt="they slept on me", state=MomentState.decided))
     led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.rendered))
     request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
-    assert not request_path(cfg, "captions", "clip_1").exists()
+    assert request_path(cfg, "captions", "clip_1").exists()
     p = source_tag_locks_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({
@@ -1396,6 +1737,48 @@ def test_unattended_lock_walks_budget_tags(tmp_path, monkeypatch):
     assert unfinished
     assert all(r.get("level") != "error" for r in unfinished)
     assert not any(r.get("err") == "scrape_unfinished" for r in recs)
+
+
+def test_unattended_exact_miss_pass_persists_and_advances(tmp_path, monkeypatch):
+    """A pass that only exact-misses must land exact_miss and remaining. The next tick
+    searches the rest of the catalog, not those misses, and does not re-research."""
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setenv("FANOPS_LOCK_TAGS_PER_PASS", "2")
+    names = ["missa", "missb", "hitc", "hitd"]
+    research_calls = {"n": 0}
+    clients = []
+
+    def research(_s, _e):
+        research_calls["n"] += 1
+        return list(names)
+
+    def opener(_cfg, user=None):
+        cli = _SearchClient(
+            {"missa": [], "missb": [], "hitc": [_Hit("hitc")], "hitd": [_Hit("hitd")]},
+            media_by_tag={"#hitc": [_Media(1, "", play_count=8)],
+                          "#hitd": [_Media(1, "", play_count=9)]},
+        )
+        cli._fanops_scrape_user = user
+        clients.append(cli)
+        return cli
+
+    ensure_source_lock(cfg, _src(), research_fn=research, open_client_fn=opener, **_ok_graph())
+    rec = load_source_tag_locks(cfg)["src_1"]
+    assert research_calls["n"] == 1
+    assert clients[-1].search_calls == ["missa", "missb"]
+    assert rec.get("exact_miss") == ["#missa", "#missb"]
+    assert rec.get("remaining") == ["#hitc", "#hitd"]
+    assert not rec.get("researched_at")
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    reset_safari_tick_slot()
+    ensure_source_lock(cfg, _src(), research_fn=research, open_client_fn=opener, **_ok_graph())
+    assert research_calls["n"] == 1
+    assert clients[-1].search_calls == ["hitc", "hitd"]
+    rec2 = load_source_tag_locks(cfg)["src_1"]
+    assert rec2.get("exact_miss") == ["#missa", "#missb"]
+    assert "#missa" not in rec2.get("lock", []) and "#missb" not in rec2.get("lock", [])
+    assert rec2.get("researched_at")
 
 
 def test_lock_tags_per_pass_env_override(tmp_path, monkeypatch):
@@ -1621,3 +2004,164 @@ def test_pool_shortlist_then_scrape_completes(tmp_path):
     shortlist_norm = {f"#{n}" for n in shortlist}
     assert set(rec["lock"]) <= shortlist_norm
     assert rec.get("catalog") == [f"#{n}" for n in shortlist]
+
+
+_KEPT = {
+    "src_other": {
+        "pile": ["#kept"],
+        "lock": ["#kept"],
+        "researched_at": "2026-01-01T00:00:00Z",
+        "catalog": ["#kept"],
+        "catalog_at": "2026-01-01T00:00:00Z",
+    }
+}
+
+
+def _plant_other(cfg):
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(_KEPT))
+    return p
+
+
+def test_missing_sidecar_reads_empty_and_ships_stored_caption(tmp_path):
+    from fanops.caption_compose import posted_text_for
+    cfg = _cfg(tmp_path)
+    assert load_source_tag_locks(None) == {}
+    assert not source_tag_locks_path(cfg).exists()
+    assert load_source_tag_locks(cfg) == {}
+    led = _seed_source_with_tags(cfg, "src_1", ["#keep"])
+    post = led.posts["post_src_1"].model_copy(update={"caption": "stored line #keep"})
+    assert posted_text_for(cfg, led, post) == "stored line #keep"
+    assert not source_tag_locks_path(cfg).exists()
+
+
+def test_corrupt_sidecar_does_not_ship_as_a_missing_lock(tmp_path):
+    from fanops.caption_compose import posted_text_for
+    cfg = _cfg(tmp_path)
+    led = _seed_source_with_tags(cfg, "src_1", ["#keep"])
+    post = led.posts["post_src_1"].model_copy(update={"caption": "stored line #keep"})
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{")
+    with pytest.raises(ControlFileError):
+        posted_text_for(cfg, led, post)
+    assert p.read_text() == "{"
+
+
+def test_corrupt_or_non_object_sidecar_is_not_empty_and_not_replaced(tmp_path):
+    from fanops.source_tags_sidecar import _stamp_source
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    for body in ("{", "[]", "null"):
+        p.write_text(body)
+        with pytest.raises(ControlFileError):
+            load_source_tag_locks(cfg)
+        with pytest.raises(ControlFileError):
+            _stamp_source(cfg, {}, "src_1", ["#music"], ["#music"],
+                          catalog=["#music"], catalog_at="2026-01-02T00:00:00Z")
+        with pytest.raises(ControlFileError):
+            ensure_source_lock(cfg, _src(), research_fn=lambda *_a: ["music"])
+        assert p.read_text() == body
+
+
+def test_unreadable_sidecar_is_not_empty_and_not_replaced(tmp_path):
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = json.dumps(_KEPT)
+    p.write_text(body)
+    p.chmod(0)
+    called = {"n": 0}
+
+    def research(*_a):
+        called["n"] += 1
+        return ["music"]
+
+    try:
+        with pytest.raises(ControlFileError):
+            load_source_tag_locks(cfg)
+        with pytest.raises(ControlFileError):
+            ensure_source_lock(cfg, _src(), research_fn=research)
+        assert called["n"] == 0
+    finally:
+        p.chmod(0o644)
+    assert p.read_text() == body
+
+
+def test_stamp_source_merges_into_latest_sidecar(tmp_path):
+    from fanops.source_tags_sidecar import _stamp_source
+    cfg = _cfg(tmp_path)
+    p = _plant_other(cfg)
+    stale: dict = {}
+    _stamp_source(cfg, stale, "src_1", ["#music"], ["#music"],
+                  catalog=["#music"], catalog_at="2026-01-02T00:00:00Z")
+    table = json.loads(p.read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert table["src_1"]["lock"] == ["#music"]
+    assert table["src_1"]["researched_at"]
+    assert "src_other" not in stale
+
+
+def test_ensure_source_lock_does_not_clobber_a_stamp_during_scrape(tmp_path):
+    cfg = _cfg(tmp_path)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+
+    class _Plant(_SearchClient):
+        def search_hashtags(self, query):
+            _plant_other(cfg)
+            return super().search_hashtags(query)
+
+    planted = _Plant(client.search_by_query, media_by_tag=client.media_by_tag)
+    ensure_source_lock(cfg, _src(), client=planted, research_fn=lambda *_a: ["music"])
+    table = json.loads(source_tag_locks_path(cfg).read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert table["src_1"]["lock"] == ["#music"]
+    assert table["src_1"]["researched_at"]
+
+
+def test_unfinished_scrape_does_not_clobber_a_stamp_during_the_walk(tmp_path, monkeypatch):
+    from fanops.fanops_hashtags import reset_safari_tick_slot
+    cfg = _cfg(tmp_path)
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    names = [f"t{i}" for i in range(5)]
+
+    def opener(_cfg, user=None):
+        _plant_other(cfg)
+        cli = _SearchClient({n: [_Hit(n)] for n in names},
+                            media_by_tag={f"#{n}": [_Media(1, "", play_count=8)] for n in names})
+        cli._fanops_scrape_user = user
+        return cli
+
+    reset_safari_tick_slot()
+    try:
+        ensure_source_lock(cfg, _src(), research_fn=lambda *_a: names, open_client_fn=opener)
+    finally:
+        reset_safari_tick_slot()
+    table = json.loads(source_tag_locks_path(cfg).read_text())
+    assert table["src_other"]["lock"] == ["#kept"]
+    assert table["src_other"]["researched_at"] == "2026-01-01T00:00:00Z"
+    assert not table["src_1"].get("researched_at")
+    assert table["src_1"].get("verified")
+
+
+def test_stamp_refuses_when_scrape_leaves_the_sidecar_corrupt(tmp_path):
+    cfg = _cfg(tmp_path)
+    p = source_tag_locks_path(cfg)
+    client = _SearchClient({"music": [_Hit("music")]},
+                           media_by_tag={"#music": [_Media(1, "", play_count=8)]})
+
+    class _Tear(_SearchClient):
+        def search_hashtags(self, query):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("{")
+            return super().search_hashtags(query)
+
+    torn = _Tear(client.search_by_query, media_by_tag=client.media_by_tag)
+    with pytest.raises(ControlFileError):
+        ensure_source_lock(cfg, _src(), client=torn, research_fn=lambda *_a: ["music"])
+    assert p.read_text() == "{"

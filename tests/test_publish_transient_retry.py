@@ -27,6 +27,20 @@ def _queued(cfg, pid="p1", cid="c1", *, sub=None):
                           submission_id=sub))
 
 
+def test_never_sent_transport_classifies():
+    # Defect D1: never-established vs maybe-sent. ReadTimeout is transient AND maybe-sent.
+    from fanops.post.publish_errors import _is_never_sent_transport
+    assert _is_never_sent_transport(_rq.exceptions.ConnectTimeout("connect timed out")) is True
+    refused = (
+        "HTTPSConnectionPool(host='127.0.0.1', port=5000): Max retries exceeded with url: "
+        "/api/v1/posts (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection "
+        "object>: Failed to establish a new connection: [Errno 61] Connection refused'))"
+    )
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError(refused)) is True
+    assert _is_never_sent_transport(_rq.exceptions.ConnectionError("dropped")) is False
+    assert _is_never_sent_transport(_rq.exceptions.ReadTimeout("read timed out")) is False
+
+
 def test_is_transient_publish_error_classifies():
     assert _is_transient_publish_error(_rq.exceptions.ConnectionError("dropped")) is True
     assert _is_transient_publish_error(_rq.exceptions.Timeout("timed out")) is True
@@ -38,7 +52,7 @@ def test_is_transient_publish_error_classifies():
 
 
 def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkeypatch, mocker):
-    # ConnectionError during media ensure → retry → exhausted → failed (re-queueable), NOT needs_reconcile.
+    # ConnectionError during media ensure → retry → exhausted → queued (never-sent), NOT failed.
     _live_zernio(monkeypatch)
     cfg = Config(root=tmp_path)
     _queued(cfg)
@@ -53,8 +67,10 @@ def test_transient_upload_retries_then_lands_failed_requeueable(tmp_path, monkey
     mocker.patch("requests.post", side_effect=_post)
     _publish_one(cfg, "p1", "zernio")
     p = Ledger.load(cfg).posts["p1"]
-    assert p.state is PostState.failed, f"expected failed (re-queueable), got {p.state}"
-    assert "connection" in (p.error_reason or "").lower() or "publish failed" in (p.error_reason or "").lower()
+    assert p.state is PostState.queued, f"expected queued, got {p.state}"
+    assert p.error_kind is None
+    assert p.daemon_transient_retry == 0
+    assert (p.error_reason or "").startswith("publish deferred:")
     assert calls["n"] == run._PUBLISH_TRANSIENT_MAX   # retried to exhaustion
 
 

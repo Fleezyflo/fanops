@@ -174,18 +174,24 @@ def stage_inbox_candidates(cfg: Config, *, origin: str = "drop",
                            origin_kind: Literal["native", "third_party"] = "native",
                            inbox: Path | None = None, batch_id: str | None = None,
                            origin_paths: set[Path] | None = None) -> StagedInbox:
-    """Lock-free ingest staging: scan inbox, hash+copy+probe each candidate — NO ledger flock held."""
+    """Lock-free ingest staging: scan inbox, hash+copy+probe each candidate — NO ledger flock held.
+    Skips this box's `.ingested` archive and a child `.pull` URL stage. The pull scanner passes
+    `inbox=.pull` and is the only catalogue of that tree."""
     cfg.sources.mkdir(parents=True, exist_ok=True)
     box = (inbox or cfg.inbox); box.mkdir(parents=True, exist_ok=True)
     _sweep_partials(box, cfg)
     counts = IngestCounts()
     archive = _archive_dir(box).resolve()
+    # Native rglob matches dot dirs. `.pull` is the URL stage (peer of `.ingested`), not a drop.
+    # When box IS that stage, this path is a nested `box/.pull` and the pull's own files still match.
+    pull_stage = (box / _PULL_STAGE).resolve()
     candidates: list[StagedCandidate] = []
     archive_paths: list[Path] = []
     for f in sorted(box.rglob("*")):
         if f.is_symlink() or not f.is_file() or f.name == ".gitkeep" or f.suffix.lower() not in MEDIA_EXT:
             continue
-        if archive in f.resolve().parents:
+        resolved = f.resolve()
+        if archive in resolved.parents or pull_stage in resolved.parents:
             continue
         if is_excluded(f.name):
             counts.excluded += 1; get_logger(cfg)("ingest", f.name, "pii_excluded")

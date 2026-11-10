@@ -8,7 +8,7 @@ import pytest
 from fanops.config import Config
 from fanops.errors import PostizAuthError
 from fanops.ledger import Ledger
-from fanops.models import ErrorKind, Post, Platform, PostState
+from fanops.models import Clip, ClipState, ErrorKind, Post, Platform, PostState
 from fanops.post.postiz import (PostizPoster, build_postiz_payload, postiz_upload_media,
                                 postiz_list_integrations, postiz_check_auth, PostizIntegration,
                                 _extract_postiz_id, rewrite_media_base, _mirror_media_to_r2)
@@ -279,6 +279,30 @@ def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocke
     post_mock.assert_not_called()
     assert led.posts["p1"].state is PostState.submitted
     assert led.posts["p1"].submission_id == "postiz_existing"
+
+
+def test_postiz_connecttimeout_no_existing_stays_queued(tmp_path, monkeypatch, mocker):
+    # Defect D1: Postiz POST ConnectTimeout + empty GET /posts raises into `_publish_one` → queued.
+    import requests as _rq
+    from fanops.post.run import _publish_one
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    cfg = _cfg(tmp_path, monkeypatch)
+    f = cfg.clips / "c1.mp4"; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="intg_1",
+                          platform=Platform.instagram, caption="fire", state=PostState.queued,
+                          post_type="post", created_at="2026-07-16T13:31:00Z",
+                          media_urls=["https://uploads.postiz.com/x.mp4"],
+                          scheduled_time="2020-01-01T00:00:00Z", public_url="dryrun://p1"))
+    mocker.patch("requests.post", side_effect=_rq.exceptions.ConnectTimeout("timed out"))
+    _integrations_get(mocker)
+    _publish_one(cfg, "p1", "postiz")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None
+    assert (p.error_reason or "").startswith("publish deferred:")
+    assert not p.submission_id
 
 
 def test_publish_timeout_dedup_adopts_not_needs_reconcile(tmp_path, monkeypatch, mocker):

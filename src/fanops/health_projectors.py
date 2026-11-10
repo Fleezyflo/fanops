@@ -177,6 +177,19 @@ def project_deps_from_rows(rows: list) -> list[DepHealth]:
     return out
 
 
+def sending_backend_label(cfg: Config, deps: list[DepHealth]) -> str:
+    """The backend that will actually send — cfg.effective_publish_mode (per-channel live-ready
+    providers, not the legacy FANOPS_POSTER) — with each sending provider's DepHealth detail when
+    that row is not ok. A snapshot-unknown `deps` row annotates every sending provider."""
+    mode = cfg.effective_publish_mode()
+    if not cfg.is_live:
+        return mode
+    bad = {d.name: d.detail for d in deps if not d.ok}
+    unknown = bad.get("deps")
+    return ", ".join(f"{p} ({bad[p]})" if p in bad else f"{p} ({unknown})" if unknown else p
+                     for p in mode.split(", "))
+
+
 def project_prometheus_health(
     report: HealthReport,
     *,

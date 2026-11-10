@@ -28,6 +28,9 @@ def test_is_secret_env_key_global_and_per_handle():
     assert secret_provider.is_secret_env_key("ZERNIO_API_KEY")
     assert secret_provider.is_secret_env_key("META_GRAPH_TOKEN")
     assert secret_provider.is_secret_env_key("META_GRAPH_TOKEN__STAN")
+    assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD")
+    assert secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_PASSWORD_PERCA_LATE")
+    assert not secret_provider.is_secret_env_key("FANOPS_IG_SCRAPE_USER")
     assert not secret_provider.is_secret_env_key("POSTIZ_URL")
     assert not secret_provider.is_secret_env_key("FANOPS_LIVE")
 

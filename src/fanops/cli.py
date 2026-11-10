@@ -955,19 +955,16 @@ def _check_preflight(cfg: Config) -> int:
     do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
     returns 0 clean, else prints an actionable line to stderr and returns 2.
 
-      - The LLM CLI is not on PATH: gates are answered ONLY by the LLM (the manual responder was
-        retired), so the responder shells `claude -p`; without the binary every gate raises
-        ToolchainMissingError and stays pending -> zero content. Hard exit 2 with an install +
-        `claude login` pointer — ALWAYS (empty/unset FANOPS_RESPONDER resolves to llm too). (AUTH NOTE
-        2026-06-04: the responder uses the operator's EXISTING `claude` subscription/login — plain
-        `claude -p`, NOT `--bare`, so it rides the OAuth/keychain session, NOT an API key. We require
-        `claude` PRESENT + logged in, NOT `ANTHROPIC_API_KEY`. A true login check needs a network call,
-        so we hard-block only on the binary's ABSENCE and otherwise point the operator at `claude login`.)
+      - `grok` (`cfg.llm_cli_binary`) is not on PATH: gates are answered ONLY by the LLM (the
+        manual responder was retired). Without the binary, reachable gates raise
+        ToolchainMissingError and stay pending -> zero content. Hard exit 2 with an install +
+        `grok login` pointer (empty/unset FANOPS_RESPONDER resolves to llm too). Login is the
+        grok session file, not an API key; also probes `grok models`.
 
       - FANOPS_RESPONDER set to anything but 'llm' (or unset): HARD REFUSE — there is no manual mode to
         fall back to, so a bad value must fail loudly rather than silently stop answering gates."""
     import shutil
-    from fanops.llm import _CURSOR_SUPPORTS_VISION
+    from fanops.llm import grok_models_ok
     problems = []
     try:
         cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; else raises)
@@ -976,21 +973,14 @@ def _check_preflight(cfg: Config) -> int:
     cli_bin = cfg.llm_cli_binary
     if shutil.which(cli_bin) is None:
         # ALWAYS fail closed: gates are answered only by the LLM, so a missing CLI produces zero content.
-        if cli_bin == "cursor-agent":
-            problems.append(
-                "`cursor-agent` is not on PATH — the autonomous responder shells `cursor-agent -p` to "
-                "answer every gate. Install Cursor CLI on this host, or set LLM transport to claude in "
-                "Studio Go-Live (the single switch).")
-        else:
-            problems.append(
-                "`claude` is not on PATH — the autonomous responder shells `claude -p` using your existing "
-                "Claude subscription to answer every gate. Install Claude Code and run `claude login` on "
-                "this host (no API key needed).")
-    if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
         problems.append(
-            "FANOPS_LLM_TRANSPORT=cursor but cursor-agent cannot run vision-grounded gates — "
-            "set LLM transport to claude in Studio Go-Live (single switch; transport is absolute, "
-            "no silent claude fallback).")
+            "`grok` is not on PATH — the autonomous responder shells `grok --no-auto-update` to "
+            "answer every gate. Install Grok CLI and run `grok login` on this host (session file, "
+            "no API key).")
+    elif not grok_models_ok():
+        problems.append(
+            "`grok models` failed — grok is on PATH but not logged in. Run `grok login` "
+            "(session file, no API key).")
     _raw_poster = (cfg.poster_backend_raw or "").strip().lower()
     if _raw_poster == "postiz" and (cfg.postiz_url is None or cfg.postiz_api_key is None):
         miss = " and ".join(n for n, v in (("POSTIZ_URL", cfg.postiz_url),
@@ -1070,9 +1060,10 @@ def cmd_run(cfg: Config, args) -> int:
             try:
                 with fail_open("run.ensure_keeper_loaded"):
                     daemon.ensure_keeper_loaded(cfg)        # keeper cannot reload itself when unloaded
+                from fanops.health import refresh_runtime_snapshots
+                refresh_runtime_snapshots(cfg)
                 if (s := _cmd_run_pass(cfg, base_time)) is not None:
                     _heartbeat(cfg, s, origin="loop"); print(s)
-                    from fanops.health import refresh_runtime_snapshots
                     refresh_runtime_snapshots(cfg)
             except RunBusyError as e:
                 print(str(e), file=sys.stderr)   # skip this tick; next --interval retries
@@ -1212,7 +1203,7 @@ def cmd_retire_source(cfg: Config, args) -> int:
         line = json.dumps({"source_id": args.source_id, **preview}, indent=2)
     else:
         snap = Ledger.snapshot(cfg)
-        if not ledger_wipe.snapshot_is_restorable(snap):
+        if not ledger_wipe.snapshot_is_restorable(snap, cfg):
             get_logger(cfg)("retire-source", args.source_id, "refused_snapshot_unrestorable",
                             snapshot=str(snap))
             return 2

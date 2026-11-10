@@ -8,6 +8,7 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import requests
 from fanops.config import Config
 from fanops.accounts import Account, AccountStatus, Accounts
 from fanops.errors import redact
@@ -46,8 +47,13 @@ _PUBLISH_TRANSIENT_MAX = 3   # MOL-115: bounded retry for pre-send / upload tran
 # Report 11 §5: reconcile_candidate_id rides here for ONE reason — a poster writes it on the throwaway
 # network ledger, so without it in this union the write is silently DISCARDED at finalize and the operator
 # loses the only pointer a 409 handed back. It is propagation only; run.py never reads or acts on it.
+# sent_content rides for the same reason: the poster stamps the exact vendor `content` on that throwaway
+# post. Without this field, finalize drops the stamp and the committed ledger never records what was sent.
+# publish_hour / publish_dow are stamped on that same throwaway post at the submitted->published
+# promotion. Omit them and a permalink-on-create publish stays unranked by timing_bias.
 _NET_POST_FIELDS = ("state", "submission_id", "error_reason", "error_kind", "daemon_transient_retry",
-                    "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id")
+                    "public_url", "media_urls", "published_at", "account_id", "reconcile_candidate_id",
+                    "sent_content", "publish_hour", "publish_dow")
 
 # Sprint 2: per-(backend, integration) publish throttle — in-process only (daemon is single-process).
 _publish_throttle_last: dict[tuple[str, str], float] = {}
@@ -209,6 +215,16 @@ def _non_active_row(accounts: Accounts | None, handle: str) -> Account | None:
     return None
 
 
+def _note_queued_skip(cfg: Config, post: Post, reason: str) -> None:
+    """A due row publish leaves queued records why: error_reason only, state stays queued."""
+    if post.error_reason == reason:
+        return
+    with Ledger.transaction(cfg) as led:
+        p = led.posts.get(post.id)
+        if p is not None and p.state is PostState.queued:
+            led.set_post_state(post.id, PostState.queued, error_reason=reason)
+
+
 def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts | None" = None,
                  account_id: str | None = None,
                  _tally: dict | None = None, due_cutoff: datetime | None = None) -> str | None:
@@ -228,6 +244,7 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
         _unclaim_no_integration(cfg, post_id, pre, unclaim=False)
+        _note_queued_skip(cfg, pre, f"publish skipped: no {backend} integration id for this channel")
         if _tally is not None:
             _tally["no_integration_id"] = _tally.get("no_integration_id", 0) + 1
         return None
@@ -259,6 +276,8 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         # two production producers — publish_due, publish_post — always pass it.)
         if accounts is not None and accounts.channel_provider_if_ready(post.account, post.platform) is None:
             get_logger(cfg)("publish", post_id, "skip_not_live_ready", account=post.account, platform=post.platform.value)
+            led.set_post_state(post_id, PostState.queued, error_reason=(
+                f"publish skipped: {backend} channel not live-ready (provider credentials missing)"))
             if _tally is not None:
                 _tally["not_live_ready"] = _tally.get("not_live_ready", 0) + 1
             return None                                # leave it `queued` — reconcile is not available for this channel
@@ -271,6 +290,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         # skipped count, WITHOUT a republish action.)
         if is_real_submission_id(post.submission_id):
             get_logger(cfg)("publish", post_id, "skip_resubmit_existing_id", sub=post.submission_id)
+            led.set_post_state(post_id, PostState.queued, error_reason=(
+                f"publish skipped: already submitted as {post.submission_id} — never re-sent; "
+                "reconcile resolves it"))
             if _tally is not None:
                 _tally["skip_resubmit_existing_id"] = _tally.get("skip_resubmit_existing_id", 0) + 1
             return None                                # leave it `queued` — never claimed, never stranded
@@ -351,10 +373,11 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
                                            error_reason="publish transient error (retries exhausted): " + red)
                         post = led.posts[post_id]
                     else:
-                        # MOL-812: retry count lives on Post.daemon_transient_retry — error_reason is prose only.
-                        led.set_post_state(post_id, PostState.failed, error_kind=ErrorKind.transient,
-                                           error_reason="publish failed: " + red)
+                        led.set_post_state(post_id, PostState.queued, error_kind=None,
+                                           error_reason="publish deferred: " + red)
                         post = led.posts[post_id]
+                        if _tally is not None and isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                            _tally["vendor_unreachable"] = 1
                 else:
                     kind = ErrorKind.bad_payload if isinstance(exc, ValueError) else ErrorKind.unknown
                     led.set_post_state(post_id, PostState.failed, error_kind=kind, error_reason=(
@@ -475,16 +498,21 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         if provider is None:                           # live but the channel has no provider -> skip, leave queued
             no_provider += 1
             log("publish", post.id, "no_provider", account=post.account, platform=post.platform.value)
+            _note_queued_skip(cfg, post, "publish skipped: live, but this channel has no provider")
             continue
         if provider == "dryrun":                       # dryrun-boundary (Finding #1): NOT live -> no real backend to
             not_distributed += 1                       # distribute to — preview sidecar only, post stays `queued`
             _handle_dryrun_boundary(cfg, post)
+            _note_queued_skip(cfg, post, "publish skipped: dryrun (not live) — preview written, nothing sent")
             continue
         acct_id = _resolve_publish_account_id(accounts, post, cfg=cfg)   # #10: cfg breadcrumbs a frozen-id fallback
         key = (provider, (acct_id or post.account_id or "").strip() or "_")
-        if key in tripped:
+        if key in tripped or (provider, "*") in tripped:
             log("publish", post.id, "skip_rate_limited_circuit",
                 account=post.account, platform=post.platform.value)
+            _note_queued_skip(cfg, post, f"publish skipped: {provider} " + (
+                "rate-limited (429) this integration" if key in tripped else "unreachable")
+                + " earlier this pass — retried next pass")
             continue
         tally: dict = {}
         if _publish_one(cfg, post.id, provider, accounts=accounts, account_id=acct_id,
@@ -492,6 +520,8 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
             published += 1
         if tally.get("rate_limited"):
             tripped.add(key)
+        if tally.get("vendor_unreachable"):
+            tripped.add((provider, "*"))
         no_integration_id += tally.get("no_integration_id", 0)
         skipped_existing_id += tally.get("skip_resubmit_existing_id", 0)   # RC-1/S03: refused-at-claim, left queued
         not_live_ready += tally.get("not_live_ready", 0)                   # RC-3b/S07: cred-less channel, left queued

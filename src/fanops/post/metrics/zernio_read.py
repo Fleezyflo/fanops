@@ -444,8 +444,10 @@ class ZernioStatusClient:
         status = _ZERNIO_STATE_MAP.get(_extract_zernio_state(body).strip().lower(), "scheduled")
         out = {"status": status}
         if status == "failed":
-            msg = poster_fail_reason(body.get("errorMessage"), body.get("error"),
-                                     body.get("message"))
+            plat = _zernio_platform_rows(body)
+            msg = poster_fail_reason(
+                body.get("errorMessage"), body.get("error"), body.get("message"),
+                *[p.get(k) for p in plat for k in ("errorMessage", "error", "message")])
             if msg:
                 out["errorMessage"] = msg
         if status == "published":

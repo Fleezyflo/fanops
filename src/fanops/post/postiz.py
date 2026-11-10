@@ -27,6 +27,7 @@ from fanops.config import Config
 from fanops.errors import PostizAuthError, redact
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Platform, PostState, error_kind_for_http_status
+from fanops.post.publish_errors import _is_never_sent_transport
 from fanops.text import safe_public_url
 
 _log = logging.getLogger("fanops.post.postiz")
@@ -572,6 +573,8 @@ class PostizPoster:
                 existing_sid, existing_raw = self._existing_submission_for_payload(post, payload)
                 if existing_sid:
                     return self._adopt_submission(led, post_id, existing_sid, existing_raw)
+                if _is_never_sent_transport(exc):
+                    raise
                 # Body may have landed on Postiz (the response, not the request, was lost) — ambiguous,
                 # park for reconcile, never re-POST into a possible second live post.
                 led.set_post_state(post_id, PostState.needs_reconcile,

@@ -3375,64 +3375,64 @@
    },
    "framing_py": {
     "_SIDECAR_V": {
-     "value": 5,
-     "line": 17
+     "value": 6,
+     "line": 22
     },
     "_KF_COUNT": {
      "value": 5,
-     "line": 18
+     "line": 23
     },
     "_KF_WIDTH": {
      "value": 960,
-     "line": 19
+     "line": 24
     },
     "_MIN_CONF": {
      "value": 0.34,
-     "line": 21
+     "line": 26
     },
     "_SCORE_THRESH": {
      "value": 0.6,
-     "line": 22
+     "line": 27
     },
     "_MODEL": {
      "value": "yunet_2023mar.onnx",
-     "line": 23
+     "line": 28
     },
     "_DETECT_V": {
-     "value": 2,
-     "line": 124
-    },
-    "_DETECT_FPS": {
-     "value": 4.0,
-     "line": 125
-    },
-    "_PHANTOM_QUALITY_RATIO": {
-     "value": 0.3,
-     "line": 256
+     "value": 4,
+     "line": 160
     },
     "_ASD_FPS": {
      "value": 9.0,
-     "line": 293
+     "line": 161
+    },
+    "_FRAMING_GRID_FPS": {
+     "value": 9.0,
+     "line": 162
+    },
+    "_PHANTOM_QUALITY_RATIO": {
+     "value": 0.3,
+     "line": 308
     },
     "_ASD_HOLD_S": {
      "value": 0.35,
-     "line": 295
+     "line": 392
     },
     "_ASD_RATIO": {
      "value": 1.2,
-     "line": 297
+     "line": 394
     },
     "_ASD_SAME_TOL": {
      "value": 0.08,
-     "line": 298
+     "line": 395
     },
     "_ASD_SIDE_SPLIT": {
      "value": 0.5,
-     "line": 299
+     "line": 396
     },
     "_ASD_MIN_SEG_S": {
      "value": 1.5,
-     "line": 300
+     "line": 397
     }
    },
    "correction": "CYCLE-1 wrongly reported _FACE_FRAC_*/_EYELINE_FRAC/_ZOOM_*/_TARGETS/_REFRAME_GEOM_V as UNKNOWN. They live in clip.py, not framing.py. Now resolved."

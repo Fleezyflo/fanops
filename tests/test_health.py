@@ -2,6 +2,8 @@
 (not discovered later via a buried downstream error).
 subprocess/HTTP are mocked; these prove the health verdicts, never a real Docker/Postiz."""
 import os
+import signal
+import subprocess
 import types
 from pathlib import Path
 from fanops.config import Config
@@ -32,8 +34,8 @@ def _cfg(tmp_path, monkeypatch, **env):
     return Config(root=tmp_path)
 
 
-class _Run:
-    """A fake subprocess.run: records every command, returns a chosen returncode keyed by a substring."""
+class _Popen:
+    """A fake subprocess.Popen: records every command, returncode keyed by a substring."""
     def __init__(self, codes=None):
         self.calls = []
         self.codes = codes or {}
@@ -43,17 +45,17 @@ class _Run:
         for prefix, c in self.codes.items():
             if prefix in " ".join(cmd):
                 code = c
-        return types.SimpleNamespace(returncode=code, stdout=b"", stderr=b"")
-
-    def joined(self):
-        return [" ".join(c) for c in self.calls]
+        inst = types.SimpleNamespace(pid=4242, returncode=code)
+        inst.communicate = lambda timeout=None: (b"", b"")
+        inst.wait = lambda: code
+        return inst
 
 
 # ---------------------------------------------------------------- per-dependency verdicts ----
 def test_docker_health_up(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
     _docker_on_path(tmp_path, monkeypatch, rc=0)
-    monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 0}))
+    monkeypatch.setattr(health.subprocess, "Popen", _Popen({"docker info": 0}))
     h = health._docker_health()
     assert h.name == "docker" and h.ok is True
 
@@ -61,8 +63,30 @@ def test_docker_health_up(tmp_path, monkeypatch):
 def test_docker_health_down(tmp_path, monkeypatch):
     _cfg(tmp_path, monkeypatch)
     _docker_on_path(tmp_path, monkeypatch, rc=1)
-    monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 1}))
+    monkeypatch.setattr(health.subprocess, "Popen", _Popen({"docker info": 1}))
     assert health._docker_health().ok is False
+
+
+def test_docker_health_timeout_reap(tmp_path, monkeypatch):
+    _cfg(tmp_path, monkeypatch)
+    _docker_on_path(tmp_path, monkeypatch, rc=0)
+    killed, waited = [], []
+    class _Hung:
+        pid = 4242
+        returncode = None
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(["docker", "info"], timeout)
+        def wait(self):
+            waited.append(self.pid)
+            self.returncode = -9
+            return -9
+    monkeypatch.setattr(health.subprocess, "Popen", lambda *a, **k: _Hung())
+    monkeypatch.setattr(health.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    h = health._docker_health()
+    assert h.ok is False
+    assert h.detail == "TimeoutExpired"
+    assert killed == [(4242, signal.SIGKILL)]
+    assert waited == [4242]
 
 
 def test_docker_health_missing_cli(tmp_path, monkeypatch):
@@ -78,6 +102,7 @@ def test_docker_health_missing_cli(tmp_path, monkeypatch):
 def _mock_probe(monkeypatch, *, status=None, refused=False):
     from fanops.post import postiz as pz
     monkeypatch.setenv("POSTIZ_API_KEY", "test-key")     # so the probe reaches the (mocked) network, not a pre-auth raise
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")        # routed live — creds alone no longer probes
     def _get(*a, **k):
         if refused:
             raise pz.requests.exceptions.ConnectionError("refused")
@@ -114,6 +139,26 @@ def test_postiz_health_unreachable_on_refused(tmp_path, monkeypatch):
     assert h.ok is False and h.detail == "unreachable"   # no HTTP answer -> unreachable (existing path)
 
 
+def test_postiz_and_docker_skipped_when_creds_but_not_routed(tmp_path, monkeypatch):
+    """POSTIZ_API_KEY set, nothing routed to Postiz: dep rows skip. Do not probe Docker or Postiz."""
+    compose = tmp_path / "compose"
+    compose.mkdir()
+    cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api", POSTIZ_API_KEY="k",
+               FANOPS_POSTIZ_COMPOSE_DIR=str(compose))
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    monkeypatch.delenv("FANOPS_LIVE", raising=False)
+
+    def boom(*a, **k):
+        raise AssertionError("docker/postiz must not be probed when nothing routes to Postiz")
+
+    monkeypatch.setattr(health, "_docker_health", boom)
+    from fanops.post import postiz as pz
+    monkeypatch.setattr(pz, "postiz_health_probe", boom)
+    rows = {d.name: d for d in health.system_health(cfg)}
+    assert rows["postiz"].ok is True and rows["postiz"].detail == "skipped (not routed live)"
+    assert rows["docker"].ok is True and rows["docker"].detail == "skipped (not routed live)"
+
+
 def test_postiz_health_not_configured(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch)                    # no POSTIZ_URL / key
     h = health.postiz_health(cfg)
@@ -123,7 +168,7 @@ def test_postiz_health_not_configured(tmp_path, monkeypatch):
 def test_system_health_lists_docker_postiz_zernio(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path, monkeypatch, POSTIZ_URL="http://localhost:4007/api")
     _docker_on_path(tmp_path, monkeypatch, rc=0)
-    monkeypatch.setattr(health.subprocess, "run", _Run({"docker info": 0}))
+    monkeypatch.setattr(health.subprocess, "Popen", _Popen({"docker info": 0}))
     _mock_probe(monkeypatch, status=200)                 # MOL-61: postiz row now rides the deeper probe
     assert [d.name for d in health.system_health(cfg)] == ["docker", "postiz", "zernio"]
 

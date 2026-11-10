@@ -340,6 +340,43 @@ def test_doctor_does_not_flag_genuine_live(tmp_path, monkeypatch):
     assert coh and coh[0]["ok"] is True                          # genuine live passes the coherence check
 
 
+def test_postiz_banner_docker_timeout_not_mastra(tmp_path, monkeypatch):
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_LIVE", "1"); monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com"); monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    _seed(cfg, [{"handle": "@ig", "account_id": "1", "platforms": ["instagram"], "status": "active"}])
+    _seed_due_postiz_post(cfg)
+    _seed_deps(cfg, [
+        {"name": "docker", "ok": False, "detail": "TimeoutExpired", "status_code": None},
+        {"name": "postiz", "ok": False, "detail": "unreachable", "status_code": None},
+        {"name": "zernio", "ok": True, "detail": "skipped (not configured)", "status_code": None},
+    ])
+    banner = views_common.postiz_health_for_banner(cfg)
+    assert banner.get("show") is True and banner.get("danger") is True
+    hint = banner.get("hint") or ""
+    assert "Docker engine not answering" in hint
+    assert "TimeoutExpired" in hint
+    assert "mastra" not in hint.lower()
+    assert "nginx" not in hint.lower()
+    assert "POSTIZ_OPS.md" not in hint
+
+
+def test_postiz_metrics_connection_error_stops_remaining_ids(tmp_path, monkeypatch, mocker):
+    import requests as _rq
+    from fanops.post.metrics import PostizMetricsClient
+    cfg = _clean(monkeypatch, tmp_path)
+    monkeypatch.setenv("POSTIZ_URL", "https://postiz.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    seen = []
+    def _get(url, **kw):
+        seen.append(url)
+        raise _rq.ConnectionError("down")
+    mocker.patch("fanops.post.metrics.postiz_read.requests.get", side_effect=_get)
+    rows = PostizMetricsClient(cfg, submission_ids=["a", "b"]).list_posts()
+    assert rows == []
+    assert len(seen) == 1
+
+
 def test_postiz_banner_unknown_on_stale_snapshot(tmp_path, monkeypatch):
     """Ancient deps snapshot must show unknown, never silent hide, when a channel routes to postiz."""
     import json

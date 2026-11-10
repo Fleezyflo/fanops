@@ -49,9 +49,41 @@ def test_ensure_up_is_inert_in_tests(monkeypatch):
         called["n"] += 1
         raise AssertionError("subprocess must NOT run during the test suite")
     monkeypatch.setattr(pl.subprocess, "run", boom)
+    monkeypatch.setattr(pl.subprocess, "Popen", boom)
     pl.ensure_up(_cfg("postiz"))          # must not raise, must not call subprocess
     pl.ensure_up(_cfg("dryrun"))
     assert called["n"] == 0
+
+
+def test_ensure_up_runs_script_when_docker_down(tmp_path, monkeypatch):
+    """Cold Docker must not skip ensure — the script starts the daemon. Regression for the
+    _docker_health early return that left a due Postiz publish with the stack down."""
+    script = tmp_path / "postiz-ondemand.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n")
+    monkeypatch.setenv("FANOPS_POSTIZ_ONDEMAND", str(script))
+    monkeypatch.setattr(pl, "_should_autostart", lambda cfg: True)
+    monkeypatch.setattr("fanops.health._docker_health",
+                        lambda: types.SimpleNamespace(ok=False, name="docker", detail="daemon down"))
+    seen: dict = {}
+
+    class _Proc:
+        pid = 4242
+
+        def communicate(self, timeout=None):
+            return b"", b""
+
+        def wait(self):
+            return 0
+
+    def popen(cmd, *a, **k):
+        seen["cmd"] = list(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(pl.subprocess, "Popen", popen)
+    pl.ensure_up(_cfg("postiz"))
+    assert seen["cmd"][0] == "bash"
+    assert seen["cmd"][-1] == "ensure"
+    assert seen["cmd"][1] == str(script)
 
 
 def test_ensure_up_functiondef_only_in_postiz_lifecycle():

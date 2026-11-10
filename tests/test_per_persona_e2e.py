@@ -82,8 +82,10 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
     led = Ledger.load(cfg)
     led.add_source(Source(id="src_1", source_path=str(cfg.sources / "src_1.mp4"),
                           state=SourceState.signalled, duration=60.0, language="en",
-                          transcript=[{"start": 0, "end": 8, "text": "facts matter"},
-                                      {"start": 20, "end": 28, "text": "they started the beef"}],
+                          transcript=[{"start": 0, "end": 8, "text": "facts matter",
+                                       "avg_logprob": -0.2, "compression_ratio": 1.0},
+                                      {"start": 20, "end": 28, "text": "they started the beef",
+                                       "avg_logprob": -0.2, "compression_ratio": 1.0}],
                           signal_peaks=[{"t": 4.0, "kind": "scene_cut", "score": 0.5},
                                         {"t": 24.0, "kind": "scene_cut", "score": 0.8}],
                           meta={"transcribed": True}))
@@ -91,7 +93,7 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
     # PASS 1: per-account gates, owner-attributed picks
     led = request_moments(led, cfg, "src_1", accounts=accts)
     led = _ingest_picks(led, cfg, "src_1", {
-        "trust": [MomentPick(start=0, end=30, reason="credible window", personas=["trust"])],
+        "trust": [MomentPick(start=0, end=8, reason="credible window", personas=["trust"])],
         "drama": [MomentPick(start=20, end=28, reason="rivalry window", personas=["drama"])],
     })
     moms = led.moments_of("src_1")
@@ -101,7 +103,7 @@ def test_per_persona_single_owner_e2e_through_crosspost(tmp_path, mocker, monkey
         assert m.hook is None and m.state is MomentState.picked
 
     # PASS 2: one hook per owner-moment (hook gate sends ONLY the owner)
-    hooks = {"0.00-30.00": "pass on the sensational cut", "20.00-28.00": "who started it though"}
+    hooks = {"0.00-8.00": "pass on the sensational cut", "20.00-28.00": "who started it though"}
     led = _decide_hooks(led, cfg, "src_1", hooks, accts)
     for m in led.moments_of("src_1"):
         assert m.state is MomentState.decided and m.hook

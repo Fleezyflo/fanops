@@ -70,7 +70,8 @@ _STAGE = {
 # poster_backend. dryrun = posts nothing; postiz = free self-hosted (IG/YouTube); zernio = hosted TikTok.
 PosterBackend = Literal["dryrun", "postiz", "zernio"]
 _VALID_BACKENDS = frozenset({"dryrun", "postiz", "zernio"})
-_VALID_LLM_TRANSPORTS = frozenset({"claude", "cursor"})
+_VALID_LLM_TRANSPORTS = frozenset({"grok"})
+_GROK_MODEL_ALIASES = {"opus": "grok-4.6", "sonnet": "grok-4.5"}
 _VALID_RESPONDERS = frozenset({"llm"})
 # Live (real-posting) backends: a per-account backend override pointing at one of these is a real
 # "go live for this account" and must be creds-gated + confirmed, like the global go_live (dryrun isn't).
@@ -133,16 +134,11 @@ def _pick_timeout_aware_model(duration_seconds: float | None, *, chain: tuple[st
     return chain[min(idx + max(0, timeout_attempts), len(chain) - 1)]
 
 def resolve_llm_transport(raw: str | None = None) -> str:
-    """LLM CLI transport: claude (default) or cursor-agent headless. Unknown values warn + fall back.
-    Runtime-lenient; Settings field validators / strict_validate refuse the same set loudly."""
+    """Grok is the only LLM CLI. Leftover FANOPS_LLM_TRANSPORT values are ignored."""
     v = (raw if raw is not None else os.getenv("FANOPS_LLM_TRANSPORT") or "").strip().lower()
-    if not v:
-        return "claude"
-    if v not in _VALID_LLM_TRANSPORTS:
-        _log.warning("ignoring unknown FANOPS_LLM_TRANSPORT=%r (using claude); valid: %s",
-                     v, ", ".join(sorted(_VALID_LLM_TRANSPORTS)))
-        return "claude"
-    return v
+    if v and v != "grok":
+        _log.warning("ignoring FANOPS_LLM_TRANSPORT=%r (grok is the only transport)", v)
+    return "grok"
 
 # THE boolean-word vocabulary for every FANOPS_* flag, declared once. It used to be hand-copied into
 # twenty property bodies below and declared a third time in settings.py — a word added to one copy and
@@ -651,7 +647,7 @@ class Config:
 
     @property
     def llm_cli_binary(self) -> str:
-        return "cursor-agent" if self.llm_transport == "cursor" else "claude"
+        return "grok"
 
     @property
     def llm_model(self) -> str | None:
@@ -661,17 +657,15 @@ class Config:
         return g.strip() if g and g.strip() else None
 
     def llm_model_for(self, kind: str) -> str:
-        # V2 M1/F1: the creative brain stays PINNED (an unpinned `claude -p` drifts with the CLI default).
-        # But the tier is now PER-GATE, not one blanket "opus": the MECHANICAL gate — hashtags-only
-        # `captions` — runs on `sonnet` (fast + plenty for the task). (P11/MOL-152: moment_casting is gone.)
-        # The CREATIVE VISION gates — `moments` (the pass-1 WINDOW picks) and `moment_hooks` (the pass-2
-        # author of the on-screen RETENTION hook, the watch-through driver) — stay on `opus`.
-        # FANOPS_LLM_MODEL forces ONE model for ALL gates (operator escape hatch; set a FULL id
-        # like "claude-opus-4-..." for bit-stable repro). Validate-or-default shape (mirrors clip_profile).
+        # Per-gate grok id. Aliases always apply (opus→grok-4.6, sonnet→grok-4.5). A leftover
+        # FANOPS_LLM_MODEL pin that is not a grok- id maps to the per-gate grok default so it
+        # cannot reach `grok -m`.
         g = self.llm_model
-        if g:
-            return g
-        return _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
+        name = g if g else _GATE_MODEL_DEFAULTS.get(kind, "sonnet")
+        mapped = _GROK_MODEL_ALIASES.get(name, name)
+        if not mapped.startswith("grok-"):
+            return _GROK_MODEL_ALIASES[_GATE_MODEL_DEFAULTS.get(kind, "sonnet")]
+        return mapped
 
     @property
     def artist_name(self) -> str:
@@ -797,8 +791,9 @@ class Config:
         # transcription-accuracy lever for music/rap: the instrumental is what wrecks the lyrics, and
         # removing it turned near-gibberish Arabic into coherent lines + fixed clear English errors on
         # real clips. DEFAULT ON; only the explicit off-words "0"/"false"/"no"/"off" disable it.
-        # Safe to default ON: if demucs/the [asr] extra isn't installed, isolation FAILS OPEN to the
-        # raw audio (today's behavior), so this never breaks a host without Demucs.
+        # When this is on and Demucs is missing, times out, exits nonzero, or leaves no stem,
+        # vocals.isolate_vocals raises ToolchainMissingError. The caller sets the source to error
+        # and does not transcribe the mix.
         return env_bool(os.getenv("FANOPS_ISOLATE_VOCALS"), default=True)
 
     @property

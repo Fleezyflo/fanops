@@ -136,3 +136,16 @@ def test_excerpt_for_window_joins_full_tier_only():
     src2 = Source(id="s2", source_path="/y.mp4", state=SourceState.transcribed, language="en",
                   transcript=[talk_seg(long.strip(), start=0.0, end=10.0)])
     assert len(excerpt_for_window(src2, 0.0, 10.0, max_chars=240)) == 240
+
+
+def test_excerpt_for_window_supercut_spans_omit_gap_speech():
+    """A rendered supercut is the spans, not the envelope. One span keeps the window."""
+    src = Source(id="s1", source_path="/x.mp4", state=SourceState.transcribed, language="en",
+                 transcript=[talk_seg("inside first", start=14.0, end=18.0),
+                             talk_seg("gap bridge", start=20.0, end=34.0),
+                             talk_seg("inside second", start=40.0, end=54.0)])
+    window = excerpt_for_window(src, 14.0, 54.0)
+    assert window == "inside first gap bridge inside second"
+    assert excerpt_for_window(src, 14.0, 54.0, spans=[(14.0, 54.0)]) == window
+    assert excerpt_for_window(src, 14.0, 54.0, spans=[(14.0, 18.0), (40.0, 54.0)]) == (
+        "inside first inside second")

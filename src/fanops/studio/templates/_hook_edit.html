@@ -1,0 +1,35 @@
+{# On-screen hook. Owner-moment: burned into this clip on approval.
+   Re-burn posts the textarea to do_reburn_hook. Regenerate hook re-runs the
+   frame-seeing author (do_regenerate_hook) and uses the same hx-target/hx-swap
+   so the column and the feed refresh hook, tags, sentence, and the player. #}
+{% if s.editable %}
+{% if focus_edit %}
+{% set _hx_target = '#review-body' %}
+{% set _hx_swap = 'outerHTML' %}
+{% set _scope = dict(view='account', account=active, focus=1, fi=focus_idx, batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), offset=pivot_page.offset if pivot_page else none) %}
+{% endif %}
+{% if regen_hook_note is defined and regen_hook_note and regen_hook_note.post_id == s.post_id %}
+<div class="result ok">Regenerated — the new hook is in the box below. Re-burn it, or regenerate again for another take.</div>
+{% endif %}
+{% if reburn_note is defined and reburn_note and reburn_note.post_id == s.post_id and not reburn_note.hook_burned %}
+<div class="result err">Hook saved, but ffmpeg couldn't burn it on screen (no libass / nothing burnable) — this surface ships CLEAN. Install libass to burn the text.</div>
+{% endif %}
+{% if focus_edit %}
+<form class="hook-edit" hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id, **_scope) }}" hx-target="{{ _hx_target }}" hx-swap="{{ _hx_swap }}">
+{% else %}
+<form class="hook-edit" hx-post="{{ url_for('do_reburn_hook', post_id=s.post_id, account=(active if active is defined else none), batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=(compact_param if compact_param is defined else none), offset=(page.offset if page is defined else none)) }}" hx-target="{{ hook_target if hook_target is defined else '#edit-' ~ s.post_id }}" hx-swap="outerHTML"{% if hook_scope is defined %} hx-vals='{"swap": {{ hook_scope|tojson }}}'{% endif %}>
+{% endif %}
+  <label for="hook-{{ s.post_id }}">On-screen hook <span class="muted">(burned into this clip on approval)</span></label>
+  <textarea id="hook-{{ s.post_id }}" name="hook" rows="2">{{ s.variant_hook or '' }}</textarea>
+  <button type="submit">Re-burn text</button>
+</form>
+{% if focus_edit %}
+<form class="hook-regen" hx-post="{{ url_for('do_regenerate_hook', post_id=s.post_id, **_scope) }}" hx-target="{{ _hx_target }}" hx-swap="{{ _hx_swap }}">
+{% else %}
+<form class="hook-regen" hx-post="{{ url_for('do_regenerate_hook', post_id=s.post_id, account=(active if active is defined else none), batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=(compact_param if compact_param is defined else none), offset=(page.offset if page is defined else none)) }}" hx-target="{{ hook_target if hook_target is defined else '#edit-' ~ s.post_id }}" hx-swap="outerHTML"{% if hook_scope is defined %} hx-vals='{"swap": {{ hook_scope|tojson }}}'{% endif %}>
+{% endif %}
+  <label for="hook-guidance-{{ s.post_id }}">Not right? Tell the system what to change, then regenerate the hook</label>
+  <input id="hook-guidance-{{ s.post_id }}" type="text" name="guidance" placeholder="e.g. what is on screen · shorter">
+  <button type="submit" class="primary">Regenerate hook</button>
+</form>
+{% endif %}

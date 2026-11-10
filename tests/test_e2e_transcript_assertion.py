@@ -10,7 +10,8 @@ The E2E's real contract (its own comment) is "the transcript is non-empty and ca
 — i.e. REAL whisper produced a REAL, substantive transcript, NOT that one specific word survived.
 `real_transcript_signal()` encodes that contract so it can be unit-tested against fixtures here
 (both engines' ACTUAL transcripts) without a 30s real-tooling run. RED/GREEN is proven against the
-real espeak transcript captured from the failing CI log.
+real espeak transcript captured from the failing CI log. The E2E does not assert a vocoder token
+(`"anymore"`).
 """
 from fanops.transcribe import real_transcript_signal
 

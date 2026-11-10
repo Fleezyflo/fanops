@@ -320,8 +320,9 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
             return {"show": True, "danger": False, "status": None,
                     "hint": f"Postiz health unknown (snapshot {sr.freshness.value})"}
         snap = sr.data
-        row = next((d for d in (snap.get("deps") or [])
-                    if isinstance(d, dict) and d.get("name") == "postiz"), None)
+        deps = snap.get("deps") or []
+        row = next((d for d in deps if isinstance(d, dict) and d.get("name") == "postiz"), None)
+        docker_row = next((d for d in deps if isinstance(d, dict) and d.get("name") == "docker"), None)
         if row is None:
             return {"show": False, "danger": False, "status": None, "hint": ""}
         status = row.get("status_code")
@@ -340,11 +341,16 @@ def postiz_health_for_banner(cfg: Config, *, now: "float | None" = None) -> dict
                 where = f" (status: {status})" if status is not None else ""
                 hint = f"Postiz API unreachable{where}"
             return {"show": True, "danger": False, "status": status, "hint": hint}
-        where = f" (status: {status})" if status is not None else ""
-        return {"show": True, "danger": True, "status": status,
-                "hint": (f"Postiz API unhealthy{where} — publishes via Postiz are stalled. The container's "
-                         "health check is nginx-only and can lie; check `docker logs postiz` (see "
-                         "docs/POSTIZ_OPS.md).")}
+        if status is not None:
+            hint = (f"Postiz API unhealthy (status: {status}) — publishes via Postiz are stalled. The container's "
+                    "health check is nginx-only and can lie; check `docker logs postiz` (see "
+                    "docs/POSTIZ_OPS.md).")
+        elif docker_row is not None and not docker_row.get("ok"):
+            detail = docker_row.get("detail") or ""
+            hint = f"Docker engine not answering ({detail})" if detail else "Docker engine not answering"
+        else:
+            hint = "Postiz API unreachable (no HTTP status)"
+        return {"show": True, "danger": True, "status": status, "hint": hint}
     except Exception as e:
         _log.warning("postiz banner snapshot read failed (showing unknown): %s", e)
         return {"show": True, "danger": False, "status": None, "hint": "Postiz health unknown (read failed)"}

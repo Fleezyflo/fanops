@@ -1,0 +1,19 @@
+{# Shipped tags as lock-menu selects. One include per surface: the moment column and the feed card. #}
+{% if s.editable and s.shipped_tags %}
+<div class="tag-swaps">
+  {% for row in s.shipped_tags %}
+  {% set row_key = (row.tag if row.tag[:1] == '#' else '#' ~ row.tag)|lower %}
+  <span class="chip tag tag-swap">{{ row.tag }}{% if row.play_text %}<span class="reach-n"> · {{ row.play_text }}</span>{% endif %}{% if row.trend_text %}<span class="reach-n"> · {{ row.trend_text }} plays/7d</span>{% endif %}
+    <select class="tag-swap-select" name="new_tag" aria-label="replace {{ row.tag }}"
+            hx-post="{{ url_for('do_swap_tag', post_id=s.post_id, account=(active if active is defined else none), batch=active_batch|default(none), source=active_source|default(none), state=active_state|default(none), compact=(compact_param if compact_param is defined else none), offset=(page.offset if page is defined else none)) }}"
+            hx-trigger="change" hx-target="{{ tag_swap_target }}" hx-swap="outerHTML"
+            hx-include="this" hx-params="new_tag,old_tag,swap"
+            hx-vals='{"old_tag": {{ row.tag|tojson }}, "swap": {{ tag_swap|tojson }}}'>
+      {% for opt in s.lock_menu %}
+      <option value="{{ opt.tag }}"{% if opt.tag|lower == row_key %} selected{% endif %}>{{ opt.tag }}{% if opt.play_text %} · {{ opt.play_text }}{% endif %}{% if opt.trend_text %} · {{ opt.trend_text }} plays/7d{% endif %}</option>
+      {% endfor %}
+    </select>
+  </span>
+  {% endfor %}
+</div>
+{% endif %}

@@ -95,37 +95,39 @@ def _dotenv_assignment(env_path: Path, key: str) -> Optional[str]:
 
 
 def set_postiz_config(cfg: Config, url: str, key: str = "") -> ActionResult:
-    """Connect Postiz: durably set POSTIZ_URL (+ POSTIZ_API_KEY when a non-blank key is given), then
-    test the credentials against the live instance. The key is write-only — tested, never returned or
-    logged (the result exposes only a key_set bool). A blank key leaves any existing key untouched, so
-    the operator can update just the URL. Rejects a non-http(s) URL up front with NO partial write."""
+    """Connect Postiz: probe the candidate URL (and key, when non-blank), then durably set POSTIZ_URL
+    only after postiz_check_auth succeeds. A blank key leaves any existing key untouched. A failed
+    probe leaves the previous URL. The key is write-only — tested, never returned or logged (the
+    result exposes only a key_set bool). A non-http(s) URL is rejected with no write."""
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return ActionResult(ok=False, error=f"Postiz URL must start with http:// or https:// — got {url!r}")
-    err = _dual_write(cfg, "POSTIZ_URL", url)
-    if err:
-        return ActionResult(ok=False, error=err)
-    url = postiz._base(cfg)
-    err = _dual_write(cfg, "POSTIZ_URL", url)
-    if err:
-        return ActionResult(ok=False, error=err)
     key = (key or "").strip()
+    if "\n" in url or "\r" in url or "\n" in key or "\r" in key:
+        which = "POSTIZ_URL" if ("\n" in url or "\r" in url) else "POSTIZ_API_KEY"
+        return ActionResult(ok=False, error=f"could not write {which}: value contains a newline — rejected")
+    # postiz_check_auth reads postiz_url / postiz_api_key. Those Config properties read the
+    # already-persisted env and keyring, so the candidate rides a stand-in and is dual-written
+    # only after the probe succeeds.
+    Creds = NamedTuple("Creds", [("postiz_url", str), ("postiz_api_key", Optional[str])])
+    url = postiz._base(Creds(url, None))
+    try:
+        reachable = postiz.postiz_check_auth(Creds(url, key or cfg.postiz_api_key))
+    except PostizAuthError:
+        # Fixed message (no str(exc)) so a key embedded in the exception can never leak.
+        # Nothing was persisted — the probe ran against the candidate, not a prior dual-write.
+        return ActionResult(ok=False, error="Postiz auth failed — check POSTIZ_API_KEY (the test request was "
+                            "rejected).")
+    if not reachable:
+        return ActionResult(ok=False, error=f"Could not reach Postiz at {url} — "
+                            "check the URL points at your running Postiz instance.")
+    err = _dual_write(cfg, "POSTIZ_URL", url)
+    if err:
+        return ActionResult(ok=False, error=err)
     if key:
         err = _dual_write(cfg, "POSTIZ_API_KEY", key)    # write-only: stored, never echoed back
         if err:
             return ActionResult(ok=False, error=err)
-    try:
-        reachable = postiz.postiz_check_auth(cfg)
-    except PostizAuthError:
-        # Discard the exception text on the key-handling surface — emit a FIXED message so a future
-        # PostizAuthError that ever embedded the key value could not leak through str(exc) (ecc:python-review).
-        # W9: the key WAS dual-written above, so tell the operator it's saved (re-enter to correct) rather
-        # than imply nothing happened. Still no key echo.
-        return ActionResult(ok=False, error="Postiz auth failed — check POSTIZ_API_KEY (the test request was "
-                            "rejected; credentials saved — re-enter to correct).")
-    if not reachable:
-        return ActionResult(ok=False, error=f"Saved POSTIZ_URL but could not reach Postiz at {url} — "
-                            "check the URL points at your running Postiz instance.")
     return ActionResult(ok=True, detail={"url": url, "key_set": cfg.postiz_api_key is not None, "auth": "ok"})
 
 
@@ -260,19 +262,6 @@ def set_account_casting(cfg: Config, on: bool) -> ActionResult:
     effect immediately AND persists. Works in dryrun OR live (it changes which posts are BORN, not whether they
     publish). No secret -> no key-leak surface. A durable-write failure -> clean error."""
     return set_flag(cfg, "FANOPS_ACCOUNT_CASTING", on)
-
-
-def set_llm_transport(cfg: Config, transport: str) -> ActionResult:
-    """Set FANOPS_LLM_TRANSPORT (claude | cursor) from the Go-Live tab — which CLI the autonomous responder
-    shells to answer the agent gates. Dual-written (.env + os.environ) so it takes effect immediately on the
-    next gate without a Studio restart. Unknown values -> clean error."""
-    transport = (transport or "").strip().lower()
-    if transport not in ("claude", "cursor"):
-        return ActionResult(ok=False, error="llm transport must be claude or cursor")
-    err = _dual_write(cfg, "FANOPS_LLM_TRANSPORT", transport)
-    if err:
-        return ActionResult(ok=False, error=err)
-    return ActionResult(ok=True, detail={"llm_transport": transport, "llm_cli_binary": cfg.llm_cli_binary})
 
 
 def install_daemon(cfg: Config, interval: str = "10m") -> ActionResult:

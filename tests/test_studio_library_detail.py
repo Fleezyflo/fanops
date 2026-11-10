@@ -52,7 +52,9 @@ def test_strip_disk_artifact_transcribe_beats_empty_ledger(tmp_path):
     _seed(cfg, lambda led: _src(led, cfg, state=SourceState.catalogued))
     side = cfg.agent_io / "transcripts" / "clip.json"
     side.parent.mkdir(parents=True, exist_ok=True)
-    side.write_text(json.dumps({"segments": [{"start": 0, "end": 1, "text": "hi"}]}))
+    side.write_text(json.dumps({"language": "en", "segments": [
+        {"start": 0, "end": 1, "text": "hi", "avg_logprob": -0.2, "compression_ratio": 1.1},
+    ]}))
     strip = views.library_catalog(cfg)["native"][0]["stage_strip"]
     tx = next(c for c in strip if c["key"] == "transcribe")
     assert tx["status"] == "done"

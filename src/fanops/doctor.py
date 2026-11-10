@@ -16,6 +16,8 @@ from fanops.personas import Personas
 from fanops.validation_gate import learning_validated
 from fanops.errors import fail_open
 from fanops.escalation import EscalationPosture, decide
+from fanops.health_projectors import sending_backend_label
+from fanops.health_types import DepHealth
 
 
 def _check(label: str, ok: bool = True, hint: str = "", *, severity: str | None = None) -> dict:
@@ -230,9 +232,10 @@ def _daemon_liveness_check(cfg: Config, *, status_reader=None) -> dict:
 def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
     """Deploy gate — the pump's heartbeat `code` must match the code SHA on disk.
 
-    FAIL when the daemon is loaded and the running SHA (_last_heartbeat_code) differs from the
-    deployed SHA (_version_signal). N/A when the daemon is not loaded. Mirrors daemon.ensure's
-    drift branch (keeper kickstart) as an operator-visible doctor check (STD-VER-02)."""
+    FAIL when the daemon is loaded and either SHA is missing, or the running SHA
+    (_last_heartbeat_code) differs from the deployed SHA (_version_signal). N/A when the
+    daemon is not loaded. Mirrors daemon.ensure's adopt branch (keeper kickstart) as an
+    operator-visible doctor check (STD-VER-02)."""
     from fanops import daemon
     lbl = "publish daemon running current code (heartbeat SHA matches disk)"
     interval = daemon.installed_interval(cfg) or _DAEMON_DEFAULT_INTERVAL_S
@@ -245,19 +248,17 @@ def _deploy_code_check(cfg: Config, *, daemon_status=None) -> dict | None:
             pass
     if not st or not st.get("loaded"):
         return None                                              # N/A — pump not loaded
-    running = daemon._last_heartbeat_code(cfg)
-    deployed = daemon._version_signal(cfg)[0]
-    if running is not None and deployed is not None and running != deployed:
-        return _check(lbl, False,
-                      f"pump reports code {running[:12]} but disk is {deployed[:12]} — "
-                      f"release = merge → `git pull --ff-only` → `fanops up`; verify this check is green")
+    reason = daemon.stale_code_reason(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg)[0])
+    if reason:
+        return _check(lbl, False, f"{reason} — release = merge → `git pull --ff-only` → `fanops up`; "
+                                  f"verify this check is green")
     return _check(lbl, True, "")
 
 
-def _doctor_notes(cfg: Config) -> list[str]:
+def _doctor_notes(cfg: Config, deps: list[DepHealth]) -> list[str]:
     lv = learning_validated(cfg)
     notes: list[str] = []
-    notes.append(f"poster backend: {cfg.poster_backend}"
+    notes.append(f"poster backend: {sending_backend_label(cfg, deps)}"
                  + (" (dryrun — writes payloads, posts nothing)" if not cfg.is_live else " (LIVE)"))
     if lv:
         notes.append("learning loop: validation-confirmed (lift fields reconciled by cutover) — amplify/bandit may be enabled")
@@ -416,7 +417,7 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     # 2. gates are answered ONLY by the LLM, so the LLM CLI is ALWAYS required on PATH (mirrors preflight —
     # no longer gated on FANOPS_RESPONDER=llm, since there is no other responder). A bad FANOPS_RESPONDER
     # value is surfaced as its own failing check rather than a traceback.
-    from fanops.llm import _CURSOR_SUPPORTS_VISION
+    from fanops.llm import grok_models_ok
     try:
         cfg.responder_mode                               # validate FANOPS_RESPONDER (empty/'llm' ok; anything else raises)
         responder_err = None
@@ -425,25 +426,15 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     checks.append(_check("FANOPS_RESPONDER valid (llm-only)", responder_err is None,
                          responder_err or "leave FANOPS_RESPONDER unset, or set it to 'llm' — it has no other valid value"))
     cli_bin = cfg.llm_cli_binary
-    hint = ("install Cursor CLI, or set LLM transport to claude in Studio Go-Live"
-            if cli_bin == "cursor-agent"
-            else "install Claude Code + run `claude login` (uses your subscription, no API key)")
-    # PATH presence is NOT proof of login; no cheap non-mutating auth probe. When present, emit
-    # Severity.WARN (non-blocking) so we never claim a silent authenticated PASS.
-    if shutil.which(cli_bin) is not None:
-        login_cmd = "cursor-agent login" if cli_bin == "cursor-agent" else "claude login"
-        checks.append(_check(
-            f"{cli_bin} on PATH",
-            severity="warn",
-            hint=(f"{cli_bin} is on PATH but that is NOT proof it is logged in — if gates "
-                  f"start failing with auth errors, run `{login_cmd}`")))
+    if shutil.which(cli_bin) is None:
+        checks.append(_check(f"{cli_bin} on PATH", False,
+                             "install Grok CLI + run `grok login` (session file, no API key)"))
+    elif not grok_models_ok():
+        checks.append(_check(f"{cli_bin} on PATH", False,
+                             "grok is on PATH but `grok models` failed — run `grok login` "
+                             "(session file, no API key)"))
     else:
-        checks.append(_check(f"{cli_bin} on PATH", False, hint))
-    if cfg.llm_transport == "cursor" and not _CURSOR_SUPPORTS_VISION:
-        # Absolute transport: cursor cannot run vision gates — operator must flip the ONE switch.
-        checks.append(_check("LLM transport can run vision gates", False,
-                             "set LLM transport to claude in Studio Go-Live "
-                             "(single switch; no silent claude fallback when transport=cursor)"))
+        checks.append(_check(f"{cli_bin} on PATH", True, ""))
     # 2b. brand brief present + non-empty. context.md is injected verbatim into every moment +
     # caption decision (the #1 output lever); its absence used to be SILENT (load_guidance now warns,
     # but a preflight is the visible gate). Read directly + safely so the report never crashes.

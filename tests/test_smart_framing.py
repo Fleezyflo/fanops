@@ -13,7 +13,8 @@ from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, Fmt
 from fanops import framing
 from fanops.clip import (reframe_filter, _render_fingerprint, render_account_cut,
-                         _segments_filter_complex, ffmpeg_segments_cmd, render_reframed, _ch0_for)
+                         _segments_filter_complex, ffmpeg_segments_cmd, ffmpeg_supercut_cmd,
+                         render_reframed, _ch0_for)
 import fanops.clip as clipmod
 from fanops.errors import ToolchainMissingError
 from fanops.framing_outcomes import FramingEventType as _FE, FramingOutcome as _FO
@@ -304,6 +305,16 @@ def test_ffmpeg_segments_cmd_forces_cfr_so_concat_gaps_dont_drop_fps():
     cmd = ffmpeg_segments_cmd("src.mp4", "out.mp4", 100.0, 108.0, "9:16", track, src_w=1920, src_h=1080)
     assert "-fps_mode" in cmd and cmd[cmd.index("-fps_mode") + 1] == "cfr"
     assert cmd.index("-fps_mode") > cmd.index("-filter_complex")   # an output option, after the last input
+
+
+def test_ffmpeg_supercut_cmd_forces_cfr_so_concat_gaps_dont_drop_fps():
+    # Supercut joins spans with the same concat filter. Without `-fps_mode cfr` each join keeps a
+    # 1-frame PTS gap. The flag is an output option, after the maps, not among the per-span seeks.
+    spans = [(10.0, 12.0), (30.0, 33.0), (50.0, 53.0)]
+    cmd = ffmpeg_supercut_cmd("src.mp4", "out.mp4", spans, "9:16", src_w=1920, src_h=1080)
+    assert "-fps_mode" in cmd and cmd[cmd.index("-fps_mode") + 1] == "cfr"
+    assert cmd.index("-fps_mode") > cmd.index("-filter_complex")
+    assert cmd.index("-fps_mode") > max(i for i, a in enumerate(cmd) if a == "-map")
 
 def test_ch0_for_routes_by_aspect():
     assert _ch0_for("9:16", 1920, 1080) == 1080             # wide source -> width-crop -> full height baseline
