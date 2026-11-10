@@ -43,14 +43,10 @@ def mark_published(cfg: Config, post_id: str, url: Optional[str] = None) -> Acti
         p = led.posts[post_id]
         if p.state not in _POSTABLE:
             return ActionResult(ok=False, error=f"post {post_id} is {p.state.value} — only an unpublished post can be marked posted")
-        sid = (p.submission_id or "").strip() or None
-        if sid and not is_real_submission_id(sid):
+        if not is_real_submission_id(p.submission_id):
             return ActionResult(ok=False, error=(
-                "submission_id must be a real backend id, not a fanops_ birth token"))
-        if not is_real_submission_id(sid):
-            return ActionResult(ok=False, error=(
-                "cannot mark published without a trackable backend id — "
-                "reconcile auto-bind will retry when the duplicate candidate verifies"))
+                "cannot mark published without a trackable backend id — submission_id must be a real "
+                "backend id, not a fanops_ birth token"))
         # R1: set the URL BEFORE the state flip so the @model_validator sees a consistent shape on
         # the next ledger save (Pydantic re-validates the modified instance on serialization).
         p.public_url = url.strip()
