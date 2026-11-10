@@ -1,50 +1,50 @@
 # Pack: H-INT — invariant authority
 
-Subject `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`. H-INT-F01 is resolved. No retag.
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. Assessment date 2026-10-18. `git diff origin/main -- src` is empty on this SHA. Entry symbols re-read: `tools/arch/policy/rules.py` ARCH-001 (“The subsystem partition is TOTAL”); `tools/arch/cli.py` `cmd_regen` / `cmd_ci`; `partition.json` `modules`. H-INT-F01 stays resolved. No retag. No X-keys in `partition.json`.
 
 ## Findings
 
 | ID | Severity | Class | Status | Observed | Required | Evidence |
 |----|----------|-------|--------|----------|----------|----------|
-| H-INT-F01 | low | taxonomy | resolved | Operator edits of reconcile.py are C6. `partition.json` keeps reconcile.py in C7 and `post/metrics/*` in C6. No retag. ARCH-001 stays the totality rule. | Dual map kept. Do not merge the partitions. Do not add X-keys. | `tools/arch/policy/rules.py` ARCH-001; `docs/CODEMAPS/partition.json`; `docs/audit/OPEN_GAPS.md` |
+| H-INT-F01 | low | taxonomy | resolved | Two deliberate C6/C7 disagreements between the operator audit index and `partition.json`: operator edits of `reconcile.py` are **C6** (publish lane in `.agents/lanes.json`); `partition.json` keeps `src/fanops/reconcile.py` in **C7**. `post/metrics/*` is **C6** in `partition.json` and **C7** for operator audit (metrics/learning). X-modules (e.g. X-DEP) stay audit overlays only — no third partition key. ARCH-001 enforces subsystem totality in `kb/subsystems.json` / derived `modules.json`, not lane retag. | Dual map kept. Do not merge operator index with `partition.json`. Do not add X-keys to `partition.json`. Do not retag `lanes.json`. | `tools/arch/policy/rules.py` ARCH-001; `tools/arch/cli.py` `cmd_regen`, `cmd_ci`; `docs/CODEMAPS/partition.json` `modules`; `.github/workflows/architecture.yml` |
 
-## Split
+## Dual map (operator index vs partition.json)
 
-reconcile.py is C7 in partition.json and C6 for operator remediation (publish lane owns the file); post/metrics/* is C6 in partition.json and C7 for operator audit. No retag.
+| Path | `partition.json` | Operator audit index |
+|------|------------------|----------------------|
+| `src/fanops/reconcile.py` | C7 | C6 (publish owns edits; lane `publish`) |
+| `src/fanops/post/metrics/*` (four modules) | C6 | C7 (metrics/learning audit) |
+
+X-DEP and other X-modules overlap C1–C10 files in prose only; `partition.json` values remain C1–C10 exclusively (`test_live_partition_covers_every_module`).
 
 ## Evidence commands run
 
 ```
-git rev-parse HEAD
-# d2cded31e29e027e4ed55bfdb99b9a93ac4f024e
+SUBJ=430ece7377bf33cc5c5e72876c13d6b78b8e6ca9
 
-git diff --stat origin/main...HEAD
-# 29 files, +904 / −26
-
-git show HEAD:tools/arch/policy/rules.py | rg -n 'ARCH-001'
+git show $SUBJ:tools/arch/policy/rules.py | rg -n 'ARCH-001'
 # Rule("ARCH-001", "The subsystem partition is TOTAL"
 
-python3 -c 'json.load subsystems.json; print sorted subsystem ids'
-# S01_foundation … S19_maintenance, all S-prefixed
+git show $SUBJ:tools/arch/cli.py | rg -n 'def cmd_regen|def cmd_ci|"regen"|"ci"'
+# cmd_regen, cmd_ci; subparsers regen + ci
 
-rg -n 'partition_is_total' .reports/architecture/derived/modules.json
+git show $SUBJ:.reports/architecture/derived/modules.json | rg 'partition_is_total'
 # "partition_is_total": true
 
-python3 -c 'print partition.json keys for reconcile.py and src/fanops/post/metrics/'
-# live_py_count 196
-# value_set C1 C2 C3 C4 C5 C6 C7 C8 C9 C10
-# outside C1–C10: none
-# src/fanops/reconcile.py=C7
-# src/fanops/post/metrics/__init__.py=C6
-# src/fanops/post/metrics/common.py=C6
-# src/fanops/post/metrics/postiz_read.py=C6
-# src/fanops/post/metrics/zernio_read.py=C6
+git show $SUBJ:docs/CODEMAPS/partition.json | python3 -c "import json,sys; p=json.load(sys.stdin); m=p['modules']; print(len(m), sorted(set(m.values())), [m[k] for k in sorted(m) if 'reconcile' in k or 'post/metrics' in k])"
+# 196 ['C1'…'C10']; reconcile C7; metrics paths C6
+# src/fanops/reconcile.py C7; post/metrics/* C6 (four paths)
 
-git grep -n 'src/fanops/reconcile.py' HEAD -- .agents/lanes.json docs/CODEMAPS/partition.json
-# lanes.json owner publish; partition.json value C7
+git show $SUBJ:.agents/lanes.json | rg reconcile
+# "src/fanops/reconcile.py": "publish"
 
-git grep -n 'src/fanops/post/metrics/' HEAD -- docs/CODEMAPS/partition.json
-# all four files C6
+git grep -n 'src/fanops/reconcile.py' $SUBJ -- .agents/lanes.json docs/CODEMAPS/partition.json
+git grep -n 'src/fanops/post/metrics/' $SUBJ -- docs/CODEMAPS/partition.json
+
+rg -n 'python -m tools.arch regen|python -m tools.arch ci' .github/workflows/architecture.yml
+# regen at docs/regen step; ci at composite gate step
 ```
 
-`test_live_partition_covers_every_module` asserts every `partition.json` value is in C1–C10. Operator index keeps reconcile.py on C6 (publish wire) and metrics/learning, including `post/metrics`, on C7. Scanned-source edit path, not run this turn: `python -m tools.arch regen`, then `python -m tools.arch ci` in `.github/workflows/architecture.yml`.
+Scanned-source edit path (documented, not run this turn): `python -m tools.arch regen`, then `python -m tools.arch ci` as wired in `.github/workflows/architecture.yml`. `./scripts/check.sh` was not run (pack-only remediate).
