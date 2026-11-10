@@ -40,6 +40,10 @@ _COMPLETE_KEY = "last_complete_pass"   # sibling of tag records; gates the 12h t
 _REFRESH_CADENCE_S = 12 * 60 * 60   # the tick's refresh window, and the yardstick an outage is measured in
 _EXACT_NAME_QUOTA = 30              # remesure at most this many unique sidecar names / window (HV1-PR4)
 _EXACT_NAME_WINDOW_DAYS = 7
+# A torn cooldown file makes every policy read raise ControlFileError: no peer scrapes and no ladder clears it.
+_COOLDOWN_UNREADABLE_REMEDY = ("repair 00_control/" + _COOLDOWN_NAME + " to a JSON object (only the account records "
+                               "you restore survive) or delete it (every scrape account's auth hold, backoff and "
+                               "UTC-day request count is forgotten); fanops hashtags scrape-login does not clear it")
 # Scrape is ~5–7s/tag. Caps bound a pass so co-tag harvest cannot run unbounded; incomplete passes do NOT
 # stamp last_complete_pass. Caps come from Config (env overrides); tests set FANOPS_HASHTAG_SCRAPE_*.
 # MOL-854: try_cap is a small per-pass ceiling (25); the UTC day budget on the cooldown blob is the
@@ -702,12 +706,14 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     Configured = FANOPS_IG_SCRAPE_USER listed. Password / Chrome dumps / envelope json do not
     count. Envelope authority is the opener (`open_client`), not this gate — probing on every
     on every tick would hit Instagram when the cache is still fresh. A torn cooldown file
-    refuses the tick (`refreshed: False`, no scrape). Any other error -> a reason, NEVER raises.
+    refuses the tick (`refreshed: False`, no scrape) and logs `scrape_outage` at error with the
+    file, the cause and `_COOLDOWN_UNREADABLE_REMEDY`. Any other error -> a reason, NEVER raises.
     Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
     MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted.
     A skip under a freeze that has outlived the cadence also emits `scrape_outage` at
     `_outage_level` (MOL-794). Manual `fanops hashtags refresh` still runs Layer A via
     `refresh_store` — this tick does not call that path."""
+    from fanops.errors import ControlFileError
     from fanops.ig_hashtag_scrape import scrape_users
     if scrape_client is None and not scrape_users(cfg):
         return {"refreshed": False, "reason": "no scrape session"}
@@ -717,7 +723,13 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
         if locks_pending(cfg, Ledger.load(cfg)):
             return {"refreshed": False, "reason": "locks_pending"}
         now_dt = now or datetime.now(timezone.utc)
-        cool = _read_active_cooldown(cfg, now_dt)
+        try:
+            cool = _read_active_cooldown(cfg, now_dt)
+        except ControlFileError as e:                         # torn cooldown file: an outage only the operator clears
+            get_logger(cfg)("hashtags", "-", "scrape_outage", level="error", reason="cooldown_unreadable",
+                            detail=f"Layer A measurement stalled — {e}; {_COOLDOWN_UNREADABLE_REMEDY}")
+            return {"refreshed": False, "reason": "cooldown", "level": "error",
+                    "cooldown_reason": "cooldown_unreadable"}
         if cool is not None:
             reason = cool.get("reason") or "throttle"
             stalled = _complete_pass_age_s(cfg, now_dt)

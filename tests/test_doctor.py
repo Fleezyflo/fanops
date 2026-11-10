@@ -778,6 +778,25 @@ def test_operational_sensor_warns_on_unknown_gate_age(tmp_path, monkeypatch):
     assert "gate age unknown" in (gate.get("hint") or "")
 
 
+def test_operational_sensor_fails_on_an_unreadable_scrape_cooldown(tmp_path):
+    """A non-object .hashtag_scrape_cooldown.json makes every Layer A policy read raise, so nothing scrapes
+    until the operator acts: doctor shows a FAIL row naming the file, the cause and a remedy that clears it
+    (deleting the file removes the row). Fails on main: the cooldown sensor swallowed the ControlFileError
+    and emitted no row at all."""
+    from fanops.hashtag_scrape_policy import _cooldown_path
+    cfg = Config(root=tmp_path)
+    p = _cooldown_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("[]")
+    row = next((c for c in doctor._operational_sensor_checks(cfg) if "Layer A" in c["label"]), None)
+    assert row is not None and row["severity"] == "fail" and row["ok"] is False
+    assert ".hashtag_scrape_cooldown.json invalid: top-level must be an object, got list" in row["hint"]
+    assert "delete it" in row["hint"] and "auth hold" in row["hint"] and "UTC-day request count" in row["hint"]
+    assert "scrape-login does not clear it" in row["hint"]
+    p.unlink()                                                    # the remedy
+    assert not any("Layer A" in c["label"] for c in doctor._operational_sensor_checks(cfg))
+
+
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
     """Approval backlog is EXPECTED (nothing auto-publishes) — it appears as an INFO note, never as a
     warn-tier check, because the human Review gate is deliberately kept."""

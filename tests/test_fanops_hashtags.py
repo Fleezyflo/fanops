@@ -1114,7 +1114,7 @@ def test_healthy_scrape_users_default_skips_loginrequired_freeze(tmp_path, monke
     assert _healthy_scrape_users(cfg, t0, require_budget_room=False) == []
 
 
-def test_corrupt_cooldown_fails_open(tmp_path):
+def test_corrupt_cooldown_refuses_the_tick_and_keeps_the_file(tmp_path):
     from datetime import datetime, timezone
     from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
     cfg = Config(root=tmp_path); _persona(cfg)
@@ -1127,6 +1127,36 @@ def test_corrupt_cooldown_fails_open(tmp_path):
     assert out["refreshed"] is False
     assert client.media_calls == []
     assert _cooldown_path(cfg).read_text() == "{not-json"
+
+
+def test_corrupt_cooldown_is_an_error_scrape_outage_with_a_remedy_that_clears_it(tmp_path):
+    """A torn cooldown file stops every scrape and no ladder clears it, so the tick's outage verdict is
+    `scrape_outage` at error from the first tick, naming the file, the parse error and the operator's
+    remedy; following the remedy (delete the file) lets the next tick measure. Fails on main: the tick
+    returned `reason: "error: …"` and logged only `refresh_error` at info — no `scrape_outage` at all."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import refresh_store_if_due, _cooldown_path
+    cfg = Config(root=tmp_path)
+    _write_sidecar(cfg, ["#hiphop"])
+    t0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text("{not-json")
+    client = _FakeClient({"#hiphop": 10})
+    out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client, now=t0)
+    assert out == {"refreshed": False, "reason": "cooldown", "level": "error",
+                   "cooldown_reason": "cooldown_unreadable"}
+    assert client.info_calls == [] and client.media_calls == []
+    assert _log_recs(cfg, "refresh_error") == []
+    rec = _log_recs(cfg, "scrape_outage")
+    assert len(rec) == 1 and rec[0]["level"] == "error" and rec[0]["reason"] == "cooldown_unreadable"
+    detail = rec[0]["detail"]
+    assert ".hashtag_scrape_cooldown.json invalid: Expecting property name" in detail   # the file and the cause
+    assert "delete it" in detail and "auth hold" in detail and "UTC-day request count" in detail
+    assert "scrape-login does not clear it" in detail
+    _cooldown_path(cfg).unlink()                                  # the remedy
+    out = refresh_store_if_due(cfg, max_age_s=1, scrape_client=client, now=t0)
+    assert out["refreshed"] is True and "#hiphop" in load_measurements(cfg)
+    assert len(_log_recs(cfg, "scrape_outage")) == 1
 
 
 def test_zero_progress_pass_preserves_hashtags_bytes(tmp_path, monkeypatch):
