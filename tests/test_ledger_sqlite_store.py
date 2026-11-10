@@ -133,14 +133,10 @@ def test_killed_mid_write_recovers_prior_commit(tmp_path):
         db_at_kill, whole_wal = store.db_path.read_bytes(), wal.read_bytes()
     finally:
         conn.close()
-    def crash_image(wal_bytes):                                 # what the next process finds on disk
-        store.db_path.write_bytes(db_at_kill)
-        if shm.exists():
-            shm.unlink()
-        wal.write_bytes(wal_bytes)
-    crash_image(whole_wal)
+    # the crash image is what the next process finds on disk: the db file as it stood at the kill, plus the WAL
+    store.db_path.write_bytes(db_at_kill); shm.unlink(missing_ok=True); wal.write_bytes(whole_wal)
     assert store.read_raw()["schema_version"] == 99, "tear did not happen: the WAL never carried the mutation"
-    crash_image(whole_wal[:-64] + b"\xff" * 24)
+    store.db_path.write_bytes(db_at_kill); shm.unlink(missing_ok=True); wal.write_bytes(whole_wal[:-64] + b"\xff" * 24)
     led = Ledger.load(cfg)
     assert store.read_raw() == doc_a
     assert "src1" in led.sources
