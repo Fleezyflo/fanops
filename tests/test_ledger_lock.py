@@ -17,8 +17,10 @@ def _store(cfg) -> SqliteLedgerStore:
 
 
 def test_uncommitted_txn_does_not_wedge_save(tmp_path):
-    """A live BEGIN IMMEDIATE must stay open across save — closing first (or swallowing setup)
-    never proves that save does not wedge on a reserved writer."""
+    """H6: a writer that DIES with its BEGIN IMMEDIATE open leaves no lock behind — the next save goes
+    straight through and its document is what rests on disk. A LIVE writer is the opposite contract
+    (the second acquirer waits out its timeout, then LockBusyError), asserted first so that setup
+    which never opened the txn, or closed it early, fails instead of passing."""
     cfg = Config(root=tmp_path)
     store = _store(cfg)
     led = Ledger.load(cfg)
@@ -29,12 +31,16 @@ def test_uncommitted_txn_does_not_wedge_save(tmp_path):
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("DELETE FROM ledger_rows")
     try:
-        t0 = time.monotonic()
-        led.save()
-        assert time.monotonic() - t0 < 5.0
-        assert store.read_raw() is not None
+        with pytest.raises(LockBusyError):
+            with store.lock(timeout=0.5):
+                pass
     finally:
-        conn.close()
+        conn.close()                                            # the writer dies: no COMMIT
+    led.add_source(Source(id="s1", source_path="/x.mp4"))
+    t0 = time.monotonic()
+    led.save()
+    assert time.monotonic() - t0 < 5.0
+    assert "s1" in Ledger.load(cfg).sources
 
 
 def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
