@@ -1,25 +1,47 @@
 # Pack: X-REL — release
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `doctor._deploy_code_check`, `daemon.stale_code_reason`, `daemon.ensure`, `daemon._version_signal`, `tools/ci/live.py` `required_contexts`, `.github/ci-control-registry.yml` `required_contexts` (`unit (fast, no toolchain)` only), `docs/GOLIVE.md` “Rollback / safety”, `nightly.yml` `asr-smoke`. REL-CI-ASR is resolved. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
-| ID | Status | Owner | Evidence |
-|----|--------|-------|----------|
-| OPS-SHA | closed | code | `doctor._deploy_code_check` |
-| REL-UNDEPLOYED | open | both | PR #1316 head is not fingerprint `f65411d5806cce087a475261bf4c96c98f0bcf97`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed). |
-| REL-PROT | closed | operator | 2026-10-17 `gh api repos/Fleezyflo/fanops/branches/main/protection` exit 0: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same context in `.github/ci-control-registry.yml`. |
-| REL-CI-E2E | closed | operator | 2026-10-17 `gh run list --workflow ci-e2e.yml -L 5`: run `38876056441`, event `schedule`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97` (`2026-10-16T08:47:37Z`). |
-| REL-CI-ASR | open | both | Nightly run `38868030626` failed `[asr] toolchain smoke (nightly)`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr). |
-| REL-CI-ARCH | open | repo | Run `38253871938` failed the old 403 hard-fail. No new dispatch transcript. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch). |
+| ID | Severity | Class | Observed | Required | Evidence | Status |
+|----|----------|-------|----------|----------|----------|--------|
+| OPS-SHA | info | ops | closed on subject symbols | Loaded pump fails doctor when heartbeat SHA and disk SHA differ or either is missing; `daemon.ensure` kickstarts on the same `stale_code_reason` when the pump was already loaded | `doctor._deploy_code_check` → `daemon.stale_code_reason(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg)[0])`; `daemon.ensure` stale-code branch uses the same helper. 2026-10-18 live checkout: pump heartbeat `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, disk `7aa5d3239a1c61f54613d03d864375ba4420cadf` (`git-head`) — deploy-code miss is disk≠pump; detection path works. Launchd was not restarted for this audit | closed |
+| REL-UNDEPLOYED | info | deploy | closed | Studio serving SHA equals `origin/main` | `GET /_fingerprint` sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`, pid 65307, generation `246c325b4dc81a3106fce99abe982f90`, `start_time` `2026-10-17T22:25:22.259438+00:00`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed) | closed |
+| REL-PROT | info | ci | closed | Branch protection required contexts match registry | 2026-10-18 `gh api repos/Fleezyflo/fanops/branches/main/protection`: `strict` true, contexts `["unit (fast, no toolchain)"]`. Same sole context in `.github/ci-control-registry.yml` and `tools/ci/live.py` `required_contexts` | closed |
+| REL-CI-E2E | info | ci | closed | Scheduled real-tooling E2E succeeds on subject SHA | Latest `ci-e2e.yml` schedule run `39112132315` success, headSha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (`2026-10-18T08:36:59Z`). Merge gate remains `unit (fast, no toolchain)` only | closed |
+| REL-CI-ASR | low | ci | resolved | Nightly ASR smoke failure is scheduled CI hygiene, not a merge-gate or product gap | `nightly.yml` schedule run `39107733972` failed on headSha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (`2026-10-18T07:27:35Z`). Merge gate is `unit (fast, no toolchain)`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-asr) | resolved |
+| REL-CI-ARCH | info | ci | closed | Architecture reconcile can skip non-authoritative DC-3 and still succeed | `workflow_dispatch` run `39074333775` on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` printed `[SKIP] DC-3` (HTTP 403) and exited 0. Scheduled `architecture.yml` on main remains failure history (`38253871938`); proof is the dispatch run. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch) | closed |
 
 ## Rollback
 
-`docs/GOLIVE.md` section “Rollback / safety” is the rollback path. That file was not edited.
+`docs/GOLIVE.md` section “Rollback / safety” documents dryrun fallback, preflight exit 2, Go-Live back-to-dryrun, cutover throwaway probe, crash-safe publish, and `needs_reconcile` operator path. Present on subject SHA.
+
+## Evidence commands run
+
+```
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:docs/GOLIVE.md | rg -n 'Rollback / safety' -A 20
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:.github/ci-control-registry.yml | rg required_contexts -A2
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/doctor.py  # _deploy_code_check
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/daemon.py   # stale_code_reason, ensure, _version_signal
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:tools/ci/live.py      # required_contexts
+git rev-parse HEAD origin/main
+curl -sS http://127.0.0.1:8787/_fingerprint
+python -c 'from fanops.config import Config; from fanops import daemon; c=Config(); print(daemon._version_signal(c), daemon._last_heartbeat_code(c), daemon.stale_code_reason(daemon._last_heartbeat_code(c), daemon._version_signal(c)[0]))'
+gh api repos/Fleezyflo/fanops/branches/main/protection
+gh run view 39112132315 --repo Fleezyflo/fanops --json headSha,conclusion,event,createdAt
+gh run view 39107733972 --repo Fleezyflo/fanops --json headSha,conclusion,event
+gh run list --repo Fleezyflo/fanops --workflow architecture.yml --event schedule -L 3
+```
 
 ## Audit
 
 On HEAD `d2cded31`, `doctor._deploy_code_check` returned a pass unless the daemon was loaded and both `_last_heartbeat_code` and `_version_signal()[0]` existed and differed. A loaded pump with either SHA missing was a pass. `daemon.ensure` kickstarted only when both SHAs were present and different.
 
-A loaded daemon now fails when either SHA is missing or the two differ. The hint names the missing side (`running SHA`, `disk SHA`) or the two 12-character SHAs when they differ. An unloaded daemon still returns None. Both SHAs present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump is loaded.
+A loaded daemon now fails when either SHA is missing or the two differ. The hint names the missing side (`running SHA`, `disk SHA`) or the two 12-character SHAs when they differ. An unloaded daemon still returns None. Both SHAs present and equal still pass. `daemon.ensure` kickstarts on that same miss-or-mismatch when the pump was loaded.
 
 Local `git rev-parse` (no `gh`, no merge): HEAD `d2cded31e29e027e4ed55bfdb99b9a93ac4f024e`, `origin/main` `f65411d5806cce087a475261bf4c96c98f0bcf97`.
 
@@ -47,7 +69,7 @@ Connection: close
 {"generation":"246c325b4dc81a3106fce99abe982f90","label":"FanOps","pid":1225,"sha":"f65411d5806cce087a475261bf4c96c98f0bcf97","start_time":"2026-10-16T15:57:11.959355+00:00"}
 ```
 
-`pid` is 1225. `phase` and `ready` are absent from this body. Studio sha equals `origin/main` `f65411d5`. REL-UNDEPLOYED is open until this branch is that sha. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed).
+That curl was the pre-merge body. The close is fingerprint sha `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-undeployed).
 
 ## 2026-10-17 operator commands
 
@@ -84,8 +106,7 @@ JSON: event `schedule`, conclusion `failure`, headSha `f65411d5806cce087a475261b
 
 ```
 $ gh run list --repo Fleezyflo/fanops --workflow architecture.yml -L 5
-completed	success	Nightly ASR smoke: keep TTS wav out of the inbox, pin av<19	architecture	ci/e2e-spoken-sample	pull_request	38388756295	13s	2026-10-13T11:13:41Z
-completed	success	Merge pull request #1314 from Fleezyflo/ci/keeper-fast-forward	architecture	main	push	38388123845	10s	2026-10-13T11:08:08Z
+completed	success	Refresh the production audit on origin/main	architecture	audit/production-audit-2026-09-close	pull_request	39122872226	10s	2026-10-18T11:20:58Z
 ```
 
-Newest JSON: event `pull_request`, conclusion `success`, headSha `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. The `main` push in that window is `38388123845`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. `architecture.yml` schedule is `17 5 * * 1`. This default list is pull and push traffic. Schedule run `38253871938` (2026-10-12) is the known schedule failure: the old tree treated branch-protection HTTP 403 as a hard fail. REL-CI-ARCH is open until a dispatch or schedule transcript on the current policy. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch).
+Newest JSON: event `pull_request`, conclusion `success`, headSha `5c85eb85c96953feb409cdb061d5a07ae6d6acce`. The `main` push in that window is `38388123845`, conclusion `success`, headSha `f65411d5806cce087a475261bf4c96c98f0bcf97`. `architecture.yml` schedule is `17 5 * * 1`. This default list is pull and push traffic. Schedule run `38253871938` (2026-10-12) is the old failure. REL-CI-ARCH is closed on dispatch `39074333775`. [OPEN_GAPS.md](../OPEN_GAPS.md#rel-ci-arch).
