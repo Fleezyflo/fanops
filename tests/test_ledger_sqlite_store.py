@@ -107,9 +107,12 @@ def test_concurrent_reader_sees_committed_while_writer_holds_txn(tmp_path):
 
 
 def test_killed_mid_write_recovers_prior_commit(tmp_path):
-    """Commit doc_a, then tear the in-flight WAL (truncated frames + garbage) as the on-disk
-    crash image. Ledger.load must recover doc_a. Fail if the WAL never received the mutation.
-    No multiprocessing / fork / os._exit — those contaminate the rest of the suite."""
+    """A writer killed while its COMMIT is being appended to the WAL leaves a torn tail: frames on
+    disk, no commit frame. The next open must read doc_a, never the half-written mutation. SQLite
+    keeps a txn this small in its page cache until COMMIT, so the frames reach the WAL only then —
+    the crash image is that real WAL cut short, over the db file as it stood at the kill. The same
+    image left whole replays the mutation, which proves the tear (not an ignored WAL) decides the
+    outcome. No multiprocessing / fork / os._exit — those contaminate the rest of the suite."""
     cfg = Config(root=tmp_path)
     store = SqliteLedgerStore(cfg)
     doc_a = _populated_ledger(cfg)._to_doc()
@@ -121,22 +124,23 @@ def test_killed_mid_write_recovers_prior_commit(tmp_path):
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
-        conn.execute("PRAGMA wal_autocheckpoint=0")
+        conn.execute("PRAGMA wal_autocheckpoint=0")             # the commit stays in the WAL, out of the db file
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM ledger_meta")
         conn.execute("DELETE FROM ledger_rows")
         conn.execute("INSERT INTO ledger_meta(key, value) VALUES('schema_version', '99')")
-        ver = conn.execute("SELECT value FROM ledger_meta WHERE key='schema_version'").fetchone()
-        assert ver == ("99",), "tear did not happen: writer never mutated"
-        assert wal.exists() and wal.stat().st_size > 32, "tear did not happen: WAL has no in-flight frames"
-        torn_wal = wal.read_bytes()[:-64] + b"\xff" * 24
-        assert len(torn_wal) > 32, "tear did not happen: captured WAL too small to truncate"
+        conn.execute("COMMIT")
+        db_at_kill, whole_wal = store.db_path.read_bytes(), wal.read_bytes()
     finally:
         conn.close()
-    if shm.exists():
-        shm.unlink()
-    wal.write_bytes(torn_wal)
-    assert wal.exists() and wal.stat().st_size > 32, "tear did not happen: crash image missing"
+    def crash_image(wal_bytes):                                 # what the next process finds on disk
+        store.db_path.write_bytes(db_at_kill)
+        if shm.exists():
+            shm.unlink()
+        wal.write_bytes(wal_bytes)
+    crash_image(whole_wal)
+    assert store.read_raw()["schema_version"] == 99, "tear did not happen: the WAL never carried the mutation"
+    crash_image(whole_wal[:-64] + b"\xff" * 24)
     led = Ledger.load(cfg)
     assert store.read_raw() == doc_a
     assert "src1" in led.sources
