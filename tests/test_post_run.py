@@ -45,6 +45,17 @@ def _live(monkeypatch):
     monkeypatch.setenv("POSTIZ_API_KEY", "pk")
 
 
+def _stub_ok_poster(mocker, cfg):
+    import fanops.post.run as run
+    class _OkPoster:
+        def __init__(self, cfg): pass
+        def publish(self, led_, post_id):
+            led_.posts[post_id] = led_.posts[post_id].model_copy(update={"state": PostState.submitted}); led_.posts[post_id].submission_id = "s"
+            led_.posts[post_id].public_url = _LIVE_PERMALINK   # real permalink -> submitted promotes to published
+            return led_
+    mocker.patch.object(run, "get_poster", return_value=_OkPoster(cfg))
+
+
 def _http_media(led, *pids):
     for pid in pids:
         led.posts[pid].media_urls = ["https://h/v.mp4"]   # already-http -> passes through, no live upload
@@ -159,6 +170,22 @@ def test_publish_stamps_published_at(tmp_path, monkeypatch, mocker):
     before = p.published_at
     led.approve_post("pp", now_iso=iso_z(datetime.now(timezone.utc)))   # a no-op on a non-awaiting post
     assert led.posts["pp"].published_at == before                       # untouched by approve
+
+def test_publish_persists_timing_buckets(tmp_path, monkeypatch, mocker):
+    # submitted->published with a permalink stamps publish_hour/dow on the throwaway ledger.
+    # Finalize merges only _NET_POST_FIELDS; omit the pair and the committed row stays None.
+    from fanops.timeutil import publish_buckets
+    _live(monkeypatch)
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _queued(led, cfg, pid="ph", cid="c_ph", when="2020-01-01T00:00:00Z")
+    _http_media(led, "ph"); _stub_ok_poster(mocker, cfg)
+    publish_due(cfg, now="2026-06-02T18:00:00Z")
+    p = Ledger.load(cfg).posts["ph"]
+    assert p.state is PostState.published
+    hour, dow = publish_buckets(p.published_at, cfg)
+    assert hour is not None and dow is not None
+    assert p.publish_hour == hour and p.publish_dow == dow
+
 
 def test_publish_writes_06_published_archive(tmp_path, monkeypatch, mocker):
     # content-lifecycle Phase 3: a published post writes 06_published/<day>/<id>.json with expected fields;

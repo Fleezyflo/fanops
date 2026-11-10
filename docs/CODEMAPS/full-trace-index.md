@@ -1,5 +1,7 @@
 > Frozen 2026-07-11 — invariants map, not auto-synced. When prose and code disagree, the code is right.
 
+> Re-verified 2026-10-18 on `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`: live `src/fanops/**/*.py` count is 196; `partition.json` is the C-cluster map (124 indexed stems, 196 keys); semantic traces are marked stale in [subsystem-traces/STALE.md](subsystem-traces/STALE.md); this file is an explicitly stale 2026-07-11 ledger, not the live module list.
+
 <!-- Generated: 2026-07-07 | Method: deterministic AST extraction (scripts/codemap_extract/) + hand-verified semantic sync | Files scanned: 109/109 src/fanops/*.py | Token estimate: ~2400 -->
 # FanOps Full-Codebase Trace Index
 
@@ -195,3 +197,7 @@ Both scripts are pure stdlib, deterministic, and safe to re-run after any code c
 not require the 10 subsystem trace documents to be regenerated (those are the semantic layer, run
 via Sonnet agents per cluster, only needed when the intent of a specific area changes materially,
 not on every edit).
+
+## Live partition (2026-09-12)
+
+Machine-readable C1–C10 map: [partition.json](partition.json). Authoritative module set: `git ls-files 'src/fanops/**/*.py'`. S-subsystem totality is enforced separately by `python -m tools.arch ci` (ARCH-001).

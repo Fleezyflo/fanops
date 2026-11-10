@@ -24,6 +24,8 @@ def main():
         data = json.load(sys.stdin)
     except Exception:
         sys.exit(0)
+    if data.get("cursor_version"):
+        sys.exit(0)  # Cursor sessions are guarded by ~/.cursor/contract
     tool = data.get('tool_name', '')
     if tool == 'Bash':
         event = 'bash'

@@ -14,7 +14,8 @@ rather than silently no-op'ing; a systemd --user sibling is the natural follow-u
 guard marks the seam). Every `launchctl` call mirrors ingest._run_ffprobe (timeout + typed
 ToolchainMissingError on absence). Backend stays dryrun by default — this never publishes."""
 from __future__ import annotations
-import contextlib, json, logging, os, plistlib, re, shutil, subprocess, sys, time
+import contextlib, ctypes, fcntl, json, logging, os, plistlib, re, shutil, subprocess, sys, time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from fanops.config import Config
@@ -264,6 +265,7 @@ from fanops.daemon_siblings import (  # noqa: E402
     KEEPER_LABEL,
     KEEPER_POLL_INTERVAL_S,
     _install_keeper,
+    _install_postiz_reaper,
     ensure_keeper_loaded,
     keeper_plist_path,
 )
@@ -348,13 +350,165 @@ def install(cfg: Config, *, interval: int) -> dict:
     write_text_atomic(pp, render_plist(cfg, interval=interval))
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
-    return {"plist": str(pp), "interval": interval, "loaded": loaded,
-            "responder": resolved, **keeper}
+    out = {"plist": str(pp), "interval": interval, "loaded": loaded,
+           "responder": resolved, **keeper}
+    reaper = _install_postiz_reaper(cfg)
+    if reaper:
+        out.update(reaper)
+    return out
+
+# launchd opens StandardOutPath / StandardErrorPath once and does not rotate them. Those fds are
+# O_APPEND, so the keeper can copytruncate without a kickstart: the pump's next write goes to EOF.
+# Unreadable flags are not proof — the live file stays untouched.
+LAUNCHD_LOG_ROTATE_BYTES = 50 * 1024 * 1024
+_LAUNCHD_LOG_FDS = (("daemon.out", 1), ("daemon.err", 2))
+
+
+def _same_file_append(flags: int, ino: int, dev: int, path: Path) -> bool:
+    """True when `flags` includes O_APPEND and `path` is still that inode."""
+    if (flags & os.O_APPEND) == 0:
+        return False
+    try:
+        st = path.stat()
+    except OSError:
+        return False
+    return st.st_ino == ino and st.st_dev == dev
+
+
+def _darwin_fd_stat(pid: int, fd: int) -> tuple[int, int, int] | None:
+    """(open flags, inode, device) for one fd, or None when proc_pidfdinfo won't say."""
+    class _ProcFileinfo(ctypes.Structure):
+        _fields_ = [
+            ("fi_openflags", ctypes.c_uint32), ("fi_status", ctypes.c_uint32),
+            ("fi_offset", ctypes.c_int64), ("fi_type", ctypes.c_int32),
+            ("fi_guardflags", ctypes.c_uint32),
+        ]
+
+    class _VinfoStat(ctypes.Structure):
+        _fields_ = [
+            ("vst_dev", ctypes.c_uint32), ("vst_mode", ctypes.c_uint16), ("vst_nlink", ctypes.c_uint16),
+            ("vst_ino", ctypes.c_uint64), ("vst_uid", ctypes.c_uint32), ("vst_gid", ctypes.c_uint32),
+            ("vst_atime", ctypes.c_int64), ("vst_atimensec", ctypes.c_int64),
+            ("vst_mtime", ctypes.c_int64), ("vst_mtimensec", ctypes.c_int64),
+            ("vst_ctime", ctypes.c_int64), ("vst_ctimensec", ctypes.c_int64),
+            ("vst_birthtime", ctypes.c_int64), ("vst_birthtimensec", ctypes.c_int64),
+            ("vst_size", ctypes.c_int64), ("vst_blocks", ctypes.c_int64),
+            ("vst_blksize", ctypes.c_int32), ("vst_flags", ctypes.c_uint32),
+            ("vst_gen", ctypes.c_uint32), ("vst_rdev", ctypes.c_uint32),
+            ("vst_qspare", ctypes.c_int64 * 2),
+        ]
+
+    class _VnodeInfo(ctypes.Structure):
+        _fields_ = [
+            ("vi_stat", _VinfoStat), ("vi_type", ctypes.c_int), ("vi_pad", ctypes.c_int),
+            ("vi_fsid_0", ctypes.c_int32), ("vi_fsid_1", ctypes.c_int32),
+        ]
+
+    class _VnodeFdinfo(ctypes.Structure):
+        _fields_ = [("pfi", _ProcFileinfo), ("pvi", _VnodeInfo)]
+
+    try:
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        libc.proc_pidfdinfo.argtypes = [
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        libc.proc_pidfdinfo.restype = ctypes.c_int
+        buf = ctypes.create_string_buffer(ctypes.sizeof(_VnodeFdinfo))
+        n = libc.proc_pidfdinfo(pid, fd, 1, buf, ctypes.sizeof(_VnodeFdinfo))
+    except (AttributeError, OSError) as exc:
+        _log.warning("launchd fd flags unreadable pid=%s fd=%s: %s", pid, fd, exc)
+        return None
+    if n < ctypes.sizeof(_VnodeFdinfo):
+        return None
+    info = _VnodeFdinfo.from_buffer_copy(buf)
+    return info.pfi.fi_openflags, info.pvi.vi_stat.vst_ino, info.pvi.vi_stat.vst_dev
+
+
+def launchd_fd_is_append(pid: int, fd: int, path: Path) -> bool:
+    """True only when `pid`'s `fd` is O_APPEND on `path`. Anything unreadable is not proven."""
+    if sys.platform != "darwin":
+        return False
+    info = _darwin_fd_stat(pid, fd)
+    if info is None:
+        return False
+    return _same_file_append(*info, path)
+
+
+def _copytruncate(path: Path, size: int) -> bool:
+    """Copy `path` to `path.1`, then truncate it. A failed copy leaves the live file alone.
+
+    One rotator at a time: `ensure` runs from the keeper and from `fanops up`, and a second copy
+    racing the first one's truncate would put a partial `path.1` over an emptied log. The loser of
+    the flock returns without touching the copy in flight."""
+    inode = path.stat().st_ino
+    tmp = path.with_name(path.name + ".1.tmp")
+    dest = path.with_name(path.name + ".1")
+    with open(path, "rb") as held:                        # closing it drops the flock
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        try:
+            shutil.copyfile(path, tmp)
+            if tmp.stat().st_size < size or path.stat().st_ino != inode:
+                return False
+            os.replace(tmp, dest)
+            if path.stat().st_ino != inode:
+                return False
+            os.truncate(path, 0)
+            return True
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError as exc:
+                _log.warning("rotate temp unlink %s failed: %s", tmp, exc)
+
+
+def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
+                        minimum_bytes: int | None = None,
+                        fd_is_append: Callable[[int, int, Path], bool] | None = None) -> list[str]:
+    """Copytruncate daemon.out / daemon.err once each exceeds the cap. Does not kickstart.
+
+    stdout is fd 1 and stderr is fd 2 — the descriptors launchd installs for StandardOutPath and
+    StandardErrorPath. Truncation happens only when that fd is still this path and O_APPEND.
+    """
+    cap = LAUNCHD_LOG_ROTATE_BYTES if minimum_bytes is None else minimum_bytes
+    probe = launchd_fd_is_append if fd_is_append is None else fd_is_append
+    use_pid = pid
+    rotated: list[str] = []
+    for name, fd in _LAUNCHD_LOG_FDS:
+        path = cfg.reports / name
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size < cap:
+            continue
+        if use_pid is None:
+            use_pid, _age = _pump_pid_age_s()
+        if use_pid is None or not probe(use_pid, fd, path):
+            _log.warning("rotate_launchd_logs: %s is %s bytes but O_APPEND on fd %s is not proven "
+                         "(pid=%s) — leaving it", name, size, fd, use_pid)
+            continue
+        if _copytruncate(path, size):
+            _log.warning("rotate_launchd_logs: %s reached %s bytes — copied to %s.1 and truncated",
+                         name, size, name)
+            rotated.append(name)
+    return rotated
+
 
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
-    stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env)."""
+    stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env).
+    Copytruncates an over-cap launchd log when its fd is O_APPEND, without kickstart. A rotation
+    failure is logged and does not skip the rest of ensure."""
     _require_darwin()
+    try:
+        rotate_launchd_logs(cfg)
+    except Exception as exc:
+        _log.warning("ensure.rotate_launchd_logs: %s: %s",
+                     type(exc).__name__, str(exc)[:200], exc_info=True)
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
@@ -386,8 +540,13 @@ def ensure(cfg: Config) -> dict:
     # leaves the pump alone.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
+    # Nothing else advances the production checkout, so disk moves here first: a fast-forward makes the
+    # disk SHA differ from the heartbeat and the stale-code branch below adopts it in this same call.
     if cfg.auto_adopt:
         from fanops.errors import fail_open
+        if was_loaded:
+            with fail_open("ensure.fast_forward"):
+                _fast_forward_checkout(cfg)
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
@@ -525,6 +684,7 @@ from fanops.daemon_siblings import (  # noqa: E402, F401
     SIBLING_POLL_INTERVAL_S,
     SIBLING_POLL_TIMERS_RATIONALE,
     render_keeper_plist,
+    render_postiz_reaper_plist,
     sibling_agent_status,
     sibling_agents_status,
     sibling_plist_path,
@@ -639,7 +799,8 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
 # Brief: docs/design/briefs/16-one-step-bring-up.md. Reuses `postiz-ondemand.sh ensure` verbatim
 # (its docker_up + honest 200/401 probe + Mastra self-heal) and daemon.ensure's aliveness contract;
 # it reimplements NONE of Docker/compose/launchd. Never publishes (posts are born awaiting_approval),
-# never flips FANOPS_LIVE, never mutates the git tree.
+# never flips FANOPS_LIVE. The git plane never mutates the tree; the daemon plane's `ensure` may
+# fast-forward it (`_fast_forward_checkout`).
 
 _DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
@@ -648,10 +809,9 @@ _KICKSTART_HEARTBEAT_STEP = 2.0
 
 
 def _ondemand_script() -> Path:
-    """Path to the self-hosted Postiz on-demand script. FANOPS_POSTIZ_ONDEMAND overrides; else the
-    conventional $HOME/postiz-selfhost/postiz-ondemand.sh (mirrors postiz_lifecycle._SCRIPT)."""
-    v = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
-    return Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-ondemand.sh")
+    """Path to the self-hosted Postiz on-demand script. Single resolver: postiz_lifecycle._ondemand_script."""
+    from fanops.postiz_lifecycle import _ondemand_script as resolve
+    return resolve()
 
 
 def _tail(text: str, n: int = 6) -> str:
@@ -748,7 +908,8 @@ def _plane_git(cfg: Config) -> dict:
     workspace, which by the FANOPS_ROOT split may have no .git), same as the self-adopt signal. NEVER
     mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior sync clobbered a live
     accounts.json, another produced a false verdict). Always ok=True: a stale tree or a failed fetch is
-    surfaced, never fatal. The operator decides whether to sync."""
+    surfaced, never fatal. The one tree mutation is the keeper's ff-only `_fast_forward_checkout`, whose
+    docstring answers §6."""
     import fanops, pathlib
     code_root = pathlib.Path(fanops.__file__).resolve().parent
     behind = ahead = None
@@ -780,7 +941,13 @@ def _plane_postiz(cfg: Config) -> dict:
     """Docker + Postiz plane: shell out to `postiz-ondemand.sh ensure` (which starts Docker, brings
     the stack up idempotently, self-heals the Mastra crash-loop, and runs the honest 200/401-past-nginx
     probe — all reused verbatim). Gate: exit 0 = Postiz ready; non-zero surfaces the script's stderr
-    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash."""
+    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash.
+    No live Postiz-routed channel → skipped (ok, not a gate): Zernio-only bring-up does not start
+    Docker or Postiz."""
+    from fanops.postiz_lifecycle import _backend_is_postiz
+    if not _backend_is_postiz(cfg):
+        return {"plane": "postiz", "ok": True, "skipped": True,
+                "detail": "deferred (no live Postiz-routed channel; Zernio/other backends unaffected)"}
     script = _ondemand_script()
     if not script.exists():
         return {"plane": "postiz", "ok": False,
@@ -870,6 +1037,67 @@ def _sync_locked_deps() -> tuple[bool, str]:
         tail = err[-1][:120] if err else f"exit {r.returncode}"
         return False, f"deps sync failed for {shown}: {tail}"
     return True, f"deps synced ({shown})"
+
+
+def _git_code(root: Path, *args: str, timeout: float = 60) -> subprocess.CompletedProcess | None:
+    """One git call in the code checkout; None when git is missing or times out."""
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _fast_forward_checkout(cfg: Config) -> str:
+    """Fast-forward the code checkout onto origin/main so `ensure`'s stale-code adopt has new code to adopt.
+
+    `git merge --ff-only origin/main` runs only when HEAD is a strict ancestor of origin/main, no pass
+    holds the run flock, and the pump is past the adopt settle window — the same moment the stale-code
+    kickstart may fire, so new modules are never lazily imported into a pump that is not about to be
+    replaced. Works on a detached HEAD. Returns the outcome word; every refusal leaves the tree as it was
+    and logs one breadcrumb.
+
+    Binding non-goal §6 (docs/design/briefs/16-one-step-bring-up.md) forbade tree mutation because a
+    `reset --hard` sync clobbered a live accounts.json and a stale `main` produced a false verdict.
+    ff-only cannot clobber the way that reset did: it only moves HEAD forward along origin/main and
+    refuses, writing nothing, when the checkout has diverged or when a tracked local edit or an untracked
+    file sits on a path the merge would write. Nothing here resets, checks out, or stashes. The exception
+    is a gitignored path: git overwrites an ignored file when an incoming commit tracks that path, so
+    the data workspace stays safe only while main tracks nothing under it."""
+    from fanops.pipeline_run import run_held
+    root = _code_checkout_root()
+    if root is None:
+        return "no_checkout"
+    pid, age = _pump_pid_age_s()
+    if pid is not None and (age is None or age < _adopt_settle_s(cfg)):
+        return "settling"
+    fetched = _git_code(root, "fetch", "origin")
+    if fetched is None or fetched.returncode != 0:
+        _log.warning("ensure.fast_forward: git fetch failed in %s — tree untouched (%s)",
+                     root, _tail(fetched.stderr if fetched else "", 2) or "git unavailable")
+        return "fetch_failed"
+    revs = _git_code(root, "rev-parse", "HEAD", "origin/main", timeout=15)
+    shas = (revs.stdout or "").split() if revs is not None and revs.returncode == 0 else []
+    if len(shas) != 2:
+        _log.warning("ensure.fast_forward: could not resolve HEAD and origin/main in %s — tree untouched", root)
+        return "unresolved"
+    head, target = shas
+    if head == target:
+        return "current"
+    anc = _git_code(root, "merge-base", "--is-ancestor", "HEAD", "origin/main", timeout=15)
+    if anc is None or anc.returncode != 0:
+        _log.warning("ensure.fast_forward: HEAD %s is not an ancestor of origin/main %s — tree untouched",
+                     head[:12], target[:12])
+        return "diverged"
+    if run_held(cfg):
+        _log.warning("ensure.fast_forward: run flock held — deferring %s -> %s", head[:12], target[:12])
+        return "run_held"
+    merged = _git_code(root, "merge", "--ff-only", "origin/main", timeout=120)
+    if merged is None or merged.returncode != 0:
+        _log.warning("ensure.fast_forward: merge --ff-only %s -> %s did not complete (%s)", head[:12], target[:12],
+                     _tail(merged.stderr, 2) if merged else "git missing or timed out")
+        return "refused"
+    _log.warning("ensure.fast_forward: %s -> %s", head[:12], target[:12])
+    return "fast_forward"
 
 
 def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
@@ -1042,6 +1270,6 @@ def format_up_report(result: dict) -> list[str]:
         p = result.get(name)
         if p is None:
             return f"  [ -- ] {name}: (not reached)"
-        mark = "ok  " if p["ok"] else ("skip" if p.get("skipped") else "DOWN")
+        mark = "skip" if p.get("skipped") else ("ok  " if p["ok"] else "DOWN")
         return f"  [{mark}] {name}: {p.get('detail', '')}"
     return [line("git"), line("postiz"), line("daemon"), line("studio"), result["verdict"]]

@@ -4,7 +4,9 @@ keeper (com.fanops.keeper, StartInterval 120s, `fanops daemon ensure`) compares 
 disk and kickstarts the PUMP when they drift.
 
 These tests drive `daemon.ensure(cfg)` with only the launchctl/ps/git process edge stubbed. Decision
-inputs are real: heartbeat lines on disk, real `_version_signal` via git pass-through, real run flock."""
+inputs are real: heartbeat lines on disk, real `_version_signal` over a fake git state (HEAD starts at
+the real checkout SHA; a successful `merge --ff-only` moves it to origin/main), real run flock. No test
+fetches or merges a real checkout."""
 from __future__ import annotations
 import fcntl
 import json
@@ -19,18 +21,44 @@ from fanops.pipeline_run import _lock_path
 import fanops
 
 
-def _fake_ensure_run(monkeypatch, tmp_path, *, list_out="", ps_etime=None):
+def _fake_git(cmd, git, *, ancestor, merge_rc):
+    """`git -C <root> <args>` against a two-ref state; any other git argv fails the test."""
+    args = cmd[3:]
+
+    def ok(out=""):
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+    if args == ["fetch", "origin"]:
+        return ok()
+    if args == ["rev-parse", "HEAD"]:
+        return ok(f"{git['head']}\n")
+    if args == ["rev-parse", "HEAD", "origin/main"]:
+        return ok(f"{git['head']}\n{git['origin']}\n")
+    if args == ["merge-base", "--is-ancestor", "HEAD", "origin/main"]:
+        return subprocess.CompletedProcess(cmd, 0 if ancestor else 1, stdout="", stderr="")
+    if args == ["merge", "--ff-only", "origin/main"]:
+        if merge_rc == 0:
+            git["head"] = git["origin"]
+            return ok()
+        return subprocess.CompletedProcess(cmd, merge_rc, stdout="",
+                                           stderr="fatal: Not possible to fast-forward, aborting.\n")
+    raise AssertionError(f"unexpected git argv: {cmd}")
+
+
+def _fake_ensure_run(monkeypatch, tmp_path, *, list_out="", ps_etime=None,
+                     head=None, origin=None, ancestor=True, merge_rc=0):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(sys, "platform", "darwin")
     uid = os.getuid()
     calls: list[list[str]] = []
-    real = subprocess.run
+    git = {"head": head or _deployed_sha()}
+    git["origin"] = origin or git["head"]
 
     def run(cmd, *a, **k):
         cmd = list(cmd)
         calls.append(cmd)
         if cmd[:1] == ["git"]:
-            return real(cmd, *a, **k)
+            return _fake_git(cmd, git, ancestor=ancestor, merge_rc=merge_rc)
         if cmd[:1] == ["ps"]:
             out = "" if ps_etime is None else ps_etime
             return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
@@ -244,3 +272,112 @@ def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path):
     sig, src = daemon._version_signal(Config(tmp_path))
     assert (sig, src) == (want, "git-head")
     assert not (tmp_path / ".git").exists()
+
+
+# ── keeper fast-forward: the production checkout advances onto origin/main ─────────────────────
+
+_OLD = "1" * 40
+_NEW = "2" * 40
+_FF = ["merge", "--ff-only", "origin/main"]
+_NEVER = {"reset", "checkout", "stash", "rebase", "pull", "switch", "restore", "clean"}
+_LOADED = {"label": daemon.LABEL, "loaded": True, "action": "none"}
+
+
+def _git_args(calls):
+    return [c[3:] for c in calls if c[:1] == ["git"]]
+
+
+def _behind(monkeypatch, tmp_path, **kw):
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path, head=_OLD, origin=_NEW, **kw)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    monkeypatch.setattr(daemon, "_sync_locked_deps", lambda: (True, ""))
+    _loop_hb(cfg, _OLD)                               # the pump runs the checkout's current HEAD
+    return cfg, calls, uid
+
+
+def _hold_run_flock(cfg):
+    lp = _lock_path(cfg)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lp), os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def test_fast_forward_when_behind_then_adopts_in_same_call(tmp_path, monkeypatch):
+    cfg, calls, uid = _behind(monkeypatch, tmp_path)
+
+    res = daemon.ensure(cfg)
+
+    git = _git_args(calls)
+    assert ["fetch", "origin"] in git
+    assert ["merge-base", "--is-ancestor", "HEAD", "origin/main"] in git
+    merge_at = next(i for i, c in enumerate(calls) if c[3:] == _FF and c[:1] == ["git"])
+    assert merge_at < calls.index(_kickstart_argv(uid))
+    assert daemon._version_signal(cfg)[0] == _NEW
+    assert not any(_NEVER & set(a) for a in git)
+    assert res == {**_LOADED, "action": "kickstart_stale_code"}
+
+
+def test_fast_forward_skipped_while_run_flock_held(tmp_path, monkeypatch):
+    cfg, calls, uid = _behind(monkeypatch, tmp_path)
+    fd = _hold_run_flock(cfg)
+    try:
+        res = daemon.ensure(cfg)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert _FF not in _git_args(calls)
+    assert _kickstart_argv(uid) not in calls
+    assert daemon._version_signal(cfg)[0] == _OLD
+    assert res == _LOADED
+
+
+def test_fast_forward_skipped_when_head_diverged(tmp_path, monkeypatch):
+    cfg, calls, uid = _behind(monkeypatch, tmp_path, ancestor=False)
+
+    res = daemon.ensure(cfg)
+
+    git = _git_args(calls)
+    assert ["merge-base", "--is-ancestor", "HEAD", "origin/main"] in git
+    assert _FF not in git
+    assert _kickstart_argv(uid) not in calls
+    assert res == _LOADED
+
+
+def test_fast_forward_refusal_leaves_tree_untouched(tmp_path, monkeypatch):
+    cfg, calls, uid = _behind(monkeypatch, tmp_path, merge_rc=128)
+
+    res = daemon.ensure(cfg)                          # a refusal never raises
+
+    git = _git_args(calls)
+    assert _FF in git
+    assert not any(_NEVER & set(a) for a in git)
+    assert daemon._version_signal(cfg)[0] == _OLD
+    assert _kickstart_argv(uid) not in calls
+    assert res == _LOADED
+
+
+def test_no_fast_forward_when_already_at_origin_main(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path, head=_NEW, origin=_NEW)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    _loop_hb(cfg, _NEW)
+
+    res = daemon.ensure(cfg)
+
+    git = _git_args(calls)
+    assert ["fetch", "origin"] in git
+    assert _FF not in git
+    assert _kickstart_argv(uid) not in calls
+    assert res == _LOADED
+
+
+def test_fast_forward_waits_out_a_young_pump(tmp_path, monkeypatch):
+    """A pump inside the settle window would not be kickstarted, so disk must not move under it."""
+    cfg, calls, uid = _behind(monkeypatch, tmp_path, list_out='\t"PID" = 4321;\n', ps_etime="00:10\n")
+
+    res = daemon.ensure(cfg)
+
+    assert _git_args(calls) == [["rev-parse", "HEAD"]]   # _version_signal only: no fetch, no merge
+    assert _kickstart_argv(uid) not in calls
+    assert res == _LOADED

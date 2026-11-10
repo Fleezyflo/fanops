@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fanops.accounts import Accounts
+from fanops.caption_compose import send_caption
 from fanops.config import Config
 from fanops.errors import fail_open
 from fanops.ledger import Ledger
@@ -52,7 +53,8 @@ def publish_queue(cfg: Config, *, now: Optional[datetime] = None,
             with fail_open("studio.views_run.publish_queue"):
                 due = parse_iso(p.scheduled_time) <= now
         rows.append({"post_id": p.id, "clip_id": p.parent_id, "account": p.account,
-                     "platform": p.platform.value, "caption": p.caption, "state": p.state.value,
+                     "platform": p.platform.value, "caption": send_caption(cfg, led, p)[0],
+                     "state": p.state.value,
                      "scheduled_time": p.scheduled_time, "due": due})
     # due-first; within a bucket by schedule. "9999" sentinel (not "") so a None/unscheduled post
     # sorts LAST, not as if it were the most urgent (ecc:python-review).

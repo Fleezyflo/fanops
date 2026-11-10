@@ -234,6 +234,8 @@ def main():
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         sys.exit(0)
+    if data.get("cursor_version"):
+        sys.exit(0)  # Cursor sessions are guarded by ~/.cursor/contract
     if data.get("tool_name") != "AskUserQuestion":
         sys.exit(0)
     questions = data.get("tool_input", {}).get("questions")

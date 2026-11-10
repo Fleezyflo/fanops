@@ -14,12 +14,27 @@ from __future__ import annotations
 from pathlib import Path
 from fanops.config import Config
 from fanops.controlio import write_text_atomic
-from fanops.ledger import _file_lock
 
 
 def _env_rewrite_lock(env_path: Path):
-    """Exclusive lock for one .env read-modify-write. Not Config.lock_path — that lock is the ledger."""
-    return _file_lock(env_path.with_name(env_path.name + ".lock"))
+    """Exclusive lock for one .env read-modify-write. Not Config.lock_path — that lock is the ledger.
+
+    Looks up `_file_lock` at call time so a test can patch `fanops.ledger._file_lock`. A lock timeout
+    is `LockBusyError` raised from `__enter__`; golive only catches `OSError`, so that timeout is
+    re-raised as `OSError`."""
+    from contextlib import contextmanager
+    from fanops.errors import LockBusyError
+    from fanops.ledger import _file_lock
+
+    @contextmanager
+    def _locked():
+        try:
+            with _file_lock(env_path.with_name(env_path.name + ".lock")):
+                yield
+        except LockBusyError as exc:
+            raise OSError(str(exc)) from exc
+
+    return _locked()
 
 
 def set_env_var(env_path: Path, key: str, value: str) -> None:
