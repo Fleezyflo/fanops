@@ -275,6 +275,8 @@ def test_execute_wipe_writes_file_manifest(tmp_path):
     cfg = Config(root=tmp_path); _live_shaped(cfg)
     snap = Ledger.snapshot(cfg)
     result = ledger_wipe.execute_wipe(cfg, confirmed=True, snapshot_path=snap)
+    led = Ledger.load(cfg)
+    assert "p_drop" not in led.posts
     manifest = __import__("pathlib").Path(result["manifest"])
     assert manifest.exists()
     lines = [ln for ln in manifest.read_text().splitlines() if ln]
