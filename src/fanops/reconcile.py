@@ -223,16 +223,10 @@ def _submission_held_by_other(led: Ledger, post_id: str, sid: str) -> bool:
 
 
 def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *,
-                           captured_url: str, new_sub: str, release_id: Optional[str] = None,
-                           search_row: Optional[dict] = None) -> bool:
-    """Shared published promotion. False — and no write — when another post holds `new_sub`,
-    or `search_row` is a search hit whose parsed caption is missing or not this post's."""
+                           captured_url: str, new_sub: str, release_id: Optional[str] = None) -> bool:
+    """Shared published promotion. False — and no write — when another post holds `new_sub`."""
     if _submission_held_by_other(led, post.id, new_sub):
         return False
-    if search_row is not None:
-        from fanops.caption_compose import caption_shown
-        if not _search_row_is_this_post(search_row, caption_shown(cfg, led, post) or ""):
-            return False
     upd = {"public_url": captured_url, "submission_id": new_sub, "reconcile_candidate_id": None,
            "ig_confirm_failopen_count": 0}
     if post.platform is Platform.instagram and release_id:
@@ -384,26 +378,22 @@ def _zernio_row_matches_url(row: dict, want_url: str) -> bool:
     return False
 
 
-def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Optional[str],
-                                 ) -> tuple[set[str], dict[str, dict]]:
+def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Optional[str]) -> set[str]:
     """Merge URL + caption list hits; capped pagination per strategy.
 
-    Returns (ids, search_rows). Permalink URL hits stay in `ids` only. The search text is
-    `caption_shown`: `Post.sent_content` when the send stamped it, else the send text. A
-    search row is admitted only when its parsed caption equals that text; those ids map
-    to the row in `search_rows` so promote can refuse a hit that failed the check.
-    A search row with no parsed caption is not this post and is not admitted. len>1
-    still returns immediately (ambiguous)."""
+    A permalink URL hit needs no caption. The search text is `caption_shown`: `Post.sent_content`
+    when the send stamped it, else the send text. A search row is admitted only when its parsed
+    caption equals that text; a row with no parsed caption is not this post. len>1 still returns
+    immediately (ambiguous)."""
     from fanops.caption_compose import caption_shown
     from fanops.post.metrics.zernio_read import zernio_list_posts
     account_id = (post.account_id or "").strip()
     if not account_id:
-        return set(), {}
+        return set()
     date_from, date_to = _vendor_lookup_date_window(post)
     if not date_from or not date_to:
-        return set(), {}
+        return set()
     ids: set[str] = set()
-    search_rows: dict[str, dict] = {}
     url = safe_public_url(url_hint) or safe_public_url(post.public_url)
     if url:
         for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
@@ -420,7 +410,7 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                     if rid:
                         ids.add(rid)
             if len(ids) > 1:
-                return ids, search_rows
+                return ids
             total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
             if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
                 break
@@ -438,18 +428,14 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                 break
             for row in rows:
                 rid = _zernio_list_row_id(row)
-                if not rid or rid in ids:
-                    continue
-                if not _search_row_is_this_post(row, posted):
-                    continue
-                ids.add(rid)
-                search_rows[rid] = row
+                if rid and _search_row_is_this_post(row, posted):
+                    ids.add(rid)
             if len(ids) > 1:
-                return ids, search_rows
+                return ids
             total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
             if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
                 break
-    return ids, search_rows
+    return ids
 
 
 def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
@@ -461,7 +447,7 @@ def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
         return False
     if not (post.account_id or "").strip():
         return False
-    ids, search_rows = _vendor_lookup_candidate_ids(cfg, led, post, url_hint=url_hint)
+    ids = _vendor_lookup_candidate_ids(cfg, led, post, url_hint=url_hint)
     if not ids:
         log("reconcile", post.id, "vendor_lookup_no_match")
         return False
@@ -479,8 +465,7 @@ def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
     if not ok or not captured:
         log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
         return False
-    if not _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=sid,
-                                  search_row=search_rows.get(sid)):
+    if not _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=sid):
         log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
         return False
     log("reconcile", post.id, "vendor_lookup_ok", sub=sid)

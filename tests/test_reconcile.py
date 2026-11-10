@@ -1624,14 +1624,14 @@ def test_vendor_lookup_permalink_promotes_without_caption(tmp_path, monkeypatch)
     assert out.posts["pv"].submission_id == "z_vendor"
 
 
-def test_promote_bound_publish_refuses_failed_search_and_held_id(tmp_path):
+def test_promote_bound_publish_refuses_held_id(tmp_path):
+    # Both binds (candidate and vendor lookup) promote here, so a held id is refused on either.
     from datetime import datetime, timezone
     from fanops import reconcile as rec_mod
     from fanops.log import get_logger
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    cap = "unique caption for vendor lookup test"
-    _tiktok_unbound(led, "pv", caption=cap)
+    _tiktok_unbound(led, "pv", caption="unique caption for vendor lookup test")
     led.add_post(Post(id="other", parent_id="c", account="tt", account_id="integ-2",
                       platform=Platform.tiktok, caption="x", state=PostState.published,
                       submission_id="z_held",
@@ -1641,18 +1641,11 @@ def test_promote_bound_publish_refuses_failed_search_and_held_id(tmp_path):
     now = datetime.now(timezone.utc)
     url = "https://www.tiktok.com/@wahed_bared/video/9"
     assert rec_mod._promote_bound_publish(
-        cfg, led, post, log, now, captured_url=url, new_sub="z_new",
-        search_row={"_id": "z_new"}) is False
-    assert rec_mod._promote_bound_publish(
-        cfg, led, post, log, now, captured_url=url, new_sub="z_new",
-        search_row={"_id": "z_new", "content": "not ours"}) is False
-    assert rec_mod._promote_bound_publish(
         cfg, led, post, log, now, captured_url=url, new_sub="z_held") is False
     assert led.posts["pv"].state is PostState.needs_reconcile
     assert led.posts["pv"].submission_id == "fanops_tok"
     assert rec_mod._promote_bound_publish(
-        cfg, led, post, log, now, captured_url=url, new_sub="z_new",
-        search_row={"_id": "z_new", "content": cap}) is True
+        cfg, led, post, log, now, captured_url=url, new_sub="z_new") is True
     assert led.posts["pv"].state is PostState.published
     assert led.posts["pv"].submission_id == "z_new"
     assert led.posts["other"].submission_id == "z_held"
