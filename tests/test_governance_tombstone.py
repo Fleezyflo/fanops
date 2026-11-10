@@ -5,6 +5,7 @@ gates were overwhelmingly backed by no mechanism; the cleanup route deleted it. 
 deletion in the required unit lane: the namespaces stay dead and the index of real enforcers exists.
 A rule ships as an enforcer or it does not ship — docs/ENFORCEMENT.md is the index.
 """
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +34,16 @@ DEAD = [
 
 
 def test_governance_prose_stays_deleted():
-    resurrected = [p for p in DEAD if (ROOT / p).exists()]
+    resurrected = []
+    for rel in DEAD:
+        path = ROOT / rel
+        if not path.exists():
+            continue
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "--", rel], cwd=ROOT, check=False,
+        ).returncode == 0
+        if not ignored:
+            resurrected.append(rel)
     assert not resurrected, f"deleted governance namespaces resurrected: {resurrected}"
 
 

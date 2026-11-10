@@ -10,13 +10,13 @@
     },
     "FANOPS_ACCOUNT_CASTING": {
       "read_at": [
-        "fanops.config:831"
+        "fanops.config:832"
       ],
       "reader_count": 1
     },
     "FANOPS_ADJUST_PER_SURFACE": {
       "read_at": [
-        "fanops.config:1031"
+        "fanops.config:1032"
       ],
       "reader_count": 1
     },
@@ -47,13 +47,13 @@
     },
     "FANOPS_AWARE_REFRAME": {
       "read_at": [
-        "fanops.config:813"
+        "fanops.config:814"
       ],
       "reader_count": 1
     },
     "FANOPS_BURN_SUBS": {
       "read_at": [
-        "fanops.config:804"
+        "fanops.config:805"
       ],
       "reader_count": 1
     },
@@ -65,13 +65,13 @@
     },
     "FANOPS_CONCURRENT_SOURCES": {
       "read_at": [
-        "fanops.config:1234"
+        "fanops.config:1235"
       ],
       "reader_count": 1
     },
     "FANOPS_CONCURRENT_WORKERS": {
       "read_at": [
-        "fanops.config:1245"
+        "fanops.config:1246"
       ],
       "reader_count": 1
     },
@@ -83,7 +83,7 @@
     },
     "FANOPS_GC_KEEP_DAYS": {
       "read_at": [
-        "fanops.config:1095"
+        "fanops.config:1096"
       ],
       "reader_count": 1
     },
@@ -113,13 +113,13 @@
     },
     "FANOPS_HOOK_ROUTER": {
       "read_at": [
-        "fanops.config:838"
+        "fanops.config:839"
       ],
       "reader_count": 1
     },
     "FANOPS_IG_RETENTION_PROOF": {
       "read_at": [
-        "fanops.config:1064"
+        "fanops.config:1065"
       ],
       "reader_count": 1
     },
@@ -137,31 +137,31 @@
     },
     "FANOPS_IMPACT_CUT": {
       "read_at": [
-        "fanops.config:846"
+        "fanops.config:847"
       ],
       "reader_count": 1
     },
     "FANOPS_INTRO_TEASE": {
       "read_at": [
-        "fanops.config:855"
+        "fanops.config:856"
       ],
       "reader_count": 1
     },
     "FANOPS_ISOLATE_VOCALS": {
       "read_at": [
-        "fanops.config:796"
+        "fanops.config:797"
       ],
       "reader_count": 1
     },
     "FANOPS_LEARN_AMPLIFY": {
       "read_at": [
-        "fanops.config:902"
+        "fanops.config:903"
       ],
       "reader_count": 1
     },
     "FANOPS_LEARN_RETIRE": {
       "read_at": [
-        "fanops.config:913"
+        "fanops.config:914"
       ],
       "reader_count": 1
     },
@@ -191,7 +191,7 @@
     },
     "FANOPS_MAX_POSTS_PER_ACCOUNT_PER_DAY": {
       "read_at": [
-        "fanops.config:1148"
+        "fanops.config:1149"
       ],
       "reader_count": 1
     },
@@ -203,63 +203,63 @@
     },
     "FANOPS_MOMENT_HOOK_LEARNING": {
       "read_at": [
-        "fanops.config:1072"
+        "fanops.config:1073"
       ],
       "reader_count": 1
     },
     "FANOPS_OPERATOR_TZ": {
       "read_at": [
-        "fanops.config:1132"
+        "fanops.config:1133"
       ],
       "reader_count": 1
     },
     "FANOPS_P4_DIM_BIAS": {
       "read_at": [
-        "fanops.config:1041"
+        "fanops.config:1042"
       ],
       "reader_count": 1
     },
     "FANOPS_P4_MIN_REACH_GAP": {
       "read_at": [
-        "fanops.config:1083"
+        "fanops.config:1084"
       ],
       "reader_count": 1
     },
     "FANOPS_POSTER": {
       "read_at": [
-        "fanops.config:1254",
+        "fanops.config:1255",
         "fanops.config:334"
       ],
       "reader_count": 2
     },
     "FANOPS_POSTIZ_AUTOSTART": {
       "read_at": [
-        "fanops.config:1260"
+        "fanops.config:1261"
       ],
       "reader_count": 1
     },
     "FANOPS_POSTIZ_COMPOSE_DIR": {
       "read_at": [
-        "fanops.config:1265"
+        "fanops.config:1266"
       ],
       "reader_count": 1
     },
     "FANOPS_POSTIZ_ONDEMAND": {
       "read_at": [
-        "fanops.daemon:659",
-        "fanops.doctor:293"
+        "fanops.doctor:293",
+        "fanops.postiz_lifecycle:38"
       ],
       "reader_count": 2
     },
     "FANOPS_POSTIZ_PUBLISH_PER_MIN": {
       "read_at": [
-        "fanops.config:1219"
+        "fanops.config:1220"
       ],
       "reader_count": 1
     },
     "FANOPS_PUBLISH_LEAD_MINUTES": {
       "read_at": [
-        "fanops.config:1199"
+        "fanops.config:1200"
       ],
       "reader_count": 1
     },
@@ -271,7 +271,7 @@
     },
     "FANOPS_REALISTIC_CADENCE": {
       "read_at": [
-        "fanops.config:1141"
+        "fanops.config:1142"
       ],
       "reader_count": 1
     },
@@ -307,7 +307,7 @@
     },
     "FANOPS_SOURCE_SHARD_MIN": {
       "read_at": [
-        "fanops.config:1120"
+        "fanops.config:1121"
       ],
       "reader_count": 1
     },
@@ -319,91 +319,91 @@
     },
     "FANOPS_SUBTITLE_FONT": {
       "read_at": [
-        "fanops.config:820"
+        "fanops.config:821"
       ],
       "reader_count": 1
     },
     "FANOPS_TIMING_BIAS": {
       "read_at": [
-        "fanops.config:1050"
+        "fanops.config:1051"
       ],
       "reader_count": 1
     },
     "FANOPS_UPLOAD_MAX_MB": {
       "read_at": [
-        "fanops.config:1108"
+        "fanops.config:1109"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_AMPLIFY": {
       "read_at": [
-        "fanops.config:926"
+        "fanops.config:927"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_AMPLIFY_MIN_GAP": {
       "read_at": [
-        "fanops.config:944"
+        "fanops.config:945"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_AMPLIFY_MIN_POSTS": {
       "read_at": [
-        "fanops.config:934"
+        "fanops.config:935"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_AMPLIFY_MIN_STREAK": {
       "read_at": [
-        "fanops.config:955"
+        "fanops.config:956"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_LEARNING": {
       "read_at": [
-        "fanops.config:865"
+        "fanops.config:866"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_MIN_GAP": {
       "read_at": [
-        "fanops.config:885"
+        "fanops.config:886"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_MIN_POSTS": {
       "read_at": [
-        "fanops.config:874"
+        "fanops.config:875"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_TRANSFER": {
       "read_at": [
-        "fanops.config:1001"
+        "fanops.config:1002"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_TRANSFER_MAX_HOOKS": {
       "read_at": [
-        "fanops.config:1020"
+        "fanops.config:1021"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_TRANSFER_MIN_DONORS": {
       "read_at": [
-        "fanops.config:1010"
+        "fanops.config:1011"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_UCB": {
       "read_at": [
-        "fanops.config:975"
+        "fanops.config:976"
       ],
       "reader_count": 1
     },
     "FANOPS_VARIANT_UCB_C": {
       "read_at": [
-        "fanops.config:985"
+        "fanops.config:986"
       ],
       "reader_count": 1
     },
@@ -422,7 +422,7 @@
     },
     "FANOPS_ZERNIO_MAX_UPLOAD_MB": {
       "read_at": [
-        "fanops.config:1209"
+        "fanops.config:1210"
       ],
       "reader_count": 1
     },
@@ -482,7 +482,7 @@
     },
     "XDG_CACHE_HOME": {
       "read_at": [
-        "fanops.config:1272"
+        "fanops.config:1273"
       ],
       "reader_count": 1
     },

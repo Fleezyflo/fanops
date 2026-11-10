@@ -9,16 +9,21 @@ one place only: the **source lock**, shipped by `hashtags.ship_from_lock`.
 ## The single rule everything else follows
 
 **Ship path = `ship_from_lock`.** Caption ingest / compose takes model picks ∩
-that source's lock, pick order, hard cap 4. Empty / missing lock → empty tag
-line. A tags-only stored `Post.caption` **survives** on the IG/TT wire via
-`compose_posted_caption` — `src/fanops/post/CLAUDE.md`. No AR floor, no mega
-slot, no store ∪ corpus, no 80-pile, no `vet_hashtags` on the posted line.
+that source's lock, caps at 4, drops the artist-name tag, then orders the
+survivors with `play_rank_key` on the lock row's measurements. Empty / missing
+lock → empty tag line. A tags-only stored `Post.caption` **survives** on the
+IG/TT wire via `compose_posted_caption` — `src/fanops/post/CLAUDE.md`. No AR
+floor, no mega slot, no store ∪ corpus, no 80-pile, no `vet_hashtags` on the
+posted line.
 
-Lock membership is catalog keep ∩ positive `play_count`, order is keep order,
-cap 12 (`hashtags.lock_from_shortlist`). Caption picks up to 4 from that lock
-by CLIP FIT. `play_count` / `current_top_reel_play_max_7d` are meters on the
-row, not the choose-key. `lock_from_pile` remains for hydrate / used-tags fill
-only.
+Lock membership is positive `play_count`, order is `play_rank_key`, cap 12
+(`hashtags.lock_from_pile`). The caption menu is that lock minus the artist-name
+tag (`artist_tag_norms`), still in `play_rank_key` order. The choose-key is
+`play_count`; the tie is `current_top_reel_play_max_7d`. `play_count` then
+`current_top_reel_play_max_7d` ranks the tags that fit this window, the same order
+as `play_rank_key`. It does not assign the highest `play_count` tags to every window.
+`media_count` is a post
+count on the row. `lock_from_shortlist` does not stamp the stored lock.
 
 Studio `/hashtags` shows source locks (full cap-12 list) and a play-ranked
 measurement cache. It does not show persona corpora as a caption menu.
@@ -37,8 +42,10 @@ scrape (`ig_web_scrape`) admits those names
 never vetoes membership, never reorders the lock, and never withholds
 `researched_at`. Empty `lock: []` means scrape finished with zero admits.
 
-Caption surfaces read that lock as `hashtag_store` (same list every surface of
-that source). Never the persona store ∪ corpus.
+Caption surfaces read that lock, minus the artist-name tag and ordered by
+`play_rank_key`, as `hashtag_store` (same list every surface of that source).
+The numbers on the row are that lock row's measurements. Never the persona
+store ∪ corpus.
 
 ## Tick — sidecar remesure (not persona discovery)
 
@@ -67,12 +74,13 @@ auth-death freeze per user). Live `hashtag_refresh.refresh_store()` without an i
 Called from `caption` (ingest + compose helpers):
 
 ```text
-tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4)
+tags = ship_from_lock(picks, _source_lock_tags(cfg, src), n=4,
+                      artist_name=cfg.artist_name, measurements=lock_row_measurements)
 ```
 
-- Membership = lock only
-- Order = pick order among lock members
-- Cap = 4
+- Membership = lock only, artist-name tag off the menu and dropped again at ship
+- Order = `play_rank_key` on the lock row's measurements
+- Cap = 4 (walks the picks, then the survivors are reordered)
 - No floors, no backfill, no mega / AR composition
 
 ## Layer B — deleted

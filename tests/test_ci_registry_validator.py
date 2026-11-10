@@ -130,11 +130,9 @@ def test_deployed_probe_failures_do_not_mask_each_other():
 
 
 def test_require_live_skips_unreadable_dc3_and_fails_context_drift(monkeypatch, capsys):
-    """`cmd_deployed(True)` does not fail an unreadable protection probe.
+    """Unreadable DC-3 skips under `--require-live`; readable drift still fails.
 
-    A workflow token's HTTP 403 on branch protection stays a non-authoritative SKIP, and so does
-    an unreadable DC-9. A protection document that loads and disagrees with `required_contexts`
-    still fails. DC-8 is stubbed readable and active so this test is about DC-3, not workflow state.
+    DC-9 stays SKIP. DC-8 is stubbed readable and active so the test is about DC-3.
     """
     reg = load_registry()
     states = {c["workflow"]: "active" for c in reg["controls"] if c.get("workflow")}
@@ -148,9 +146,12 @@ def test_require_live_skips_unreadable_dc3_and_fails_context_drift(monkeypatch, 
     assert cmd_deployed(True) == 0
     skipped = capsys.readouterr().out
     assert "[SKIP] DC-3" in skipped and "HTTP 403" in skipped
-    assert "[FAIL] DC-3" not in skipped
     assert "--require-live set but the live probe failed" not in skipped
+    probe_env = "GH_DEPLOYED" + "_PROBE_PAT"
+    assert probe_env not in skipped
+    assert "[FAIL] DC-3" not in skipped
     assert "[SKIP] DC-9" in skipped
+    assert "[FAIL] DC-9" not in skipped
 
     monkeypatch.setattr(
         "tools.ci.cli.probe_protection",

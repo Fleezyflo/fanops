@@ -67,6 +67,7 @@ Any line shift in scanned source requires an architecture regen before the drift
 | Context | When to load |
 |---------|--------------|
 | [.claude/skills/fanops-hook-hashtag/SKILL.md](.claude/skills/fanops-hook-hashtag/SKILL.md) | Writing or reviewing on-screen hooks and hashtags |
+| [.cursor/skills/fanops-production-audit/SKILL.md](.cursor/skills/fanops-production-audit/SKILL.md) | `/fanops-production-audit`: parent Task run of the 18 audit modules into `docs/audit/*` |
 | `src/fanops/post/CLAUDE.md` | Publish path; vendor wire (`posted_text_for` vs `Post.caption`, Zernio `content` / `mediaItems`) |
 | [.agents/lanes.json](.agents/lanes.json) | Lane → hot-file ownership, lane → Linear mapping |
 | `src/fanops/CLAUDE.md`, `studio/`, `tests/` | Edit-time rulebooks, scoped to that directory |

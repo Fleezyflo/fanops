@@ -162,6 +162,22 @@ def test_timing_window_clamp_skips_out_of_window_hour(tmp_path):
     assert timing_bias_hour_for(led, cfg, "a") is None    # 03:00 outside 09–23 -> no bias
 
 
+def test_timing_hour_for_is_none_when_kill_switch_off(tmp_path, monkeypatch):
+    # Default OFF: a validated in-window winner must not reach the schedule. crosspost applies
+    # timing_bias_hour_for and does not read FANOPS_TIMING_BIAS itself.
+    from fanops.timing_bias import timing_bias_hour_for
+    monkeypatch.delenv("FANOPS_TIMING_BIAS", raising=False)
+    cfg = Config(root=tmp_path); led = _timing_led(cfg); _validate(cfg)   # winner = 18:00, window open
+    assert timing_bias_hour_for(led, cfg, "a") is None
+
+
+def test_timing_hour_for_returns_winner_when_kill_switch_on(tmp_path, monkeypatch):
+    from fanops.timing_bias import timing_bias_hour_for
+    monkeypatch.setenv("FANOPS_TIMING_BIAS", "1")
+    cfg = Config(root=tmp_path); led = _timing_led(cfg); _validate(cfg)
+    assert timing_bias_hour_for(led, cfg, "a") == 18
+
+
 def _frozen(led):
     return json.dumps({
         "sources": {k: v.model_dump() for k, v in led.sources.items()},

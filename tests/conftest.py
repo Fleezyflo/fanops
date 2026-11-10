@@ -119,6 +119,16 @@ def pytest_runtest_makereport(item, call):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_home(tmp_path, monkeypatch):
+    """daemon.plist_path() is Path.home()/Library/LaunchAgents. A machine with a real
+    com.fanops.daemon plist makes every cwd-fallback cli.main() exit 2. CI has no plist.
+    A test that needs a plist sets HOME itself and overrides this."""
+    home = tmp_path / "_pytest_home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+
+@pytest.fixture(autouse=True)
 def _no_real_publish_sleep(monkeypatch):
     """The publish throttle (post/run.py `_publish_throttle_wait`, ~60/postiz_publish_per_min s between posts)
     and the publish retry-backoff call a REAL time.sleep. Any test that drives the live publish path without

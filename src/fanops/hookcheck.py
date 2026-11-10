@@ -1,6 +1,6 @@
-"""Deterministic MECHANICAL hook-hygiene floor (v2). It does not judge hook QUALITY — that is the
-vision author's job (the author writes the hook seeing the footage). This floor is the ONLY gate after
-the author; it rejects only the three things a regex can decide without reading meaning:
+"""Deterministic MECHANICAL hook floors (v2). They do not judge hook QUALITY — that is the
+vision author's job (the author writes the hook seeing the footage). is_weak_hook rejects only the
+three things a regex can decide without reading meaning:
   - an EMPTY hook (nothing to show)
   - an EXACT cross-clip duplicate (the same line burned twice)
   - an opening-TEMPLATE cluster (the 'before he was X' x6 / 'wait for the Y' x6 'reads like a bot' tell)

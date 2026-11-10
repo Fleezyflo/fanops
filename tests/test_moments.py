@@ -278,7 +278,7 @@ def test_hook_applied_to_m_hook_single(tmp_path):
     accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}])
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14, end=34, reason="punchline", personas=["a"])])
+                        [MomentPick(start=14, end=34, reason="replay punchline", personas=["a"])])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-34.00": "the part you'll replay"}, accounts=accts)
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided
@@ -288,7 +288,7 @@ def test_persona_blind_hook_falls_back_shared(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [_mp(14, 34, "blind pick")])
+    led = _ingest_picks(led, cfg, "src_1", [_mp(14, 34, "blind switch")])
     led = request_moment_hooks(led, cfg, "src_1", accounts=accts)
     req = json.loads(request_path(cfg, "moment_hooks", "src_1.14.00-34.00").read_text())
     assert req["personas"] == []
@@ -302,7 +302,7 @@ def test_hook_gate_key_collision_two_owners_same_window(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=60.0)
     accts = _seed_owner_spec_accounts(cfg, [{"handle": "@a"}, {"handle": "@b"}])
     led = request_moments(led, cfg, "src_1")
-    pick = MomentPick(start=14, end=34, reason="shared window")
+    pick = MomentPick(start=14, end=34, reason="shared hook window")
     led = _ingest_picks(led, cfg, "src_1",
                         [pick.model_copy(update={"personas": ["a"]}),
                          pick.model_copy(update={"personas": ["b"]})])
@@ -988,7 +988,7 @@ def test_ingest_degraded_yields_empty_excerpt(tmp_path):
 def test_decide_hooks_promotes_picked_to_decided_with_window_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="beat switch punchline")])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-34.00": "wait for the beat switch"})
     m = led.moments_of("src_1")[0]
     assert m.state is MomentState.decided and m.hook == "wait for the beat switch"
@@ -1018,7 +1018,7 @@ def test_ingest_moment_hooks_pending_gate_keeps_moment_picked(tmp_path):
 def test_decide_hooks_sanitizes_em_dash_in_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="r")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="the switch")])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-34.00": "the switch — you feel it"})
     assert "—" not in (led.moments_of("src_1")[0].hook or "")
 
@@ -1054,7 +1054,7 @@ def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
     # tests. A third-person hook is intentionally passed to prove ingest does not gate perspective.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="personal switches")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-34.00": "he switches to Arabic when it gets personal"})
     m = led.moments_of("src_1")[0]
@@ -1064,7 +1064,7 @@ def test_decide_hooks_does_not_strip_perspective_at_ingest(tmp_path):
 def test_decide_hooks_keeps_viewer_pov_hook(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="replay punchline")])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-34.00": "the part you'll replay"})
     assert led.moments_of("src_1")[0].hook == "the part you'll replay"   # viewer-POV ships
 
@@ -1072,7 +1072,7 @@ def test_decide_hooks_does_not_strip_perspective_from_per_account_hooks(tmp_path
     # P6: ingest no longer persists hooks_by_persona — only the shared `hook` lands on m.hook.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="replay punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-34.00": ("the part you'll replay",
                                          {"a": "you won't expect the switch",
@@ -1098,7 +1098,7 @@ def test_decide_hooks_rejects_off_brand_per_account_hook_falls_back(tmp_path):
     # P6: off-brand keys in decision hooks_by_persona are ignored — only the shared hook is gated + persisted.
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="replay punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-34.00": ("the part you'll replay",
                                          {"a": "you won't expect the switch",
@@ -1112,7 +1112,7 @@ def test_decide_hooks_drops_and_logs_unknown_persona_handle(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg)
     accts = Accounts(cfg); accts.accounts = [Account(handle="mohflow", platforms=["instagram"])]
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="replay punchline")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-34.00": ("the part you'll replay",
                                          {"mohflow": "you won't expect the switch",
@@ -1128,7 +1128,7 @@ def test_decide_hooks_brand_risk_honors_tuning_override(tmp_path):
     cfg.control.mkdir(parents=True, exist_ok=True)
     (cfg.control / "tuning.json").write_text('{"offbrand_en": [], "offbrand_ar": []}')
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="punchline")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=14.0, end=34.0, reason="replay punchline")])
     led = _decide_hooks(led, cfg, "src_1", {"14.00-34.00": "sorry but you'll replay this part"})
     assert led.moments_of("src_1")[0].hook == "sorry but you'll replay this part"   # override cleared -> ships
 
@@ -1156,7 +1156,7 @@ def test_cross_source_shared_opener_survives(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
     _seed_cross_source_openers(led)
     led = request_moments(led, cfg, "src_1")
-    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=0.0, end=18.0, reason="r")])
+    led = _ingest_picks(led, cfg, "src_1", [MomentPick(start=0.0, end=18.0, reason="final verse")])
     led = _decide_hooks(led, cfg, "src_1", {"0.00-18.00": "wait for the final verse"})
     m = led.moments_of("src_1")[0]
     assert m.hook == "wait for the final verse"              # SURVIVES — feed-wide openers don't cluster it
@@ -1206,7 +1206,7 @@ def test_cross_pass_exact_dup_stripped_not_burned_twice(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1",
-                        [MomentPick(start=14.0, end=18.0, reason="a"),
+                        [MomentPick(start=14.0, end=18.0, reason="the drop"),
                          MomentPick(start=40.0, end=54.0, reason="b")])
     led = _decide_hooks(led, cfg, "src_1",
                         {"14.00-18.00": "wait for the drop", "40.00-54.00": "wait for the drop"})
@@ -1238,7 +1238,7 @@ def test_within_source_template_cluster_still_strips_surplus(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _src(led, cfg, dur=120.0)
     led = request_moments(led, cfg, "src_1")
     led = _ingest_picks(led, cfg, "src_1", [
-        MomentPick(start=0.0, end=18.0, reason="r"),
+        MomentPick(start=0.0, end=18.0, reason="beat drop"),
         MomentPick(start=20.0, end=34.0, reason="r"),
         MomentPick(start=40.0, end=54.0, reason="r"),
         MomentPick(start=60.0, end=74.0, reason="r")])

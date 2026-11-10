@@ -1,0 +1,10 @@
+{# Shared Review player. hook_preburn draws the operator hook over hookless footage
+   (centered, bold, light on a dark outline — the HOOK style in overlay.build_ass).
+   A successful burn leaves hook_preburn false: the mp4 is the truth, no overlay. #}
+<div class="{{ preview_class }}">
+  {% if preview_held %}<span class="badge held-badge">HELD</span>{% endif %}
+  <video controls preload="none" poster="{{ preview_poster }}" src="{{ preview_src }}" aria-label="{{ preview_label }}"></video>
+  {% if preview_hook_preburn and preview_hook %}
+  <p class="hook-preburn" aria-hidden="true">{{ preview_hook }}</p>
+  {% endif %}
+</div>

@@ -4,10 +4,10 @@
   deployed   registry <-> live GitHub settings (DC-3 branch protection, DC-8 workflow enablement,
              DC-9 repository security settings). Explicit read-only probes; nothing here mutates.
              --require-live => a failure of a probe this job CAN authenticate FAILS (DC-8).
-             An unreadable DC-3 or DC-9 stays a non-authoritative SKIP. A protection payload that
-             was read and whose contexts differ from required_contexts, or whose strict is not
-             true, fails. Otherwise a probe failure is an explicit NON-AUTHORITATIVE SKIP — never
-             a false pass.
+             An unreadable DC-3 or DC-9 stays a non-authoritative SKIP in every mode, including
+             --require-live. A protection payload that was read and whose contexts differ from
+             required_contexts, or whose strict is not true, fails. Otherwise a probe failure is
+             an explicit NON-AUTHORITATIVE SKIP — never a false pass.
   reconcile  all three planes together (static + deployed).
   selftest   run the negative controls (each blocking condition fires on an injected defect).
   regen      rewrite the GENERATED schema from tools/ci/schema.py. The unit lane byte-compares it,
@@ -52,15 +52,15 @@ def cmd_deployed(require_live: bool) -> int:
                                    workflow_error=wf_err, security_settings=settings,
                                    security_error=sec_err)
     rc = _emit("deployed-state (registry <-> live GitHub)", findings)
-    # --require-live escalates an unreadable probe to a FAILURE only where the read failing is
-    # itself the defect. DC-8 needs `actions: read`, which the job's token is granted — an
-    # unreadable workflow list means that grant broke, and fails.
+    # --require-live fails an unreadable probe only where this job can authenticate the read.
+    # DC-8 needs `actions: read`, which the workflow token is granted — an unreadable workflow
+    # list means that grant broke, and fails.
     #
-    # DC-3 (branch protection) and DC-9 (`security_and_analysis`) are not escalated. A workflow
-    # GITHUB_TOKEN is never granted read on either, so their read failing measures the token, not
-    # the setting: it is a SKIP — non-authoritative, never a pass. What DC-3 judges is a payload it
-    # actually read — contexts that differ from `required_contexts`, or `strict` not true, fail in
-    # the findings emitted above.
+    # DC-3 and DC-9 unreadable never escalate, including under --require-live. The workflow
+    # GITHUB_TOKEN cannot read branch protection or `security_and_analysis`, and no permissions
+    # block can grant `administration`. checks.dc3_deployed_state still renders that SKIP. A
+    # payload that WAS read fails in the findings above when contexts differ from
+    # required_contexts or strict is not true.
     hard = [("DC-8", wf_err)]
     failed = [(dc, e) for dc, e in hard if e]
     if failed and require_live:

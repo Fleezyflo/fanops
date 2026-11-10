@@ -265,6 +265,37 @@ def test_doctor_zernio_auth_ok_and_fail(tmp_path, monkeypatch):
     assert zc3 is not None and zc3["ok"] is False
 
 
+def test_doctor_zernio_only_skips_postiz_dep_and_still_checks_zernio(tmp_path, monkeypatch):
+    """Postiz creds with no live Postiz route: reach check omitted, dep row skipped, Zernio still runs.
+    A compose dir on disk must not make doctor probe (and FAIL) a stopped Docker daemon."""
+    from fanops import health
+    compose = tmp_path / "compose"
+    compose.mkdir()
+    monkeypatch.setenv("FANOPS_POSTIZ_COMPOSE_DIR", str(compose))
+    monkeypatch.setenv("POSTIZ_API_KEY", _KEY)
+    monkeypatch.setenv("POSTIZ_URL", "http://127.0.0.1:4007/api")
+    monkeypatch.setenv("ZERNIO_API_KEY", "zk-not-a-secret")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.delenv("FANOPS_POSTER", raising=False)
+    cfg = Config(root=tmp_path)
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@tk", "platforms": ["tiktok"], "status": "active",
+         "integrations": {"tiktok": "tk_1"}, "backends": {"tiktok": "zernio"}}]}))
+
+    def boom(*a, **k):
+        raise AssertionError("postiz/docker probe must not run on a Zernio-only live deployment")
+
+    monkeypatch.setattr(health, "_docker_health", boom)
+    rep = doctor.doctor_report(cfg, postiz_probe=boom, zernio_auth=lambda c: True)
+    assert _postiz_check(rep) is None
+    zc = _zernio_check(rep)
+    assert zc is not None and zc["ok"] is True
+    deps = {d["name"]: d for d in rep["deps"]}
+    assert deps["postiz"]["ok"] is True and deps["postiz"]["detail"] == "skipped (not routed live)"
+    assert deps["docker"]["ok"] is True and deps["docker"]["detail"] == "skipped (not routed live)"
+
+
 # --- T12: permanent daemon-liveness + past-due-backlog guard (fail-closed) ---
 
 def _daemon_check(rep):
