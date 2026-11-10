@@ -7,6 +7,7 @@ import statistics
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from fanops.caption_compose import caption_shown
 from fanops.config import Config
 from fanops.accounts import Accounts
 from fanops.ledger import Ledger
@@ -214,7 +215,7 @@ def posted_library(led: Ledger, cfg: Config, *, account: Optional[str] = None, b
         except (ValueError, TypeError): return (0, "")
     posts.sort(key=_key, reverse=True)              # reverse: latest aware time first; unscheduled (key[0]=0) last
     return [PostedRow(post_id=p.id, clip_id=p.parent_id, account=p.account, platform=p.platform.value,
-                      caption=p.caption, public_url=p.public_url, scheduled_time=p.scheduled_time,
+                      caption=caption_shown(cfg, led, p), public_url=p.public_url, scheduled_time=p.scheduled_time,
                       lift_score=p.metrics.get(LIFT_SCORE), published_at=p.published_at,
                       saves=p.metrics.get("saves"), shares=p.metrics.get("shares"),
                       retention=p.metrics.get("retention"), reach=p.metrics.get("reach"),

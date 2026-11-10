@@ -6,10 +6,14 @@ tab (MUST preserve other keys/secrets); its tests stay here. os.environ mutation
 from __future__ import annotations
 import subprocess
 import threading
+from pathlib import Path
+
+import pytest
 
 from fanops.config import Config
+from fanops.errors import LockBusyError
 from fanops.ledger import _file_lock
-from fanops import autopilot, daemon
+from fanops import autopilot, controlio, daemon
 
 
 def _fake_launchctl(**spec):
@@ -40,6 +44,45 @@ def test_set_env_var_preserves_other_lines(tmp_path):
     assert "POSTIZ_API_KEY=s3cret" in body
     assert "FANOPS_WHISPER_MODEL=turbo" in body
     assert "FANOPS_LLM_TRANSPORT=claude" in body
+
+
+def test_set_unset_env_var_sequential_preserves_other_lines(tmp_path):
+    # flock around read-modify-replace must not change the atomic line-preserving contract.
+    env = tmp_path / ".env"
+    env.write_text("POSTIZ_API_KEY=s3cret\nFANOPS_WHISPER_MODEL=turbo\n# keep me\n")
+    autopilot.set_env_var(env, "FANOPS_LLM_TRANSPORT", "claude")
+    autopilot.set_env_var(env, "FANOPS_CLIP_PROFILE", "tight")
+    autopilot.unset_env_var(env, "FANOPS_LLM_TRANSPORT")
+    body = env.read_text()
+    assert "POSTIZ_API_KEY=s3cret" in body
+    assert "FANOPS_WHISPER_MODEL=turbo" in body
+    assert "# keep me" in body
+    assert "FANOPS_CLIP_PROFILE=tight" in body
+    assert "FANOPS_LLM_TRANSPORT" not in body
+    assert not (tmp_path / ".env.tmp").exists()
+
+
+def test_set_unset_env_var_lock_busy_raises_oserror(tmp_path, monkeypatch):
+    # golive._dual_write catches OSError, not LockBusyError. A timeout must stay on that channel.
+    import pytest
+    from fanops.errors import LockBusyError
+    from fanops import ledger
+
+    class _Busy:
+        def __enter__(self):
+            raise LockBusyError("ledger lock busy > 30.0s")
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(ledger, "_file_lock", lambda *a, **k: _Busy())
+    env = tmp_path / ".env"
+    env.write_text("POSTIZ_API_KEY=s3cret\n")
+    with pytest.raises(OSError, match="lock busy"):
+        autopilot.set_env_var(env, "FANOPS_LLM_TRANSPORT", "claude")
+    assert env.read_text() == "POSTIZ_API_KEY=s3cret\n"
+    with pytest.raises(OSError, match="lock busy"):
+        autopilot.unset_env_var(env, "POSTIZ_API_KEY")
+    assert env.read_text() == "POSTIZ_API_KEY=s3cret\n"
 
 
 def test_set_env_var_updates_in_place_no_duplicate(tmp_path):
@@ -138,6 +181,30 @@ def test_env_rewrite_keeps_keys_written_while_lock_held(tmp_path):
     assert "KEEP=1" in body and "THIRD=3" in body
 
 
+def test_env_rewrite_writes_via_write_text_atomic_inside_lock(tmp_path, monkeypatch):
+    # A fixed `.env.tmp` shared by every writer is replaced by controlio's unique temp, and the
+    # write happens while `<name>.lock` is still held (a probe on a second fd must find it busy).
+    env = tmp_path / ".env"
+    env.write_text("KEEP=1\n")
+    lock_path = env.with_name(env.name + ".lock")
+    calls: list[Path] = []
+
+    def spy(p, text, **kw):
+        with pytest.raises(LockBusyError):
+            with _file_lock(lock_path, timeout=0):
+                pass
+        calls.append(p)
+        controlio.write_text_atomic(p, text, **kw)
+
+    monkeypatch.setattr(autopilot, "write_text_atomic", spy)
+    autopilot.set_env_var(env, "OTHER", "2")
+    autopilot.unset_env_var(env, "OTHER")
+    assert calls == [env, env]
+    assert env.read_text() == "KEEP=1\n"
+    assert (env.stat().st_mode & 0o777) == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 # ── autopilot — installs the daemon + reports readiness; NEVER writes FANOPS_RESPONDER ──────────
 
 def test_autopilot_installs_daemon_and_reports_llm(tmp_path, monkeypatch):
@@ -194,6 +261,7 @@ def test_autopilot_reports_dryrun_and_no_blotato_requirement(tmp_path, monkeypat
 def test_main_autopilot_nonzero_when_fixture_unhealthy(tmp_path, monkeypatch, capsys):
     # MOL-965 WP1: exit honesty — incomplete tmp fixture → report_is_healthy false → nonzero.
     # Soft-lie "always 0" retired; healthy-path 0 covered by constructing a healthy report below.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops.cli import main
@@ -206,6 +274,7 @@ def test_main_autopilot_nonzero_when_fixture_unhealthy(tmp_path, monkeypatch, ca
 
 def test_main_autopilot_returns_0_when_healthy(tmp_path, monkeypatch, capsys):
     # Construct a healthy autopilot result so exit-0 path stays covered under severity honesty.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     from fanops import autopilot
@@ -232,6 +301,7 @@ def test_main_autopilot_returns_0_when_healthy(tmp_path, monkeypatch, capsys):
 def test_main_autopilot_bad_responder_exits_2(tmp_path, monkeypatch, capsys):
     # A bad FANOPS_RESPONDER is a HARD REFUSE (cfg.responder_mode raises ValueError) — cmd_autopilot must
     # degrade to one clean stderr line + exit 2, never a traceback.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "bogus")
     from fanops.cli import main

@@ -1,0 +1,22 @@
+---
+description: FanOps additions to the user-level engineering contract (~/.cursor/contract) — the never-rules and gates specific to this repo. Enforced by the contract hook through .cursor/contract.json.
+alwaysApply: true
+---
+# FanOps contract additions (always on)
+
+The engineering bar for this repo is this file (alwaysApply) plus `AGENTS.md`. The global hook
+at `~/.cursor/contract` does not inject procedure text; it denies irreversible git, in-flight
+parent product writes, unread unit paths, and GitHub claims that disagree with this session's
+`gh pr` calls. These are the facts of this repo:
+
+- **Production picks up merged code.** The daemon is launchd-driven and runs the editable install;
+  a merge is the deploy. No restart, kickstart, or hand-run of the pipeline, ever.
+- **Ledger state is production data.** No wipe, no reset, no destructive repair path.
+- **`00_control/accounts.json` is live state**, never committed; local `main` moves by
+  `git pull --ff-only` only.
+- **Tests run in CI only.** `./scripts/check.sh` before every commit; `python -m tools.arch regen`
+  after any line shift in scanned source; the PR's checks are the test run.
+- **Lanes own hot files** (`.agents/lanes.json`); a file another lane owns is reported, not taken.
+- **Skill lines in subagent briefs name skills that resolve here** (`.cursor/skills`,
+  `~/.cursor/skills`, `~/.agents/skills`, `~/.claude/skills`). The `/orch-*` names resolve
+  nowhere in Cursor.

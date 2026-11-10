@@ -81,7 +81,7 @@ def test_advance_stops_at_gate_then_continues(tmp_path, monkeypatch, mocker):
     rid = latest_request_id(cfg, "moments", pick_key)
     response_path(cfg, "moments", pick_key).write_text(MomentDecision(
         source_id=src_id, request_id=rid,
-        picks=[MomentPick(start=13.0, end=20.0, reason="punchline",
+        picks=[MomentPick(start=13.0, end=20.0, reason="beat switch punchline",
                           transcript_excerpt="they slept on me")]).model_dump_json())
 
     s = advance(cfg, base_time="2026-06-02T18:00:00Z")

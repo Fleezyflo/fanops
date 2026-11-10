@@ -264,6 +264,7 @@ from fanops.daemon_siblings import (  # noqa: E402
     KEEPER_LABEL,
     KEEPER_POLL_INTERVAL_S,
     _install_keeper,
+    _install_postiz_reaper,
     ensure_keeper_loaded,
     keeper_plist_path,
 )
@@ -348,8 +349,12 @@ def install(cfg: Config, *, interval: int) -> dict:
     write_text_atomic(pp, render_plist(cfg, interval=interval))
     loaded = _load_plist(pp, LABEL)
     keeper = _install_keeper(cfg)
-    return {"plist": str(pp), "interval": interval, "loaded": loaded,
-            "responder": resolved, **keeper}
+    out = {"plist": str(pp), "interval": interval, "loaded": loaded,
+           "responder": resolved, **keeper}
+    reaper = _install_postiz_reaper(cfg)
+    if reaper:
+        out.update(reaper)
+    return out
 
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
@@ -358,7 +363,9 @@ def ensure(cfg: Config) -> dict:
     action = "none"
     if _confirm_loaded(LABEL):
         loaded = True
+        was_loaded = True
     else:
+        was_loaded = False
         pp = plist_path()
         loaded = _load_plist(pp, LABEL) if pp.exists() else False
         action = "bootstrap" if pp.exists() else "none"
@@ -378,17 +385,24 @@ def ensure(cfg: Config) -> dict:
             if action == "none":
                 action = "rewrite_plist"
     # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
-    # the EXTERNAL keeper adopts new code. Compare the SHA the pump reports in its heartbeat to the SHA
-    # on disk; kickstart the PUMP (not the keeper) when they differ. Kill switch default-on (matches
-    # cli). Fail-open with one breadcrumb — a git/launchctl hiccup leaves the pump alone.
+    # the EXTERNAL keeper adopts disk code. Kickstart the PUMP (not the keeper) when the heartbeat SHA
+    # differs from the SHA on disk, and when the pump is already loaded and either SHA is missing.
+    # Kill switch default-on (matches cli). Fail-open with one breadcrumb — a git/launchctl hiccup
+    # leaves the pump alone.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
+    # Nothing else advances the production checkout, so disk moves here first: a fast-forward makes the
+    # disk SHA differ from the heartbeat and the stale-code branch below adopts it in this same call.
     if cfg.auto_adopt:
         from fanops.errors import fail_open
+        if was_loaded:
+            with fail_open("ensure.fast_forward"):
+                _fast_forward_checkout(cfg)
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
-            if running is not None and deployed is not None and running != deployed:
+            # A pump this call just bootstrapped already runs disk code and has not stamped a heartbeat.
+            if was_loaded and stale_code_reason(running, deployed):
                 # STORM GUARD (replaces the deleted execv's baseline re-capture = one kickstart/deploy):
                 # the keeper is stateless across 120s fires, and the pump's stale heartbeat keeps the OLD
                 # SHA until its FIRST post-restart pass finishes (minutes-hours). Skip re-kickstarting while
@@ -521,6 +535,7 @@ from fanops.daemon_siblings import (  # noqa: E402, F401
     SIBLING_POLL_INTERVAL_S,
     SIBLING_POLL_TIMERS_RATIONALE,
     render_keeper_plist,
+    render_postiz_reaper_plist,
     sibling_agent_status,
     sibling_agents_status,
     sibling_plist_path,
@@ -591,12 +606,24 @@ def _heartbeat_age_s(cfg: Config) -> float | None:
     return (datetime.now(timezone.utc) - ts).total_seconds()
 
 
+def stale_code_reason(running: str | None, deployed: str | None) -> str | None:
+    """Why a loaded pump is not on disk code, or None when it is: the heartbeat SHA is missing, the
+    disk SHA is missing, or the two differ. doctor._deploy_code_check fails on it; ensure adopts on it."""
+    missing = [n for n, v in (("heartbeat SHA", running), ("disk SHA", deployed)) if v is None]
+    if missing:
+        return f"missing {' and '.join(missing)} — a loaded pump is not on current code"
+    if running != deployed:
+        return f"pump reports code {running[:12]} but disk is {deployed[:12]}"
+    return None
+
+
 def _last_heartbeat_code(cfg: Config) -> str | None:
     """The `code` (running-HEAD SHA) from the pump's most recent loop heartbeat in run.log, or None.
     Fail-open to None on: no log, unreadable, no heartbeat line, or a pre-upgrade heartbeat with no
     `code` field. Reads JSON heartbeats by stage=='heartbeat' + origin=='loop' (same convention as
-    _heartbeat_age_s). None is load-bearing: the keeper's drift branch treats it as 'don't kickstart'
-    (disarm), so a pre-upgrade pump missing the `code` key is never stormed."""
+    _heartbeat_age_s). None is not current code: a loaded pump missing this SHA fails
+    doctor._deploy_code_check, and daemon.ensure adopts disk code through the same settle and
+    run_held guards as a SHA mismatch."""
     p = cfg.log_path
     if not p.exists():
         return None
@@ -623,7 +650,8 @@ def _last_heartbeat_code(cfg: Config) -> str | None:
 # Brief: docs/design/briefs/16-one-step-bring-up.md. Reuses `postiz-ondemand.sh ensure` verbatim
 # (its docker_up + honest 200/401 probe + Mastra self-heal) and daemon.ensure's aliveness contract;
 # it reimplements NONE of Docker/compose/launchd. Never publishes (posts are born awaiting_approval),
-# never flips FANOPS_LIVE, never mutates the git tree.
+# never flips FANOPS_LIVE. The git plane never mutates the tree; the daemon plane's `ensure` may
+# fast-forward it (`_fast_forward_checkout`).
 
 _DEFAULT_ONDEMAND = Path.home() / "postiz-selfhost" / "postiz-ondemand.sh"
 _ONDEMAND_WAIT_S = 200          # cold Postiz boot budget (script's own WAIT_S=180 + slack)
@@ -632,10 +660,9 @@ _KICKSTART_HEARTBEAT_STEP = 2.0
 
 
 def _ondemand_script() -> Path:
-    """Path to the self-hosted Postiz on-demand script. FANOPS_POSTIZ_ONDEMAND overrides; else the
-    conventional $HOME/postiz-selfhost/postiz-ondemand.sh (mirrors postiz_lifecycle._SCRIPT)."""
-    v = (os.getenv("FANOPS_POSTIZ_ONDEMAND") or "").strip()
-    return Path(v).expanduser() if v else (Path.home() / "postiz-selfhost" / "postiz-ondemand.sh")
+    """Path to the self-hosted Postiz on-demand script. Single resolver: postiz_lifecycle._ondemand_script."""
+    from fanops.postiz_lifecycle import _ondemand_script as resolve
+    return resolve()
 
 
 def _tail(text: str, n: int = 6) -> str:
@@ -701,8 +728,9 @@ def _version_signal(cfg: Config) -> tuple[str | None, str]:
     `git rev-parse HEAD` in the CODE checkout that holds the running `fanops` package (moves
     per-commit — the real change signal); falls back to `fanops.__version__` (stale, doesn't move
     per-commit, so it only guards a totally git-less install); returns (None, 'unavailable') when
-    BOTH are absent so the caller DISARMS self-adopt and logs a DEGRADED line rather than appear
-    armed but never fire. NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
+    BOTH are absent. A loaded pump missing this disk SHA fails doctor._deploy_code_check, and
+    daemon.ensure adopts disk code through the same settle and run_held guards as a mismatch.
+    NB: the signal follows the CODE tree, NOT cfg.root — cfg.root is the DATA
     workspace and (by design, the FANOPS_ROOT split) may have no .git. Fail-open with a breadcrumb:
     a git error / missing binary degrades to the version fallback."""
     from fanops.errors import fail_open
@@ -731,7 +759,8 @@ def _plane_git(cfg: Config) -> dict:
     workspace, which by the FANOPS_ROOT split may have no .git), same as the self-adopt signal. NEVER
     mutates the tree (no merge/reset/checkout — binding non-goal §6: a prior sync clobbered a live
     accounts.json, another produced a false verdict). Always ok=True: a stale tree or a failed fetch is
-    surfaced, never fatal. The operator decides whether to sync."""
+    surfaced, never fatal. The one tree mutation is the keeper's ff-only `_fast_forward_checkout`, whose
+    docstring answers §6."""
     import fanops, pathlib
     code_root = pathlib.Path(fanops.__file__).resolve().parent
     behind = ahead = None
@@ -763,7 +792,13 @@ def _plane_postiz(cfg: Config) -> dict:
     """Docker + Postiz plane: shell out to `postiz-ondemand.sh ensure` (which starts Docker, brings
     the stack up idempotently, self-heals the Mastra crash-loop, and runs the honest 200/401-past-nginx
     probe — all reused verbatim). Gate: exit 0 = Postiz ready; non-zero surfaces the script's stderr
-    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash."""
+    tail (the honest diagnostic). A missing script emits a clear NOT-READY for this plane, no crash.
+    No live Postiz-routed channel → skipped (ok, not a gate): Zernio-only bring-up does not start
+    Docker or Postiz."""
+    from fanops.postiz_lifecycle import _backend_is_postiz
+    if not _backend_is_postiz(cfg):
+        return {"plane": "postiz", "ok": True, "skipped": True,
+                "detail": "deferred (no live Postiz-routed channel; Zernio/other backends unaffected)"}
     script = _ondemand_script()
     if not script.exists():
         return {"plane": "postiz", "ok": False,
@@ -853,6 +888,67 @@ def _sync_locked_deps() -> tuple[bool, str]:
         tail = err[-1][:120] if err else f"exit {r.returncode}"
         return False, f"deps sync failed for {shown}: {tail}"
     return True, f"deps synced ({shown})"
+
+
+def _git_code(root: Path, *args: str, timeout: float = 60) -> subprocess.CompletedProcess | None:
+    """One git call in the code checkout; None when git is missing or times out."""
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _fast_forward_checkout(cfg: Config) -> str:
+    """Fast-forward the code checkout onto origin/main so `ensure`'s stale-code adopt has new code to adopt.
+
+    `git merge --ff-only origin/main` runs only when HEAD is a strict ancestor of origin/main, no pass
+    holds the run flock, and the pump is past the adopt settle window — the same moment the stale-code
+    kickstart may fire, so new modules are never lazily imported into a pump that is not about to be
+    replaced. Works on a detached HEAD. Returns the outcome word; every refusal leaves the tree as it was
+    and logs one breadcrumb.
+
+    Binding non-goal §6 (docs/design/briefs/16-one-step-bring-up.md) forbade tree mutation because a
+    `reset --hard` sync clobbered a live accounts.json and a stale `main` produced a false verdict.
+    ff-only cannot clobber the way that reset did: it only moves HEAD forward along origin/main and
+    refuses, writing nothing, when the checkout has diverged or when a tracked local edit or an untracked
+    file sits on a path the merge would write. Nothing here resets, checks out, or stashes. The exception
+    is a gitignored path: git overwrites an ignored file when an incoming commit tracks that path, so
+    the data workspace stays safe only while main tracks nothing under it."""
+    from fanops.pipeline_run import run_held
+    root = _code_checkout_root()
+    if root is None:
+        return "no_checkout"
+    pid, age = _pump_pid_age_s()
+    if pid is not None and (age is None or age < _adopt_settle_s(cfg)):
+        return "settling"
+    fetched = _git_code(root, "fetch", "origin")
+    if fetched is None or fetched.returncode != 0:
+        _log.warning("ensure.fast_forward: git fetch failed in %s — tree untouched (%s)",
+                     root, _tail(fetched.stderr if fetched else "", 2) or "git unavailable")
+        return "fetch_failed"
+    revs = _git_code(root, "rev-parse", "HEAD", "origin/main", timeout=15)
+    shas = (revs.stdout or "").split() if revs is not None and revs.returncode == 0 else []
+    if len(shas) != 2:
+        _log.warning("ensure.fast_forward: could not resolve HEAD and origin/main in %s — tree untouched", root)
+        return "unresolved"
+    head, target = shas
+    if head == target:
+        return "current"
+    anc = _git_code(root, "merge-base", "--is-ancestor", "HEAD", "origin/main", timeout=15)
+    if anc is None or anc.returncode != 0:
+        _log.warning("ensure.fast_forward: HEAD %s is not an ancestor of origin/main %s — tree untouched",
+                     head[:12], target[:12])
+        return "diverged"
+    if run_held(cfg):
+        _log.warning("ensure.fast_forward: run flock held — deferring %s -> %s", head[:12], target[:12])
+        return "run_held"
+    merged = _git_code(root, "merge", "--ff-only", "origin/main", timeout=120)
+    if merged is None or merged.returncode != 0:
+        _log.warning("ensure.fast_forward: merge --ff-only %s -> %s did not complete (%s)", head[:12], target[:12],
+                     _tail(merged.stderr, 2) if merged else "git missing or timed out")
+        return "refused"
+    _log.warning("ensure.fast_forward: %s -> %s", head[:12], target[:12])
+    return "fast_forward"
 
 
 def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
@@ -1025,6 +1121,6 @@ def format_up_report(result: dict) -> list[str]:
         p = result.get(name)
         if p is None:
             return f"  [ -- ] {name}: (not reached)"
-        mark = "ok  " if p["ok"] else ("skip" if p.get("skipped") else "DOWN")
+        mark = "skip" if p.get("skipped") else ("ok  " if p["ok"] else "DOWN")
         return f"  [{mark}] {name}: {p.get('detail', '')}"
     return [line("git"), line("postiz"), line("daemon"), line("studio"), result["verdict"]]

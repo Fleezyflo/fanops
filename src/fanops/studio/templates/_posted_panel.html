@@ -114,7 +114,7 @@
   </ul>
   {% endfor %}
   {% if page and page.total > page.items|length %}<div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.
-      <a href="{{ url_for('posted', offset=page.next_offset, account=active, batch=active_batch|default(none), delivery=active_delivery|default(none)) }}">Show more</a></div>{% elif page and page.offset > 0 %}<div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.</div>{% endif %}
+      {% if page.next_offset is not none %}<a href="{{ url_for('posted', offset=page.next_offset, account=active, batch=active_batch|default(none), source=active_source|default(none), delivery=active_delivery|default(none), failure=active_failure|default(none)) }}">Show more</a>{% endif %}</div>{% elif page and page.offset > 0 %}<div class="grid-more meta">Showing {{ page.offset + 1 }}–{{ page.offset + page.items|length }} of {{ page.total }}.</div>{% endif %}
   {% else %}<div class="empty">Nothing in this view yet.</div>{% endif %}
   {% if accounts|length > 1 %}
   <form class="posted-crosspost-all meta" hx-post="{{ url_for('do_crosspost_all', account=active, batch=active_batch|default(none)) }}" hx-target="#posted-body" hx-swap="outerHTML">
