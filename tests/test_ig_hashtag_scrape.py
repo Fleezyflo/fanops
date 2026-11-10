@@ -510,3 +510,16 @@ def test_wait_for_scrape_profile_auth_returns_when_sid_appears(tmp_path, monkeyp
         clock=lambda: 0 if hits["n"] < 2 else 5)
     assert got == ("safari", "u")
     assert slept
+
+
+def test_ensure_scrape_safari_writes_no_safari_plist(tmp_path, monkeypatch):
+    """Safari reads its settings from its sandbox container, never ~/Library/Preferences/com.apple.Safari.plist,
+    so the write there changed nothing. Allow JavaScript from Apple Events is the operator's switch."""
+    import fanops.ig_hashtag_scrape as igs
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    monkeypatch.setattr("subprocess.check_output", lambda *_a, **_k: "2\n")
+    assert igs.ensure_scrape_safari(Config(root=tmp_path), "u") is True
+    assert list(home.rglob("com.apple.Safari.plist")) == []
