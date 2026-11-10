@@ -193,11 +193,11 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 625
+        "line": 631
       },
       {
         "call": "Ledger.transaction",
-        "line": 691
+        "line": 698
       }
     ],
     "fanops.responder": [
@@ -531,7 +531,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1402
+        "line": 1400
       }
     ],
     "fanops.post.compress": [
@@ -626,7 +626,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1434
+        "line": 1432
       }
     ],
     "fanops.post.compress": [
