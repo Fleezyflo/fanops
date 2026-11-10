@@ -17,23 +17,30 @@ def _store(cfg) -> SqliteLedgerStore:
 
 
 def test_uncommitted_txn_does_not_wedge_save(tmp_path):
+    """H6: a writer that DIES with its BEGIN IMMEDIATE open leaves no lock behind — the next save goes
+    straight through and its document is what rests on disk. A LIVE writer is the opposite contract
+    (the second acquirer waits out its timeout, then LockBusyError), asserted first so that setup
+    which never opened the txn, or closed it early, fails instead of passing."""
     cfg = Config(root=tmp_path)
     store = _store(cfg)
     led = Ledger.load(cfg)
     with store.lock():
         store.write_raw(led._to_doc())
-    conn = sqlite3.connect(store.db_path)
+    conn = sqlite3.connect(store.db_path, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DELETE FROM ledger_rows")
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM ledger_rows")
-        conn.close()
-    except Exception:
-        conn.close()
+        with pytest.raises(LockBusyError):
+            with store.lock(timeout=0.5):
+                pass
+    finally:
+        conn.close()                                            # the writer dies: no COMMIT
+    led.add_source(Source(id="s1", source_path="/x.mp4"))
     t0 = time.monotonic()
     led.save()
     assert time.monotonic() - t0 < 5.0
-    assert store.read_raw() is not None
+    assert "s1" in Ledger.load(cfg).sources
 
 
 def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
@@ -59,18 +66,25 @@ def test_live_writer_excludes_second_acquirer_with_typed_error(tmp_path):
     finally:
         release.set()
         t.join(5)
+    acquired = False
+    with waiter_store.lock(timeout=0.5):
+        acquired = True
+    assert acquired
 
 
 def test_lock_released_after_commit_lets_next_acquirer_in(tmp_path):
+    """Hold the real store lock, second acquirer is LockBusyError, then acquire after release.
+    A BEGIN IMMEDIATE that commits before the waiter never overlaps."""
     cfg = Config(root=tmp_path)
     Ledger.load(cfg).save()
-    store = _store(cfg)
-    holder = sqlite3.connect(store.db_path, timeout=30.0)
-    holder.execute("BEGIN IMMEDIATE")
-    holder.commit()
-    holder.close()
+    holder_store = _store(cfg)
+    waiter_store = _store(cfg)
+    with holder_store.lock(timeout=30):
+        with pytest.raises(LockBusyError):
+            with waiter_store.lock(timeout=0.5):
+                pass
     acquired = False
-    with store.lock(timeout=0.5):
+    with waiter_store.lock(timeout=0.5):
         acquired = True
     assert acquired
 
