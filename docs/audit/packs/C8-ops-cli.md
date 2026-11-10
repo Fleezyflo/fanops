@@ -1,16 +1,33 @@
 # Pack: C8 — ops, CLI & daemon
 
+## Re-verified 2026-10-18
+
+Subject is `origin/main` `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9`. `git diff origin/main -- src` is empty. Entry symbols re-read 2026-10-18: `health_projectors.half_live_state`, `doctor._deploy_code_check`, `daemon.ensure`, `transcribe._fw_available`. Launchd was not restarted. Later sections that name `d2cded31` or a dirty tree are the earlier close record.
+
+
 ## Findings
 
 | ID | Severity | Class | Observed | Required | Evidence |
 |----|----------|-------|----------|----------|----------|
-| C8-F01 | low | mis-report | closed on this tree | `half_live_state` surfaces a compute failure in the hint. Doctor emits that check | `health_projectors.half_live_state` |
+| C8-F01 | low | mis-report | closed on origin/main | `half_live_state` surfaces a compute failure in the hint. Doctor emits that check | `health_projectors.half_live_state` returns a hint on compute failure and does not treat that error as solid LIVE. `daemon.ensure` kickstarts when `stale_code_reason` is set |
 
-## Evidence commands run
+2026-10-18 `doctor._deploy_code_check` on this checkout FAILs while the pump is loaded: `daemon._last_heartbeat_code` = `430ece7377bf33cc5c5e72876c13d6b78b8e6ca9` (matches subject / Studio `GET /_fingerprint` sha `430ece73`), `daemon._version_signal` = (`7aa5d3239a1c61f54613d03d864375ba4420cadf`, `git-head`) on branch `audit/production-audit-2026-09-close` (HEAD ahead of `origin/main`; `git diff origin/main -- src/fanops/` is empty). Exit 1 is that SHA mismatch via `daemon.stale_code_reason` — not a register row. `daemon._daemon_liveness_check` passed on the same run. Launchd was not restarted. `[PASS] faster-whisper importable ([asr] extra)` is `transcribe._fw_available`, not a hub-token check.
+
+OPS-SHA (closed on subject): `doctor._deploy_code_check` and `daemon.ensure` both delegate miss-or-mismatch to `daemon.stale_code_reason`; ensure kickstarts only when `was_loaded and stale_code_reason(running, deployed)` inside `ensure.kickstart_stale_code`.
+
+`doctor._sibling_launchd_checks` labels every sibling, including the keeper, with `daemon.SIBLING_POLL_INTERVAL_S` (300). `daemon_siblings.KEEPER_POLL_INTERVAL_S` is 120, and the installed `com.fanops.keeper` plist `StartInterval` is 120. The keeper check passed. That label is not a new register row.
+
+## Evidence commands run (2026-10-18 re-verify)
 
 ```
+git rev-parse origin/main HEAD
+git diff origin/main -- src/fanops/
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/doctor.py  # _deploy_code_check → stale_code_reason
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/daemon.py  # ensure + stale_code_reason + _last_heartbeat_code + _version_signal
+git show 430ece7377bf33cc5c5e72876c13d6b78b8e6ca9:src/fanops/health_projectors.py  # half_live_state
 rg 'half_live' src/fanops/doctor.py
-tests/test_doctor.py tests/test_cli.py tests/test_daemon_keeper.py
+uv run python -c "from fanops.config import Config; from fanops import daemon; cfg=Config(); print(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg), daemon.stale_code_reason(daemon._last_heartbeat_code(cfg), daemon._version_signal(cfg)[0]))"
+uv run python -c "from fanops.config import Config; from fanops.doctor import _deploy_code_check; print(_deploy_code_check(Config()))"
 ```
 
 ## Full checklist 2026-10-17
