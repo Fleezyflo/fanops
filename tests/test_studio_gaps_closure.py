@@ -49,16 +49,18 @@ def test_preview_media_returns_playable_path(tmp_path):
     assert path and Path(path).exists()
 
 def test_retry_rate_limited_failures(tmp_path):
-    # The Studio verb calls the daemon requeue writer. A rate_limit row with no real id stays failed.
+    # The operator's retry skips the daemon's Postiz-hour cool-off: a 429 taken this second re-queues at once.
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
     p = led.posts["p0"].model_copy(update={"state": PostState.failed, "error_reason": "postiz 429",
-                                           "error_kind": ErrorKind.rate_limit})
+                                           "error_kind": ErrorKind.rate_limit,
+                                           "submission_started_at": iso_z(datetime.now(timezone.utc))})
     led.posts["p0"] = p; led.save()
     res = actions.retry_rate_limited_failures(cfg)
-    assert res.ok and res.detail["retried"] == 0
-    assert Ledger.load(cfg).posts["p0"].state is PostState.failed
-    assert Ledger.load(cfg).posts["p0"].error_kind is ErrorKind.rate_limit
+    assert res.ok and res.detail["retried"] == 1
+    assert Ledger.load(cfg).posts["p0"].state is PostState.queued
 
 def test_spine_next_links_focus_review(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg)
@@ -79,10 +81,10 @@ def test_restore_persona_hook_render_fail_leaves_stripped(tmp_path):
     assert led2.moments["m1"].hook is None
     assert led2.moments["m1"].hook_removed == "STRIPPED"
 
-def test_retry_rate_limit_rows_without_real_id_stay_failed(tmp_path):
+def test_retry_rate_limit_one_per_account_not_a_blast(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
-    for pid in ("p0", "p1"):
+    for i, pid in enumerate(["p0", "p1"]):
         if pid not in led.posts:
             led.add_post(Post(id=pid, parent_id="c0", account="a", account_id="ig1", platform=Platform.instagram,
                               caption="c", state=PostState.failed, error_reason="postiz 429",
@@ -93,10 +95,11 @@ def test_retry_rate_limit_rows_without_real_id_stay_failed(tmp_path):
                         "error_kind": ErrorKind.rate_limit})
     led.save()
     res = actions.retry_rate_limited_failures(cfg)
-    assert res.ok and res.detail["retried"] == 0
+    assert res.ok and res.detail["retried"] == 1
     after = Ledger.load(cfg).posts
-    assert after["p0"].state is PostState.failed and after["p1"].state is PostState.failed
-    assert after["p0"].error_kind is ErrorKind.rate_limit and after["p1"].error_kind is ErrorKind.rate_limit
+    queued = [pid for pid in ("p0", "p1") if after[pid].state is PostState.queued]
+    failed = [pid for pid in ("p0", "p1") if after[pid].state is PostState.failed]
+    assert len(queued) == 1 and len(failed) == 1
 
 def test_zero_post_clips_surfaces_orphans(tmp_path):
     cfg = Config(root=tmp_path); _accounts(cfg)
