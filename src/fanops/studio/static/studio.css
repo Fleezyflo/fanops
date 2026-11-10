@@ -187,6 +187,13 @@ h3::before { content:""; width:.4rem; height:.4rem; border-radius:50%; backgroun
 /* narrow viewports: stack the master above the columns instead of a cramped 2-col grid */
 @media (max-width:680px) { .clip-card:not(.compact) { grid-template-columns:1fr; } }
 .surface-hook { font:600 var(--t-meta) var(--serif); color:var(--ink); padding:.4rem .55rem 0; line-height:1.35; }   /* MOL-41: static emphasis — already serif+600, drop the accent (it read as a link) */
+/* On-video hook: Alignment 5, bold, white on a black outline — the HOOK style overlay.build_ass burns. */
+.clip-frame > .hook-preburn { position:absolute; z-index:2; left:8%; right:8%; top:50%; transform:translateY(-50%);
+  margin:0; padding:0; text-align:center; pointer-events:none;
+  font:700 clamp(1.05rem, 5vw, 1.7rem)/1.15 var(--sans); color:#fff;
+  text-shadow:0 0 6px #000, 0 0 2px #000, 0 1px 0 #000, 1px 0 0 #000, 0 -1px 0 #000, -1px 0 0 #000, 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000; }
+.hook-edit { display:grid; gap:.35rem; margin:0; }
+.hook-edit label { font-size:var(--t-meta); color:var(--muted); font-weight:500; }
 
 /* ── Badges & banners ───────────────────────────────────────────────────── */
 .badge { display:inline-flex; align-items:center; gap:.3rem; font:600 var(--t-eyebrow) var(--sans); text-transform:uppercase;
@@ -498,7 +505,16 @@ details.batch > summary .muted { font:500 var(--t-meta) var(--sans); }
 .cast-affinity { display:flex; align-items:center; flex-wrap:wrap; gap:.3rem; margin:.3rem 0; }
 .chip { display:inline-flex; align-items:center; padding:.1rem .5rem; border:1px solid var(--line-bright); border-radius:var(--r-pill);
   font:600 var(--t-eyebrow) var(--sans); background:var(--surface-2); color:var(--muted); }
+.chip .reach-n { font-weight:500; }
 .chip.ro { color:var(--faint); }
+.tag-swaps { display:flex; flex-wrap:wrap; gap:.35rem; margin:.35rem 0; }
+.chip.tag-swap { position:relative; cursor:pointer; }
+.chip.tag-swap::after { content:""; width:.4rem; height:.4rem; margin-left:.25rem; flex:none;
+  border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor;
+  transform:rotate(45deg) translateY(-.12rem); }
+.chip.tag-swap select.tag-swap-select { position:absolute; inset:0; width:100%; height:100%; margin:0;
+  opacity:0; cursor:pointer; border:0; padding:0; background:transparent; }
+.chip.tag-swap:focus-within { box-shadow:var(--ring); }
 /* batch rollup stat strip (Posted) */
 .batch-rollup { padding:.5rem .8rem; background:var(--surface-1); border:1px solid var(--line); border-left:3px solid var(--accent);
   border-radius:var(--r-sm); margin:0 0 var(--s-3); }
@@ -1045,7 +1061,6 @@ button.ghost:hover, .button.ghost:hover { color:var(--ink); background:transpare
 
 .home-start-here { margin:0 0 var(--s-3); }
 .focus-hook-banner { font-size:var(--t-lead); font-weight:600; margin:0 0 var(--s-2); padding:.5rem .65rem; background:var(--surface-2); border-radius:var(--r-md); border-left:3px solid var(--accent); }
-.hook-preburn { font-size:var(--t-meta); margin:0 0 var(--s-2); }
 
 /* U7 — Schedule month calendar + per-account bucket */
 .schedule-cal { margin:var(--s-4) 0; }

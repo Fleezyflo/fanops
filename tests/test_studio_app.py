@@ -251,6 +251,8 @@ def test_core_cli_imports_with_flask_absent(monkeypatch, tmp_path):
         # stale code indefinitely), so it returns 2 without reaching Flask. Assert that, then drive the
         # managed path to actually exercise the lazy import this test exists to prove.
         assert cli.main(["studio"]) == 2
+        monkeypatch.setattr(cli, "_studio_port_busy", lambda *_a, **_k: False)
+        monkeypatch.setattr(cli, "_studio_ipv6_foreign_listener", lambda *_a, **_k: False)
         with pytest.raises(ImportError, match="flask blocked"):
             cli.main(["studio", "--managed"])
     finally:
@@ -482,7 +484,7 @@ def test_review_reschedule_surface_reflects_new_time_in_input(tmp_path):
     r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": new})
     assert r.status_code == 200
     body = r.data.decode()
-    assert f'name="new_time" value="{to_local_input(new)}"' in body   # the editor shows the fresh value, localized
+    assert f'name="new_time" value="{to_local_input(new, cfg=cfg)}"' in body   # the editor shows the fresh value, localized
     assert Ledger.load(cfg).posts["p_aw"].scheduled_time == new       # ...but the ledger keeps UTC
 
 def test_reschedule_surface_local_input_stored_as_utc(tmp_path):
@@ -491,7 +493,7 @@ def test_reschedule_surface_local_input_stored_as_utc(tmp_path):
     from fanops.timeutil import to_local_input
     cfg = Config(root=tmp_path); _seed_awaiting(cfg, tmp_path)
     z = _z(NOW.replace(second=0) + timedelta(days=4))         # minute-granular (datetime-local has no seconds)
-    r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": to_local_input(z)})
+    r = _client(cfg).post("/reschedule-surface/p_aw", data={"new_time": to_local_input(z, cfg=cfg)})
     assert r.status_code == 200
     assert Ledger.load(cfg).posts["p_aw"].scheduled_time == z
 

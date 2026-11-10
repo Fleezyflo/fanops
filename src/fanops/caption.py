@@ -6,6 +6,7 @@ surface (FIX F74 — no silent default), stores clean captions keyed by the docu
 from __future__ import annotations
 import json
 import logging
+import os
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ClipState, Platform, CaptionSet
@@ -26,10 +27,10 @@ from fanops.variant_learning import ucb_rank
 # so request_captions' fail-open path is unit-patchable (tests monkeypatch fanops.caption.transferred_hooks).
 from fanops.variant_transfer import transferred_hooks
 from fanops.personas import caption_directive
-from fanops.hashtags import ship_from_lock, load_measurements, _dedupe_norm
+from fanops.hashtags import ship_from_lock, _dedupe_norm
 from fanops.control import load_guidance
 from fanops.caption_compose import (_hashtag_metrics_for, _lock_fingerprint, _source_lock_completed,
-                                    _source_lock_tags)
+                                    _source_lock_measurements, _source_lock_tags)
 from fanops.caption_ingest import (_caption_entry, _lang_base, _platform_for_surface, _request_surfaces,
                                     _tags_in, brand_risk_flag, is_tags_only_caption)
 
@@ -82,6 +83,13 @@ def caption_request_stale(cfg: Config, clip_id: str, want_surfaces: list[tuple[s
             raw = s.get("hashtag_store") or s.get("corpus") or []
             menu = _dedupe_norm(t for t in raw if isinstance(t, str)) if isinstance(raw, list) else []
             if (lock and menu != lock) or (not lock and menu):
+                return True
+        # A text-only caption request (no frames list) cannot see this clip. The source file is
+        # on disk, so the next refresh rewrites the window-and-frames request. write_request mints
+        # a new request_id and unlinks the old response. An empty list is the honest probe result.
+        if not isinstance(req.get("frames"), list):
+            source_path = getattr(src, "source_path", None) if src is not None else None
+            if source_path and os.path.exists(source_path):
                 return True
     return False
 
@@ -138,18 +146,56 @@ def request_captions(led: Ledger, cfg: Config, clip_id: str,
     clip = led.clips[clip_id]
     moment = led.moments[clip.parent_id]
     src = led.sources.get(moment.parent_id)
+    # Same window the hook gate already builds: fitted cut, in-window peaks, live excerpt, window stills.
+    # The caption sentence stays the model's sentence — moment.hook is not copied and no caption hook field.
+    from fanops.clip import fit_window
+    from fanops.transcribe import excerpt_for_window
+    from fanops.moments import _peak_in_segments, _peak_in_window, _window_frames
+    dur = src.duration or 0.0
+    hi = dur if dur > 0 else float("inf")
+    cs, ce = fit_window(moment.start, moment.end, dur, lo=0.0, hi=hi)
+    raw_peaks = src.signal_peaks or []
+    env_peaks = [p for p in raw_peaks if _peak_in_window(p, cs, ce)]
+    if moment.segments:
+        span_peaks = [p for p in raw_peaks if _peak_in_segments(p, moment.segments)]
+        peaks = span_peaks if span_peaks else env_peaks
+    else:
+        peaks = env_peaks
+    segs = list(moment.segments) if moment.segments else None
+    rendered = segs if segs and len(segs) >= 2 else None
+    if rendered:
+        excerpt = excerpt_for_window(src, cs, ce, spans=rendered)
+    else:
+        excerpt = excerpt_for_window(src, cs, ce)
+    stored = moment.transcript_excerpt or ""
+    if rendered:
+        if excerpt != stored:
+            led.moments[moment.id] = moment.model_copy(update={"transcript_excerpt": excerpt})
+            moment = led.moments[moment.id]
+    elif excerpt and excerpt != stored:
+        led.moments[moment.id] = moment.model_copy(update={"transcript_excerpt": excerpt})
+        moment = led.moments[moment.id]
+    frames = _window_frames(cfg, src, cs, ce, segments=segs)
     learned = _learned_hooks(led, cfg, surfaces)
     transferred = _transferred_hooks(led, cfg, accounts, surfaces)
     # Per-surface persona (the UI-set fan voice). Rides the payload so it survives to ingest (which reads the
     # request back). Absent registry / None value -> no key (byte-identical to before).
     personas = {a.handle: caption_directive(a) for a in accounts.accounts} if accounts is not None else {}
-    # no early return. hydrate-only must not become the menu:
-    lock = _source_lock_tags(cfg, src) if _source_lock_completed(cfg, src) else []
-    meas = load_measurements(cfg)
+    if _source_lock_completed(cfg, src):
+        lock = _source_lock_tags(cfg, src)
+        meas = _source_lock_measurements(cfg, src)
+    else:
+        lock = []
+        meas = {}
     hashtag_metrics = _hashtag_metrics_for(meas, lock)
     payload = {
         "clip_id": clip_id,
-        "transcript_excerpt": moment.transcript_excerpt,
+        "start": moment.start,
+        "end": moment.end,
+        "reason": moment.reason,
+        "transcript_excerpt": excerpt if rendered else (excerpt or moment.transcript_excerpt),
+        "signal_peaks": peaks,
+        "frames": frames,
         "language": src.language if src else None,
         "guidance": load_guidance(cfg),
         "lock_fingerprint": _lock_fingerprint(lock),
@@ -214,10 +260,13 @@ def ingest_captions(led: Ledger, cfg: Config, clip_id: str) -> Ledger:
         # ...THEN ship picks ∩ sidecar lock. Request hashtag_store is the menu, not membership.
         _platform_for_surface(item.surface, surface_platform)   # AGENT-6: request platform still required
         picks = item.hashtags or _tags_in(item.caption)
-        tags = ship_from_lock(picks, _source_lock_tags(cfg, src))
+        tags = ship_from_lock(picks, _source_lock_tags(cfg, src),
+                              artist_name=cfg.artist_name,
+                              measurements=_source_lock_measurements(cfg, src))
         clip.meta_captions[item.surface] = _caption_entry(
             tags, [str(h) for h in (item.hashtags or [])],
-            caption=(item.caption or "").strip(), tag_sources={})
+            caption=(item.caption or "").strip(),
+            tag_sources={t: "lock" for t in tags})
         if is_tags_only_caption(item.caption, item.hashtags):
             tags_only = True
     answered = {item.surface for item in cs.items}

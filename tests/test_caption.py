@@ -56,6 +56,57 @@ def test_request_captions_writes_surfaces_and_language(tmp_path):
     assert payload["language"] == "en"
     assert led.clips["clip_1"].state is ClipState.captions_requested
 
+
+def test_request_captions_two_moments_share_lock_and_differ_by_window(tmp_path, mocker):
+    # One source lock on every surface. Each moment carries its own window stills, start, and excerpt.
+    # The on-screen hook is not the caption sentence and is not a caption-item field.
+    from tests.fixtures.speech_segments import talk_seg
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"x")
+    led.add_source(Source(
+        id="src_1", source_path=str(media), language="en", duration=80.0,
+        transcript=[
+            talk_seg("opening bar lands here", start=1.0, end=6.0),
+            talk_seg("later verse hits different", start=32.0, end=38.0),
+        ],
+        signal_peaks=[{"t": 3.0, "kind": "scene_cut", "score": 0.8},
+                      {"t": 35.0, "kind": "scene_cut", "score": 0.4},
+                      {"t": 70.0, "kind": "scene_cut", "score": 0.1}],
+    ))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                          reason="opening", transcript_excerpt="stale one",
+                          hook="DO NOT COPY THIS HOOK"))
+    led.add_moment(Moment(id="mom_2", parent_id="src_1", content_token="30-40", start=30, end=40,
+                          reason="later", transcript_excerpt="stale two",
+                          hook="ALSO NOT THE CAPTION"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c1.mp4", state=ClipState.rendered))
+    led.add_clip(Clip(id="clip_2", parent_id="mom_2", path="/c2.mp4", state=ClipState.rendered))
+    lock = ["#alpha", "#beta", "#gamma"]
+    _ensure_completed_lock(cfg, "src_1", lock=tuple(lock))
+
+    def _frames(_cfg, src, start, end, segments=None):
+        return [f"{src.id}:{start:.1f}-{end:.1f}.jpg"]
+
+    mocker.patch("fanops.moments._window_frames", side_effect=_frames)
+    request_captions(led, cfg, "clip_1", [("a", Platform.instagram), ("a", Platform.tiktok)])
+    request_captions(led, cfg, "clip_2", [("a", Platform.instagram), ("a", Platform.tiktok)])
+    p1 = json.loads(request_path(cfg, "captions", "clip_1").read_text())
+    p2 = json.loads(request_path(cfg, "captions", "clip_2").read_text())
+    stores_1 = [s["hashtag_store"] for s in p1["surfaces"]]
+    stores_2 = [s["hashtag_store"] for s in p2["surfaces"]]
+    assert stores_1 == stores_2 == [lock, lock]
+    assert p1["frames"] != p2["frames"]
+    assert p1["start"] != p2["start"]
+    assert p1["transcript_excerpt"] != p2["transcript_excerpt"]
+    assert "opening bar" in p1["transcript_excerpt"]
+    assert "later verse" in p2["transcript_excerpt"]
+    assert "hook" not in p1 and "hook" not in p2
+    assert "DO NOT COPY THIS HOOK" not in p1["transcript_excerpt"]
+    assert [p["t"] for p in p1["signal_peaks"]] == [3.0]
+    assert [p["t"] for p in p2["signal_peaks"]] == [35.0]
+
 def test_ingest_captions_clean_advances_and_stores(tmp_path):
     cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
     led = request_captions(led, cfg, "clip_1", [("a", Platform.instagram)])
@@ -197,7 +248,6 @@ def test_ingest_captions_vets_hashtags_max4_and_drops_random(tmp_path):
     mc = led.clips["clip_1"].meta_captions["a/instagram"]
     assert mc["caption"] == sentence
     assert mc["hashtags"] == ship_from_lock(picks, lock)
-    assert mc["hashtags"] == lock[:4]
     assert len(mc["hashtags"]) == 4
     assert "#inventedslogan" not in mc["hashtags"]
 
@@ -669,7 +719,167 @@ def test_compose_posted_caption_idempotent():
     assert compose_posted_caption(once + " #extra", ["#keep"]) == "hello there\n#keep"
 
 
-# --- HV1-WALK B: caption gate always opens; menu only from a completed lock ----------------
+def _locks(cfg, rows: dict) -> None:
+    p = source_tag_locks_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(rows))
+
+
+def _locked_row(tags: list[str]) -> dict:
+    return {"pile": tags, "lock": tags, "researched_at": "2026-08-17T00:00:00Z"}
+
+
+def _play_line(tags) -> str:
+    """Unmeasured lock row: play_rank_key is the zero key, so the line is tag order."""
+    from fanops.hashtags import play_rank_key
+    return " ".join(sorted(tags, key=lambda t: play_rank_key(t, None)))
+
+
+def test_posted_text_stale_tag_line_uses_clip_meta(tmp_path):
+    """A minted post can still hold a generic tag line after ingest wrote clip-fit tags."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    tags = ["#fiveminuteslater", "#kelseyharris", "#timestampsdontlie", "#evidenceovernarrative"]
+    _locks(cfg, {"src_megan": _locked_row(tags + ["#90shiphop"])})
+    sentence = "Inside that five-minute SUV panic, Kelsey Harris had no time to build a lie."
+    led.add_source(Source(id="src_megan", source_path="/megan.mp4", language="en"))
+    led.add_moment(Moment(id="mom_megan", parent_id="src_megan", content_token="0-7", start=0, end=7,
+                          reason="r", transcript_excerpt="gunshots"))
+    led.add_clip(Clip(id="clip_megan", parent_id="mom_megan", path="/megan.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": sentence, "hashtags": tags}}))
+    stale = ["#realhiphop", "#undergroundhiphop", "#freestyle", "#bars"]
+    led.add_post(Post(id="p_megan", parent_id="clip_megan", account="a", account_id="1",
+                      platform=Platform.instagram, caption=" ".join(stale), hashtags=stale))
+    # One lock tag on the stale line must not beat the clip sentence.
+    overlap = ["#pressconference", "#boldstatement", "#90shiphop", "#realrap"]
+    led.add_post(Post(id="p_overlap", parent_id="clip_megan", account="a", account_id="1",
+                      platform=Platform.instagram, caption=" ".join(overlap), hashtags=overlap))
+    text = posted_text_for(cfg, led, led.posts["p_megan"])
+    assert text == sentence + "\n" + _play_line(tags)
+    assert "#realhiphop" not in text and "#freestyle" not in text
+    overlap_text = posted_text_for(cfg, led, led.posts["p_overlap"])
+    assert overlap_text == text
+    assert "#90shiphop" not in overlap_text and "#pressconference" not in overlap_text
+
+
+def test_posted_text_does_not_attach_another_videos_tags(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    megan = ["#fiveminuteslater", "#kelseyharris", "#timestampsdontlie", "#evidenceovernarrative"]
+    jussie = ["#jussiesmollett", "#casedismissed", "#legalexplainer", "#smollettcase"]
+    _locks(cfg, {"src_megan": _locked_row(megan), "src_jussie": _locked_row(jussie)})
+    sent_m = "Inside that five-minute SUV panic, Kelsey Harris had no time to build a lie."
+    sent_j = "If you are completely innocent, you demand a trial."
+    led.add_source(Source(id="src_megan", source_path="/megan.mp4", language="en"))
+    led.add_source(Source(id="src_jussie", source_path="/jussie.mp4", language="en"))
+    led.add_moment(Moment(id="mom_megan", parent_id="src_megan", content_token="0-7", start=0, end=7,
+                          reason="r"))
+    led.add_moment(Moment(id="mom_jussie", parent_id="src_jussie", content_token="0-7", start=0, end=7,
+                          reason="r"))
+    led.add_clip(Clip(id="clip_megan", parent_id="mom_megan", path="/m.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": sent_m, "hashtags": megan}}))
+    led.add_clip(Clip(id="clip_jussie", parent_id="mom_jussie", path="/j.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": sent_j, "hashtags": jussie}}))
+    stale = ["#realhiphop", "#undergroundhiphop", "#freestyle", "#bars"]
+    for pid, cid in (("p_megan", "clip_megan"), ("p_jussie", "clip_jussie")):
+        led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="1",
+                          platform=Platform.instagram, caption=" ".join(stale), hashtags=list(stale)))
+    text_m = posted_text_for(cfg, led, led.posts["p_megan"])
+    text_j = posted_text_for(cfg, led, led.posts["p_jussie"])
+    assert text_m == sent_m + "\n" + _play_line(megan)
+    assert text_j == sent_j + "\n" + _play_line(jussie)
+    assert "#kelseyharris" not in text_j and "#jussiesmollett" not in text_m
+    assert "#realhiphop" not in text_m and "#freestyle" not in text_j
+
+
+def test_posted_text_aspect_clip_reads_same_moment_seed(tmp_path):
+    """post.parent_id is the aspect render; the clip-fit line lives on the seed sibling."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    tags = ["#fiveminuteslater", "#kelseyharris", "#timestampsdontlie", "#evidenceovernarrative"]
+    _locks(cfg, {"src_megan": _locked_row(tags)})
+    sentence = "Inside that five-minute SUV panic, Kelsey Harris had no time to build a lie."
+    led.add_source(Source(id="src_megan", source_path="/megan.mp4", language="en"))
+    led.add_moment(Moment(id="mom_megan", parent_id="src_megan", content_token="0-7", start=0, end=7,
+                          reason="r"))
+    led.add_clip(Clip(id="clip_seed", parent_id="mom_megan", path="/seed.mp4", state=ClipState.queued,
+                      meta_captions={"@a/instagram": {"caption": sentence, "hashtags": tags}}))
+    led.add_clip(Clip(id="clip_aspect", parent_id="mom_megan", path="/aspect.mp4", state=ClipState.queued))
+    stale = ["#realhiphop", "#freestyle", "#bars", "#undergroundhiphop"]
+    led.add_post(Post(id="p_aspect", parent_id="clip_aspect", account="a", account_id="1",
+                      platform=Platform.instagram, caption=" ".join(stale), hashtags=stale))
+    text = posted_text_for(cfg, led, led.posts["p_aspect"])
+    assert text == sentence + "\n" + _play_line(tags)
+    assert "#realhiphop" not in text
+
+
+def test_posted_text_empty_intersection_drops_stored_tag_line(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    _locks(cfg, {"src_1": _locked_row(["#kelseyharris", "#fiveminuteslater"])})
+    stale = ["#realhiphop", "#undergroundhiphop", "#freestyle", "#bars"]
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": " ".join(stale), "hashtags": stale}}))
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption=" ".join(stale), hashtags=stale))
+    text = posted_text_for(cfg, led, led.posts["p1"])
+    assert text == ""
+    assert "#realhiphop" not in text and "#freestyle" not in text
+    assert "#kelseyharris" not in text
+
+
+def test_posted_text_empty_lock_keeps_stored_tag_line(tmp_path):
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg); _clip(led, cfg)
+    led.clips["clip_1"].meta_captions = {
+        "a/instagram": {"caption": "A real sentence the empty lock must not swap in.",
+                        "hashtags": ["#kelseyharris"]},
+    }
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption="#beatmaking #songwriting",
+                      hashtags=["#beatmaking", "#songwriting"]))
+    assert posted_text_for(cfg, led, led.posts["p1"]) == "#beatmaking #songwriting"
+
+
+def test_posted_text_sentence_takes_clip_tags_when_post_tags_miss_the_lock(tmp_path):
+    """A real post sentence stays. Off-lock post.hashtags do not; the clip's lock picks do."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    tags = ["#fiveminuteslater", "#kelseyharris", "#timestampsdontlie", "#evidenceovernarrative"]
+    _locks(cfg, {"src_1": _locked_row(tags)})
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": "Clip sentence not used.",
+                                                    "hashtags": tags}}))
+    sentence = "Focus on the pocket here."
+    stale = ["#realhiphop", "#undergroundhiphop", "#freestyle", "#bars"]
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption=sentence, hashtags=stale))
+    text = posted_text_for(cfg, led, led.posts["p1"])
+    assert text == sentence + "\n" + _play_line(tags)
+    assert "#realhiphop" not in text and "#freestyle" not in text
+    assert "Clip sentence not used." not in text
+
+
+def test_posted_text_keeps_post_sentence_when_its_tags_hit_the_lock(tmp_path):
+    """A regenerate wrote a sentence plus on-lock tags. Older clip meta must not replace it."""
+    cfg = Config(root=tmp_path); led = Ledger.load(cfg)
+    lock = ["#mohflow", "#rapmusic", "#hiphop", "#newmusic", "#oldmeta"]
+    _locks(cfg, {"src_1": _locked_row(lock)})
+    led.add_source(Source(id="src_1", source_path="/s.mp4", language="en"))
+    led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7, reason="r"))
+    led.add_clip(Clip(id="clip_1", parent_id="mom_1", path="/c.mp4", state=ClipState.queued,
+                      meta_captions={"a/instagram": {"caption": "Older clip sentence.",
+                                                    "hashtags": ["#oldmeta"]}}))
+    sentence = "Focus on the pocket here."
+    picks = ["#mohflow", "#rapmusic", "#hiphop", "#newmusic"]
+    led.add_post(Post(id="p1", parent_id="clip_1", account="a", account_id="1",
+                      platform=Platform.instagram, caption=sentence, hashtags=picks))
+    text = posted_text_for(cfg, led, led.posts["p1"])
+    kept = [t for t in picks if t not in {"#mohflow", "#mohflowmusic"}]
+    assert text == sentence + "\n" + _play_line(kept)
+    assert "#mohflow" not in text and "#mohflowmusic" not in text
+    assert "#oldmeta" not in text
+
+
+# --- HV1-WALK B: caption gate stays closed until the source lock row is completed ----------------
 
 def test_request_captions_no_sidecar_opens_empty_menu(tmp_path):
     """D2: missing lock must still open the captions gate (empty menu)."""
@@ -789,8 +999,8 @@ def test_consecutive_clips_can_differ_via_agent(tmp_path):
     tags_a = led.clips["clip_1"].meta_captions["cisumwolfhom/instagram"]["hashtags"]
     tags_b = led.clips["clip_2"].meta_captions["cisumwolfhom/instagram"]["hashtags"]
     assert tags_a != tags_b
-    assert tags_a == picks_a
-    assert tags_b == picks_b
+    assert tags_a == _play_line(picks_a).split()
+    assert tags_b == _play_line(picks_b).split()
     src = inspect.getsource(ingest_fn)
     assert "pass_recent" not in src
     assert "rotate_tag_line" not in src

@@ -2,19 +2,17 @@
    source clip plays on the LEFT (ONE player, never a per-account burned video), and each account that has this
    moment gets its OWN COLUMN on the RIGHT showing its on-screen HOOK + CAPTION as text + its clip spec +
    approve/reject. The operator watches the master, reads what each account would post, then approves — the
-   per-account hook is burned on approval (slice 2). Compact mode is the dense, video-less scan/bulk-approve
-   list (UNCHANGED — the master player + the per-account columns are a Full-view concern). A post-less
+   per-account hook is burned on approval (slice 2). Compact mode is the dense, video-less scan list:
+   hook, tags, and the sentence, without the master player. A post-less
    prepared/held card shows the master + its state, no columns. #}
 {% from "_prov.html" import cause_chips %}
 <div class="card clip-card{{ ' compact' if compact else '' }}" id="card-{{ card.clip_id }}">
+  {% if mutation_error is defined and mutation_error %}<div class="result err" role="status">✗ {{ mutation_error | operator_error }}</div>{% endif %}
   {# the MASTER/source clip on the left — the operator watches THIS, not a per-account burn (which doesn't exist
      until approval). Compact drops it (the dense list is for scanning + bulk approve, not previewing). #}
   {% if not compact %}
   <div class="moment-master">
-    <div class="clip-frame">
-      {% if card.bucket == 'held' %}<span class="badge held-badge">HELD</span>{% endif %}
-      <video controls preload="none" poster="{{ url_for('clip_thumb', clip_id=card.clip_id) }}" src="{{ card.preview_url }}" aria-label="{{ card.label }} source clip"></video>
-    </div>
+    {% with preview_class='clip-frame', preview_held=(card.bucket == 'held'), preview_poster=url_for('clip_thumb', clip_id=card.clip_id), preview_src=card.preview_url, preview_label=card.label ~ ' source clip', preview_hook_preburn=card.hook_preburn, preview_hook=card.moment_hook %}{% include "_hook_preview.html" %}{% endwith %}
   </div>
   {% endif %}
 
@@ -69,17 +67,16 @@
         {% if spec_chips %}
           <div class="meta surface-spec" aria-label="{{ s.account }} clip spec">{{ cause_chips(spec_chips) }}</div>
         {% endif %}
-        {% if compact %}
-          {# compact: the master preview is hidden, so show the on-screen hook inline; the full caption + inline
-             editor are a Full-view concern (compact is for scanning + bulk approve). #}
-          {% if s.variant_hook %}<div class="surface-hook compact-hook" title="the on-screen hook that burns into {{ s.account }}'s clip on approval">✦ {{ s.variant_hook }}</div>{% endif %}
-        {% else %}
-          {# full: the on-screen hook + the caption shown as TEXT next to the master, so the operator reads exactly
-             what each account would post; the editor (caption / re-burn / reschedule) stays one click away. #}
-          {% if s.variant_hook %}<div class="surface-hook" title="the on-screen hook that burns into {{ s.account }}'s clip on approval">✦ {{ s.variant_hook }}</div>{% endif %}
-          <div class="ro surface-caption">{{ s.caption }}</div>
-          {% if s.editable %}<details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>{% endif %}
+        {# Hook, then the one tag row, then the sentence. Compact included. Edit (save / regenerate /
+           reschedule) stays one click away on the full card. #}
+        {% if s.editable %}
+          {% with hook_target='#card-' ~ card.clip_id, hook_scope='card' %}{% include "_hook_edit.html" %}{% endwith %}
+        {% elif s.variant_hook %}
+          <div class="surface-hook{{ ' compact-hook' if compact else '' }}" title="burned into this clip on approval">✦ {{ s.variant_hook }}</div>
         {% endif %}
+        {% with tag_swap='card', tag_swap_target='#card-' ~ card.clip_id %}{% include "_tag_selects.html" %}{% endwith %}
+        <div class="ro surface-caption">{{ s.caption }}</div>
+        {% if s.editable and not compact %}<details class="surface-editor"><summary>Edit</summary>{% include "_surface_edit.html" %}</details>{% endif %}
         <div id="res-{{ s.post_id }}"></div>
       </div>
       {% endfor %}

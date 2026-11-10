@@ -120,7 +120,8 @@
     "tests/test_health_model.py"
   ],
   "src/fanops/framing.py": [
-    "tests/test_smart_framing.py"
+    "tests/test_smart_framing.py",
+    "tests/test_framing_grid_fusion.py"
   ],
   "src/fanops/gate_keys.py": [
     "tests/test_pipeline_status.py"

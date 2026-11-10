@@ -80,18 +80,19 @@ OWN error: one unreadable plane must never report another as clean, which is how
   deliberately NOT reported: GitHub keeps a record of every workflow file ever pushed, and this repo
   carries three such ghosts from deleted files.
 - **DC-9: a declared repository security setting disabled** (MOL-722) — `required_security_settings`
-  vs the repo object's `security_and_analysis`. **Stated cost:** that field is admin-only, admin is
-  not a grantable `GITHUB_TOKEN` scope, so in CI this reports an explicit `[SKIP]` — never a pass —
-  until the operator supplies the same fine-grained PAT DC-3 waits on. It is authoritative today on
-  an operator terminal. `--require-live` deliberately does NOT escalate its probe failure: a read
-  the token is never granted measures the token, not the setting, so it is a SKIP rather than a
-  verdict. A divergence it CAN see still blocks.
-- **DC-3: live branch protection vs the registry context list** — same job. An unreadable
-  protection probe is `[SKIP]` under `--require-live`: a workflow token is never granted read on
-  branch protection, so the failed read measures the token, not the setting — non-authoritative,
-  never a pass. A protection payload that WAS read fails when its required contexts differ from
-  `required_contexts`, or when `required_status_checks.strict` is not true (without strict, a PR
-  merges on checks that ran against a stale base). Negative controls: `NC-DC3-drift`, `NC-DC3-strict`.
+  vs the repo object's `security_and_analysis`. **Stated cost:** that field is admin-only, and admin
+  is not a grantable `GITHUB_TOKEN` scope, so on `reconcile` / `workflow_dispatch` an unreadable
+  probe is an explicit `[SKIP]` — never a pass. `--require-live` deliberately does NOT escalate it:
+  a read the workflow token cannot make measures the token, not the setting. A divergence it CAN
+  see still blocks.
+- **DC-3: live branch protection vs the registry context list** — same job. `reconcile` /
+  `workflow_dispatch` use the workflow `GITHUB_TOKEN` only (`contents: read`, `actions: read`).
+  Branch protection is not readable on that token, so an HTTP 403 / unreadable protection probe is
+  an explicit non-authoritative `[SKIP]` — never a pass, and not a reconcile failure.
+  `--require-live` deliberately does NOT escalate it: a read the workflow token cannot make measures
+  the token, not the protection. A protection payload that WAS read fails when its required contexts
+  differ from `required_contexts`, or when `required_status_checks.strict` is not true. Negative
+  controls: `NC-DC3-drift`, `NC-DC3-strict`.
   Until 2026-07-26 this entry read "operator-run, no workflow invokes it… Defined trigger: the
   operator runs it after ANY branch-protection change." That was a deliberate decision, not an
   oversight — and it failed the way a human-memory trigger fails. Protection was changed on
@@ -140,9 +141,13 @@ from "passed silently" would rebuild the blind spot it exists to close.
   Schedule-or-dispatch only: a red there is a signal to look, and no merge is waiting on it. That
   containment is WHERE the job runs, not a softened verdict — a real divergence still renders
   `[FAIL]` and exits non-zero.
-- `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. Scheduled,
-  independent; never touches the e2e job. Whether it is actually ENABLED in GitHub is DC-8's
-  question — from 2026-07-14 it was not, and nothing here could tell.
+- `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. `asr-smoke`
+  restores an `actions/cache` of `~/.cache/huggingface` keyed to the pinned `tiny` checkpoint and
+  `pyproject.toml`, then prewarms `WhisperModel` before pytest. Schedule runs require repo secret
+  `HF_TOKEN` (GitHub Actions only — not product `CONFIG.md`). An empty secret fails the prewarm
+  and the smoke. Anonymous Hub access is not a pass. Scheduled, independent; never touches the e2e job.
+  Whether it is actually ENABLED in GitHub is DC-8's question — from 2026-07-14 it was not, and
+  nothing here could tell.
 
 ## Scheduled lane — cron only; nothing of it runs on a PR
 - `ci-e2e.yml` — the real-tooling suite (real ffmpeg/whisper/espeak; `FANOPS_REQUIRE_E2E=1`

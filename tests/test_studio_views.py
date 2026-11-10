@@ -958,7 +958,7 @@ def test_review_surface_length_label_absent_when_no_profile(tmp_path):
     assert sp.length_label is None and sp.is_account_cut is False
 
 
-def test_review_surface_caption_is_posted_text_for(tmp_path):
+def test_review_surface_caption_is_sentence_wire_is_posted_text(tmp_path):
     from fanops.caption_compose import posted_text_for
     from fanops.source_tags import source_tag_locks_path
     from fanops.studio.views_review import _surface
@@ -978,9 +978,10 @@ def test_review_surface_caption_is_posted_text_for(tmp_path):
     s = _surface(post, persona=None, now=NOW, cfg=cfg, led=led)
     want = posted_text_for(cfg, led, post)
     assert want == "hello there\n#keep"
-    assert s.caption == want
+    assert s.caption == "hello there"
+    assert s.approve_caption == want
     assert post.caption == "hello there"
-    assert s.hashtags == ["#keep", "#invented"]
+    assert s.hashtags == ["#keep"]
 
 
 # ---- Production redesign: classify_post_delivery + schedule inflight lane ----
