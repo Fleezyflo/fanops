@@ -60,6 +60,32 @@ def test_pull_does_not_mislabel_a_pre_existing_drop_as_url(tmp_path, mocker):
     assert (cfg.inbox / "manual_drop.mp4").exists()
 
 
+def test_native_ingest_leaves_pull_stage_untouched(tmp_path, mocker):
+    # Native catalogue (advance / ingest) rglobs 01_inbox, and pathlib matches the dot dir.
+    # A stranded pull file and a disposed `.pull/.ingested` copy must not be minted as
+    # source_origin=drop or moved into the inbox archive. The pull scanner still owns that tree.
+    cfg = Config(root=tmp_path)
+    mocker.patch("fanops.ingest.has_video_stream", return_value=True)
+    mocker.patch("fanops.ingest.probe_dimensions", return_value=(1920, 1080, 3.0))
+    _put(cfg.inbox / "manual.mp4", b"MANUAL")
+    _put(_pull_stage(cfg) / "stranded.mp4", b"PULLFILE")
+    _put(_pull_stage(cfg) / ".ingested" / "done.mp4", b"ARCHIVED!")
+    led, counts = ingest_drops(Ledger.load(cfg), cfg)
+    assert counts.added == 1
+    src = next(iter(led.sources.values()))
+    assert src.source_origin == "drop" and src.meta["bytes"] == len(b"MANUAL")
+    assert (_pull_stage(cfg) / "stranded.mp4").exists()
+    assert (_pull_stage(cfg) / ".ingested" / "done.mp4").exists()
+    assert not (cfg.inbox / ".ingested" / "stranded.mp4").exists()
+    assert not (cfg.inbox / ".ingested" / "done.mp4").exists()
+    produced = {(_pull_stage(cfg) / "stranded.mp4").resolve()}
+    led, counts = ingest_drops(led, cfg, origin="url", inbox=_pull_stage(cfg), origin_paths=produced)
+    assert counts.added == 1 and len(led.sources) == 2
+    by_origin = {s.source_origin: s.meta["bytes"] for s in led.sources.values()}
+    assert by_origin == {"drop": len(b"MANUAL"), "url": len(b"PULLFILE")}
+    assert (_pull_stage(cfg) / ".ingested" / "done.mp4").exists()
+
+
 def test_download_url_returns_the_files_it_produced(tmp_path, mocker):
     cfg = Config(root=tmp_path)
     _put(cfg.inbox / "preexisting.mp4", b"OLD")

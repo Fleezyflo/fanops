@@ -437,13 +437,13 @@ def test_last_heartbeat_code_reads_code_from_loop_heartbeat(tmp_path):
 
 
 def test_last_heartbeat_code_none_when_no_log(tmp_path):
-    # No run.log -> None (fail-open; the keeper's drift branch then disarms).
+    # No run.log -> None. A loaded ensure treats that miss as a mismatch.
     cfg = Config(root=tmp_path)
     assert daemon._last_heartbeat_code(cfg) is None
 
 
 def test_last_heartbeat_code_none_when_code_field_absent(tmp_path):
-    # A pre-upgrade loop heartbeat with NO `code` key -> None (load-bearing: never storm an old pump).
+    # A pre-upgrade loop heartbeat with NO `code` key -> None (loaded ensure treats the miss as a mismatch).
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).isoformat()

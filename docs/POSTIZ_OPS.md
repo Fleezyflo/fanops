@@ -19,6 +19,8 @@ Companion surfaces in FanOps:
   channel routes to postiz (the probe goes *past* the nginx-only container health — see §3).
 - `fanops doctor` surfaces poster/key readiness.
 
+Resting state is Docker and the local Postiz stack **down** after the reaper's idle stop. `postiz_lifecycle.ensure_up` (a due Postiz publish or reconcile) and `fanops up` start them on demand by running `postiz-ondemand.sh ensure` — the script starts Docker; a down daemon is not a reason for FanOps to skip. A Zernio-only live deployment (no channel routed to Postiz) skips the Postiz plane and does not bring Docker or Postiz up. `fanops daemon install` installs `com.fanops.postiz-reaper` (`postiz-ondemand.sh reap` on a 300s poll) when that script exists and `POSTIZ_URL` is local.
+
 ---
 
 ## 1. Symptom

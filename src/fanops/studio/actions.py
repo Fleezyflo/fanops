@@ -21,7 +21,7 @@ from fanops.studio.actions_run import (run_ingest, run_pull, save_uploads, save_
 from fanops.studio.actions_approve import (approve_posts, reject_posts, unapprove_post, approve_with_hook, approve_clip, approve_batch, approve_account, approve_moment, approve_as_is, approve_with_edits, approve_stitches, dismiss_stitches, release_stitches)  # noqa: F401
 from fanops.studio.actions_casting import cast_add, cast_remove  # noqa: F401
 from fanops.studio.actions_segments import set_segments, clear_segments  # noqa: F401
-from fanops.studio.actions_edit import edit_caption, reburn_hook, regenerate_caption, _guard_editable_post  # noqa: F401
+from fanops.studio.actions_edit import edit_caption, reburn_hook, regenerate_caption, regenerate_hook, swap_shipped_tag, _guard_editable_post  # noqa: F401
 from fanops.studio.actions_schedule import (SNOOZE_DAYS, _normalize_z, reschedule_post, clear_time, accept_suggested_account, snooze_clip, _seconds_away, reschedule_bucket, shift_account_schedule, reschedule_account, randomize_account_schedule, publish_due_bucket)  # noqa: F401
 from fanops.studio.actions_publish import (mark_published, _studio_publish_guard, preflight_publish_media, reconcile_inflight, publish_now)  # noqa: F401
 from fanops.studio.actions_crosspost import (repost_post, repost_to_other_accounts, crosspost_to_account, crosspost_all_to_account, _warm_target_aspect)  # noqa: F401

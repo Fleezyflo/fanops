@@ -5,7 +5,8 @@ from pathlib import Path
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Source, Moment, MomentState, ClipState, Fmt
-from fanops.clip import render_moment, render_reframed
+from fanops.ids import child_id
+from fanops.clip import render_moment, render_reframed, render_supercut_reframed
 
 
 def _muxer_strict_ffmpeg(cmd, **kw):
@@ -140,6 +141,62 @@ def test_render_reframed_publishes_non_mp4_dst(tmp_path, mocker):
     assert r.returncode == 0, "muxer-strict ffmpeg refused the output -> internal temp lacked .mp4"
     assert dst.exists() and dst.read_bytes() == b"MUXED-OK"   # published verbatim to the non-.mp4 dst
     assert not (tmp_path / "out.mp4.part.part.mp4").exists()  # internal temp swept
+
+
+def test_empty_rc0_rerender_does_not_adopt_prior_mp4(tmp_path, mocker):
+    # A re-render whose ffmpeg exits 0 but writes a 0-byte temp must not os.replace, and must not
+    # report rc 0. Otherwise the pre-existing dst still has size > 0, render_moment stamps the NEW
+    # fingerprint on the OLD bytes, and later passes skip.
+    cfg = Config(root=tmp_path); led = _seed(cfg)
+    cid = child_id("clip", "mom_1", Fmt.r9x16.value)
+    dst = cfg.clips / f"{cid}.mp4"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(b"PRIOR-GOOD")
+    fp_path = cfg.clips / f"{cid}.render.json"
+
+    def empty_ok(cmd, **kw):
+        out = Path(cmd[-1]); out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(b"")
+        class R: returncode = 0; stderr = "mux truncated"; stdout = ""
+        return R()
+
+    mocker.patch("fanops.clip.subprocess.run", side_effect=empty_ok)
+    led, c = render_moment(led, cfg, "mom_1", aspect=Fmt.r9x16)
+    assert c.path == str(dst)
+    assert c.state is ClipState.error
+    assert dst.read_bytes() == b"PRIOR-GOOD"
+    assert not fp_path.exists()
+    assert led.moments["mom_1"].state is MomentState.decided
+
+
+def test_supercut_empty_rc0_does_not_replace_prior_dst(tmp_path, mocker):
+    dst = tmp_path / "out.mp4"
+    dst.write_bytes(b"PRIOR-GOOD")
+
+    def empty_ok(cmd, **kw):
+        Path(cmd[-1]).write_bytes(b"")
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+
+    mocker.patch("fanops.clip.subprocess.run", side_effect=empty_ok)
+    r = render_supercut_reframed("src.mp4", str(dst), [(1.0, 2.5), (4.0, 6.0)], "9:16",
+                                 src_w=1920, src_h=1080)
+    assert r.returncode == 1
+    assert dst.read_bytes() == b"PRIOR-GOOD"
+    assert not Path(str(dst) + ".part.mp4").exists()
+
+
+def test_render_reframed_missing_temp_rc0_does_not_replace_prior_dst(tmp_path, mocker):
+    dst = tmp_path / "out.mp4"
+    dst.write_bytes(b"PRIOR-GOOD")
+
+    def no_file(cmd, **kw):
+        class R: returncode = 0; stderr = ""; stdout = ""
+        return R()
+
+    mocker.patch("fanops.clip.subprocess.run", side_effect=no_file)
+    r = render_reframed(str(tmp_path / "s.mp4"), str(dst), 0.0, 7.0, "9:16", src_w=1920, src_h=1080)
+    assert r.returncode == 1
+    assert dst.read_bytes() == b"PRIOR-GOOD"
 
 
 # --- Real-ffmpeg smoke: gated exactly like the repo's toolchain tests (shutil.which) ---

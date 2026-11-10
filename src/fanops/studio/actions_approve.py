@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Callable, Optional, Sequence
 
 from fanops.accounts import Accounts
+from fanops.caption_compose import send_caption
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.post.run import _non_active_row
@@ -75,6 +76,11 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
             for pid in ids_in_batch:
                 post = led.posts.get(pid)
                 if post is None:
+                    continue
+                # Repeated approve: Ledger.approve_post no-ops unless the post is still awaiting.
+                # Counting that no-op put the account into the MOL-869 respread and rewrote every
+                # queued time on the handle. Same rule as reject: only a real promotion is counted.
+                if post.state is not PostState.awaiting_approval:
                     continue
                 # A RETIRED lineage is never approvable. crosspost/crosspost_to_account already refuse to MINT
                 # onto one; this is the missing APPROVE-side twin — these posts were minted BEFORE their parent
@@ -294,11 +300,31 @@ def approve_moment(cfg: Config, moment_id: str, *, now: Optional[datetime] = Non
         return lambda p: p.parent_id in clip_ids
     return _approve_matching(cfg, pred_for=_pred_for, now=now, detail={"moment": moment_id})
 
-def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: str,
+def _wire_after_edit(cfg: Config, led: Ledger, post, edit_text: str) -> str:
+    """Send string `_parts_for_edit` would store from `edit_text`, for the Approve compare."""
+    from fanops.caption_compose import compose_posted_caption, _source_lock_tags
+    from fanops.studio.actions_edit import _parts_for_edit, _source_of
+    sentence, tags, keep = _parts_for_edit(cfg, led, post, edit_text)
+    if keep:
+        return sentence
+    if tags:
+        return compose_posted_caption(sentence, tags)
+    if _source_lock_tags(cfg, _source_of(led, post)):
+        return compose_posted_caption(sentence, [], drop_inline_tags=True)
+    return (edit_text or "").strip()
+
+
+def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: Optional[str] = None,
                        now: Optional[datetime] = None) -> ActionResult:
-    """U6: composite approve — persist caption/hook edits when dirty, then promote ONE awaiting post."""
+    """U6: composite approve — persist caption/hook edits when dirty, then promote ONE awaiting post.
+
+    The feed textarea is the sentence. Compare the wire `_parts_for_edit` builds from
+    that sentence plus `post.hashtags` (after swaps) to `send_caption`. An absent hook
+    is left alone — Re-burn owns the on-screen line.
+    """
     from fanops.studio import actions as _actions
-    from fanops.studio.actions_edit import edit_caption, reburn_hook, _guard_editable_post
+    from fanops.studio.actions_edit import (edit_caption, reburn_hook, _guard_editable_post,
+                                            text_for_caption_edit)
     now = _actions._now(now)
     led = Ledger.load(cfg)
     p, err = _guard_editable_post(led, post_id, now)
@@ -308,15 +334,15 @@ def approve_with_edits(cfg: Config, post_id: str, *, caption: str, hook: str,
         return ActionResult(ok=False, error=f"post {post_id} is {p.state.value}; only awaiting posts can be approved")
     clip = led.clips.get(p.parent_id)
     mom = led.moments.get(clip.parent_id) if clip is not None else None
-    cur_caption = p.caption or ""
+    edit_text = text_for_caption_edit(cfg, led, p, caption or "")
+    cur_caption = send_caption(cfg, led, p)[0]
     cur_hook = ((mom.hook if mom is not None else None) or "").strip()
-    new_hook = (hook or "").strip()
-    if (caption or "") != cur_caption:
-        res = edit_caption(cfg, post_id, caption, now=now)
+    if _wire_after_edit(cfg, led, p, edit_text) != cur_caption:
+        res = edit_caption(cfg, post_id, edit_text, now=now)
         if not res.ok:
             return res
-    if new_hook != cur_hook:
-        res = reburn_hook(cfg, post_id, new_hook, now=now)
+    if hook is not None and (hook or "").strip() != cur_hook:
+        res = reburn_hook(cfg, post_id, (hook or "").strip(), now=now)
         if not res.ok:
             return res
     return _approve_ids_with_render(cfg, resolve_ids=lambda led: [post_id], now=now, detail={"post_id": post_id})

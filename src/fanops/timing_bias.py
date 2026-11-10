@@ -61,9 +61,12 @@ def _in_window(hour: int, window) -> bool:
 
 
 def timing_bias_hour_for(led, cfg, handle: str) -> "int | None":
-    """The window-CLAMPED timing suggestion for one account: the reach-winning hour IF it lands inside
-    cfg.account_window(handle), else None (skip the bias rather than propose a rejected slot). Fail-safe:
+    """The window-CLAMPED timing suggestion for one account. None unless FANOPS_TIMING_BIAS is on
+    (default OFF — crosspost applies this return with no second check, so the switch has to live
+    here), the hour is a reach winner, and it lands inside cfg.account_window(handle). Fail-safe:
     no winner -> None. Read-only."""
+    if not cfg.timing_bias:
+        return None                                      # kill switch / default OFF -> no schedule bias
     win = timing_bias_winner(led, cfg)
     if win is None:
         return None

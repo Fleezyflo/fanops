@@ -3,8 +3,9 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 
+from fanops.controlio import write_json_atomic
 from fanops.hashtags import (_dedupe_norm, _norm, _num, _scrape_number, load_measurements,
-                             lock_from_shortlist)
+                             lock_from_pile)
 from fanops.ig_hashtag_scrape import (ScrapeUnavailable, measure_and_harvest_scrape,
                                      scrape_session_dead, search_hashtags_scrape)
 from fanops.log import get_logger
@@ -14,7 +15,8 @@ from fanops.source_tags_sidecar import (_LOCK_N, _has_catalog, _in_progress, _re
                                         _restore_meters, _stamp_source, _union_lock_meters,
                                         _write_in_progress, _cache_lookup, _cached_metric,
                                         _note_graph_id, _note_graph_metric,
-                                        graph_search_quota_status, load_source_tag_locks)
+                                        graph_search_quota_status, load_source_tag_locks,
+                                        source_tag_locks_path)
 from fanops.source_tags_shortlist import _CATALOG_CAP, _RESEARCH_CAP, _prose
 from fanops.source_tags_walk import (_advance_lock_client, _charge_lock_tag,
                                      _iter_lock_clients, _remember_dead_dump)
@@ -38,7 +40,7 @@ def _scrape_already_done(search_needed, pending, pile, measurements) -> bool:
     """True when a prior Safari walk already finished. Graph quota is not membership."""
     if search_needed:
         return False
-    if len(lock_from_shortlist(pile, measurements, _LOCK_N)) >= _LOCK_N:
+    if len(lock_from_pile(pile, measurements, _LOCK_N)) >= _LOCK_N:
         return True
     return not pending
 
@@ -143,7 +145,7 @@ def _graph_attach_then_stamp(cfg, table, sid, pile, verified, measurements, *,
             except (GraphThrottled, GraphRefused, GraphUnreachable) as exc:
                 log("source_tags", sid, "no_graph", level="error", err=_graph_message(exc))
                 break
-    _stamp_source(cfg, table, sid, pile, lock_from_shortlist(pile, measurements, _LOCK_N),
+    _stamp_source(cfg, table, sid, pile, lock_from_pile(pile, measurements, _LOCK_N),
                   measurements, catalog=catalog, catalog_at=catalog_at)
 
 
@@ -163,8 +165,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     table = load_source_tag_locks(cfg)
     log = get_logger(cfg)
     prior = table.get(sid) if isinstance(table.get(sid), dict) else {}
-    if _researched(table, sid) and not _in_progress(prior):
-        return False
+    misses = _dedupe_norm(prior.get("exact_miss") if isinstance(prior.get("exact_miss"), list) else [])
     pile_prior = prior.get("pile") if isinstance(prior.get("pile"), list) else None
     llm_names = _dedupe_norm(pile_prior)[:_RESEARCH_CAP] if pile_prior else []
     catalog: list[str] = []
@@ -199,9 +200,24 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             if tag not in verified:
                 verified.append(tag)
             _apply_cached_graph(cfg, measurements, tag)
-        elif tag:
+        elif tag and tag not in misses:
             still.append(tag)
     pending = still
+    if catalog:
+        for name in catalog:
+            if name in misses:
+                continue
+            if _scrape_number(measurements.get(name)) is not None:
+                if name not in verified:
+                    verified.append(name)
+                continue
+            if name not in pending:
+                pending.append(name)
+                if name not in verified:
+                    search_needed = True
+    # researched_at is not a reason to return while a catalog name is still pending.
+    if _researched(table, sid) and not _in_progress(prior) and (not catalog or not pending):
+        return False
     scrape_complete = bool(llm_names) and (
         (not pending)
         or _scrape_already_done(False if not pending else search_needed, pending,
@@ -209,7 +225,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
     )
     if scrape_complete and _has_catalog(prior):
         _stamp_source(cfg, table, sid, llm_names,
-                      lock_from_shortlist(llm_names, measurements, _LOCK_N), measurements,
+                      lock_from_pile(llm_names, measurements, _LOCK_N), measurements,
                       catalog=catalog, catalog_at=catalog_at)
         return False
     walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
@@ -242,7 +258,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         search_needed = True
     retryable_fail = False
     while pending:
-        if len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
+        if len(lock_from_pile(llm_names, measurements, _LOCK_N)) >= _LOCK_N:
             break
         raw = pending[0]
         tag = _norm(raw) if isinstance(raw, str) else ""
@@ -271,6 +287,8 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                 retryable_fail = True
                 break
             if not _exact_hit(hits, tag):
+                if tag not in misses:
+                    misses.append(tag)
                 pending.pop(0)
                 tags_this_walk += 1
                 continue
@@ -291,14 +309,26 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
         _apply_cached_graph(cfg, measurements, tag)
         pending.pop(0)
         tags_this_walk += 1
-    scrape_done = (not pending) or len(lock_from_shortlist(llm_names, measurements, _LOCK_N)) >= _LOCK_N
+    scrape_done = (not pending) or len(lock_from_pile(llm_names, measurements, _LOCK_N)) >= _LOCK_N
     if not scrape_done:
         log("source_tags", sid, "scrape_unfinished")
-        if verified or retryable_fail:
+        # A pass of only exact misses has verified=[] and retryable_fail False.
+        # Those misses still have to land, or the next tick re-researches and
+        # searches the same names (the rest of the catalog never starts).
+        if verified or retryable_fail or misses:
             _write_in_progress(cfg, table, sid, pile=llm_names, verified=verified,
                                measurements=measurements, remaining=pending,
                                catalog=catalog, catalog_at=catalog_at)
+            if misses and isinstance(table.get(sid), dict):
+                table[sid]["exact_miss"] = list(misses)
+                write_json_atomic(source_tag_locks_path(cfg), table)
         return True
+    if misses:
+        row = table.get(sid)
+        if not isinstance(row, dict):
+            row = {}
+            table[sid] = row
+        row["exact_miss"] = list(misses)
     _graph_attach_then_stamp(cfg, table, sid, llm_names, verified, measurements,
                              catalog=catalog, catalog_at=catalog_at,
                              resolve_fn=resolve_fn, measure_fn=measure_fn, log=log)

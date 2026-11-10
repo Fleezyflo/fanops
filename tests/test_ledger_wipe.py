@@ -131,11 +131,11 @@ def test_snapshot_verify_restorable_catches_bad_snapshot(tmp_path):
     cfg = Config(root=tmp_path)
     _live_shaped(cfg)
     # a snapshot that doesn't load must be detected as NOT verified-restorable
-    assert ledger_wipe.snapshot_is_restorable(cfg.ledger_path) is True
+    assert ledger_wipe.snapshot_is_restorable(cfg.ledger_path, cfg) is True
     bad = tmp_path / "bad.sqlite"; bad.write_bytes(b"not a db")
-    assert ledger_wipe.snapshot_is_restorable(bad) is False
+    assert ledger_wipe.snapshot_is_restorable(bad, cfg) is False
     legacy = tmp_path / "legacy.json"; legacy.write_text('{"schema_version": 11, "posts": {}}')
-    assert ledger_wipe.snapshot_is_restorable(legacy) is False
+    assert ledger_wipe.snapshot_is_restorable(legacy, cfg) is False
 
 
 def test_execute_wipe_refuses_json_snapshot(tmp_path):
@@ -167,8 +167,8 @@ def test_two_same_second_snapshots_yield_two_distinct_surviving_files(tmp_path):
     assert snap1.read_bytes() == first_image
     assert snap2.read_bytes() != first_image
     # both remain valid rollback points (the wipe gate still accepts them)
-    assert ledger_wipe.snapshot_is_restorable(snap1) is True
-    assert ledger_wipe.snapshot_is_restorable(snap2) is True
+    assert ledger_wipe.snapshot_is_restorable(snap1, cfg) is True
+    assert ledger_wipe.snapshot_is_restorable(snap2, cfg) is True
     # timestamp prefix retained -> sortable/recognizable
     assert snap1.name.startswith("ledger.snapshot.2026") and snap2.name.startswith("ledger.snapshot.2026")
 
@@ -187,7 +187,7 @@ def test_snapshot_refuses_to_overwrite_an_existing_path(tmp_path, monkeypatch):
     assert first == fixed_dest and first.exists()
     with pytest.raises(ControlFileError):
         Ledger.snapshot(cfg)                                    # must refuse, not overwrite
-    assert ledger_wipe.snapshot_is_restorable(first) is True    # the original survives untouched
+    assert ledger_wipe.snapshot_is_restorable(first, cfg) is True    # the original survives untouched
 
 
 def test_execute_wipe_refuses_without_snapshot(tmp_path):
