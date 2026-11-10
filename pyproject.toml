@@ -55,8 +55,10 @@ compose = ["moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843
 # beat so Whisper reads the lyrics, not the instrumental; faster-whisper runs large-v3 (the proven
 # accuracy winner over turbo) at int8 so it's practical on CPU. OPTIONAL at install (drags torch) —
 # only `.[asr]` pulls them. REQUIRED at transcribe time: missing extra is SourceState.error, not a
-# whisper-CLI fallback. certifi ships the CA bundle (macOS model-download fix).
-asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi"]
+# whisper-CLI fallback. certifi ships the CA bundle (macOS model-download fix). av<19: faster-whisper
+# 1.2.1 decode_audio passes av.open(metadata_errors=...), which PyAV 19 removed, so every transcription
+# raises and exits 1. Lift it when a faster-whisper release after 1.2.1 handles PyAV 19.
+asr = ["demucs>=4.0", "faster-whisper>=1.0", "certifi", "av<19"]
 # Subject-aware reframe (smart framing): OpenCV detects the dominant face per cut window so the 9:16 crop
 # follows the subject instead of the blind top/center guess. OPTIONAL + lazy + FAIL-OPEN like the others —
 # `pip install -e .` stays OpenCV-free; only `.[framing]` pulls it (numpy already comes via [compose]).
