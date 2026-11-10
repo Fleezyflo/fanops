@@ -200,33 +200,21 @@ def stop_scrape_chrome(cfg: Config, user: str) -> None:
         time.sleep(0.2)
 
 
-def _enable_safari_apple_events() -> None:
-    """Safari refuses do JavaScript until this pref is on. Plist write — no Chrome."""
-    import plistlib
-    prefs = Path.home() / "Library/Preferences/com.apple.Safari.plist"
-    data: dict = {}
-    if prefs.is_file():
-        try:
-            data = plistlib.loads(prefs.read_bytes())
-        except (OSError, plistlib.InvalidFileException, ValueError):
-            data = {}
-    if not isinstance(data, dict):
-        data = {}
-    if data.get("AllowJavaScriptFromAppleEvents") is True:
-        return
-    data["AllowJavaScriptFromAppleEvents"] = True
-    data["IncludeDevelopMenu"] = True
-    prefs.parent.mkdir(parents=True, exist_ok=True)
-    prefs.write_bytes(plistlib.dumps(data))
+# Safari refuses `do JavaScript` while this setting is off. Only the operator can turn it on (Safari asks
+# them to confirm); FanOps never edits Safari's settings, so the refusal is a fixed reason, not a retry.
+_SAFARI_JS_OFF = ("safari refuses do JavaScript — turn on Safari > Settings > Advanced > Show features "
+                  "for web developers, then Developer > Allow JavaScript from Apple Events")
 
 
 def _safari_osascript(script: str, *args: str) -> str:
     import subprocess
     try:
         out = subprocess.check_output(
-            ["osascript", "-", *args], input=script, text=True, timeout=45,
+            ["osascript", "-", *args], input=script, text=True, timeout=45, stderr=subprocess.PIPE,
         )
     except subprocess.CalledProcessError as exc:
+        if "allow javascript from apple events" in (exc.stderr or "").lower():
+            raise ScrapeUnavailable(_SAFARI_JS_OFF) from exc
         err = (exc.stderr or str(exc))[:160]
         raise RuntimeError(err) from exc
     return (out or "").strip()
@@ -321,10 +309,10 @@ def ensure_scrape_safari(cfg: Config, user: str | None = None, *, restart: bool 
     Reloading a tab that already contains instagram.com is the session-kill
     and is not done. `navigate` is kept for callers; False no longer skips
     window restore (that was why the tick died until an agent drove login).
+    Safari refusing `do JavaScript` raises ScrapeUnavailable(`_SAFARI_JS_OFF`) without polling.
     """
     import time
     del navigate
-    _enable_safari_apple_events()
     for u in scrape_users(cfg) or ((user,) if user else ()):
         stop_scrape_chrome(cfg, u)
     if not user:
