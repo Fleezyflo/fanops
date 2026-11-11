@@ -797,6 +797,20 @@ def test_operational_sensor_fails_on_an_unreadable_scrape_cooldown(tmp_path):
     assert not any("Layer A" in c["label"] for c in doctor._operational_sensor_checks(cfg))
 
 
+def test_operational_sensor_fails_on_a_scrape_cooldown_sensor_error(tmp_path, monkeypatch):
+    """A cooldown-sensor error other than an unreadable file is a visible FAIL row.
+    Fails on main: except Exception became fail_open(log=debug) and emitted no row."""
+    def _boom(cfg, now):
+        raise RuntimeError("sensor blew up")
+    monkeypatch.setattr("fanops.hashtag_scrape_policy._read_active_cooldown", _boom)
+    checks = doctor._operational_sensor_checks(Config(root=tmp_path))
+    row = next((c for c in checks if c["label"] == "hashtag scrape cooldown sensor readable"), None)
+    assert row is not None and row["severity"] == "fail" and row["ok"] is False
+    assert "RuntimeError" in row["hint"] and "sensor blew up" in row["hint"]
+    assert not any(c["label"] == "hashtag Layer A not in cooldown" and "scrape stopped" in (c.get("hint") or "")
+                   for c in checks)
+
+
 def test_approval_backlog_is_info_note_only_not_a_warn(tmp_path, monkeypatch):
     """Approval backlog is EXPECTED (nothing auto-publishes) — it appears as an INFO note, never as a
     warn-tier check, because the human Review gate is deliberately kept."""
