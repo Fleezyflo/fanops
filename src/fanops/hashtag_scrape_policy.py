@@ -152,7 +152,8 @@ def _is_frozen(rec: dict, now: datetime) -> bool:
 
 
 def scrape_user_blocked(cfg: Config, user: str, now: datetime | None = None) -> bool:
-    """True when frozen, auth-held, or day-budget-exhausted (`_day_room` ≤ 0). Fail-open."""
+    """True when frozen, auth-held, or day-budget-exhausted (`_day_room` ≤ 0). Fails closed: an
+    unreadable cooldown file raises ControlFileError."""
     now = now or datetime.now(timezone.utc)
     return _block_view_for_rec(_account_rec(_load_cooldown_blob(cfg), user), now) is not None
 

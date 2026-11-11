@@ -75,7 +75,7 @@ Purpose: resolves posts stranded in `submitting`/`submitted`/`needs_reconcile` b
 - **`_poll_backend_for_sid(cfg, routing, sid)`** — resolves live backend for one submission id; raises `RuntimeError` if none live. Callers: `_default_get_status`, `reconcile_due`.
 - **`_default_get_status(cfg, led=None)`** — builds the composite poll function. Callers: `reconcile_due`, `reconcile_posts`.
 - **`heal_stranded_submitting(cfg, *, now=None)`** — disk write (Ledger.transaction), flips a stranded `submitting` post back to `queued` after 15min. Callers: `reconcile_due`.
-- **`reconcile_due(cfg)`** — orchestrator: load → heal → network polls (lock-free) → `postiz_lifecycle.ensure_up` (subprocess) → Ledger.transaction wrapping `reconcile_posts`. Raises `AuthError` on fatal auth. Callers: `cli.cmd_reconcile`, `pipeline._reconcile_safe`, `studio.actions.reconcile_inflight`.
+- **`reconcile_due(cfg)`** — orchestrator: load → heal → network polls (lock-free) → `postiz_lifecycle.ensure_up` only while a Postiz-mirrored post is pending (`if any(p.state in _RECONCILABLE for p in mirrored): ensure_up`; resting, held, token-only, and Zernio reads leave the stack down) → Ledger.transaction wrapping `reconcile_posts`. Raises `AuthError` on fatal auth. Callers: `cli.cmd_reconcile`, `pipeline._reconcile_safe`, `studio.actions.reconcile_inflight`.
 - **`reconcile_posts(led, cfg, *, get_status=None, now=None)`** — the state machine: poll→`published`/`failed`/parked-with-escalation (XC-1/XC-2/XC-6). Mutates `led.posts`. Callers: `reconcile_due`.
 
 ### `track.py`

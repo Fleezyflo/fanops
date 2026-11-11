@@ -160,7 +160,7 @@ def test_closed_loop_single_owner_lift_round_trip(tmp_path, monkeypatch, mocker)
     pid = next(iter(led.posts))
     approve_posts(cfg, [pid], now=FIXED_DT)
     p = Ledger.load(cfg).posts[pid]
-    p.scheduled_time = "2020-01-01T00:00:00Z"
+    p.scheduled_time = "2020-01-01T00:50:00Z"
     p.media_urls = ["https://uploads.postiz.com/v.mp4"]
     with Ledger.transaction(cfg) as tx:
         tx.posts[pid] = p

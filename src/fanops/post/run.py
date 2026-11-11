@@ -238,8 +238,9 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
       per-post failure marks THIS post failed (FIX F54); a needs_reconcile park is NOT downgraded to
       failed (AUDIT C1/#17 — failed is re-queueable => double-post); a FATAL AuthError RE-RAISES (H8).
     FINALIZE (tight txn): merge ONLY the network-determined post fields + the clip media cache into a
-      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). Returns the
-      final post-state value (or None if not claimable)."""
+      FRESHLY loaded ledger — never persist the stale full snapshot (B4 lost-update). The post fields
+      land only while that row is still 'submitting'. Returns this attempt's post-state value (or None
+      if not claimable)."""
     # Pre-claim guard (CULM-1): same gate as publish_due — never claim a post we can't address.
     pre = Ledger.load(cfg).posts.get(post_id)
     if pre is not None and pre.state is PostState.queued and _missing_integration_id(backend, account_id, pre):
@@ -399,12 +400,16 @@ def _publish_one(cfg: Config, post_id: str, backend: str, *, accounts: "Accounts
         p = led.posts.get(post_id)
         if p is None:
             return final_state.value if final_state else None   # gone (shouldn't happen) — nothing to merge
-        # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
-        upd = {f: v for f, v in net.items()
-               if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
-        if upd:
-            led.posts[post_id] = p.model_copy(update=upd)
-            p = led.posts[post_id]
+        # Only while this attempt still owns the row: a writer that moved it out of `submitting` mid-network
+        # (a mark_published / apply_published_resolve / reconcile _promote_bound_publish promotion and its
+        # public_url, or a heal_stranded_submitting park) must not be overwritten by the stale network snapshot.
+        if p.state is PostState.submitting:
+            # MOL-819: Post.state is Field(frozen=True) — merge via model_copy, never setattr(state).
+            upd = {f: v for f, v in net.items()
+                   if not (f == "account_id" and v == getattr(p, f))}  # XC-5: don't rewrite an unchanged id
+            if upd:
+                led.posts[post_id] = p.model_copy(update=upd)
+                p = led.posts[post_id]
         c = led.clips.get(p.parent_id)
         if c is not None and clip_media and _media_cache_hit(clip_media, backend):
             if not c.media_url or not _media_cache_hit(c.media_url, backend):
@@ -444,11 +449,51 @@ def _due_or_fail(cfg: Config, post: Post, cutoff: datetime) -> bool:
     return is_scheduled_due(post, cutoff)
 
 
+def _catch_up_grace_s(cfg: Config) -> int:
+    """Doctor backlog window (`backlog_grace_s`): two daemon ticks. Lazy import keeps the layer edge deferred."""
+    from fanops.doctor import backlog_grace_s, daemon_tick_s
+    return backlog_grace_s(daemon_tick_s(cfg))
+
+
+def _past_publish_grace(post: Post, cutoff: datetime, grace_s: int) -> bool:
+    """True when the post is due by more than the doctor's grace. Naive stamps are canonical UTC."""
+    dt = schedule_utc(post.scheduled_time)
+    if dt is None:
+        return False
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    return (cutoff - dt).total_seconds() > grace_s
+
+
+def _reslot_past_grace(cfg: Config, posts: list[Post], *, now: datetime) -> None:
+    """Move past-grace queued rows onto the approve/reschedule cadence. Not sent on this tick.
+
+    `suggest_times_for_batch` is the slotting owner Reschedule and re-spread already call.
+    """
+    from fanops.studio.views_common import suggest_times_for_batch
+    if not posts:
+        return
+    sched = suggest_times_for_batch(cfg, posts, now=now)
+    logged: list[tuple[str, str, str]] = []
+    with Ledger.transaction(cfg) as led:
+        for pid, stamp in sched.items():
+            p = led.posts.get(pid)
+            if p is None or p.state is not PostState.queued:
+                continue
+            if p.scheduled_time != stamp:
+                p.scheduled_time = stamp
+            logged.append((pid, p.account, stamp))
+    log = get_logger(cfg)
+    for pid, account, stamp in logged:
+        log("publish", pid, "catch_up_respread", account=account, scheduled_time=stamp)
+
+
 def publish_due(cfg: Config, *, now: str | None = None, account: str | None = None, batch_id: str | None = None) -> dict:
     """Publish every DUE queued post, each via _publish_one (network OUTSIDE the ledger lock). Only
     'queued' is considered: a 'submitting' post stranded by a crash is NOT re-driven here (reconcile's
     job — auto-resubmitting could double-post a live post, FIX F11). A FATAL AuthError propagates
-    (halt the queue, H8). Returns a small summary."""
+    (halt the queue, H8). Rows past the doctor's grace window are re-slotted through
+    `suggest_times_for_batch` and are not sent on this tick. Returns a small summary."""
     cutoff = _now(now)
     accounts = Accounts.load(cfg)                      # one load; per-post provider resolved off it (M3)
     _requeue_failed_posts(cfg)                         # MOL-125: bounded daemon retry for transient + 429 failed
@@ -486,6 +531,16 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
         get_logger(cfg)("publish", handle, "skip_account_not_active",
                         account=handle, status=row.status.value, n=n)
     due = [p for p in due if p.id not in parked_not_active]
+    # Past the doctor's grace (two ticks): re-slot through the existing cadence owner and do not send
+    # them on this tick. A pump that was down must not dump the backlog in one pass. Dryrun and
+    # no-provider rows are not sends. Retired lineage and non-active handles were already removed.
+    grace_s = _catch_up_grace_s(cfg)
+    stale = [p for p in due if _past_publish_grace(p, cutoff, grace_s)
+             and _post_provider(cfg, accounts, p) not in (None, "dryrun")]
+    _reslot_past_grace(cfg, stale, now=cutoff)
+    if stale:
+        stale_ids = {p.id for p in stale}
+        due = [p for p in due if p.id not in stale_ids]
     if due:                                            # on-demand: start the local Postiz stack ONLY when there is work
         from fanops.postiz_lifecycle import ensure_up
         ensure_up(cfg)
@@ -529,7 +584,8 @@ def publish_due(cfg: Config, *, now: str | None = None, account: str | None = No
     return {"due": len(due), "published": published, "no_provider": no_provider,
             "no_integration_id": no_integration_id, "not_distributed": not_distributed,
             "skipped_existing_id": skipped_existing_id, "not_live_ready": not_live_ready,
-            "skipped_retired_lineage": len(stranded), "skipped_not_active": skipped_not_active}
+            "skipped_retired_lineage": len(stranded), "skipped_not_active": skipped_not_active,
+            "respread": len(stale)}
 
 
 def publish_post(cfg: Config, post_id: str) -> str | None:

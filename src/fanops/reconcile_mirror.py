@@ -114,6 +114,8 @@ def _mirror_info(row: Optional[dict]) -> dict:
                                  raw_row.get("errorMessage"), raw_row.get("error"))
         if msg:
             out["errorMessage"] = msg
+        if row.get("releaseURL") or row.get("releaseId"):
+            out["released"] = True                         # an ERROR row that still names a release is NOT proof of no-publish
     return out
 
 
