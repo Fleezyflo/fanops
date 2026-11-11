@@ -1,7 +1,8 @@
-"""Keeper copytruncate of launchd daemon.out / daemon.err.
+"""Keeper copytruncate of launchd daemon.out / daemon.err / studio.err.
 
-Truncation is allowed only when the pump fd for that path is O_APPEND. The suite never
-opens the live logs and never calls launchctl.
+Truncation is allowed only when that process's fd for the path is O_APPEND. studio.err is
+the Studio resident's fd 2, not the pump's. The suite never opens the live logs and never
+calls launchctl.
 """
 from __future__ import annotations
 import fcntl
@@ -171,6 +172,77 @@ def test_symlink_log_is_not_truncated(tmp_path):
 
     assert daemon.rotate_launchd_logs(cfg, pid=4, minimum_bytes=1, fd_is_append=probe) == []
     assert target.read_bytes() == b"do-not-touch"
+
+
+def test_studio_err_rotates_on_its_own_pid_when_append_proven(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "studio.err"
+    pump = cfg.reports / "daemon.err"
+    err.write_bytes(b"STUDIO-BEFORE\n")
+    pump.write_bytes(b"tiny")
+    seen = []
+
+    def probe(pid, fd, log_path):
+        seen.append((pid, fd, log_path.name))
+        return pid == 77 and fd == 2 and log_path.name == "studio.err"
+
+    rotated = daemon.rotate_launchd_logs(cfg, pid=4, studio_pid=77, minimum_bytes=8, fd_is_append=probe)
+    assert rotated == ["studio.err"]
+    assert seen == [(77, 2, "studio.err")]
+    assert err.read_bytes() == b""
+    assert (cfg.reports / "studio.err.1").read_bytes() == b"STUDIO-BEFORE\n"
+    assert pump.read_bytes() == b"tiny"
+
+
+def test_studio_err_does_not_rotate_on_the_pump_pid(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "studio.err"
+    err.write_bytes(b"keep-studio")
+    seen = []
+
+    def probe(pid, fd, log_path):
+        seen.append(pid)
+        return pid == 4 and fd == 2
+
+    assert daemon.rotate_launchd_logs(cfg, pid=4, studio_pid=None, minimum_bytes=1,
+                                      fd_is_append=probe) == []
+    assert seen == []
+    assert err.read_bytes() == b"keep-studio"
+    assert not (cfg.reports / "studio.err.1").exists()
+
+
+def test_studio_err_without_append_stays(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "studio.err"
+    err.write_bytes(b"keep-studio")
+    seen = []
+
+    def probe(pid, fd, log_path):
+        seen.append((pid, fd, log_path.name))
+        return False
+
+    assert daemon.rotate_launchd_logs(cfg, pid=4, studio_pid=77, minimum_bytes=1, fd_is_append=probe) == []
+    assert seen == [(77, 2, "studio.err")]
+    assert err.read_bytes() == b"keep-studio"
+
+
+def test_second_rotator_leaves_studio_err_to_the_flock_holder(tmp_path):
+    cfg = _cfg(tmp_path)
+    err = cfg.reports / "studio.err"
+    err.write_bytes(b"keep-studio")
+    held = os.open(err, os.O_RDONLY)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        assert daemon.rotate_launchd_logs(cfg, pid=4, studio_pid=77, minimum_bytes=1,
+                                          fd_is_append=lambda *a: True) == []
+        assert err.read_bytes() == b"keep-studio"
+        assert not (cfg.reports / "studio.err.1").exists()
+    finally:
+        os.close(held)
+    assert daemon.rotate_launchd_logs(cfg, pid=4, studio_pid=77, minimum_bytes=1,
+                                      fd_is_append=lambda *a: True) == ["studio.err"]
+    assert (cfg.reports / "studio.err.1").read_bytes() == b"keep-studio"
+    assert err.read_bytes() == b""
 
 
 def test_ensure_continues_when_rotate_fails(tmp_path, monkeypatch):
