@@ -425,7 +425,7 @@
     "fanops.daemon": [
       {
         "call": "fcntl.flock",
-        "line": 447
+        "line": 453
       }
     ],
     "fanops.hashtag_refresh": [
@@ -695,27 +695,27 @@
       },
       {
         "call": "subprocess.run",
-        "line": 890
+        "line": 943
       },
       {
         "call": "subprocess.run",
-        "line": 917
+        "line": 970
       },
       {
         "call": "subprocess.run",
-        "line": 922
+        "line": 975
       },
       {
         "call": "subprocess.run",
-        "line": 956
+        "line": 1009
       },
       {
         "call": "subprocess.run",
-        "line": 1029
+        "line": 1082
       },
       {
         "call": "subprocess.run",
-        "line": 1045
+        "line": 1098
       }
     ],
     "fanops.discover": [
