@@ -160,9 +160,8 @@ def _reopen_misclassified_failures(led: Ledger, log) -> None:
             log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
 
 
-def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict,
-                                *, url_hint: Optional[str] = None) -> tuple[bool, Optional[str]]:
-    """True when candidate is published on THIS post's integration and passes the TikTok liveness gate."""
+def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict) -> tuple[bool, Optional[str]]:
+    """Published on this integration. The URL is the body's permalink; liveness runs on that URL."""
     if post.platform is not Platform.tiktok:
         return False, None
     from fanops.post.metrics.zernio_read import (_ZERNIO_STATE_MAP, _extract_zernio_permalink,
@@ -173,7 +172,7 @@ def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict
     reported = zernio_reported_tiktok_username(body, post.account_id)
     if not reported:
         return False, None
-    captured = safe_public_url(url_hint) or safe_public_url(_extract_zernio_permalink(body))
+    captured = safe_public_url(_extract_zernio_permalink(body))
     if not captured:
         return False, None
     if not _tiktok_url_confirmed(cfg, post, captured, candidate_id, reported):
@@ -246,9 +245,8 @@ def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *
     return True
 
 
-def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log, now: datetime,
-                                      *, url_hint: Optional[str] = None) -> bool:
-    """Poll reconcile_candidate_id with integration + liveness gates; bind real sid without operator input."""
+def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log, now: datetime) -> bool:
+    """Bind reconcile_candidate_id only when the fetched body caption is this post."""
     if is_real_submission_id(post.submission_id):
         return False
     cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
@@ -262,7 +260,11 @@ def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log,
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "auto_bind_fetch_failed", err=str(exc)[:120])
         return False
-    ok, captured = _verified_candidate_publish(cfg, post, cand, body, url_hint=url_hint)
+    from fanops.caption_compose import caption_shown
+    if not _search_row_is_this_post(body, caption_shown(cfg, led, post)):
+        log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
+        return False
+    ok, captured = _verified_candidate_publish(cfg, post, cand, body)
     if not ok or not captured:
         log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
         return False
@@ -273,8 +275,7 @@ def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log,
     return True
 
 
-def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str, *,
-                                  url_hint: Optional[str] = None) -> bool:
+def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str) -> bool:
     """Public entry for resolve: auto-bind a verified candidate sid. Returns True when bound/promoted."""
     log = get_logger(cfg)
     now = datetime.now(timezone.utc)
@@ -282,7 +283,7 @@ def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str, *,
     if post is None:
         return False
     poll = _default_get_status(cfg, led)
-    return _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=url_hint)
+    return _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now)
 
 
 def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
@@ -311,7 +312,7 @@ def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
             log("resolve", post_id, "archive_error", err=str(exc)[:120])
         return True, ""
     if not sid or not is_real_submission_id(sid):
-        auto_bind_submission_for_post(cfg, led, post_id, url_hint=url)
+        auto_bind_submission_for_post(cfg, led, post_id)
         p = led.posts[post_id]
         if is_real_submission_id(p.submission_id) and p.state is PostState.published:
             return True, ""
@@ -461,7 +462,7 @@ def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "vendor_lookup_fetch_failed", err=str(exc)[:120])
         return False
-    ok, captured = _verified_candidate_publish(cfg, post, sid, body, url_hint=url_hint)
+    ok, captured = _verified_candidate_publish(cfg, post, sid, body)
     if not ok or not captured:
         log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
         return False
@@ -487,7 +488,7 @@ def _auto_heal_unbound_submissions(cfg: Config, led: Ledger, poll, log, now: dat
                 continue
             _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
         elif post.state in (PostState.published, PostState.analyzed):
-            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=hint):
+            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now):
                 continue
             _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
 

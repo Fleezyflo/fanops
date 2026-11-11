@@ -1327,20 +1327,29 @@ def _zernio_reads(monkeypatch, *, bodies, lists=None, list_boom=False, oembed="w
 
 
 def test_auto_bind_promotes_verified_candidate(tmp_path, monkeypatch):
+    # A body with no parsed content is not this post. The same caption text the list search
+    # already accepts still auto-binds, and that pass does not call the list client.
     from fanops import reconcile as rec_mod
-    from fanops.models import Platform
+    cap = "unique caption for vendor lookup test"
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _post(led, "p1", PostState.needs_reconcile, sub="fanops_tok")
-    led.posts["p1"] = led.posts["p1"].model_copy(update={"platform": Platform.tiktok,
-                                                          "reconcile_candidate_id": "z_real",
-                                                          "account_id": "integ-1"})
-    body = {"status": "published", "platforms": [{"platform": "tiktok",
-            "accountId": {"_id": "integ-1", "username": "wahed_bared"},
-            "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    _zernio_reads(monkeypatch, bodies={"z_real": body}, list_boom=True)
+    _tiktok_unbound(led, "bare", candidate="z_bare")
+    _zernio_reads(monkeypatch, bodies={"z_bare": _zernio_published_body()}, lists=[])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
-    p = out.posts["p1"]
+    bare = out.posts["bare"]
+    assert bare.state is PostState.needs_reconcile
+    assert bare.submission_id == "fanops_tok"
+    assert bare.caption == "beat drop #fyp"
+
+    win = tmp_path / "win"
+    win.mkdir()
+    cfg2 = Config(root=win)
+    led2 = Ledger.load(cfg2)
+    _tiktok_unbound(led2, "p1", caption=cap, candidate="z_real")
+    body = {**_zernio_published_body("https://www.tiktok.com/@wahed_bared/video/1"), "content": cap}
+    _zernio_reads(monkeypatch, bodies={"z_real": body}, list_boom=True)
+    out2 = rec_mod.reconcile_posts(led2, cfg2, get_status=lambda sid: {"status": "pending"})
+    p = out2.posts["p1"]
     assert p.state is PostState.published
     assert p.submission_id == "z_real"
     assert p.reconcile_candidate_id is None
@@ -1665,14 +1674,46 @@ def test_vendor_lookup_ambiguous_refuses_bind(tmp_path, monkeypatch):
 
 
 def test_vendor_lookup_skipped_when_candidate_auto_bind_wins(tmp_path, monkeypatch):
+    # No parsed content does not publish (heal falls through; an empty list still is not this post).
+    # Content equal to the caption search text auto-binds, so the list client is not called.
+    from fanops import reconcile as rec_mod
+    cap = "unique caption for vendor lookup test"
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _tiktok_unbound(led, "bare", candidate="z_bare")
+    _zernio_reads(monkeypatch, bodies={"z_bare": _zernio_published_body()}, lists=[])
+    out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
+    bare = out.posts["bare"]
+    assert bare.state is PostState.needs_reconcile
+    assert bare.submission_id == "fanops_tok"
+    assert bare.caption == "beat drop #fyp"
+
+    win = tmp_path / "win"
+    win.mkdir()
+    cfg2 = Config(root=win)
+    led2 = Ledger.load(cfg2)
+    _tiktok_unbound(led2, "pcand", caption=cap, candidate="z_cand")
+    body = {**_zernio_published_body("https://www.tiktok.com/@wahed_bared/video/1"), "content": cap}
+    _zernio_reads(monkeypatch, bodies={"z_cand": body}, list_boom=True)
+    out2 = rec_mod.reconcile_posts(led2, cfg2, get_status=lambda sid: {"status": "pending"})
+    assert out2.posts["pcand"].state is PostState.published
+    assert out2.posts["pcand"].submission_id == "z_cand"
+
+
+def test_bound_publish_writes_body_permalink_not_public_url_hint(tmp_path, monkeypatch):
+    # post.public_url is a different live video on the same account. The written URL is the body permalink.
     from fanops import reconcile as rec_mod
     cfg = Config(root=tmp_path)
     led = Ledger.load(cfg)
-    _tiktok_unbound(led, "pcand", candidate="z_cand")
-    body = {"status": "published", "platforms": [{"platform": "tiktok",
-            "accountId": {"_id": "integ-1", "username": "wahed_bared"},
-            "platformPostUrl": "https://www.tiktok.com/@wahed_bared/video/1"}]}
-    _zernio_reads(monkeypatch, bodies={"z_cand": body}, list_boom=True)
+    cap = "unique caption for vendor lookup test"
+    hint = "https://www.tiktok.com/@wahed_bared/video/1"
+    body_url = "https://www.tiktok.com/@wahed_bared/video/9"
+    _tiktok_unbound(led, "pv", caption=cap)
+    led.posts["pv"] = led.posts["pv"].model_copy(update={"public_url": hint})
+    _zernio_reads(monkeypatch, bodies={"z_vendor": {**_zernio_published_body(body_url), "content": cap}},
+                  lists=[{"_id": "z_vendor", "content": cap}])
     out = rec_mod.reconcile_posts(led, cfg, get_status=lambda sid: {"status": "pending"})
-    assert out.posts["pcand"].state is PostState.published
-    assert out.posts["pcand"].submission_id == "z_cand"
+    p = out.posts["pv"]
+    assert p.state is PostState.published
+    assert p.submission_id == "z_vendor"
+    assert p.public_url == body_url
