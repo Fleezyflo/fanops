@@ -246,7 +246,7 @@
     },
     "FANOPS_POSTIZ_ONDEMAND": {
       "read_at": [
-        "fanops.doctor:293",
+        "fanops.doctor:306",
         "fanops.postiz_lifecycle:38"
       ],
       "reader_count": 2

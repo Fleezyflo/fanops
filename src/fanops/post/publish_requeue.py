@@ -4,10 +4,14 @@ from datetime import datetime, timedelta, timezone
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import ErrorKind, Post, PostState, is_real_submission_id
-from fanops.timeutil import iso_z
+from fanops.timeutil import iso_z, schedule_utc
 from fanops.log import get_logger
 
 _DAEMON_TRANSIENT_MAX = 3    # MOL-125: daemon re-queue cycles for failed-but-transient (no submission_id)
+# A Postiz 429 means the create-post endpoint's per-hour API_LIMIT is spent (Postiz public API docs, "Rate
+# Limits"; self-host reference, API_LIMIT). One `fanops run` pass calls publish_due once per advance, so the
+# daemon waits out that hour from the claim that took the 429 — the pass that took it never sends it again.
+_RATE_LIMIT_COOL_OFF = timedelta(hours=1)
 
 
 def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
@@ -43,15 +47,28 @@ def _requeue_transient_failed_for_daemon(cfg: Config) -> int:
     return requeued
 
 
-def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
-    """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle."""
+def _cooling_off(p: Post, now: datetime, cool_off: timedelta | None) -> bool:
+    """True while the claim that took the 429 (`submission_started_at`, re-stamped by every claim) is younger
+    than cool_off. No stamp means the attempt predates MOL-709, so there is nothing left to wait out."""
+    if cool_off is None:
+        return False
+    started = schedule_utc(p.submission_started_at)
+    return started is not None and now - started < cool_off
+
+
+def _requeue_rate_limited_for_daemon(cfg: Config, *, cool_off: timedelta | None = None) -> int:
+    """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle.
+    The daemon prep passes `_RATE_LIMIT_COOL_OFF`; the operator's Studio retry passes none and re-queues at once."""
     requeued = 0
+    now = datetime.now(timezone.utc)
     led = Ledger.load(cfg)
     by_acct: dict[str, Post] = {}
     for p in led.posts_in_state(PostState.failed):
         if is_real_submission_id(p.submission_id):
             continue
         if getattr(p, "error_kind", None) is not ErrorKind.rate_limit:
+            continue
+        if _cooling_off(p, now, cool_off):
             continue
         if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
             continue
@@ -63,7 +80,6 @@ def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
             by_acct[aid] = p
     if not by_acct:
         return 0
-    now = datetime.now(timezone.utc)
     per_min = cfg.postiz_publish_per_min
     gap = timedelta(seconds=(60.0 / per_min) if per_min > 0 else 0)
     try:
@@ -75,6 +91,8 @@ def _requeue_rate_limited_for_daemon(cfg: Config) -> int:
                 if is_real_submission_id(cur.submission_id):
                     continue
                 if getattr(cur, "error_kind", None) is not ErrorKind.rate_limit:
+                    continue
+                if _cooling_off(cur, now, cool_off):
                     continue
                 if not lg.can_promote(cur):
                     continue
@@ -138,4 +156,4 @@ def _requeue_failed_posts(cfg: Config) -> None:
     """Daemon prep before publish_due: bounded re-queue for transient and rate-limited failures."""
     _requeue_transient_failed_for_daemon(cfg)
     _heal_obsolete_failed_for_daemon(cfg)
-    _requeue_rate_limited_for_daemon(cfg)
+    _requeue_rate_limited_for_daemon(cfg, cool_off=_RATE_LIMIT_COOL_OFF)

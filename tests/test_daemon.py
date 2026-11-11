@@ -212,6 +212,70 @@ def test_status_alive_on_fresh_heartbeat(tmp_path, monkeypatch):
     assert rep["verdict"] == "alive"
 
 
+def test_status_crash_loop_is_fail_despite_fresh_activity(tmp_path, monkeypatch):
+    """Loaded, no PID, non-zero last exit. Fresh run.log is the dead process, not liveness."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(old))
+    _append_log_line(cfg, stage="llm")
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(
+        list=(0, '\t"LastExitStatus" = 2;\n')))
+
+    rep = daemon.status(cfg, interval=600)
+
+    assert rep["loaded"] is True
+    assert rep["pid"] is None
+    assert rep["last_exit"] == 2
+    assert rep["verdict"] == "FAIL: crash-looping (no PID, last exit 2)"
+
+
+def test_status_crash_loop_treats_nonpositive_pid_as_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(now))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(
+        list=(0, '\t"PID" = -1;\n\t"LastExitStatus" = 2;\n')))
+
+    rep = daemon.status(cfg, interval=600)
+
+    assert rep["verdict"] == "FAIL: crash-looping (no PID, last exit 2)"
+
+
+def test_status_running_pid_with_old_nonzero_exit_stays_alive(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(now))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(
+        list=(0, '\t"PID" = 4321;\n\t"LastExitStatus" = 2;\n')))
+
+    rep = daemon.status(cfg, interval=600)
+
+    assert rep["pid"] == 4321
+    assert rep["verdict"] == "alive"
+
+
+def test_status_clean_exit_without_pid_is_not_a_crash_loop(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg = Config(root=tmp_path)
+    cfg.reports.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    cfg.log_path.write_text(_heartbeat_line(now))
+    monkeypatch.setattr(daemon.subprocess, "run", _fake_launchctl(
+        list=(0, '\t"LastExitStatus" = 0;\n')))
+
+    rep = daemon.status(cfg, interval=600)
+
+    assert rep["pid"] is None
+    assert rep["last_exit"] == 0
+    assert rep["verdict"] == "alive"
+
+
 def test_status_stale_on_old_heartbeat(tmp_path, monkeypatch):
     cfg = Config(root=tmp_path)
     cfg.reports.mkdir(parents=True, exist_ok=True)

@@ -160,9 +160,8 @@ def _reopen_misclassified_failures(led: Ledger, log) -> None:
             log("reconcile", post.id, "healed: failed->needs_reconcile", prior=reason[:80])
 
 
-def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict,
-                                *, url_hint: Optional[str] = None) -> tuple[bool, Optional[str]]:
-    """True when candidate is published on THIS post's integration and passes the TikTok liveness gate."""
+def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict) -> tuple[bool, Optional[str]]:
+    """Published on this integration. The URL is the body's permalink; liveness runs on that URL."""
     if post.platform is not Platform.tiktok:
         return False, None
     from fanops.post.metrics.zernio_read import (_ZERNIO_STATE_MAP, _extract_zernio_permalink,
@@ -173,7 +172,7 @@ def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict
     reported = zernio_reported_tiktok_username(body, post.account_id)
     if not reported:
         return False, None
-    captured = safe_public_url(url_hint) or safe_public_url(_extract_zernio_permalink(body))
+    captured = safe_public_url(_extract_zernio_permalink(body))
     if not captured:
         return False, None
     if not _tiktok_url_confirmed(cfg, post, captured, candidate_id, reported):
@@ -181,9 +180,52 @@ def _verified_candidate_publish(cfg: Config, post, candidate_id: str, body: dict
     return True, captured
 
 
+def _zernio_parsed_caption(row: dict) -> Optional[str]:
+    """`content` on nodes Zernio row parsers already walk. None when that field is absent.
+
+    The wire caption is `content` (`build_zernio_payload`). Permalink/state parsers descend
+    `post`/`data`/`result` and platform rows; they do not read another caption key. A search
+    hit with no `content` on those nodes is not this post."""
+    if not isinstance(row, dict):
+        return None
+    from fanops.post.metrics.zernio_read import _zernio_platform_rows
+    nodes: list[dict] = [row]
+    for wrap in ("post", "data", "result"):
+        nested = row.get(wrap)
+        if isinstance(nested, dict):
+            nodes.append(nested)
+    nodes.extend(_zernio_platform_rows(row))
+    for node in nodes:
+        v = node.get("content")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _search_row_is_this_post(row: dict, posted: str) -> bool:
+    got = _zernio_parsed_caption(row)
+    want = (posted or "").strip()
+    return bool(want) and got is not None and got.strip() == want
+
+
+def _submission_held_by_other(led: Ledger, post_id: str, sid: str) -> bool:
+    """True when a different ledger post already stores this vendor id as submission_id."""
+    sid = (sid or "").strip()
+    if not sid:
+        return True
+    for other in led.posts.values():
+        if other.id == post_id:
+            continue
+        if (getattr(other, "submission_id", None) or "").strip() == sid:
+            return True
+    return False
+
+
 def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *,
-                           captured_url: str, new_sub: str, release_id: Optional[str] = None) -> None:
-    """Shared published promotion: real sid, buckets, archive — reconcile promote + resolve parity."""
+                           captured_url: str, new_sub: str, release_id: Optional[str] = None) -> bool:
+    """Shared published promotion. False — and no write — when another post holds `new_sub`."""
+    if _submission_held_by_other(led, post.id, new_sub):
+        return False
     upd = {"public_url": captured_url, "submission_id": new_sub, "reconcile_candidate_id": None,
            "ig_confirm_failopen_count": 0}
     if post.platform is Platform.instagram and release_id:
@@ -200,11 +242,11 @@ def _promote_bound_publish(cfg: Config, led: Ledger, post, log, now: datetime, *
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "archive_error", err=str(exc)[:120])
     log("reconcile", post.id, "published", auto_bind=True)
+    return True
 
 
-def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log, now: datetime,
-                                      *, url_hint: Optional[str] = None) -> bool:
-    """Poll reconcile_candidate_id with integration + liveness gates; bind real sid without operator input."""
+def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log, now: datetime) -> bool:
+    """Bind reconcile_candidate_id only when the fetched body caption is this post."""
     if is_real_submission_id(post.submission_id):
         return False
     cand = (getattr(post, "reconcile_candidate_id", None) or "").strip()
@@ -218,17 +260,22 @@ def _try_auto_bind_verified_candidate(cfg: Config, led: Ledger, post, poll, log,
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "auto_bind_fetch_failed", err=str(exc)[:120])
         return False
-    ok, captured = _verified_candidate_publish(cfg, post, cand, body, url_hint=url_hint)
+    from fanops.caption_compose import caption_shown
+    if not _search_row_is_this_post(body, caption_shown(cfg, led, post)):
+        log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
+        return False
+    ok, captured = _verified_candidate_publish(cfg, post, cand, body)
     if not ok or not captured:
         log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
         return False
-    _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=cand)
+    if not _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=cand):
+        log("reconcile", post.id, "auto_bind_rejected", candidate=cand)
+        return False
     log("reconcile", post.id, "auto_bind_ok", sub=cand)
     return True
 
 
-def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str, *,
-                                  url_hint: Optional[str] = None) -> bool:
+def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str) -> bool:
     """Public entry for resolve: auto-bind a verified candidate sid. Returns True when bound/promoted."""
     log = get_logger(cfg)
     now = datetime.now(timezone.utc)
@@ -236,7 +283,7 @@ def auto_bind_submission_for_post(cfg: Config, led: Ledger, post_id: str, *,
     if post is None:
         return False
     poll = _default_get_status(cfg, led)
-    return _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=url_hint)
+    return _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now)
 
 
 def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
@@ -265,7 +312,7 @@ def apply_published_resolve(cfg: Config, led: Ledger, post_id: str, *, url: str,
             log("resolve", post_id, "archive_error", err=str(exc)[:120])
         return True, ""
     if not sid or not is_real_submission_id(sid):
-        auto_bind_submission_for_post(cfg, led, post_id, url_hint=url)
+        auto_bind_submission_for_post(cfg, led, post_id)
         p = led.posts[post_id]
         if is_real_submission_id(p.submission_id) and p.state is PostState.published:
             return True, ""
@@ -333,8 +380,13 @@ def _zernio_row_matches_url(row: dict, want_url: str) -> bool:
 
 
 def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Optional[str]) -> set[str]:
-    """Merge URL + caption list hits; capped pagination per strategy."""
-    from fanops.caption_compose import posted_text_for
+    """Merge URL + caption list hits; capped pagination per strategy.
+
+    A permalink URL hit needs no caption. The search text is `caption_shown`: `Post.sent_content`
+    when the send stamped it, else the send text. A search row is admitted only when its parsed
+    caption equals that text; a row with no parsed caption is not this post. len>1 still returns
+    immediately (ambiguous)."""
+    from fanops.caption_compose import caption_shown
     from fanops.post.metrics.zernio_read import zernio_list_posts
     account_id = (post.account_id or "").strip()
     if not account_id:
@@ -363,7 +415,8 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
             total_pages = int(pag.get("totalPages") or pag.get("total_pages") or 1)
             if page >= total_pages or page >= _VENDOR_LOOKUP_MAX_PAGES:
                 break
-    search = (posted_text_for(cfg, led, post) or "")[:80].strip()
+    posted = (caption_shown(cfg, led, post) or "").strip()
+    search = posted[:80].strip()
     if search:
         for page in range(1, _VENDOR_LOOKUP_MAX_PAGES + 1):
             try:
@@ -376,7 +429,7 @@ def _vendor_lookup_candidate_ids(cfg: Config, led: Ledger, post, *, url_hint: Op
                 break
             for row in rows:
                 rid = _zernio_list_row_id(row)
-                if rid:
+                if rid and _search_row_is_this_post(row, posted):
                     ids.add(rid)
             if len(ids) > 1:
                 return ids
@@ -409,11 +462,13 @@ def _try_vendor_lookup_bind(cfg: Config, led: Ledger, post, log, now: datetime,
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "vendor_lookup_fetch_failed", err=str(exc)[:120])
         return False
-    ok, captured = _verified_candidate_publish(cfg, post, sid, body, url_hint=url_hint)
+    ok, captured = _verified_candidate_publish(cfg, post, sid, body)
     if not ok or not captured:
         log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
         return False
-    _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=sid)
+    if not _promote_bound_publish(cfg, led, post, log, now, captured_url=captured, new_sub=sid):
+        log("reconcile", post.id, "vendor_lookup_rejected", sid=sid)
+        return False
     log("reconcile", post.id, "vendor_lookup_ok", sub=sid)
     return True
 
@@ -433,7 +488,7 @@ def _auto_heal_unbound_submissions(cfg: Config, led: Ledger, poll, log, now: dat
                 continue
             _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
         elif post.state in (PostState.published, PostState.analyzed):
-            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now, url_hint=hint):
+            if _try_auto_bind_verified_candidate(cfg, led, post, poll, log, now):
                 continue
             _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
 
@@ -506,8 +561,12 @@ def _apply_age_terminal(post, now) -> dict | None:
 
       not-real token + age > _SUBMITTING_ESCALATE_AFTER (24h) + inflight
           (submitting/submitted)
-          -> needs_reconcile, no error_kind, same unpollable reason (a birth token cannot be
-             polled; already-parked needs_reconcile stays so auto-heal can still bind)
+          -> needs_reconcile, never failed: Studio recover re-arms a failed row of
+             kind unknown (or no kind) by clearing submission_id into a second
+             create. error_kind is cleared to None so the park carries no failure
+             kind. The birth token stays. A birth token cannot be polled;
+             already-parked needs_reconcile is not rewritten so auto-heal can
+             still bind. needs_reconcile is not re-queueable.
 
       remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
           -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
@@ -522,6 +581,7 @@ def _apply_age_terminal(post, now) -> dict | None:
     if (not real) and age > _SUBMITTING_ESCALATE_AFTER and post.state in (
             PostState.submitting, PostState.submitted):
         return {"update": {"state": PostState.needs_reconcile,
+                           "error_kind": None,
                            "error_reason": (
                                f"unpollable fanops_* after {hrs}h: GET 400 Invalid post ID; remint maybe-sent")[:400]},
                 "log": "closed: unpollable->needs_reconcile"}

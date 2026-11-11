@@ -1,5 +1,7 @@
 """Permalink persistence: same-tick publish→reconcile, keep captured https URLs when liveness fails, no invented URLs."""
 import json
+from datetime import datetime, timezone
+from fanops.timeutil import iso_z
 
 from fanops.config import Config
 from fanops.ledger import Ledger
@@ -30,7 +32,7 @@ def _seed_queued(cfg, pid="p1", cid="c1"):
                               state=MomentState.clipped))
         led.add_clip(Clip(id=cid, parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id=pid, parent_id=cid, account="a", account_id="98432", platform=Platform.instagram,
-                          caption="c", scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued,
+                          caption="c", scheduled_time=iso_z(datetime.now(timezone.utc)), state=PostState.queued,
                           post_type="post", created_at="2026-07-16T13:31:00Z",
                           media_urls=["https://cdn/v.mp4"]))
 

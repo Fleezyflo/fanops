@@ -7,7 +7,9 @@ its publish() can itself acquire the ledger store lock, which is only possible i
 holding it at network time. Post-fix, advance() commits its main txn FIRST, then publishes via the
 per-post claim->network->finalize discipline (network lock-free)."""
 import json
+from datetime import datetime, timezone
 from fanops.config import Config
+from fanops.timeutil import iso_z
 from fanops.ledger import Ledger
 from fanops.models import Post, Clip, PostState, ClipState, Platform, Moment, MomentState
 
@@ -44,7 +46,7 @@ def test_advance_publishes_with_network_outside_the_lock(tmp_path, monkeypatch, 
     cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps({"accounts": [
         {"handle": "@a", "account_id": "98432", "platforms": ["instagram"], "status": "active"}]}))
-    _persist_queued(cfg, pid="p1", cid="c1")
+    _persist_queued(cfg, pid="p1", cid="c1", when=iso_z(datetime.now(timezone.utc)))
     import fanops.post.run as run
     acquired = {}
 

@@ -261,6 +261,79 @@ def test_requeue_rate_limit_skips_real_submission_id(tmp_path, monkeypatch):
     assert Ledger.load(cfg).posts["real"].state is PostState.failed
 
 
+def test_429_is_not_resent_in_its_pass_and_returns_after_the_postiz_hour(tmp_path, monkeypatch, mocker):
+    """One `fanops run` pass calls publish_due once per advance. Main re-queued a 429 on the next call and
+    sent it again on the call after. The daemon requeue now waits out the Postiz hour, counted from the
+    claim that took the 429 (submission_started_at); after it the post comes back with no operator action."""
+    from datetime import datetime, timedelta, timezone
+    import fanops.post.publish_requeue as requeue
+    import fanops.post.run as run
+    from fanops.models import Source
+    from fanops.timeutil import iso_z
+    t0 = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
+    clock = {"now": t0}
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock["now"]
+
+    monkeypatch.setattr(run, "datetime", _Clock)        # the claim stamp (submission_started_at)
+    monkeypatch.setattr(requeue, "datetime", _Clock)    # the requeue's cool-off clock
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_URL", "https://p.example.com")
+    monkeypatch.setenv("POSTIZ_API_KEY", "pk")
+    monkeypatch.setenv("FANOPS_LIVE", "1")
+    monkeypatch.setenv("FANOPS_POSTIZ_PUBLISH_PER_MIN", "4")
+    cfg = Config(root=tmp_path)
+    f = cfg.clips / "c1.mp4"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"V")
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v.mp4", duration=10.0))
+        led.add_moment(Moment(id="mom_1", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.clipped))
+        led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
+        led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="ig1", platform=Platform.instagram,
+                          caption="c", post_type="post", state=PostState.queued,
+                          scheduled_time=iso_z(t0), media_urls=["https://h/v.mp4"]))
+    sent = []
+
+    def _post(url, **kw):                               # Postiz answers 429 until its hour has passed
+        sent.append(clock["now"])
+        if clock["now"] - t0 < timedelta(hours=1):
+            return _R(429, {}, text="rate")
+        return _R(201, {"id": "postiz_2"})
+
+    def _get(url, **kw):
+        if "integrations" in str(url):
+            return _R(200, [{"id": "ig1", "name": "a", "identifier": "instagram-standalone"}])
+        return _R(200, {"posts": []})
+
+    mocker.patch("requests.post", side_effect=_post)
+    mocker.patch("requests.get", side_effect=_get)
+
+    def publish_at(minutes):
+        clock["now"] = t0 + timedelta(minutes=minutes)
+        run.publish_due(cfg, now=iso_z(clock["now"]))
+        return Ledger.load(cfg).posts["p1"]
+
+    p = publish_at(0)
+    assert p.state is PostState.failed and p.error_kind is ErrorKind.rate_limit
+    assert p.submission_started_at == iso_z(t0)
+    sent_by_429 = len(sent)
+    publish_at(1)                                       # main re-queued it here ...
+    p = publish_at(2)                                   # ... and sent it again here, in the same pass
+    assert len(sent) == sent_by_429
+    assert p.state is PostState.failed and p.error_kind is ErrorKind.rate_limit
+    p = publish_at(61)                                  # the hour has passed: re-queued, due one throttle gap later
+    assert p.state is PostState.queued and p.error_kind is None and p.daemon_transient_retry == 1
+    assert len(sent) == sent_by_429
+    p = publish_at(62)
+    assert len(sent) == sent_by_429 + 1
+    assert p.state is PostState.needs_reconcile and p.submission_id == "postiz_2"
+
+
 # submission_id idempotency is owned by
 # test_publish_transient_retry.py::test_idempotency_skips_resubmit_when_submission_id_exists
 # (an identical copy lived here; that one seeds created_at, so it is the stronger seed).

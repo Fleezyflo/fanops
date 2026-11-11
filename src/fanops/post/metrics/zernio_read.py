@@ -1,6 +1,7 @@
 """Zernio metrics + status read clients and TikTok oEmbed permalink verification."""
 from __future__ import annotations
 
+import re
 from typing import Optional
 from urllib.parse import quote
 
@@ -220,14 +221,16 @@ def _extract_zernio_state(body) -> str:
     return ""
 
 
-# ---- T8: TikTok permalink LIVE-VERIFY (symmetric with IG's matched media_id) --------------------------
-# A captured TikTok URL must be PROVEN a real live post FOR THAT HANDLE before a post rests published — else
-# Zernio handing back a dead/wrong URL passes on paper (the same silent-failure class as a phantom IG reel).
-# TikTok oEmbed (https://www.tiktok.com/oembed?url=…) is the Graph-native proof: a 200 returns the post's
-# author (author_unique_id / author_url), a 404 means the video is dead/removed. No token needed (oEmbed is
-# public), so nothing is logged/echoed beyond the pass/fail. FAIL CLOSED at every step (bad url, non-200,
-# transport error, author mismatch -> False), so an unverifiable URL never lets a post rest.
+# ---- TikTok permalink liveness ------------------------------------------------------------------------
+# tiktok_permalink_verdict returns "" only when the URL is proven, else a reason. Two proofs, both fail
+# closed: (1) oEmbed author_unique_id / author_url matches expected_username, and embed_product_id, if
+# present, equals the URL's /video/<id>. (2) oEmbed 200 with no author (TikTok dropped
+# author_unique_id, author_url, and author_name): embed_product_id equals that video id AND the
+# GET /analytics?postId= platformAnalytics row whose accountId._id == account_id carries the same id.
+# A status-row username is not authorship. verify_tiktok_permalink is `not verdict` and does not pass
+# analytics, so oembed_no_author stays False for current callers. A mismatched author and any non-200 do too.
 _TIKTOK_OEMBED = "https://www.tiktok.com/oembed"
+_TIKTOK_VIDEO_RE = re.compile(r"/video/(\d+)")
 
 
 def _handle_key(handle: Optional[str]) -> str:
@@ -252,68 +255,214 @@ def _oembed_author_key(body: dict) -> Optional[str]:
     return None
 
 
+def _id_str(v) -> Optional[str]:
+    # TikTok video ids exceed 2^53; keep them as exact digit strings. bool is an int subclass — reject it.
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
+
+
+def _tiktok_video_id(url) -> Optional[str]:
+    if not isinstance(url, str):
+        return None
+    m = _TIKTOK_VIDEO_RE.search(url)
+    return m.group(1) if m else None
+
+
+def _embed_product_id(body: dict) -> Optional[str]:
+    if not isinstance(body, dict):
+        return None
+    return _id_str(body.get("embed_product_id"))
+
+
+def _account_id_of(row: dict) -> Optional[str]:
+    acct = row.get("accountId")
+    if isinstance(acct, dict):
+        return _id_str(acct.get("_id"))
+    return _id_str(acct)
+
+
+def _tiktok_row_username(row: dict) -> Optional[str]:
+    acct = row.get("accountId") if isinstance(row.get("accountId"), dict) else {}
+    psd = row.get("platformSpecificData") if isinstance(row.get("platformSpecificData"), dict) else {}
+    for v in (acct.get("username"), psd.get("__usernameSnapshot"), psd.get("tiktokUsername"), acct.get("displayName")):
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _tiktok_platform_rows(body) -> list[dict]:
+    return [r for r in _zernio_platform_rows(body) if str(r.get("platform", "")).strip().lower() == "tiktok"]
+
+
+def _analytics_tiktok_rows(body) -> list[dict]:
+    # Authorship reads platformAnalytics ONLY. A GET /posts/{id} status body carries platforms[] and must
+    # not prove the video — the status username alone is not authorship.
+    if not isinstance(body, dict):
+        return []
+    nodes = [body]
+    for wrap in ("post", "data", "result"):
+        inner = body.get(wrap)
+        if isinstance(inner, dict):
+            nodes.append(inner)
+    out: list[dict] = []
+    for node in nodes:
+        pa = node.get("platformAnalytics")
+        if not isinstance(pa, list):
+            continue
+        for row in pa:
+            if isinstance(row, dict) and str(row.get("platform", "")).strip().lower() == "tiktok":
+                out.append(row)
+    return out
+
+
+def _row_video_id(row: dict) -> Optional[str]:
+    vid = _id_str(row.get("platformPostId"))
+    if vid:
+        return vid
+    for key in ("platformPostUrl", "shareUrl", "postUrl", "url", "permalink"):
+        found = _tiktok_video_id(row.get(key))
+        if found:
+            return found
+    return None
+
+
+def _analytics_video_match(body, account_id: Optional[str], embed_id: str) -> Optional[bool]:
+    """True when this account's analytics row is this video. False when that row names a different video.
+    None when there is no row for the account (or it carries no video id) — not authorship."""
+    want = str(account_id or "").strip()
+    if not want or not embed_id:
+        return None
+    saw_other = False
+    for row in _analytics_tiktok_rows(body):
+        if _account_id_of(row) != want:
+            continue
+        vid = _row_video_id(row)
+        if not vid:
+            continue
+        if vid == embed_id:
+            return True
+        saw_other = True
+    return False if saw_other else None
+
+
+def _tiktok_status_accounts(body) -> list[dict]:
+    """Each TikTok status row's identity. Omitted by get_status when there is no TikTok row."""
+    out = []
+    for row in _tiktok_platform_rows(body):
+        pub = row.get("publishedAt")
+        out.append({
+            "accountId": _account_id_of(row),
+            "username": _tiktok_row_username(row),
+            "platformPostId": _id_str(row.get("platformPostId")),
+            "publishedAt": pub.strip() if isinstance(pub, str) and pub.strip() else None,
+        })
+    return out
+
+
 def zernio_reported_tiktok_username(body, integration_id: Optional[str]) -> Optional[str]:
-    """The TikTok username ZERNIO reports a post went to, read from a GET /posts/{id} status body — the SOLE
-    authority for 'which TikTok account did this post publish to'. A post's TikTok video is authored by the
-    TikTok USERNAME on the Zernio integration (e.g. our internal @hrmny-blog publishes to tiktok.com/@wahed_bared),
-    NOT by our internal account name; verify_tiktok_permalink must therefore compare the live oEmbed author to
-    THIS, never to our handle (the shipped bug). Scans the SAME platform rows _zernio_platform_rows yields,
-    restricted to tiktok rows, and returns the username of the row whose accountId._id == `integration_id`
-    (accounts.json integrations.tiktok == post.account_id). FALLBACK: the SOLE tiktok row when the id matches
-    nothing / is None (the bound-method dispatch has no post in scope to pass an id, but a single-account post
-    has exactly one tiktok row). Per-row username source order: accountId.username -> platformSpecificData
-    __usernameSnapshot -> tiktokUsername -> accountId.displayName. FAIL-CLOSED: None when no tiktok row carries
-    a usable username (the caller must then reject — a post with no derivable Zernio username stays parked)."""
-    tt_rows = [r for r in _zernio_platform_rows(body) if str(r.get("platform", "")).strip().lower() == "tiktok"]
+    """TikTok username on a Zernio status or analytics body.
+
+    The row whose accountId._id == integration_id wins. A passed integration_id that matches no row
+    returns None — never the sole TikTok row, which can belong to another account. When integration_id
+    is None and there is exactly one TikTok row, that row is used (get_status has no post in scope).
+    Username order: accountId.username, platformSpecificData.__usernameSnapshot, tiktokUsername,
+    accountId.displayName. None when nothing usable is present.
+
+    This is the username verify compares to an oEmbed author. It is not authorship by itself."""
+    tt_rows = _tiktok_platform_rows(body)
     if not tt_rows:
         return None
-
-    def _row_username(r: dict) -> Optional[str]:
-        acct = r.get("accountId") if isinstance(r.get("accountId"), dict) else {}
-        psd = r.get("platformSpecificData") if isinstance(r.get("platformSpecificData"), dict) else {}
-        for v in (acct.get("username"), psd.get("__usernameSnapshot"), psd.get("tiktokUsername"), acct.get("displayName")):
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-        return None
-
-    if integration_id:
-        for r in tt_rows:
-            acct = r.get("accountId") if isinstance(r.get("accountId"), dict) else {}
-            if str(acct.get("_id") or "") == str(integration_id):
-                return _row_username(r)                          # the EXACT account this post went to
+    if integration_id is not None:
+        want = str(integration_id).strip()
+        if not want:
+            return None
+        for row in tt_rows:
+            if _account_id_of(row) == want:
+                return _tiktok_row_username(row)                 # exact account; no username -> None, not another row
+        return None                                              # passed id matched nothing — do not bind the sole row
     if len(tt_rows) == 1:
-        return _row_username(tt_rows[0])                         # sole tiktok row -> unambiguous even with no id
-    return None                                                  # >1 row and no id match -> can't disambiguate, fail closed
+        return _tiktok_row_username(tt_rows[0])
+    return None                                                  # >1 row and no id -> can't disambiguate
 
 
-def verify_tiktok_permalink(cfg: Config, url: Optional[str], expected_username: Optional[str], *, get=None) -> bool:
-    """True iff `url` is a live TikTok post whose oEmbed author == `expected_username`, proven via TikTok oEmbed.
-    `expected_username` is the username ZERNIO reports for this post's own account (zernio_reported_tiktok_username)
-    — the real TikTok username the post published to — NOT our internal handle (comparing to the internal handle
-    was the shipped bug: @hrmny-blog's live post is tiktok.com/@wahed_bared, so oEmbed author 'wahed_bared' never
-    equaled 'hrmny-blog' and a genuinely-live post fail-closed). Injectable `get` (defaults to requests.get) so
-    tests never hit the network. FAIL CLOSED: a non-https/empty url (rejected by safe_public_url before any
-    request), a missing expected_username, a non-200 oEmbed (404 = dead video), a transport error, or an author
-    that doesn't match all return False — an unverifiable URL is never accepted. oEmbed is public (no token)."""
+def tiktok_permalink_verdict(cfg: Config, url: Optional[str], expected_username: Optional[str], *,
+                             get=None, account_id: Optional[str] = None, analytics_body=None,
+                             submission_id: Optional[str] = None) -> str:
+    """'' when `url` is a live TikTok video this post authored, else a reason string.
+
+    Reasons: bad_url, no_username, oembed_transport, oembed_status:<code>, oembed_no_author,
+    video_id_mismatch, author_mismatch.
+
+    Proven when the oEmbed author matches `expected_username` (embed_product_id, if present, must equal
+    the URL video id), OR when oEmbed has no author and the analytics row proves it: pass `analytics_body`
+    from GET /analytics?postId= (platformAnalytics, not the status body) whose accountId._id ==
+    `account_id` and whose video id == embed_product_id == the URL video id. When `analytics_body` is
+    omitted and both `account_id` and `submission_id` are set, this fetches that body with `get`.
+    A present mismatched author is author_mismatch and is never overridden by analytics. A non-200
+    (dead video) is oembed_status:<code>. `get` defaults to requests.get; tests inject it.
+
+    Next unit, from `_tiktok_url_confirmed` (do not treat a reason as success):
+
+        from fanops.post.metrics.zernio_read import tiktok_permalink_verdict
+        reason = tiktok_permalink_verdict(
+            cfg, url, reported_username, get=get,
+            account_id=post.account_id, submission_id=sub)
+        proven = reason == ""
+    """
     ok = safe_public_url(url)
     if not ok:
-        return False                                            # malformed/non-https -> never reaches the network
+        return "bad_url"
     want = _handle_key(expected_username)
     if not want:
-        return False                                            # no authoritative username to compare against -> fail closed
-    get = get or requests.get
+        return "no_username"
+    getter = get or requests.get
     try:
-        resp = get(_TIKTOK_OEMBED, params={"url": ok}, timeout=20)
+        resp = getter(_TIKTOK_OEMBED, params={"url": ok}, timeout=20)
     except requests.exceptions.RequestException:
-        return False                                            # transport error is not proof it is live
-    if getattr(resp, "status_code", None) != 200:
-        return False                                            # 404 (removed) / any non-200 -> unverified
+        return "oembed_transport"
+    code = getattr(resp, "status_code", None)
+    if code != 200:
+        return "oembed_transport" if code is None else f"oembed_status:{code}"
     try:
         body = resp.json()
     except ValueError:
-        return False
-    got = _oembed_author_key(body if isinstance(body, dict) else {})
-    return got == want                                          # exact, normalized author == Zernio-reported username
+        return "oembed_transport"
+    if not isinstance(body, dict):
+        return "oembed_no_author"
+    embed_id = _embed_product_id(body)
+    url_id = _tiktok_video_id(ok)
+    if embed_id is not None and embed_id != url_id:
+        return "video_id_mismatch"
+    got = _oembed_author_key(body)
+    if got is not None:
+        return "" if got == want else "author_mismatch"
+    if embed_id is None or url_id is None:
+        return "oembed_no_author"                                # no author and no video id to match against analytics
+    evidence = analytics_body
+    acct = str(account_id).strip() if account_id is not None else ""
+    if evidence is None and submission_id and acct:
+        evidence = _fetch_zernio_analytics_body(cfg, str(submission_id), get=getter)
+    matched = _analytics_video_match(evidence, acct, embed_id)
+    if matched is True:
+        return ""
+    if matched is False:
+        return "video_id_mismatch"
+    return "oembed_no_author"
+
+
+def verify_tiktok_permalink(cfg: Config, url: Optional[str], expected_username: Optional[str], *, get=None) -> bool:
+    """Bool for current callers: True only when tiktok_permalink_verdict returns "".
+
+    Does not pass account_id, analytics_body, or submission_id, so a 200 with no author
+    (oembed_no_author) stays False until reconcile calls tiktok_permalink_verdict. A mismatched
+    author and any non-200 stay False too. `expected_username` is the Zernio-reported TikTok
+    username, not the internal account handle."""
+    return not tiktok_permalink_verdict(cfg, url, expected_username, get=get)
 
 
 def _fetch_zernio_analytics_body(cfg: Config, submission_id: str, *, get=None):
@@ -452,13 +601,13 @@ class ZernioStatusClient:
                 out["errorMessage"] = msg
         if status == "published":
             out["publicUrl"] = _extract_zernio_permalink(body) or None
-            # T-VERIFY: carry the Zernio-REPORTED TikTok username out of the SAME body (no second fetch) so
-            # reconcile's TikTok REST-gate can verify the live oEmbed author against the username Zernio actually
-            # published to — NOT our internal handle. integration_id is not in scope here (bound-method dispatch),
-            # so this resolves the SOLE tiktok row; reconcile disambiguates a multi-account body via post.account_id.
-            # ADDITIVE + fail-closed: the key is present ONLY when a username is derivable (a status body with no
-            # accountId.username adds nothing -> the {status, publicUrl} shape is byte-identical for those bodies).
+            # integration_id is None here (bound get_status): sole TikTok row only. A multi-row body adds
+            # no tiktokUsername; callers disambiguate with tiktokAccounts[].accountId == post.account_id.
+            # Key stays absent when no username is derivable, so bodies with no TikTok row keep the old shape.
             uname = zernio_reported_tiktok_username(body, None)
             if uname:
                 out["tiktokUsername"] = uname
+        accounts = _tiktok_status_accounts(body)
+        if accounts:
+            out["tiktokAccounts"] = accounts
         return out
