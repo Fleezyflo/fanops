@@ -431,11 +431,11 @@
     "fanops.hashtag_refresh": [
       {
         "call": "fcntl.flock",
-        "line": 221
+        "line": 225
       },
       {
         "call": "fcntl.flock",
-        "line": 227
+        "line": 231
       }
     ],
     "fanops.ledger": [
@@ -567,11 +567,11 @@
     "fanops.post.metrics.zernio_read": [
       {
         "call": "requests.get",
-        "line": 143
+        "line": 144
       },
       {
         "call": "requests.get",
-        "line": 367
+        "line": 516
       }
     ],
     "fanops.post.postiz": [
