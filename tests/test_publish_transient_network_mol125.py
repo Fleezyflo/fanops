@@ -296,7 +296,7 @@ def test_429_is_not_resent_in_its_pass_and_returns_after_the_postiz_hour(tmp_pat
         led.add_clip(Clip(id="c1", parent_id="mom_1", path=str(f), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="ig1", platform=Platform.instagram,
                           caption="c", post_type="post", state=PostState.queued,
-                          scheduled_time="2020-01-01T00:00:00Z", media_urls=["https://h/v.mp4"]))
+                          scheduled_time=iso_z(t0), media_urls=["https://h/v.mp4"]))
     sent = []
 
     def _post(url, **kw):                               # Postiz answers 429 until its hour has passed
