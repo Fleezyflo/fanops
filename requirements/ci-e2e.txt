@@ -879,9 +879,9 @@ pygments==2.20.0 \
     --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
     --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
     # via pytest
-pytest==9.1.1 \
-    --hash=sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313 \
-    --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
+pytest==9.2.0 \
+    --hash=sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588 \
+    --hash=sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b
     # via
     #   fanops (pyproject.toml)
     #   pytest-cov
@@ -897,9 +897,9 @@ pytest-mock==3.15.1 \
     --hash=sha256:0a25e2eb88fe5168d535041d09a4529a188176ae608a6d249ee65abc0949630d \
     --hash=sha256:1849a238f6f396da19762269de72cb1814ab44416fa73a8686deac10b0d87a0f
     # via fanops (pyproject.toml)
-pytest-recording==0.13.4 \
-    --hash=sha256:568d64b2a85992eec4ae0a419c855d5fd96782c5fb016784d86f18053792768c \
-    --hash=sha256:ad49a434b51b1c4f78e85b1e6b74fdcc2a0a581ca16e52c798c6ace971f7f439
+pytest-recording==0.14.1 \
+    --hash=sha256:904784991ed41b78353f27a91d1a0172e314994d23f088077445cddf4f82879f \
+    --hash=sha256:da954f116a4232aca5d7d518efab2c0f1b9421778e72913e9ad3e5777322cd62
     # via fanops (pyproject.toml)
 pytest-timeout==2.4.0 \
     --hash=sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a \
@@ -1493,9 +1493,9 @@ wrapt==2.2.2 \
     --hash=sha256:fa81c5b5fe8cd6c41e3a798533b81288279e5fdbde2128f21071922764281c99 \
     --hash=sha256:fb18fc51e813df0d9c98049e3bf2298a5495a648602040e21fa3c7329371159e
     # via vcrpy
-yt-dlp==2026.8.19 \
-    --hash=sha256:1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf \
-    --hash=sha256:9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1
+yt-dlp==2026.10.26 \
+    --hash=sha256:a05c5b5d8562f7e8a62f5334348b406af4930d56d3a65f8021d14af0e22339ae \
+    --hash=sha256:abe5c6b94c3b2f0560500add1c42e0a97641752743a5b65588ac2007a6e23eb6
     # via fanops (pyproject.toml)
 
 # The following packages are considered to be unsafe in a requirements file:
