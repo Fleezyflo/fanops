@@ -707,7 +707,8 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     count. Envelope authority is the opener (`open_client`), not this gate — probing on every
     on every tick would hit Instagram when the cache is still fresh. A torn cooldown file
     refuses the tick (`refreshed: False`, no scrape) and logs `scrape_outage` at error with the
-    file, the cause and `_COOLDOWN_UNREADABLE_REMEDY`. Any other error -> a reason, NEVER raises.
+    file, the cause and `_COOLDOWN_UNREADABLE_REMEDY`. That read runs before `locks_pending`, so a
+    pending native lock cannot hide it. Any other error -> a reason, NEVER raises.
     Instagram platform-stop cooldown (MOL-695) is checked BEFORE opening scrape — never sleeps.
     MOL-858: the gate is global only when EVERY scrape peer is frozen or day-budget-exhausted.
     A skip under a freeze that has outlived the cadence also emits `scrape_outage` at
@@ -718,10 +719,6 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
     if scrape_client is None and not scrape_users(cfg):
         return {"refreshed": False, "reason": "no scrape session"}
     try:
-        from fanops.ledger import Ledger
-        from fanops.source_tags_sidecar import locks_pending
-        if locks_pending(cfg, Ledger.load(cfg)):
-            return {"refreshed": False, "reason": "locks_pending"}
         now_dt = now or datetime.now(timezone.utc)
         try:
             cool = _read_active_cooldown(cfg, now_dt)
@@ -745,6 +742,10 @@ def refresh_store_if_due(cfg: Config, *, max_age_s: int = _REFRESH_CADENCE_S, sc
                                     reason, "inspect 00_control/" + _COOLDOWN_NAME))
             return {"refreshed": False, "reason": "cooldown", "level": level, "cooldown_reason": reason,
                     "until": cool.get("until"), "streak": cool.get("streak")}
+        from fanops.ledger import Ledger
+        from fanops.source_tags_sidecar import locks_pending
+        if locks_pending(cfg, Ledger.load(cfg)):
+            return {"refreshed": False, "reason": "locks_pending"}
         names = _sidecar_tick_names(cfg)
         if not names:
             return {"refreshed": False}

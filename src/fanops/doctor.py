@@ -301,10 +301,10 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     """Operational sensors for live backlog. Progress-blocking classes emit Severity.FAIL so
     report_is_healthy / doctor exit are NONZERO (MOL-960/MOL-965). Optional Layer A scrape cooldown
     is Severity.WARN (non-blocking); an unreadable cooldown file is Severity.FAIL (nothing scrapes until
-    the operator repairs it). Sensor read failures → Severity.UNKNOWN (required → unhealthy).
+    the operator repairs it). Any other cooldown-sensor error is Severity.FAIL. Other sensor read
+    failures → Severity.UNKNOWN (required → unhealthy).
     No mutation. Severity is set at construction via _check — not a post-hoc ok+warn soft-lie."""
     from datetime import datetime, timezone
-    log = logging.getLogger("fanops.doctor")
     out: list[dict] = []
 
     # 1. pending agent-gates — unknown age (missing opened_at) is NOT clean silence: FAIL (required unknown).
@@ -380,6 +380,7 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
     # 5. hashtag-scrape cooldown — optional enrichment; Severity.WARN (non-blocking). Surface WHY Layer A
     #    is frozen with the honest remedy from _OUTAGE_REMEDY when NO healthy peer remains. An unreadable
     #    cooldown file raises ControlFileError: Severity.FAIL with the remedy the tick's scrape_outage logs.
+    #    Any other sensor error is Severity.FAIL (a debug fail_open must not swallow it).
     try:
         from fanops.hashtag_scrape_policy import _OUTAGE_REMEDY, _read_active_cooldown
         cool = _read_active_cooldown(cfg, datetime.now(timezone.utc))
@@ -397,9 +398,15 @@ def _operational_sensor_checks(cfg: Config) -> list[dict]:
             "hashtag Layer A not in cooldown",
             severity="fail",
             hint=f"scrape stopped: {e} — {_COOLDOWN_UNREADABLE_REMEDY}"))
-    except Exception:
-        with fail_open("doctor.scrape-cooldown sensor degrade:", log=log.debug):
-            pass
+    except Exception as e:
+        if decide("operator", 0) is EscalationPosture.nonzero:
+            out.append(_check(
+                "hashtag scrape cooldown sensor readable",
+                severity="fail",
+                hint=f"scrape-cooldown sensor failed ({type(e).__name__}: {str(e)[:120]}) — "
+                     f"doctor cannot prove Layer A cooldown state"))
+        else:
+            raise
 
     return out
 
@@ -541,7 +548,8 @@ def _assemble_doctor_checks(cfg: Config, *, get=None, postiz_probe=None, zernio_
     if dep is not None:
         checks.append(dep)
     # Operational sensors: progress-blocking backlog → ok=False (doctor exit NONZERO); Layer A cooldown
-    # stays warn-only unless its file is unreadable (FAIL). See _operational_sensor_checks.
+    # stays warn-only unless its file is unreadable or the sensor itself errors (both FAIL).
+    # See _operational_sensor_checks.
     checks.extend(_operational_sensor_checks(cfg))
     checks.extend(_sibling_launchd_checks())
     schk = _studio_resident_check()
