@@ -285,43 +285,60 @@ def test_advance_exits_cleanly_on_auth_error(tmp_path, monkeypatch, mocker, caps
 
 
 # --- T1: startup preflight auth-check (the silent-zero-output guard) ------------------------
-# Catches the #1 cutover trap BEFORE a run does silent nothing. AUTH: the responder shells grok
-# (`grok login` session file, no API key), so the llm trap is "FANOPS_RESPONDER=llm but `grok`
-# is NOT on PATH" (no binary -> every gate raises -> zero content), NOT a missing API key.
-# The poster trap is unchanged: rest/mcp with no BLOTATO_API_KEY (publish 401). Mirrors
-# _check_accounts: 0 clean / actionable line + returns 2.
-# Tests patch shutil.which to control `grok` presence deterministically.
+# Catches the #1 cutover trap BEFORE a run does silent nothing. A missing `grok` binary is a
+# failing dep row (health_probes.dep_health_list), not a process-wide exit 2: LLM stages stop
+# on ToolchainMissingError, publish and reconcile still run. `grok models` failure (binary
+# present, not logged in) and a bad FANOPS_RESPONDER still exit 2. Poster creds are unchanged.
+# Tests patch shutil.which to control `grok` presence deterministically. grok_models_ok is
+# forced False on the missing-binary cases so a login-probe refusal cannot hide behind the
+# autouse stub (which returns True).
 
-def test_preflight_blocks_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
+def test_preflight_missing_grok_is_not_a_process_refusal(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)     # isolate the assertion to the llm case
     mocker.patch("shutil.which", return_value=None)          # the trap: llm responder, no `grok`
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    rc = _check_preflight(Config(root=tmp_path))
-    assert rc == 2
+    from fanops.health_probes import dep_health_list
+    from fanops.health_types import Severity
+    cfg = Config(root=tmp_path)
+    assert _check_preflight(cfg) == 0
     err = capsys.readouterr().err
-    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "refusing to run" not in err and "Traceback" not in err
     assert "claude" not in err.lower()
+    grok = next(d for d in dep_health_list(cfg) if d.name == "grok")
+    assert grok.ok is False and grok.severity is Severity.FAIL
+    assert grok.detail == "grok CLI not on PATH"
 
 
-def test_preflight_blocks_llm_when_claude_absent_via_advance(tmp_path, monkeypatch, mocker, capsys):
-    # Wiring proof: the gate is actually called in the advance dispatch branch (after _check_accounts).
-    # A valid active account makes _check_accounts pass so we reach _check_preflight.
+def test_missing_grok_advance_still_publishes_and_reconciles(tmp_path, monkeypatch, mocker, capsys):
+    # Wiring proof: advance still calls preflight (after _check_accounts), and a missing binary
+    # does not return there. Publish and reconcile — the stages after the LLM gates — still run.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_RESPONDER", "llm")
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
-    mocker.patch("shutil.which", return_value=None)
+    import shutil
+    real_which = shutil.which
+    def _which(name, *a, **k):
+        return None if name == "grok" else real_which(name, *a, **k)
+    mocker.patch("shutil.which", side_effect=_which)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
     from fanops.config import Config
+    import fanops.pipeline as pipeline
     cfg = Config(root=tmp_path); cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
     cfg.accounts_path.write_text(json.dumps(
         {"accounts": [{"handle": "@x", "account_id": "1", "platforms": ["instagram"], "status": "active"}]}))
+    seen = []
+    real_pub, real_rec = pipeline._publish_safe, pipeline._reconcile_safe
+    mocker.patch.object(pipeline, "_publish_safe", lambda c, log: seen.append("publish") or real_pub(c, log))
+    mocker.patch.object(pipeline, "_reconcile_safe", lambda c, log: seen.append("reconcile") or real_rec(c, log))
     rc = main(["advance"])
-    assert rc == 2
     err = capsys.readouterr().err
-    assert "grok" in err and "grok login" in err and "Traceback" not in err
-    assert "claude" not in err.lower()
+    assert rc == 0
+    assert seen == ["publish", "reconcile"]
+    assert "refusing to run" not in err and "Traceback" not in err
 
 
 def test_preflight_refuses_manual_responder(tmp_path, monkeypatch, capsys):
@@ -338,18 +355,19 @@ def test_preflight_refuses_manual_responder(tmp_path, monkeypatch, capsys):
     assert "FANOPS_RESPONDER" in err and "Traceback" not in err
 
 
-def test_preflight_blocks_default_llm_when_claude_absent(tmp_path, monkeypatch, mocker, capsys):
-    # Fail closed: empty/unset FANOPS_RESPONDER → llm, so missing CLI refuses the same as explicit llm.
+def test_preflight_missing_grok_default_responder_is_not_a_process_refusal(tmp_path, monkeypatch, mocker, capsys):
+    # Empty/unset FANOPS_RESPONDER → llm. A missing CLI still does not refuse the process.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FANOPS_RESPONDER", raising=False)
     monkeypatch.delenv("BLOTATO_API_KEY", raising=False)
     mocker.patch("shutil.which", return_value=None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
     rc = _check_preflight(Config(root=tmp_path))
-    assert rc == 2
+    assert rc == 0
     err = capsys.readouterr().err
-    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "refusing to run" not in err and "Traceback" not in err
     assert "claude" not in err.lower()
 
 
@@ -368,15 +386,16 @@ def test_preflight_passes_llm_when_claude_present_no_api_key(tmp_path, monkeypat
     assert _check_preflight(Config(root=tmp_path)) == 0
 
 
-def test_preflight_blocks_grok_when_grok_absent(tmp_path, monkeypatch, mocker, capsys):
+def test_preflight_grok_absent_does_not_refuse(tmp_path, monkeypatch, mocker, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FANOPS_LLM_TRANSPORT", "grok")
     mocker.patch("shutil.which", side_effect=lambda b: "/usr/local/bin/claude" if b == "claude" else None)
+    mocker.patch("fanops.llm.grok_models_ok", return_value=False)
     from fanops.config import Config
     from fanops.cli import _check_preflight
-    assert _check_preflight(Config(root=tmp_path)) == 2
+    assert _check_preflight(Config(root=tmp_path)) == 0
     err = capsys.readouterr().err
-    assert "grok" in err and "grok login" in err and "Traceback" not in err
+    assert "refusing to run" not in err and "Traceback" not in err
     assert "moments/hooks stay on Claude" not in err
     assert "set LLM transport to claude" not in err
     assert "claude" not in err.lower()
@@ -401,6 +420,26 @@ def test_preflight_grok_models_fail_is_exit_2(tmp_path, monkeypatch, mocker, cap
     from fanops.cli import _check_preflight
     assert _check_preflight(Config(root=tmp_path)) == 2
     assert "grok login" in capsys.readouterr().err
+
+
+def test_heartbeat_flushes_stdout_after_the_line(tmp_path, monkeypatch):
+    # launchd captures daemon.out from a block-buffered pipe. The line must be flushed after it
+    # is written, or the file stalls while the process is still heartbeating.
+    import io
+    import fanops.cli as cli
+    from fanops.config import Config
+    class _Out(io.StringIO):
+        def __init__(self):
+            super().__init__()
+            self.at_flush = ""
+        def flush(self):
+            self.at_flush = self.getvalue()
+            return super().flush()
+    out = _Out()
+    monkeypatch.setattr("sys.stdout", out)
+    cli._heartbeat(Config(root=tmp_path), {"published_in_run": 0}, origin="loop")
+    assert "heartbeat" in out.at_flush
+    assert json.loads(out.at_flush)["published_in_run"] == 0
 
 def test_run_halts_cleanly_when_responder_raises(tmp_path, monkeypatch, mocker, capsys):
     # AUDIT H7: `fanops run` is the REQUIRED unattended mode. If the LLM responder raises

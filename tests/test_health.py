@@ -170,7 +170,21 @@ def test_system_health_lists_docker_postiz_zernio(tmp_path, monkeypatch):
     _docker_on_path(tmp_path, monkeypatch, rc=0)
     monkeypatch.setattr(health.subprocess, "Popen", _Popen({"docker info": 0}))
     _mock_probe(monkeypatch, status=200)                 # MOL-61: postiz row now rides the deeper probe
-    assert [d.name for d in health.system_health(cfg)] == ["docker", "postiz", "zernio"]
+    rows = health.system_health(cfg)
+    assert [d.name for d in rows] == ["docker", "postiz", "zernio", "grok"]
+    assert rows[-1].ok is True and rows[-1].detail == "on PATH"
+
+
+def test_missing_grok_cli_dep_row_is_a_failure(tmp_path, monkeypatch):
+    """A missing grok binary is a failing dependency row. Publish deps are untouched."""
+    from fanops.health_types import Severity
+    cfg = _cfg(tmp_path, monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda name, *a, **k: None if name == "grok" else f"/usr/bin/{name}")
+    rows = {d.name: d for d in health.system_health(cfg)}
+    grok = rows["grok"]
+    assert grok.ok is False and grok.severity is Severity.FAIL
+    assert grok.detail == "grok CLI not on PATH"
+    assert rows["docker"].ok is True and rows["postiz"].ok is True and rows["zernio"].ok is True
 
 
 # MOL-61 — the degraded postiz row must render the SAME err class + dep-alert as an unreachable one
