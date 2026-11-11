@@ -14,7 +14,7 @@ def test_health_report_composes_checks_deps_and_field_shape(tmp_path, monkeypatc
     rep = build_health_report(cfg, postiz_probe=lambda c: type("H", (), {"healthy": True, "status_code": 200, "hint": ""})())
     assert isinstance(rep, HealthReport)
     assert rep.checks and rep.notes
-    assert [d.name for d in rep.deps] == ["docker", "postiz", "zernio"]
+    assert [d.name for d in rep.deps] == ["docker", "postiz", "zernio", "grok"]
     assert rep.field_shape is not None
     assert rep.field_shape["verdict"] == "NO-DATA"
 

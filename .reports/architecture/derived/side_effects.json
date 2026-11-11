@@ -61,31 +61,31 @@
       },
       {
         "call": "Ledger.transaction",
-        "line": 1122
+        "line": 1119
       },
       {
         "call": "Ledger.transaction",
-        "line": 1137
+        "line": 1134
       },
       {
         "call": "Ledger.transaction",
-        "line": 1173
+        "line": 1170
       },
       {
         "call": "Ledger.transaction",
-        "line": 1183
+        "line": 1180
       },
       {
         "call": "Ledger.transaction",
-        "line": 1210
+        "line": 1207
       },
       {
         "call": "Ledger.transaction",
-        "line": 1219
+        "line": 1216
       },
       {
         "call": "Ledger.transaction",
-        "line": 1230
+        "line": 1227
       }
     ],
     "fanops.cli_run": [
@@ -531,7 +531,7 @@
     "fanops.cli": [
       {
         "call": "tempfile.mkdtemp",
-        "line": 1402
+        "line": 1399
       }
     ],
     "fanops.post.compress": [
@@ -626,7 +626,7 @@
     "fanops.cli": [
       {
         "call": "shutil.rmtree",
-        "line": 1434
+        "line": 1431
       }
     ],
     "fanops.post.compress": [

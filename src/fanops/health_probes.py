@@ -78,11 +78,21 @@ def zernio_dep_health(cfg: Config) -> DepHealth:
     return _http_reachable(cfg.zernio_url, "zernio", require_2xx=True)
 
 
+def llm_cli_dep_health(cfg: Config) -> DepHealth:
+    """The grok binary. Missing is a failure row: LLM stages stop, publish and reconcile do not."""
+    import shutil
+    name = cfg.llm_cli_binary
+    if shutil.which(name) is None:
+        return DepHealth(name, False, f"{name} CLI not on PATH")
+    return DepHealth(name, True, "on PATH")
+
+
 def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
     """Runtime dependency rows — docker via health._docker_health when available (test patch compat).
 
     Docker is the local Postiz stack's engine. No live Postiz-routed channel → skip it (a
-    Zernio-only deployment must not FAIL doctor because Docker Desktop is stopped)."""
+    Zernio-only deployment must not FAIL doctor because Docker Desktop is stopped).
+    grok is always a row. A missing binary fails that row only — it does not refuse the process."""
     from fanops import health as health_mod
     from fanops.health import _postiz_compose_dir
     if not _backend_is_postiz(cfg):
@@ -91,7 +101,8 @@ def dep_health_list(cfg: Config, *, postiz_probe=None) -> list[DepHealth]:
         docker = health_mod._docker_health() if hasattr(health_mod, "_docker_health") else _docker_dep()
     else:
         docker = DepHealth("docker", True, "skipped (not configured)")
-    return [docker, postiz_dep_health(cfg, probe=postiz_probe), zernio_dep_health(cfg)]
+    return [docker, postiz_dep_health(cfg, probe=postiz_probe), zernio_dep_health(cfg),
+            llm_cli_dep_health(cfg)]
 
 
 def postiz_doctor_check(cfg: Config, *, probe=None) -> dict | None:
