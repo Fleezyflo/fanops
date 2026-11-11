@@ -31,8 +31,16 @@ def _remember_dead_dump(cfg, client, exc) -> None:
     _persist_cooldown(cfg, now, reason=type(exc).__name__, user=user)
 
 
-def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
-    """Yield clients to try for this lock. Empty picker → stop (no opener(cfg) fallthrough)."""
+def _closed(_cfg, user=None, **_k):
+    """Opener for the rest of a run once a source found no scrape seat. Opens nothing."""
+    raise ScrapeUnavailable("scrape seat closed earlier in this run — "
+                            "the first scrape_unavailable line names the cause")
+
+
+def _iter_lock_clients(cfg, *, client, open_client_fn, now=None, sid="-"):
+    """Yield clients to try for this lock. Empty picker → stop (no opener(cfg) fallthrough).
+
+    A refusal logs its fixed text: error, or info when it is the `_closed` seat."""
     if client is not None:
         yield client
         return
@@ -48,7 +56,9 @@ def _iter_lock_clients(cfg, *, client, open_client_fn, now=None):
     for user in _lock_web_users(cfg, now):
         try:
             cli = _call_opener(opener, cfg, user=user)
-        except ScrapeUnavailable:
+        except ScrapeUnavailable as exc:
+            get_logger(cfg)("source_tags", sid, "scrape_unavailable", user=user, reason=str(exc),
+                            level="info" if opener is _closed else "error")
             continue
         except Exception as e:                                  # noqa: BLE001 — platform errors from the opener
             reason, delay_s = _freeze_for(e)
@@ -114,10 +124,6 @@ def lock_ready_sources(cfg, *, client=None, research_fn=None, open_client_fn=Non
         led = Ledger.load(cfg)
         table = load_source_tag_locks(cfg)
         opener = open_client_fn
-
-        def _closed(_cfg, user=None, **_k):
-            raise ScrapeUnavailable("no scrape profile session — run fanops hashtags scrape-login")
-
         sources = list(led.sources.values())
         sources.sort(key=lambda s: (getattr(s, "created_at", None) or "",
                                     str(getattr(s, "id", "") or "")), reverse=True)
