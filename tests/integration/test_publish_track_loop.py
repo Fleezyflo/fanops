@@ -13,7 +13,9 @@ LIVE. The dryrun-specific money loop (metrics bound by post_id, no fabricated `d
 M2's redesign (DryRunPoster -> preview writer + local metrics binding) and gets its own test there."""
 from __future__ import annotations
 import json
+from datetime import datetime, timezone
 import pytest
+from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Clip, ClipState, Moment, MomentState, Post, PostState, Platform
@@ -39,7 +41,7 @@ def test_live_published_post_reaches_analyzed(tmp_path, monkeypatch, mocker):
     (tmp_path / "c1.mp4").write_bytes(b"")
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="42",
                       platform=Platform.instagram, caption="hello", media_urls=["https://h/v.mp4"],
-                      scheduled_time="2020-01-01T00:00:00Z", state=PostState.queued))
+                      scheduled_time=iso_z(datetime.now(timezone.utc)), state=PostState.queued))
     led.save()                                                  # persist for the self-loading publish_due
 
     import fanops.post.run as run

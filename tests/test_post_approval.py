@@ -148,7 +148,7 @@ def test_publish_due_fires_approved_queued(tmp_path, monkeypatch, mocker):
         led.add_moment(Moment(id="m1", parent_id="src_1", start=0.0, end=7.0, reason="worth posting",
                               state=MomentState.clipped))
         led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
-        led.add_post(_post(state=PostState.queued, when=_PAST))
+        led.add_post(_post(state=PostState.queued, when=iso_z(_NOW)))
     with Ledger.transaction(cfg) as led:
         led.posts["p1"].media_urls = ["https://h/v.mp4"]   # already-http -> _ensure_media passes through (no upload)
     import fanops.post.run as run

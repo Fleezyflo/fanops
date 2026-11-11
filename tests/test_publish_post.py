@@ -121,7 +121,7 @@ def test_empty_integration_id_is_skipped_not_posted(tmp_path, monkeypatch, mocke
     # (it would ship integration:{id:""} -> a silent dead post). It stays queued + breadcrumbs.
     monkeypatch.setenv("FANOPS_POSTER", "postiz"); monkeypatch.setenv("POSTIZ_API_KEY", "k"); monkeypatch.setenv("POSTIZ_URL", "https://x")
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
-    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-01T00:00:00Z")
+    _queued(led, cfg, pid="p1", cid="c1", when="2000-01-02T00:00:00Z")
     with Ledger.transaction(cfg) as lg: lg.posts["p1"].account_id = ""           # never-mapped channel reached queued
     def boom(url, **kw):
         raise AssertionError(f"must not POST when integration id is empty: {url}")

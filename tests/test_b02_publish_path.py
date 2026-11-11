@@ -184,7 +184,7 @@ def test_publish_due_naive_past_publishes(tmp_path, monkeypatch, mocker):
     # A due naive schedule must enter the real publish path. Leftover dryrun:// is not a permalink.
     _live_postiz(monkeypatch)
     cfg = Config(root=tmp_path)
-    _seed_queued(cfg, sched="2026-06-01 09:00")
+    _seed_queued(cfg, sched="2026-06-01 23:59")   # one minute past, inside the doctor grace window
     log = _postiz_http(mocker)
     publish_due(cfg, now="2026-06-02T00:00:00Z")
     p = Ledger.load(cfg).posts["p1"]

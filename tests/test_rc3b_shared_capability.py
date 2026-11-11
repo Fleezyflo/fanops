@@ -9,7 +9,9 @@ same missing key — would never resolve: stranded forever. `test_credless_live_
 is the regression: it FAILS on pre-S07 `main` (post reaches `submitting`) and PASSES after (refused, `queued`).
 """
 import json
+from datetime import datetime, timezone
 import pytest
+from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
@@ -84,7 +86,7 @@ def _queued(cfg, platform=Platform.instagram):
         led.add_clip(Clip(id="c", parent_id="m", path=str(f), state=ClipState.queued))
         led.add_post(Post(id="p1", parent_id="c", account="h", account_id="h1", platform=platform,
                           caption="c", state=PostState.queued, media_urls=["https://x/v.mp4"],
-                          scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://c",
+                          scheduled_time=iso_z(datetime.now(timezone.utc)), public_url="dryrun://c",
                           post_type="post", created_at="2026-07-16T13:31:00Z"))
 
 
