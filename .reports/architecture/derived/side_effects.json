@@ -422,6 +422,12 @@
         "line": 30
       }
     ],
+    "fanops.daemon": [
+      {
+        "call": "fcntl.flock",
+        "line": 447
+      }
+    ],
     "fanops.hashtag_refresh": [
       {
         "call": "fcntl.flock",
@@ -677,39 +683,39 @@
     "fanops.daemon": [
       {
         "call": "subprocess.run",
-        "line": 212
+        "line": 213
       },
       {
         "call": "subprocess.run",
-        "line": 309
+        "line": 310
       },
       {
         "call": "subprocess.run",
-        "line": 314
+        "line": 315
       },
       {
         "call": "subprocess.run",
-        "line": 741
+        "line": 890
       },
       {
         "call": "subprocess.run",
-        "line": 768
+        "line": 917
       },
       {
         "call": "subprocess.run",
-        "line": 773
+        "line": 922
       },
       {
         "call": "subprocess.run",
-        "line": 807
+        "line": 956
       },
       {
         "call": "subprocess.run",
-        "line": 880
+        "line": 1029
       },
       {
         "call": "subprocess.run",
-        "line": 896
+        "line": 1045
       }
     ],
     "fanops.discover": [
@@ -741,7 +747,7 @@
       },
       {
         "call": "subprocess.check_output",
-        "line": 226
+        "line": 212
       }
     ],
     "fanops.ingest": [
@@ -862,7 +868,7 @@
   "totals": {
     "env_write_sites": 1,
     "ledger_transaction_sites": 86,
-    "lock_sites": 23,
+    "lock_sites": 24,
     "mkdtemp_sites": 2,
     "network_sites_literal_requests": 15,
     "rmtree_sites": 6,
