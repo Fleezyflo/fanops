@@ -228,7 +228,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
                       lock_from_pile(llm_names, measurements, _LOCK_N), measurements,
                       catalog=catalog, catalog_at=catalog_at)
         return False
-    walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn)
+    walk = _iter_lock_clients(cfg, client=client, open_client_fn=open_client_fn, sid=sid)
     first = next(walk, None)
     if first is None:
         log("source_tags", sid, "no_scrape")
@@ -280,6 +280,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             except Exception as exc:
                 if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
                     log("source_tags", sid, "stop_dead", err=type(exc).__name__,
+                        reason=str(exc) if isinstance(exc, ScrapeUnavailable) else type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
                     break
@@ -299,6 +300,7 @@ def ensure_source_lock(cfg, source, *, excerpt=None, client=None, research_fn=No
             except Exception as exc:
                 if scrape_session_dead(exc) or isinstance(exc, ScrapeUnavailable):
                     log("source_tags", sid, "stop_dead", tag=tag, err=type(exc).__name__,
+                        reason=str(exc) if isinstance(exc, ScrapeUnavailable) else type(exc).__name__,
                         user=str(getattr(current, "_fanops_scrape_user", "") or "")[:40])
                     _remember_dead_dump(cfg, current, exc)
                     break

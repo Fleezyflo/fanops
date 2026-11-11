@@ -231,3 +231,21 @@ def _studio_fingerprint_matches(expected: str, host: str = STUDIO_DEFAULT_HOST, 
     """Thin compatibility alias for _redeploy_studio."""
     fp = _studio_get_fingerprint(host, port)
     return bool(fp and fp.get("sha") == expected)
+
+
+def studio_fingerprint_changed(disk_sha: str | None, host: str = STUDIO_DEFAULT_HOST,
+                               port: int = STUDIO_DEFAULT_PORT) -> bool:
+    """True only when the installed Studio resident reports a sha other than `disk_sha`.
+
+    A missing plist, an unread fingerprint, or a missing sha is not a change. The pump heartbeat
+    is not an input: a dead pump cannot stamp one, and that miss must not restart Studio.
+    """
+    if not disk_sha or not studio_plist_path().exists():
+        return False
+    fp = _studio_get_fingerprint(host, port)
+    if not isinstance(fp, dict):
+        return False
+    serving = fp.get("sha")
+    if not isinstance(serving, str) or not serving:
+        return False
+    return serving != disk_sha

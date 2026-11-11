@@ -242,7 +242,8 @@
     "tests/test_post_run.py"
   ],
   "src/fanops/post/run.py": [
-    "tests/test_post_run.py"
+    "tests/test_post_run.py",
+    "tests/test_publish_catch_up.py"
   ],
   "src/fanops/post/zernio.py": [
     "tests/test_zernio.py",

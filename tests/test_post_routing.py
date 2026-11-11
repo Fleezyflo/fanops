@@ -3,7 +3,9 @@
 # can publish via Postiz while TikTok publishes via Zernio in the SAME run. Default-safe: no override ->
 # the post uses the global backend (byte-identical to today). All offline.
 import json
+from datetime import datetime, timezone
 import pytest
+from fanops.timeutil import iso_z
 from fanops.config import Config
 from fanops.ledger import Ledger
 from fanops.models import Post, Platform, PostState, Clip, ClipState, Moment, MomentState
@@ -135,10 +137,10 @@ def test_publish_due_routes_per_account(tmp_path, monkeypatch, mocker):
         _lineage(led, "c1", "c2")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="ig-cap", state=PostState.queued, post_type="post",
-                          media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+                          media_urls=["https://x/ig.mp4"], scheduled_time=iso_z(datetime.now(timezone.utc)), public_url="dryrun://pig"))
         led.add_post(Post(id="ptk", parent_id="c2", account="tk", account_id="acc_abc", platform=Platform.tiktok,
                           caption="tk-cap", state=PostState.queued, created_at="2026-07-16T13:31:00Z",
-                          media_urls=["https://x/tk.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://ptk"))
+                          media_urls=["https://x/tk.mp4"], scheduled_time=iso_z(datetime.now(timezone.utc)), public_url="dryrun://ptk"))
     backends = []
     def _get(url, **kw):
         if "integrations" in str(url):
@@ -171,7 +173,7 @@ def test_publish_due_no_overrides_uses_global(tmp_path, monkeypatch, mocker):
         _lineage(led, "c1")
         led.add_post(Post(id="pig", parent_id="c1", account="ig", account_id="ig_1", platform=Platform.instagram,
                           caption="c", state=PostState.queued, post_type="post",
-                          media_urls=["https://x/ig.mp4"], scheduled_time="2000-01-01T00:00:00Z", public_url="dryrun://pig"))
+                          media_urls=["https://x/ig.mp4"], scheduled_time=iso_z(datetime.now(timezone.utc)), public_url="dryrun://pig"))
     backends = []
     def _get(url, **kw):
         if "integrations" in str(url):

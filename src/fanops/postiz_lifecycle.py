@@ -1,9 +1,9 @@
 """On-demand start for the self-hosted Postiz Docker stack.
 
 Pairs with ~/postiz-selfhost/postiz-ondemand.sh + the launchd reaper that STOPS the stack
-when idle. FanOps calls ensure_up() at each publish/reconcile entry so the heavy stack
-(postiz + temporal + elasticsearch) is up exactly when it is needed and lapses afterward,
-instead of holding RAM 24/7.
+when idle. FanOps calls ensure_up() at publish, and at reconcile only while a Postiz post is
+pending, so the heavy stack (postiz + temporal + elasticsearch) is up exactly when it is needed
+and lapses afterward, instead of holding RAM 24/7.
 
 Safe by construction — ensure_up() does NOTHING unless ALL hold:
   * not running under pytest (never shell docker during the test suite),
@@ -73,8 +73,8 @@ def _should_autostart(cfg) -> bool:
 
 
 def ensure_up(cfg) -> None:
-    """Best-effort: bring the local Postiz stack up (and wait until its API answers) before a
-    publish/reconcile that needs it. No-op unless _should_autostart(cfg). Never raises.
+    """Best-effort: bring the local Postiz stack up (and wait until its API answers) at publish,
+    and at reconcile only while a Postiz post is pending. No-op unless _should_autostart(cfg). Never raises.
     Does not pre-check the Docker daemon — `postiz-ondemand.sh ensure` starts Docker itself."""
     if not _should_autostart(cfg):
         return
