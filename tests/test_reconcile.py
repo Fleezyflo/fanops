@@ -1051,6 +1051,65 @@ def test_mirror_promotes_a_post_the_deleted_ladder_would_have_abandoned(tmp_path
     assert seen[0]["startDate"] == "2000-01-01" and seen[0]["endDate"] == "2100-12-31"
 
 
+# ---- The Postiz wake. reconcile_due wakes the local stack ONLY while a mirrored post is pending (real sid, state
+# in _RECONCILABLE): that read can resolve it. Every other read leaves the stack asleep, so the reaper can stop it.
+# ensure_up is a pytest no-op, so the pin is the spy. ----------------------------------------------------------
+
+def test_reconcile_due_wakes_postiz_for_pending_mirrored_post(tmp_path, monkeypatch, mocker):
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pg", PostState.needs_reconcile, "postiz_1")
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED",
+                            "releaseURL": _IG_URL, "releaseId": _IG_RID}])
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    reconcile_due(cfg)
+    ensure.assert_called_once_with(cfg)
+    p = Ledger.load(cfg).posts["pg"]
+    assert p.state is PostState.published and p.public_url == _IG_URL
+
+
+def test_reconcile_due_resting_and_held_mirror_leaves_postiz_asleep(tmp_path, monkeypatch, mocker):
+    # Resting and held rows are mirrored every pass, but none of them waits on Postiz. Waking for them is what
+    # kept the stack up 24/7. They are still READ: the wake is gated, not the mirror.
+    _mirror_env(monkeypatch)
+    cfg = Config(root=tmp_path)
+    _seed(cfg, "pa", PostState.analyzed, "postiz_1", url=_IG_URL)
+    _seed(cfg, "pq", PostState.queued, "postiz_2")
+    seen = []
+    _serve_window(mocker, [{"id": "postiz_1", "state": "PUBLISHED", "releaseURL": _IG_URL, "releaseId": _IG_RID},
+                           {"id": "postiz_2", "state": "QUEUE", "releaseURL": None, "releaseId": None}], seen=seen)
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    reconcile_due(cfg)
+    ensure.assert_not_called()
+    led = Ledger.load(cfg)
+    assert len(seen) == 1
+    assert led.posts["pa"].postiz_state == "PUBLISHED" and led.posts["pq"].postiz_state == "QUEUE"
+
+
+def test_reconcile_due_zernio_and_token_reads_leave_postiz_asleep(tmp_path, monkeypatch, mocker):
+    # Both posts are pending, but no Postiz row can resolve either: the TikTok one is a per-post Zernio GET, and a
+    # `fanops_` token names no row. The Zernio read still runs; the stack stays asleep.
+    from types import SimpleNamespace
+    from fanops.accounts import add_account, set_backend
+    _mirror_env(monkeypatch)
+    monkeypatch.setenv("ZERNIO_API_KEY", "sk")
+    cfg = Config(root=tmp_path)
+    add_account(cfg, "@tt", [Platform.tiktok], status="active")
+    set_backend(cfg, "@tt", "tiktok", "zernio")
+    _seed(cfg, "tt", PostState.needs_reconcile, "6aa2bb24bf207c028b657feb", account="tt", platform=Platform.tiktok)
+    _seed(cfg, "tok", PostState.needs_reconcile, "fanops_deadbeef")
+    gets = []
+    def fake_get(url, **kw):
+        gets.append(str(url).rstrip("/").rsplit("/", 1)[-1])
+        return SimpleNamespace(status_code=200, text="{}",
+                               json=lambda: {"post": {"platforms": [{"status": "processing"}]}})
+    monkeypatch.setattr("fanops.post.metrics.zernio_read.requests.get", fake_get)
+    ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
+    reconcile_due(cfg)
+    ensure.assert_not_called()
+    assert gets == ["6aa2bb24bf207c028b657feb"]
+
+
 def test_a_published_row_that_vanishes_is_recorded_absent_never_reopened(tmp_path, monkeypatch, mocker):
     # A post that already published keeps being mirrored for life. When its row disappears from the window,
     # THAT is recorded — and only that. Reopening the post would be the double-post vector: the permalink we

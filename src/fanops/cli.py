@@ -1300,9 +1300,7 @@ def cmd_studio(cfg: Config, args) -> int:
         print(f"  Use http://127.0.0.1:{args.port}/ or free ::1:{args.port}.")
         return 2
     from fanops.studio.app import create_app
-    from fanops import postiz_lifecycle
     from fanops.health import system_health
-    postiz_lifecycle.ensure_up(cfg)
     app = create_app(cfg)
     print(f"FanOps Studio on http://{args.host}:{args.port}  (Ctrl-C to stop)")
     for d in system_health(cfg):                       # the live dependency verdict at launch — visible, not buried

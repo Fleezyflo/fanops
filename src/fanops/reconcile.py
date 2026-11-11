@@ -675,8 +675,14 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
     Fetch = mirrored / polled (network). Visit = token_only + local apply (no network). Age
     ladder and husk reject run even when fetch is empty. Unpollable is not invisible.
 
-    Empty fetch -> local-only transaction (husk reject); no ensure_up. Caller gates on
-    backend/key. Returns the resolved counts."""
+    The local Postiz stack is woken (ensure_up) ONLY while a mirrored post is PENDING: state in
+    _RECONCILABLE, and `mirrored` holds real submission ids only. That read is the one that can resolve
+    a post, so it wakes the stack every pass until Postiz does. Resting, held, token_only and polled
+    reads never wake it: against a stopped stack the bulk read is the transport failure above
+    (mirror_fetch_error, nobody mirrored), and with nothing pending the reaper stops the stack once idle.
+
+    Empty fetch -> local-only transaction (husk reject). Caller gates on backend/key. Returns the
+    resolved counts."""
     snapshot = Ledger.load(cfg)
     healed = heal_stranded_submitting(cfg)
     log = get_logger(cfg)
@@ -687,8 +693,9 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         return {"needs_reconcile": len(snapshot.posts_in_state(PostState.needs_reconcile)),
                 "published": len(snapshot.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
-    from fanops.postiz_lifecycle import ensure_up        # work exists: bring the local Postiz stack up to read
-    ensure_up(cfg)
+    if any(p.state in _RECONCILABLE for p in mirrored):  # a PENDING Postiz post: wake the stack to resolve it
+        from fanops.postiz_lifecycle import ensure_up
+        ensure_up(cfg)
     polled_as: dict[str, str] = {}                       # post_id -> submission_id at read time (stale guard)
     mirror: dict[str, dict] = {}                         # sid -> the observation reconcile_posts applies
     # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
