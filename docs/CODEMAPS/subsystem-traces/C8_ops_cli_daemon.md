@@ -38,10 +38,13 @@
             Ledger.load (RO)   Ledger.transaction(cfg)          ingest.download_url /
             digest.render_*    (flock) → pipeline.advance /     daemon.install/status/
                                 adjust.classify_outcomes/        stop / cutover_postiz.* /
-                                amplify/retire / track.pull_     postiz_lifecycle.ensure_up /
-                                metrics / reconcile.reconcile_   studio.app.create_app
-                                due (network OUTSIDE lock,
-                                apply INSIDE lock)
+                                amplify/retire / track.pull_     studio.app.create_app
+                                metrics / reconcile.reconcile_   (launch does not wake Postiz)
+                                due wakes Postiz only while a
+                                Postiz-mirrored post is pending
+                                (`if any(p.state in _RECONCILABLE
+                                for p in mirrored): ensure_up`;
+                                network OUTSIDE lock, apply INSIDE)
                                         │
                                 write_digest(led, cfg)  ── digest.py renders reports/digest.md
                                         │
@@ -101,7 +104,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 | `publish-queue` | `cmd_publish_queue` | List queued posts for manual by-hand publishing | READ-ONLY |
 | `audit tail [-n]` | `cmd_audit` | Print last N lines of the operator audit log | READ-ONLY |
 | `bulk-send-to-review <post_ids> --reason` | `cmd_bulk_send_to_review` | Revert N posts to `awaiting_approval`, clearing publish telemetry | READ-ONLY (local ledger only; reverses a publish INTENT, doesn't call an external service) |
-| `studio` | inline in `_dispatch` (`studio.app.create_app`) | Launch the local Flask cockpit web UI | May request Postiz via `postiz_lifecycle.ensure_up` then print `system_health` — **LIVE actions are reachable from within the UI** (Studio approve/publish flows are the human-gated live surface, outside this cluster) |
+| `studio` | inline in `_dispatch` (`studio.app.create_app`) | Launch the local Flask cockpit web UI | Prints `system_health`. Studio launch does not wake Postiz. **LIVE actions are reachable from within the UI** (Studio approve/publish flows are the human-gated live surface, outside this cluster) |
 | `cutover auth` | `cmd_cutover` → `cutover.cutover_auth` | Step 1: prove `POSTIZ_API_KEY` authenticates (read-only integrations probe) | **LIVE** (real network call to Postiz, no mutation) |
 | `cutover post <account_id> --i-understand-...` | `cmd_cutover` → `cutover.cutover_post` | Step 2: publish ONE real throwaway post at a 2099 schedule to a confirmed account | **LIVE / DESTRUCTIVE-ISH** — actually POSTs to a real Postiz integration; gated by `cfg.is_live`, an explicit `--i-understand-this-posts-to-a-real-account` flag, and integration-id validation |
 | `cutover metrics <submission_id>` | `cmd_cutover` → `cutover.cutover_metrics` | Step 3: pull the real metrics row for the cutover post | **LIVE** (network read) |
@@ -205,7 +208,7 @@ Distinct from the above: `cutover.py` / `cutover_postiz.py` are a **manual, oper
 - `system_health(cfg)` — the live red/green list for Docker + Postiz + Zernio, in launch order. Called by `cli._dispatch` (`studio` verb).
 - `_postiz_compose_dir()` — path resolver for observe (`health_model`); **not** a compose spawn.
 - `refresh_runtime_snapshots(cfg)` — **named snapshot strip writer** (`deps_health.json` / `daemon_strip.json` / `strip_metrics.json` via `refresh_dep_snapshot` / `refresh_daemon_strip_snapshot` / `refresh_strip_metrics`). Callers today: `studio.app_routes_golive.do_golive_health` (write-on-read), `cli` `--loop` post-pass. Snapshot *readers* must not Call `refresh_*` / `write_json_atomic` / `postiz_health_probe` (CPDP-WP4 ratchet).
-- **Infra bring-up owner:** sole `FunctionDef ensure_up` is `postiz_lifecycle.ensure_up` (ondemand script + `_should_autostart`). Call sites: `cli` studio launch, `post.run`, `reconcile`, `studio.actions`. Deleted from this module: `health.ensure_up` / `_start_docker` / `_start_postiz`.
+- **Infra bring-up owner:** sole `FunctionDef ensure_up` is `postiz_lifecycle.ensure_up` (ondemand script + `_should_autostart`). Call sites: a due Postiz publish (`post.run`), `reconcile.reconcile_due` only while a Postiz-mirrored post is pending (`if any(p.state in _RECONCILABLE for p in mirrored): ensure_up`), and the Studio Publish-now guard (`studio.actions_publish`). Studio launch (`cmd_studio`) does not wake Postiz. Deleted from this module: `health.ensure_up` / `_start_docker` / `_start_postiz`.
 
 ### `digest.py` — human-readable ledger digest renderer (read-only observability)
 
