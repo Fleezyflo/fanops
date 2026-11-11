@@ -440,6 +440,53 @@ def _row_integration_id(raw: dict) -> str | None:
     return None
 
 
+def _postiz_row_publish_at(raw: dict) -> datetime | None:
+    """`publishDate` on a GET /posts row: epoch ms, epoch seconds, or ISO. None when absent."""
+    from fanops.timeutil import parse_iso
+    v = raw.get("publishDate")
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        sec = v / 1000.0 if v > 10_000_000_000 else float(v)
+        return datetime.fromtimestamp(sec, tz=timezone.utc)
+    if isinstance(v, str) and v.strip():
+        s = v.strip()
+        if s.isdigit():
+            n = int(s)
+            sec = n / 1000.0 if n > 10_000_000_000 else float(n)
+            return datetime.fromtimestamp(sec, tz=timezone.utc)
+        try:
+            return parse_iso(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _pick_postiz_adopt(matches: list[tuple[str, dict]], *, anchor: datetime | None,
+                       attempt_start: datetime, attempt_end: datetime) -> tuple[str | None, dict | None]:
+    """One content+integration hit is this post. Several are not, unless one publishDate is
+    the unique closest to the attempt and falls inside it. Adopting the wrong row is worse
+    than leaving the post for reconcile."""
+    if not matches:
+        return None, None
+    if len(matches) == 1:
+        return matches[0]
+    if anchor is None:
+        return None, None
+    scored: list[tuple[float, str, dict]] = []
+    for sid, raw in matches:
+        ts = _postiz_row_publish_at(raw)
+        if ts is None or ts < attempt_start or ts > attempt_end:
+            continue
+        scored.append((abs((ts - anchor).total_seconds()), sid, raw))
+    if not scored:
+        return None, None
+    scored.sort()
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None, None
+    return scored[0][1], scored[0][2]
+
+
 def _submission_held_by_other(led: Ledger, sid: str, post_id: str) -> bool:
     """True when another ledger post already holds this Postiz id. Content + integration is not unique — fan
     accounts repost the same clip and hashtags-only captions collide — so that row is the other post's create."""
@@ -513,22 +560,28 @@ class PostizPoster:
             want_content = payload["posts"][0]["value"][0]["content"]
         except (IndexError, KeyError, TypeError):
             return None, None
+        # The list API only accepts calendar dates. A create on the adjacent UTC day is invisible
+        # if the query is the attempt's own dates, so this dedup read is one day wider on each side.
+        # Metrics reads do not use this window.
         try:
-            rows = PostizStatusClient(self.cfg)._fetch_posts(start, end)
+            rows = PostizStatusClient(self.cfg)._fetch_posts(start - timedelta(days=1), end + timedelta(days=1))
         except Exception as exc:
             _log.warning("postiz dedup lookup failed (%s): %s", type(exc).__name__, str(exc)[:140])
             return None, None
+        matches: list[tuple[str, dict]] = []
         for sid, rec in rows.items():
             raw = rec.get("raw")
-            if not isinstance(raw, dict):
+            if not isinstance(raw, dict) or not isinstance(sid, str) or not sid:
                 continue
             if raw.get("content") != want_content:
                 continue
             if _row_integration_id(raw) != want_intg:
                 continue
-            if isinstance(sid, str) and sid and not _submission_held_by_other(led, sid, post.id):
-                return sid, raw
-        return None, None
+            if _submission_held_by_other(led, sid, post.id):
+                continue
+            matches.append((sid, raw))
+        return _pick_postiz_adopt(matches, anchor=start if post.submission_started_at else None,
+                                  attempt_start=start, attempt_end=end)
 
     def publish(self, led: Ledger, post_id: str) -> Ledger:
         post = led.posts[post_id]
