@@ -4,8 +4,9 @@
 # locks. It counts only what a lock is built from: the base dependencies plus the extras each lock's
 # own pip-compile header names. [asr] is on no lock's header (nightly-only, MOL-197), so a change to it
 # has nothing to regenerate and must pass. Before that fix the guard compared every extra and refused
-# an [asr] change that no relock could satisfy. Each test drives the real script in a temp git repo:
-# a base commit, a PR commit on top of it, then the guard against the base.
+# an [asr] change that no relock could satisfy. A crash of the embedded interpreter is a refusal too:
+# `|| true` used to read that crash's empty stdout as OK. Each test drives the real script in a temp
+# git repo: a base commit, a PR commit on top of it, then the guard against the base.
 from __future__ import annotations
 
 import os
@@ -39,7 +40,9 @@ def _git(repo: Path, *args: str) -> str:
         cwd=repo, env=_ENV, check=True, capture_output=True, text=True).stdout.strip()
 
 
-def _guard_on_pr(repo: Path, old: str, new: str) -> subprocess.CompletedProcess:
+def _guard_on_pr(
+    repo: Path, old: str, new: str, *, guard_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     """Commit pyproject + both locks as the base, commit `old` -> `new` as the PR, run the guard on it."""
     (repo / "requirements").mkdir()
     for name, extras in _LOCK_EXTRAS.items():
@@ -55,7 +58,8 @@ def _guard_on_pr(repo: Path, old: str, new: str) -> subprocess.CompletedProcess:
     assert old in _PYPROJECT, old
     (repo / "pyproject.toml").write_text(_PYPROJECT.replace(old, new), encoding="utf-8")
     _git(repo, "commit", "-q", "-am", "pr")
-    return subprocess.run(["bash", str(_SCRIPT), base], cwd=repo, env=_ENV, capture_output=True, text=True)
+    return subprocess.run(
+        ["bash", str(_SCRIPT), base], cwd=repo, env=guard_env or _ENV, capture_output=True, text=True)
 
 
 def test_locked_extra_change_without_relock_is_refused(tmp_path):
@@ -73,3 +77,21 @@ def test_unlocked_extra_change_passes(tmp_path):
     r = _guard_on_pr(tmp_path, 'asr = ["demucs>=4.0", "faster-whisper>=1.0"]',
                      'asr = ["demucs>=4.0", "faster-whisper>=1.0", "av<19"]')
     assert r.returncode == 0 and "OK" in r.stdout, r.stdout + r.stderr
+
+
+def test_crashing_interpreter_is_refused(tmp_path):
+    # Same [asr]-only edit the sibling proves is OK when the comparison runs. An interpreter that
+    # exits 1 produces no stdout; that used to fall through `|| true` into the OK path.
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "python3"
+    stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    env = dict(_ENV)
+    env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    r = _guard_on_pr(
+        repo, 'asr = ["demucs>=4.0", "faster-whisper>=1.0"]',
+        'asr = ["demucs>=4.0", "faster-whisper>=1.0", "av<19"]', guard_env=env)
+    assert r.returncode == 1 and "REFUSED" in r.stderr and "OK" not in r.stdout, r.stdout + r.stderr
