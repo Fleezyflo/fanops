@@ -599,9 +599,11 @@ def _apply_age_terminal(post, now) -> dict | None:
           -> needs_reconcile, never failed: Studio recover re-arms a failed row of
              kind unknown (or no kind) by clearing submission_id into a second
              create. error_kind is cleared to None so the park carries no failure
-             kind. The birth token stays. A birth token cannot be polled;
-             already-parked needs_reconcile is not rewritten so auto-heal can
-             still bind. needs_reconcile is not re-queueable.
+             kind. The birth token stays. A birth token cannot be polled.
+             This function does not rewrite an already-parked needs_reconcile
+             row (auto-heal still binds first). reconcile_posts then remints
+             one past this window, or rejects it when can_promote is false —
+             needs_reconcile is what the in-flight strip lists.
 
       remaining (real-id) submitting + age > _SUBMITTING_ESCALATE_AFTER
           -> needs_reconcile (still observed, the digest's reconcile column owns it, never re-queueable)
@@ -627,6 +629,116 @@ def _apply_age_terminal(post, now) -> dict | None:
                                "real sid unresolved; remint maybe-sent")},
                 "log": "escalated: submitting->needs_reconcile"}
     return None
+
+
+# inflight_watch lists only needs_reconcile / submitting / submitted. rejected is absent from
+# that set. _requeue_rate_limited_for_daemon reads failed + rate_limit only, so it will not send
+# a rejected row. One reason each: the next pass does not visit rejected, so it is not rewritten.
+_BIRTH_NOT_PROMOTABLE = "birth token past escalate window: lineage cannot promote"
+_MISSING_URL_PARK = (
+    "publish_missing_url_at_reconcile: backend reports published but no valid "
+    "https url captured (M2 safe_public_url rejected it); re-polling next pass")
+_MISSING_URL_TERMINAL = (
+    "publish_missing_url_terminal: backend reports published but no valid https url")
+_PERMALINK_KEYS = ("publicUrl", "releaseURL", "platformPostUrl", "permalink", "postUrl", "shareUrl")
+
+
+def _past_escalate(post, now) -> bool:
+    age = _parked_age(post, now)
+    return age is not None and age > _SUBMITTING_ESCALATE_AFTER
+
+
+def _permalink_on_status(info) -> str | None:
+    """https permalink already on the status body. Never invented."""
+    if not isinstance(info, dict):
+        return None
+    for key in _PERMALINK_KEYS:
+        url = safe_public_url(info.get(key))
+        if url:
+            return url
+    liv = info.get("liveness")
+    if isinstance(liv, dict):
+        url = safe_public_url(liv.get("captured_url"))
+        if url:
+            return url
+    rows = info.get("platforms")
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in _PERMALINK_KEYS:
+                url = safe_public_url(row.get(key))
+                if url:
+                    return url
+    return None
+
+
+def _close_missing_url(led: Ledger, post, now, log) -> None:
+    """Backend says published and no https permalink survived safe_public_url.
+    Inside the age window the row stays needs_reconcile. Past it, one terminal reason on
+    rejected so the in-flight strip does not list it again."""
+    if _past_escalate(post, now):
+        if post.state is PostState.rejected and post.error_reason == _MISSING_URL_TERMINAL:
+            return
+        led.set_post_state(post.id, PostState.rejected, error_reason=_MISSING_URL_TERMINAL,
+                           error_kind=None)
+        log("reconcile", post.id, "published_no_url_terminal")
+        return
+    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=_MISSING_URL_PARK)
+    log("reconcile", post.id, "published_no_url_parked")
+
+
+def _drop_unpromotable_birth(led: Ledger, post, log) -> None:
+    """Aged birth token whose lineage cannot move forward. Not a second send."""
+    if is_real_submission_id(post.submission_id):
+        return
+    led.set_post_state(post.id, PostState.rejected, error_reason=_BIRTH_NOT_PROMOTABLE,
+                       error_kind=None)
+    log("reconcile", post.id, "closed: birth token not promotable")
+
+
+def _remint_birth_tokens(led: Ledger, cfg: Config, ids: list[str], now: datetime, log) -> None:
+    """Return aged birth tokens to queued on a future cadence slot.
+
+    suggest_times_for_batch is the slotting owner publish_due's _reslot_past_grace uses.
+    That helper opens its own transaction and only rewrites rows already queued, so the
+    times are applied in this lock instead of nesting a second flock. A real submission_id
+    is never queued. The birth token is kept; no vendor id is invented.
+    """
+    posts = []
+    for pid in ids:
+        cur = led.posts.get(pid)
+        if cur is None or cur.state is not PostState.needs_reconcile:
+            continue
+        if is_real_submission_id(cur.submission_id):
+            log("reconcile", pid, "left: real vendor id, not reminted")
+            continue
+        if not led.can_promote(cur):
+            _drop_unpromotable_birth(led, cur, log)
+            continue
+        posts.append(cur)
+    if not posts:
+        return
+    from fanops.studio.views_common import suggest_times_for_batch
+    sched = suggest_times_for_batch(cfg, posts, now=now)
+    for cur in posts:
+        stamp = sched.get(cur.id)
+        if not stamp:
+            continue
+        try:
+            when = parse_iso(stamp)
+        except (ValueError, TypeError):
+            continue
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when <= now:
+            continue
+        held = led.posts[cur.id]
+        if held.state is not PostState.needs_reconcile or is_real_submission_id(held.submission_id):
+            continue
+        led.posts[held.id] = held.model_copy(update={"scheduled_time": stamp})
+        led.set_post_state(held.id, PostState.queued, error_reason=None, error_kind=None)
+        log("reconcile", held.id, "reminted: birth token -> queued", scheduled_time=stamp)
 
 
 # ---- REST-gate quarantine sentinel (publish-verify at the transition) ---------------------------------
@@ -844,6 +956,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if upd:
             led.posts[post.id] = post.model_copy(update=upd)
             log("reconcile", post.id, "mirrored", postiz_state=upd["postiz_state"], resting=post.state.value)
+    remint_ids: list[str] = []
     for post in [p for p in led.posts.values()
                  if p.state in _RECONCILABLE
                  or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id))]:
@@ -858,6 +971,12 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             if term is not None:
                 led.posts[post.id] = post.model_copy(update=term["update"])
                 log("reconcile", post.id, term["log"])
+            elif post.state is PostState.needs_reconcile and _past_escalate(post, now):
+                # A real vendor id never reaches this branch. Keep the birth token; do not invent one.
+                if led.can_promote(post):
+                    remint_ids.append(post.id)
+                else:
+                    _drop_unpromotable_birth(led, post, log)
             else:
                 log("reconcile", post.id, "skipped: client token is not a backend id")
             continue
@@ -899,11 +1018,13 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             if liv is not None:
                 # M04: apply reads cached liveness only — no network under the flock.
                 if liv.get("published_no_url"):
-                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
-                        "publish_missing_url_at_reconcile: backend reports published but no valid "
-                        "https url captured (M2 safe_public_url rejected it); re-polling next pass"))
-                    log("reconcile", post.id, "published_no_url_parked")
-                    continue
+                    body_url = _permalink_on_status(info)
+                    if not body_url:
+                        _close_missing_url(led, post, now, log)
+                        continue
+                    # Body has a permalink the cache missed. TikTok stays needs_reconcile until
+                    # tiktok_ok is already proven; anything else falls through to published.
+                    liv = {**liv, "published_no_url": False, "captured_url": body_url}
                 captured_url = liv["captured_url"]
                 new_sub = liv.get("new_sub")
                 _rid = liv.get("release_id")
@@ -921,7 +1042,8 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
             else:
                 # Inline liveness (no poll cache — direct reconcile_posts callers / tests).
                 captured_url, reported_username, new_sub, _rid = _capture_publish_fields(info, post)
-                if not (captured_url or "").strip():
+                safe_cap = safe_public_url(captured_url) or _permalink_on_status(info)
+                if not safe_cap:
                     from fanops.models import Platform as _Plat
                     if post.platform is _Plat.tiktok:
                         try:
@@ -931,12 +1053,11 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                             reported_username = reported_username or _un
                         except Exception as exc:
                             get_logger(cfg)("reconcile", post.id, "tiktok_analytics_fallback_error", err=str(exc)[:120])
-                if not (captured_url or "").strip():
-                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
-                        "publish_missing_url_at_reconcile: backend reports published but no valid "
-                        "https url captured (M2 safe_public_url rejected it); re-polling next pass"))
-                    log("reconcile", post.id, "published_no_url_parked")
+                    safe_cap = safe_public_url(captured_url)
+                if not safe_cap:
+                    _close_missing_url(led, post, now, log)
                     continue
+                captured_url = safe_cap
                 _reason = None
                 if post.platform is Platform.tiktok:
                     if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
@@ -1034,6 +1155,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 log("reconcile", post.id, term["log"])
                 continue
             log("reconcile", post.id, f"left: {status or 'unknown'}")
+    _remint_birth_tokens(led, cfg, remint_ids, now, log)
     return led
 
 

@@ -657,18 +657,22 @@ def test_unpollable_age_close_stays_out_of_studio_rearm(tmp_path):
         assert p.error_kind is None
         assert p.submission_id == f"fanops_{pid}"
         assert "unpollable" in (p.error_reason or "")
-    assert led.posts["parked"].state is PostState.needs_reconcile
+    assert led.posts["parked"].state is PostState.rejected
     assert led.posts["parked"].submission_id == "fanops_parked"
+    assert led.posts["parked"].state is not PostState.queued
     assert led.posts["real"].state is PostState.needs_reconcile
     assert led.posts["real"].submission_id == "blotato_REAL_1"
     assert "escalated" in (led.posts["real"].error_reason or "")
     led.save()
     recover_posts(cfg, ["sub", "sent", "parked", "real"], action="retry", reason="probe")
     after = Ledger.load(cfg)
-    for pid in ("sub", "sent", "parked"):
+    for pid in ("sub", "sent"):
         assert after.posts[pid].state is PostState.needs_reconcile
         assert after.posts[pid].state is not PostState.queued
         assert after.posts[pid].submission_id == led.posts[pid].submission_id
+    assert after.posts["parked"].state is PostState.rejected
+    assert after.posts["parked"].state is not PostState.queued
+    assert after.posts["parked"].submission_id == "fanops_parked"
     assert after.posts["real"].submission_id == "blotato_REAL_1"
     assert after.posts["real"].state is not PostState.queued
     assert "unknown" in _RETRYABLE_FAILURES
@@ -704,22 +708,32 @@ def test_submitting_real_token_ALSO_escalates_past_deadline(tmp_path):
 
 
 def test_no_age_makes_an_unresolved_post_terminal(tmp_path):
-    # Already-parked birth token: first arm is submitting/submitted only, so a needs_reconcile
-    # fanops_ row stays byte-identical (auto-heal can still bind). Never GET.
+    # Aged needs_reconcile birth token, no live lineage: not in-flight. One terminal reason.
+    # A second pass does not rewrite it. Never GET. Not queued — can_promote is false.
     from datetime import datetime, timezone, timedelta
+    from fanops.post.publish_requeue import _requeue_rate_limited_for_daemon
+    from fanops.reconcile import _BIRTH_NOT_PROMOTABLE
+    from fanops.studio.views_schedule import inflight_watch
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
     led.add_post(Post(id="pg", parent_id="c", account="a", account_id="1", platform=Platform.instagram,
                       caption="x", state=PostState.needs_reconcile, submission_id="fanops_abc",
                       scheduled_time=(datetime.now(timezone.utc) - timedelta(hours=80)).isoformat()))
-    before = led.posts["pg"].model_dump()
     polled = []
     led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
     p = led.posts["pg"]
     assert polled == []
-    assert p.model_dump() == before
-    assert p.state is PostState.needs_reconcile
+    assert p.state is PostState.rejected
+    assert p.submission_id == "fanops_abc"
+    assert p.error_reason == _BIRTH_NOT_PROMOTABLE
     assert p.error_kind is None
-    assert "unpollable" not in (p.error_reason or "")
+    assert [r.post_id for r in inflight_watch(led, cfg)] == []
+    snap = p.model_dump()
+    led = reconcile_posts(led, cfg, get_status=lambda sid: polled.append(sid) or {"status": "unknown"})
+    assert polled == []
+    assert led.posts["pg"].model_dump() == snap
+    led.save()
+    assert _requeue_rate_limited_for_daemon(cfg) == 0
+    assert Ledger.load(cfg).posts["pg"].state is PostState.rejected
 
 
 @pytest.mark.parametrize("legacy", [
@@ -772,12 +786,10 @@ def test_a_real_token_past_the_old_horizon_is_also_untouched(tmp_path):
     ["fanops_FAKE", "blotato_REAL"],
     ["", "stuck 9h past schedule — check the channel"])))
 def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypatch):
-    # THE 32-CELL INVARIANT, inverted. A needs_reconcile post 73h past schedule — past the horizon at which
-    # the deleted ladder declared it lost — is decided by the OBSERVATION and by nothing else, across every
-    # (backend × observation × token × error_reason). A published/failed answer resolves it; an unknown one,
-    # or a read that raised, leaves the ledger row BYTE-IDENTICAL. The three axes that could once veto the
-    # outcome (a raising read, a real token, a stale reason) still never do — but now what they cannot veto
-    # is a NON-write, so no cell can invent a verdict the backend never gave.
+    # A needs_reconcile post 73h past schedule. A real id is decided by the OBSERVATION: published/failed
+    # resolves it; unknown or a raising read leaves the row BYTE-IDENTICAL (never guessed failed). A
+    # fanops_ birth token is not polled. Past the escalate window, with no live lineage, it leaves the
+    # in-flight strip as rejected — not queued, not failed, birth token kept.
     monkeypatch.setenv("FANOPS_POSTER", backend)
     from datetime import datetime, timezone, timedelta
     cfg = Config(root=tmp_path); led = Ledger.load(cfg)
@@ -799,10 +811,12 @@ def test_terminal_ladder_matrix(tmp_path, backend, poll, token, reason, monkeypa
     assert p.state is not PostState.submitting              # NEVER stranded — the point of the fix, in every cell
     if token.startswith("fanops_"):
         assert polled == []                                 # birth token is not a GET key
-        assert p.model_dump() == before                     # already-parked: no invented failed
-        assert p.state is PostState.needs_reconcile
+        assert p.state is PostState.rejected                # aged, no live lineage: off the strip
+        assert p.state is not PostState.queued               # cannot promote — not a second send
+        assert p.state is not PostState.failed
+        assert p.submission_id == token                     # birth token kept; no vendor id invented
         assert p.error_kind is None
-        assert "unpollable" not in (p.error_reason or "")
+        assert p.error_reason == "birth token past escalate window: lineage cannot promote"
     elif poll == "published":
         assert polled == [token]
         assert p.state is PostState.published               # the observation RESOLVES it — never discarded
@@ -1864,3 +1878,179 @@ def test_bound_publish_writes_body_permalink_not_public_url_hint(tmp_path, monke
     assert p.state is PostState.published
     assert p.submission_id == "z_vendor"
     assert p.public_url == body_url
+
+
+def _live_lineage(led):
+    from fanops.models import Clip, Moment
+    led.moments["m1"] = Moment(id="m1", parent_id="src", start=0.0, end=1.0, reason="worth posting")
+    led.clips["c"] = Clip(id="c", parent_id="m1", path="c.mp4")
+
+
+def test_aged_birth_token_remints_onto_a_future_slot(tmp_path):
+    # can_promote: clear the unpollable reason, queued, future slot, birth token kept.
+    # A real vendor id on a live lineage is not queued. A birth token inside the window stays.
+    from datetime import datetime, timedelta, timezone
+    from fanops.timeutil import parse_iso
+    from fanops.studio.views_schedule import inflight_watch
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=40)).isoformat()
+    fresh = (now - timedelta(hours=2)).isoformat()
+    reason = "unpollable fanops_* after 40h: GET 400 Invalid post ID; remint maybe-sent"
+    for pid in ("b1", "b2"):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.needs_reconcile, submission_id=f"fanops_{pid}",
+                          error_reason=reason, scheduled_time=old))
+    led.add_post(Post(id="young", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="fanops_young",
+                      error_reason=reason, scheduled_time=fresh))
+    led.add_post(Post(id="real", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="blotato_REAL_9",
+                      error_reason=reason, scheduled_time=old))
+    polled = []
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
+    assert "fanops_b1" not in polled and "fanops_b2" not in polled
+    assert polled == ["blotato_REAL_9"]
+    times = set()
+    for pid in ("b1", "b2"):
+        p = led.posts[pid]
+        assert p.state is PostState.queued
+        assert p.submission_id == f"fanops_{pid}"
+        assert p.error_reason is None
+        assert p.error_kind is None
+        when = parse_iso(p.scheduled_time)
+        assert when > now
+        times.add(p.scheduled_time)
+    assert len(times) == 2
+    assert led.posts["young"].state is PostState.needs_reconcile
+    assert led.posts["young"].scheduled_time == fresh
+    real = led.posts["real"]
+    assert real.state is PostState.needs_reconcile
+    assert real.submission_id == "blotato_REAL_9"
+    assert real.scheduled_time == old
+    assert real.state is not PostState.queued
+    watch = {r.post_id for r in inflight_watch(led, cfg, now=now)}
+    assert "b1" not in watch and "b2" not in watch
+    assert "young" in watch and "real" in watch
+
+
+def test_submitting_birth_token_remints_on_the_next_pass(tmp_path):
+    # First pass still parks submitting -> needs_reconcile. The pass that finds it already
+    # needs_reconcile, past the window, and promotable, returns it to a future queued slot.
+    from datetime import datetime, timedelta, timezone
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    led.add_post(Post(id="ps", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x", state=PostState.submitting,
+                      submission_id="fanops_ps",
+                      scheduled_time=(now - timedelta(hours=30)).isoformat()))
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: {"status": "in-progress"})
+    p = led.posts["ps"]
+    assert p.state is PostState.needs_reconcile
+    assert "unpollable" in (p.error_reason or "")
+    assert p.submission_id == "fanops_ps"
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: {"status": "in-progress"})
+    p = led.posts["ps"]
+    assert p.state is PostState.queued
+    assert p.submission_id == "fanops_ps"
+    assert p.error_reason is None
+    assert parse_iso(p.scheduled_time) > now
+
+
+def test_published_no_url_terminal_after_age_window(tmp_path):
+    # No https URL after the window: one terminal reason, off the strip, not rewritten next pass.
+    # Inside the window the row stays needs_reconcile. A non-https body is not turned into a URL.
+    from datetime import datetime, timedelta, timezone
+    from fanops.reconcile import _MISSING_URL_TERMINAL
+    from fanops.studio.views_schedule import inflight_watch
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=80)).isoformat()
+    fresh = (now - timedelta(hours=3)).isoformat()
+
+    def _row(pid, when, url=""):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.needs_reconcile, submission_id=f"postiz_{pid}",
+                          scheduled_time=when, public_url=url or None))
+
+    _row("old", old)
+    _row("young", fresh)
+    _row("junk", old)
+    bodies = {
+        "postiz_old": {"status": "published", "liveness": {"published_no_url": True, "captured_url": None}},
+        "postiz_young": {"status": "published", "liveness": {"published_no_url": True, "captured_url": None}},
+        "postiz_junk": {"status": "published", "publicUrl": "javascript:alert(1)",
+                        "liveness": {"published_no_url": True, "captured_url": None}},
+    }
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: bodies[sid])
+    old_p = led.posts["old"]
+    assert old_p.state is PostState.rejected
+    assert old_p.error_reason == _MISSING_URL_TERMINAL
+    assert old_p.public_url is None
+    assert old_p.submission_id == "postiz_old"
+    young = led.posts["young"]
+    assert young.state is PostState.needs_reconcile
+    assert "publish_missing_url_at_reconcile" in (young.error_reason or "")
+    junk = led.posts["junk"]
+    assert junk.state is PostState.rejected
+    assert junk.public_url is None
+    watch = {r.post_id for r in inflight_watch(led, cfg, now=now)}
+    assert "old" not in watch and "junk" not in watch
+    assert "young" in watch
+    snap = old_p.model_dump()
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: bodies[sid])
+    assert led.posts["old"].model_dump() == snap
+
+
+def test_published_no_url_captures_body_permalink(tmp_path):
+    # Cached published_no_url does not ignore a permalink safe_public_url accepts.
+    # TikTok stays needs_reconcile only while the verdict is not already proven.
+    from fanops.reconcile import _UNVERIFIED_TIKTOK
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    ig = "https://www.instagram.com/p/captured/"
+    tt = "https://www.tiktok.com/@h/video/9"
+    led.add_post(Post(id="ig", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="postiz_ig"))
+    led.add_post(Post(id="nest", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="postiz_nest"))
+    led.add_post(Post(id="tt", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x",
+                      state=PostState.needs_reconcile, submission_id="zernio_tt"))
+    led.add_post(Post(id="ttok", parent_id="c", account="tt", account_id="1",
+                      platform=Platform.tiktok, caption="x",
+                      state=PostState.needs_reconcile, submission_id="zernio_ok"))
+    no = {"published_no_url": True, "captured_url": None}
+    bodies = {
+        "postiz_ig": {"status": "published", "publicUrl": ig, "liveness": {**no, "new_sub": "postiz_ig"}},
+        "postiz_nest": {"status": "published",
+                        "platforms": [{"platformPostUrl": "https://www.instagram.com/p/nested/"}],
+                        "liveness": dict(no)},
+        "zernio_tt": {"status": "published", "publicUrl": tt, "liveness": {**no, "new_sub": "zernio_tt"}},
+        "zernio_ok": {"status": "published", "publicUrl": tt,
+                      "liveness": {**no, "new_sub": "zernio_ok", "tiktok_ok": True}},
+    }
+    led = reconcile_posts(led, cfg, get_status=lambda sid: bodies[sid])
+    assert led.posts["ig"].state is PostState.published
+    assert led.posts["ig"].public_url == ig
+    assert led.posts["nest"].state is PostState.published
+    assert led.posts["nest"].public_url == "https://www.instagram.com/p/nested/"
+    held = led.posts["tt"]
+    assert held.state is PostState.needs_reconcile
+    assert held.public_url == tt
+    assert held.error_reason == _UNVERIFIED_TIKTOK
+    assert "publish_missing_url" not in (held.error_reason or "")
+    assert led.posts["ttok"].state is PostState.published
+    assert led.posts["ttok"].public_url == tt
