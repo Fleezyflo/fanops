@@ -66,6 +66,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
     now = _now(now); now_iso = iso_z(now)
     approved = 0
     skipped_retired = 0; cut_over_cap = 0; skipped_not_active = 0
+    not_active_seen: set[str] = set()
     approved_ids: list[str] = []
     try:
         with Ledger.transaction(cfg) as led:
@@ -96,6 +97,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                 row = _non_active_row(accounts, post.account)
                 if row is not None:
                     skipped_not_active += 1
+                    not_active_seen.add(row.status.value)
                     get_logger(cfg)("approve", pid, "skipped_not_active", account=post.account, status=row.status.value)
                     continue
                 if _over_cap_refusal(cfg, led, post) is not None:
@@ -129,6 +131,7 @@ def _approve_ids_with_render(cfg: Config, *, resolve_ids: Callable[[Ledger], Seq
                             "schedule_account": accts[0] if len(accts) == 1 else None}
     return ActionResult(ok=True, detail={**detail, "approved": approved, "render_pending": 0,
                                          "skipped_retired": skipped_retired, "skipped_not_active": skipped_not_active,
+                                         "not_active_status": ", ".join(sorted(not_active_seen)),
                                          "cut_over_cap": cut_over_cap, **sched_detail})
 
 BULK_APPROVE_CONFIRM_AT = 15

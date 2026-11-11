@@ -605,6 +605,71 @@ def test_approve_route_says_nothing_about_a_cap_when_nothing_was_dropped(tmp_pat
     assert "Approved 1" in html and _CAP_COPY not in html
 
 
+# ---- a non-active row and a retired lineage are COUNTED and SHOWN, same as the cap drop ----
+# The approve gate already refuses both and puts the counts on the result. The review POST
+# re-renders this panel, which named only the cap, so a planned account came back 200 with the
+# same posts. Who is active, and who may be approved, stay as they were.
+_NOT_ACTIVE = "skipped — the account is not active"
+_RETIRED_SKIP = "skipped — retired, not eligible for approval"
+
+def _seed_active_and(cfg, status):
+    cfg.accounts_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.accounts_path.write_text(json.dumps({"accounts": [
+        {"handle": "@a", "account_id": "1", "platforms": ["instagram"], "status": "active"},
+        {"handle": "@b", "account_id": "2", "platforms": ["instagram"], "status": status}]}))
+
+def test_approve_route_names_a_planned_skip_beside_an_approval(tmp_path):
+    cfg = Config(root=tmp_path); _seed_active_and(cfg, "planned"); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_ok", clip="clip_1", acct="a", aid="1")
+        _awaiting(led, "p_planned", clip="clip_2", acct="b", aid="2")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_ok", "p_planned"]}).data.decode()
+    assert "Approved 1" in html and f"1 {_NOT_ACTIVE} (planned)." in html
+    led = Ledger.load(cfg)
+    assert led.posts["p_ok"].state is PostState.queued
+    assert led.posts["p_planned"].state is PostState.awaiting_approval
+
+def test_approve_route_names_every_planned_skip_when_none_promote(tmp_path):
+    """Nothing promoted: the banner would otherwise read 'Approved 0 — on schedule.' and stop."""
+    cfg = Config(root=tmp_path); _seed_active_and(cfg, "planned"); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p1", clip="clip_1", acct="b", aid="2")
+        _awaiting(led, "p2", clip="clip_2", acct="b", aid="2")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p1", "p2"]}).data.decode()
+    assert f"2 {_NOT_ACTIVE} (planned)." in html
+    led = Ledger.load(cfg)
+    assert led.posts["p1"].state is PostState.awaiting_approval
+    assert led.posts["p2"].state is PostState.awaiting_approval
+
+def test_approve_route_names_the_status_the_row_has(tmp_path):
+    cfg = Config(root=tmp_path); _seed_active_and(cfg, "warming"); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_warm", clip="clip_1", acct="b", aid="2")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_warm"]}).data.decode()
+    assert f"1 {_NOT_ACTIVE} (warming)." in html and "(planned)" not in html
+    assert Ledger.load(cfg).posts["p_warm"].state is PostState.awaiting_approval
+
+def test_approve_route_names_a_retired_lineage_skip(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg)
+    with Ledger.transaction(cfg) as led:
+        led.add_source(Source(id="src_1", source_path="/v/s.mp4", language="en"))
+        led.add_moment(Moment(id="mom_dead", parent_id="src_1", content_token="0-7", start=0, end=7,
+                              reason="r", state=MomentState.retired))
+        led.add_clip(Clip(id="clip_dead", parent_id="mom_dead", path="/c/clip_dead.mp4", aspect=Fmt.r9x16,
+                          state=ClipState.queued))
+        _awaiting(led, "p_dead", clip="clip_dead", acct="a", aid="1")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_dead"]}).data.decode()
+    assert f"1 {_RETIRED_SKIP}." in html
+    assert Ledger.load(cfg).posts["p_dead"].state is PostState.awaiting_approval
+
+def test_approve_route_stays_quiet_when_nothing_was_skipped(tmp_path):
+    cfg = Config(root=tmp_path); _seed_two_accounts(cfg); _seed_review_lineage(cfg)
+    with Ledger.transaction(cfg) as led:
+        _awaiting(led, "p_ok", clip="clip_1", acct="a", aid="1")
+    html = _client(cfg).post("/posts/approve", data={"ids": ["p_ok"]}).data.decode()
+    assert "Approved 1" in html and _NOT_ACTIVE not in html and _RETIRED_SKIP not in html
+
+
 # ---- MOL-832: the cap is ONE predicate, and EVERY approve route asks it ----
 # `approve_with_hook` guarded retired lineage and then called `led.approve_post` with no cap check at all,
 # so the same post on the same ledger was admissible or not purely by which button the operator pressed:
