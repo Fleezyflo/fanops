@@ -837,6 +837,9 @@ def test_capture_publish_fields_username_is_this_accounts_row():
     assert _capture_publish_fields(missed, post)[1] is None          # do not borrow the other account
     sole = {"status": "published", "publicUrl": url, "tiktokUsername": "mark"}
     assert _capture_publish_fields(sole, post)[1] == "mark"          # no accounts list: sole-row key
+    blank_id = {"status": "published", "publicUrl": url, "tiktokUsername": "tt",
+                "tiktokAccounts": [{"accountId": None, "username": "tt"}]}
+    assert _capture_publish_fields(blank_id, post)[1] == "tt"        # no accountId is not another account
 
 
 def test_tiktok_url_confirmed_proven_iff_verdict_empty(tmp_path, monkeypatch):

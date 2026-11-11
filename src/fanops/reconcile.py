@@ -505,15 +505,24 @@ def _auto_heal_unbound_submissions(cfg: Config, led: Ledger, poll, log, now: dat
 
 
 def _reported_tiktok_username(info: dict, post) -> str | None:
-    """get_status tiktokAccounts row for post.account_id, else the sole-row tiktokUsername."""
+    """Username for post.account_id. A tiktokAccounts row with that accountId wins.
+
+    A row whose accountId is some other integration is not this post. Rows with no accountId
+    are not a disambiguation — get_status still puts the sole-row name in tiktokUsername."""
     acct = str(getattr(post, "account_id", "") or "").strip()
     accounts = info.get("tiktokAccounts")
     if isinstance(accounts, list) and acct:
+        saw_other = False
         for row in accounts:
-            if isinstance(row, dict) and str(row.get("accountId") or "").strip() == acct:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("accountId") or "").strip()
+            if row_id == acct:
                 name = row.get("username")
                 return name.strip() if isinstance(name, str) and name.strip() else None
-        if accounts:                                     # listed rows, none are this integration
+            if row_id:
+                saw_other = True
+        if saw_other:                                    # other integrations listed; ours is not
             return None
     name = info.get("tiktokUsername")
     return name.strip() if isinstance(name, str) and name.strip() else None
