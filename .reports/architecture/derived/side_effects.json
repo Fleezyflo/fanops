@@ -143,15 +143,15 @@
     "fanops.post.publish_requeue": [
       {
         "call": "Ledger.transaction",
-        "line": 26
+        "line": 30
       },
       {
         "call": "Ledger.transaction",
-        "line": 70
+        "line": 86
       },
       {
         "call": "Ledger.transaction",
-        "line": 109
+        "line": 127
       }
     ],
     "fanops.post.run": [
@@ -581,23 +581,23 @@
     "fanops.post.postiz": [
       {
         "call": "requests.put",
-        "line": 236
+        "line": 233
       },
       {
         "call": "requests.post",
-        "line": 266
+        "line": 263
       },
       {
         "call": "requests.post",
-        "line": 337
+        "line": 334
       },
       {
         "call": "requests.get",
-        "line": 364
+        "line": 361
       },
       {
         "call": "requests.post",
-        "line": 571
+        "line": 575
       }
     ],
     "fanops.post.zernio": [
