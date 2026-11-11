@@ -85,10 +85,10 @@ Without the daemon installed, a due post fires only on a manual `fanops run` / S
 No external service at all. FanOps produces the clips + captions; you post them by hand. No metrics,
 no learning loop by definition.
 
-- **Studio → Publish**: each queued post shows the clip (download) + the caption (copy) + a
-  **Mark posted** button (optionally paste the live URL).
+- **Studio → Publish**: each queued post shows the clip (download) + the caption (copy) + **Mark posted**.
+  Record the real platform submission id and permalink. A `fanops_` birth token is not a published post.
 - Or CLI: `fanops publish-queue` lists the worklist; post each by hand, then
-  `fanops resolve <post_id> published --url <live-url>`.
+  `fanops resolve <post_id> published --url <permalink> --submission-id <real-id>`.
 
 Stays in `dryrun` (`FANOPS_POSTER=dryrun`) — nothing is ever transmitted automatically.
 

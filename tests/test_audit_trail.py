@@ -142,6 +142,9 @@ def test_mark_published_writes_audit_entry(tmp_path):
     path that produced 5 ghost-rows pre-R1 was the most opaque action of all."""
     cfg = Config(root=tmp_path)
     _seed_queued_post(cfg, "p1")
+    led = Ledger.load(cfg)
+    led.posts["p1"] = led.posts["p1"].model_copy(update={"submission_id": "zernio-real-99"})
+    led.save()
     from fanops.studio.actions import mark_published
     res = mark_published(cfg, "p1", url="https://www.instagram.com/p/abc/")
     assert res.ok

@@ -9,11 +9,12 @@ from fanops.studio import views, actions
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _seed(cfg, when="2020-01-01T00:00:00Z", state=PostState.queued):
+def _seed(cfg, when="2020-01-01T00:00:00Z", state=PostState.queued, *, submission_id="zernio-real-99"):
     led = Ledger.load(cfg)
     led.add_clip(Clip(id="c1", parent_id="m1", path=str(cfg.clips / "c1.mp4"), state=ClipState.queued))
     led.add_post(Post(id="p1", parent_id="c1", account="a", account_id="1", platform=Platform.instagram,
-                      caption="fire caption", state=state, scheduled_time=when, public_url="https://www.instagram.com/p/p1/"))
+                      caption="fire caption", state=state, scheduled_time=when,
+                      submission_id=submission_id, public_url="https://www.instagram.com/p/p1/"))
     led.save()
 
 
@@ -85,6 +86,54 @@ def test_mark_published_clears_error_reason(tmp_path):
     assert actions.mark_published(cfg, "p1", url="https://www.instagram.com/p/abc/").ok
     p = Ledger.load(cfg).posts["p1"]
     assert p.state is PostState.published and p.error_reason is None
+
+
+def test_mark_published_refuses_fanops_birth_token_on_every_platform(tmp_path):
+    # A fanops_ birth token is not a backend id. mark_published must not publish it on any
+    # platform — the TikTok refusal in reconcile.apply_published_resolve, applied everywhere.
+    from fanops.studio.actions_publish import mark_published
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    for plat in Platform:
+        led.add_post(Post(
+            id=f"birth_{plat.value}", parent_id="c1", account="a", account_id="1",
+            platform=plat, caption="x", state=PostState.needs_reconcile,
+            submission_id="fanops_deadbeef", scheduled_time="2020-01-01T00:00:00Z"))
+    led.save()
+    for plat in Platform:
+        pid = f"birth_{plat.value}"
+        res = mark_published(cfg, pid, url="https://www.instagram.com/p/live/")
+        assert res.ok is False, plat
+        assert "fanops_" in (res.error or "")
+        p = Ledger.load(cfg).posts[pid]
+        assert p.state is PostState.needs_reconcile
+        assert not (p.public_url or "").strip()
+        assert p.submission_id == "fanops_deadbeef"
+
+
+def test_mark_published_refuses_missing_submission_id(tmp_path):
+    from fanops.studio.actions_publish import mark_published
+    cfg = Config(root=tmp_path); _seed(cfg, submission_id=None)
+    res = mark_published(cfg, "p1", url="https://insta/p/abc")
+    assert res.ok is False
+    assert "trackable" in (res.error or "")
+    p = Ledger.load(cfg).posts["p1"]
+    assert p.state is PostState.queued
+    assert p.public_url == "https://www.instagram.com/p/p1/"
+
+
+def test_mark_published_real_submission_id_publishes_tiktok(tmp_path):
+    from fanops.studio.actions_publish import mark_published
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    led.add_post(Post(id="tt", parent_id="c1", account="a", account_id="1",
+                      platform=Platform.tiktok, caption="x", state=PostState.queued,
+                      submission_id="zernio-real-99", scheduled_time="2020-01-01T00:00:00Z"))
+    led.save()
+    res = mark_published(cfg, "tt", url="https://www.tiktok.com/@a/video/1")
+    assert res.ok
+    p = Ledger.load(cfg).posts["tt"]
+    assert p.state is PostState.published and p.public_url == "https://www.tiktok.com/@a/video/1"
 
 def test_unscheduled_post_sorts_last(tmp_path):
     # ecc:python-review: a None scheduled_time must sort AFTER a future-dated post, not as most urgent.
