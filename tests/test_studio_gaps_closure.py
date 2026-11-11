@@ -49,10 +49,14 @@ def test_preview_media_returns_playable_path(tmp_path):
     assert path and Path(path).exists()
 
 def test_retry_rate_limited_failures(tmp_path):
+    # The operator's retry skips the daemon's Postiz-hour cool-off: a 429 taken this second re-queues at once.
+    from datetime import datetime, timezone
+    from fanops.timeutil import iso_z
     cfg = Config(root=tmp_path); _accounts(cfg); _seed_awaiting(cfg, hook=None)
     led = Ledger.load(cfg)
     p = led.posts["p0"].model_copy(update={"state": PostState.failed, "error_reason": "postiz 429",
-                                           "error_kind": ErrorKind.rate_limit})
+                                           "error_kind": ErrorKind.rate_limit,
+                                           "submission_started_at": iso_z(datetime.now(timezone.utc))})
     led.posts["p0"] = p; led.save()
     res = actions.retry_rate_limited_failures(cfg)
     assert res.ok and res.detail["retried"] == 1
