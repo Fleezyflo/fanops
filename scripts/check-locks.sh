@@ -19,7 +19,10 @@ changed() { git diff --name-only "${base}...HEAD" -- "$@"; }
 # requirement" — so the guard reports unchanged while the deps changed, and a new package ships
 # against stale hashed locks. Comparing the PARSED tables is exact.
 # tomllib is stdlib on the 3.12 runner; setup-python runs before this step.
-pyproj_dep_change="$(python3 - "$base" "${locks[@]}" <<'PY' || true
+# Fail closed: a non-zero interpreter used to be `|| true`, so a crash's empty stdout read as
+# "unchanged — OK" and a stale lock could ship. The comparison itself is the block below.
+py_status=0
+pyproj_dep_change="$(python3 - "$base" "${locks[@]}" <<'PY'
 import re, subprocess, sys, tomllib
 
 def norm(name: str) -> str:            # PEP 685: extra names compare normalized
@@ -60,7 +63,11 @@ with open("pyproject.toml", encoding="utf-8") as fh:
 if dep_view(old.stdout, locked) != dep_view(new_text, locked):
     print("pyproject.toml [project] dependencies / optional-dependencies differ from base")
 PY
-)"
+)" || py_status=$?
+if [[ "$py_status" -ne 0 ]]; then
+  echo "[check-locks] REFUSED: the dependency comparison crashed — cannot prove the locks are current." >&2
+  exit 1
+fi
 
 if [[ -z "$pyproj_dep_change" ]]; then
   echo "[check-locks] pyproject.toml locked dependencies unchanged — locks not required to move. OK."
