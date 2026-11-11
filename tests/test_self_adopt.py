@@ -15,13 +15,17 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 from fanops.config import Config
 from fanops import daemon, doctor
 from fanops.pipeline_run import _lock_path
 import fanops
 
+_MERGE = [*daemon._DEPLOY_FF_NO_HOOKS, "merge", "--ff-only", "origin/main"]
 
-def _fake_git(cmd, git, *, ancestor, merge_rc):
+
+def _fake_git(cmd, git, *, ancestor, merge_rc, merge_stderr=None):
     """`git -C <root> <args>` against a two-ref state; any other git argv fails the test."""
     args = cmd[3:]
 
@@ -36,17 +40,18 @@ def _fake_git(cmd, git, *, ancestor, merge_rc):
         return ok(f"{git['head']}\n{git['origin']}\n")
     if args == ["merge-base", "--is-ancestor", "HEAD", "origin/main"]:
         return subprocess.CompletedProcess(cmd, 0 if ancestor else 1, stdout="", stderr="")
-    if args == ["merge", "--ff-only", "origin/main"]:
+    if args == _MERGE:
         if merge_rc == 0:
             git["head"] = git["origin"]
             return ok()
-        return subprocess.CompletedProcess(cmd, merge_rc, stdout="",
-                                           stderr="fatal: Not possible to fast-forward, aborting.\n")
+        err = merge_stderr if merge_stderr is not None else (
+            "fatal: Not possible to fast-forward, aborting.\n")
+        return subprocess.CompletedProcess(cmd, merge_rc, stdout="", stderr=err)
     raise AssertionError(f"unexpected git argv: {cmd}")
 
 
 def _fake_ensure_run(monkeypatch, tmp_path, *, list_out="", ps_etime=None,
-                     head=None, origin=None, ancestor=True, merge_rc=0):
+                     head=None, origin=None, ancestor=True, merge_rc=0, merge_stderr=None):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(sys, "platform", "darwin")
     uid = os.getuid()
@@ -58,7 +63,7 @@ def _fake_ensure_run(monkeypatch, tmp_path, *, list_out="", ps_etime=None,
         cmd = list(cmd)
         calls.append(cmd)
         if cmd[:1] == ["git"]:
-            return _fake_git(cmd, git, ancestor=ancestor, merge_rc=merge_rc)
+            return _fake_git(cmd, git, ancestor=ancestor, merge_rc=merge_rc, merge_stderr=merge_stderr)
         if cmd[:1] == ["ps"]:
             out = "" if ps_etime is None else ps_etime
             return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
@@ -103,17 +108,26 @@ def _plant_studio_plist(tmp_path):
     return p
 
 
+def _stub_studio_sha(monkeypatch, sha):
+    """/_fingerprint answer. None means the resident did not answer — not a code change."""
+    monkeypatch.setattr(
+        "fanops.daemon_studio._studio_get_fingerprint",
+        lambda *a, **k: None if sha is None else {"sha": sha, "pid": 9},
+    )
+
+
 def test_kickstarts_pump_on_drift(tmp_path, monkeypatch):
     cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
     _loop_hb(cfg, "aaa")
     _plant_studio_plist(tmp_path)
+    _stub_studio_sha(monkeypatch, _deployed_sha())        # Studio is already on disk code
 
     res = daemon.ensure(cfg)
 
     assert _kickstart_argv(uid) in calls
     assert res["action"] == "kickstart_stale_code"
-    assert _studio_kickstart_argv(uid) in calls
+    assert _studio_kickstart_argv(uid) not in calls
 
 
 def test_no_kickstart_when_shas_match(tmp_path, monkeypatch):
@@ -202,6 +216,7 @@ def test_storm_guard_holds(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
     _loop_hb(cfg, "aaa")
     _plant_studio_plist(tmp_path)
+    _stub_studio_sha(monkeypatch, _deployed_sha())
 
     res = daemon.ensure(cfg)
 
@@ -278,7 +293,7 @@ def test_version_signal_reads_head_from_code_tree_not_cfg_root(tmp_path):
 
 _OLD = "1" * 40
 _NEW = "2" * 40
-_FF = ["merge", "--ff-only", "origin/main"]
+_FF = _MERGE
 _NEVER = {"reset", "checkout", "stash", "rebase", "pull", "switch", "restore", "clean"}
 _LOADED = {"label": daemon.LABEL, "loaded": True, "action": "none"}
 
@@ -345,17 +360,76 @@ def test_fast_forward_skipped_when_head_diverged(tmp_path, monkeypatch):
     assert res == _LOADED
 
 
-def test_fast_forward_refusal_leaves_tree_untouched(tmp_path, monkeypatch):
-    cfg, calls, uid = _behind(monkeypatch, tmp_path, merge_rc=128)
+_BLOCKED = (
+    "error: Your local changes to the following files would be overwritten by merge:\n"
+    "\t.reports/architecture/derived/MANIFEST.json\n"
+    "\t.reports/architecture/derived/side_effects.json\n"
+    "Please commit your changes or stash them before you merge.\n"
+    "error: The following untracked working tree files would be overwritten by merge:\n"
+    "\tsrc/fanops/daemon.py\n"
+    "Please move or remove them before you merge.\n"
+    "Aborting\n"
+)
 
-    res = daemon.ensure(cfg)                          # a refusal never raises
 
-    git = _git_args(calls)
-    assert _FF in git
-    assert not any(_NEVER & set(a) for a in git)
+def test_deploy_ff_no_hooks(tmp_path, monkeypatch):
+    """The deploy merge disables dev hooks. post-merge must not regen derived/ on the live tree."""
+    cfg, calls, uid = _behind(monkeypatch, tmp_path)
+
+    daemon.ensure(cfg)
+
+    merges = [c for c in calls if c[:1] == ["git"] and "merge" in c]
+    assert merges == [["git", "-C", merges[0][2], *_MERGE]]
+    assert "core.hooksPath=/dev/null" in merges[0]
+    assert not any("post-merge" in arg or arg.endswith(".githooks") for c in calls for arg in c)
+    assert _kickstart_argv(uid) in calls
+
+
+def test_fast_forward_refusal_names_the_files(tmp_path, monkeypatch):
+    cfg, calls, uid = _behind(monkeypatch, tmp_path, merge_rc=1, merge_stderr=_BLOCKED)
+
+    with pytest.raises(daemon.DeployRefused, match="deploy refused") as caught:
+        daemon.ensure(cfg)
+
+    msg = str(caught.value)
+    assert "fail-open" not in msg.lower()
+    manifest = msg.index(".reports/architecture/derived/MANIFEST.json")
+    side = msg.index(".reports/architecture/derived/side_effects.json")
+    daemon_py = msg.index("src/fanops/daemon.py")
+    assert manifest < side < daemon_py
+    assert _FF in _git_args(calls)
+    assert not any(_NEVER & set(a) for a in _git_args(calls))
     assert daemon._version_signal(cfg)[0] == _OLD
     assert _kickstart_argv(uid) not in calls
-    assert res == _LOADED
+
+
+def test_studio_restarts_only_when_its_fingerprint_changed(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    disk = _deployed_sha()
+    _loop_hb(cfg, disk)                               # pump heartbeat is current — not the reason
+    _plant_studio_plist(tmp_path)
+    _stub_studio_sha(monkeypatch, "0" * 40)
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) not in calls
+    assert _studio_kickstart_argv(uid) in calls
+    assert res["action"] == "kickstart_studio"
+
+
+def test_unreadable_studio_fingerprint_does_not_restart_on_stale_pump(tmp_path, monkeypatch):
+    cfg, calls, uid = _fake_ensure_run(monkeypatch, tmp_path)
+    monkeypatch.setenv("FANOPS_AUTO_ADOPT", "1")
+    _loop_hb(cfg, "aaa")                              # dead-pump shape: heartbeat is not disk code
+    _plant_studio_plist(tmp_path)
+    _stub_studio_sha(monkeypatch, None)
+
+    res = daemon.ensure(cfg)
+
+    assert _kickstart_argv(uid) in calls
+    assert _studio_kickstart_argv(uid) not in calls
+    assert res["action"] == "kickstart_stale_code"
 
 
 def test_no_fast_forward_when_already_at_origin_main(tmp_path, monkeypatch):

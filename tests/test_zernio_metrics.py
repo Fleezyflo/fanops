@@ -326,10 +326,12 @@ def test_default_list_posts_corrupt_accounts_degrades_to_global(tmp_path, monkey
 
 # ================================================================ T8 — TikTok permalink live-verify ====
 # A captured TikTok URL must be PROVEN a real live post for that handle (symmetric with IG's media_id) — else
-# Zernio handing back a dead/wrong URL passes on paper. verify_tiktok_permalink confirms via TikTok oEmbed
-# (author_url/author_unique_id/author == handle); the HTTP getter is injected so tests never touch the network.
+# verify_tiktok_permalink is the bool gate (`not` the verdict). A matching oEmbed author still accepts.
+# A 200 with no author is oembed_no_author and the bool stays False; tiktok_permalink_verdict is what
+# reconcile will call once it can pass the analytics row. The getter is injected — tests never hit the network.
 from fanops.post.metrics import (verify_tiktok_permalink, zernio_permalink_from_analytics,
                                   zernio_reported_tiktok_username)
+from fanops.post.metrics.zernio_read import tiktok_permalink_verdict
 
 
 class _OE:
@@ -425,11 +427,17 @@ def test_zernio_reported_username_picks_the_matching_row_among_many():
 
 
 def test_zernio_reported_username_sole_row_fallback_when_no_id():
-    # When no integration id is supplied (or it matches nothing) but there is exactly ONE tiktok row, use it —
-    # this is the bound-method dispatch path (get_status has no post in scope to pass an id).
+    # integration_id None + exactly one tiktok row: get_status has no post in scope to pass an id.
     body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
     assert zernio_reported_tiktok_username(body, None) == "wahed_bared"
-    assert zernio_reported_tiktok_username(body, "NON_MATCHING_ID") == "wahed_bared"   # sole tiktok row
+
+
+def test_zernio_reported_username_passed_id_never_falls_back_to_sole_row():
+    # A passed integration id that matches no row must not bind the only TikTok row — that row can
+    # belong to another account. Empty id is "passed" too.
+    body = {"post": {"platforms": [_LIVE_ZERNIO_TIKTOK_ROW]}}
+    assert zernio_reported_tiktok_username(body, "NON_MATCHING_ID") is None
+    assert zernio_reported_tiktok_username(body, "") is None
 
 
 def test_zernio_reported_username_fallback_keys():
@@ -466,6 +474,9 @@ def test_status_published_surfaces_reported_username(tmp_path, monkeypatch, mock
     assert out["status"] == "published"
     assert out["publicUrl"] == "https://www.tiktok.com/@wahed_bared/video/7658622855357173009"
     assert out["tiktokUsername"] == "wahed_bared"                  # the sole-tiktok-row username rides out
+    assert out["tiktokAccounts"] == [{
+        "accountId": "6a37ea985f7d1751ab2e7e92", "username": "wahed_bared",
+        "platformPostId": "7658622855357173009", "publishedAt": None}]
 
 
 # ================================================================ verify against REPORTED username ====
@@ -489,6 +500,148 @@ def test_verify_tiktok_permalink_missing_expected_username_fails_closed(tmp_path
     def get(u, **kw): return _OE(200, {"author_unique_id": "wahed_bared"})
     assert verify_tiktok_permalink(cfg, url, None, get=get) is False
     assert verify_tiktok_permalink(cfg, url, "", get=get) is False
+    assert tiktok_permalink_verdict(cfg, url, None, get=get) == "no_username"
+    assert tiktok_permalink_verdict(cfg, url, "", get=get) == "no_username"
+
+
+# Live oEmbed shape (2026-11-10): 200, no author_unique_id / author_url / author_name. embed_product_id
+# is the video id; the same id under another @handle returns the same embed. html is only an iframe.
+_VID = "7658622855357173009"
+_NO_AUTHOR = {
+    "embed_product_id": _VID, "embed_type": "video", "height": "739",
+    "html": f'<iframe src="https://www.tiktok.com/player/v1/{_VID}"></iframe>',
+    "provider_name": "TikTok", "provider_url": "https://www.tiktok.com",
+    "type": "video", "version": "1.0", "width": "340"}
+
+
+def _analytics_row(account="acc1", vid=_VID, username="backlikeineveeft"):
+    return {"platformAnalytics": [{"platform": "tiktok", "platformPostId": vid,
+                                   "accountId": {"_id": account, "username": username}}]}
+
+
+def test_verdict_bad_url_no_username_transport_and_status(tmp_path):
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    called = []
+    def get(u, **kw):
+        called.append(u)
+        return _OE(200, _NO_AUTHOR)
+    assert tiktok_permalink_verdict(cfg, "not-a-url", "backlikeineveeft", get=get) == "bad_url"
+    assert tiktok_permalink_verdict(cfg, None, "backlikeineveeft", get=get) == "bad_url"
+    assert called == []
+    import requests as _rq
+    def boom(u, **kw): raise _rq.exceptions.ConnectionError("x")
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=boom) == "oembed_transport"
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(404, "gone")) == "oembed_status:404"
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(503, "x")) == "oembed_status:503"
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft",
+                                    get=lambda u, **kw: _OE(200, ValueError("bad"))) == "oembed_transport"
+
+
+def test_verdict_no_author_stays_false_for_verify(tmp_path):
+    # The live defect: oEmbed 200 names no author. The @handle in the URL is not proof. verify (current
+    # callers) must stay False; the reason is oembed_no_author, not author_mismatch.
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    def get(u, **kw):
+        assert "oembed" in u
+        return _OE(200, _NO_AUTHOR)
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=get) == "oembed_no_author"
+    assert verify_tiktok_permalink(cfg, url, "backlikeineveeft", get=get) is False
+    named = {**_NO_AUTHOR, "author_name": "backlikeineveeft"}       # display name is not a unique handle
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(200, named)) == "oembed_no_author"
+
+
+def test_verdict_author_mismatch_not_overridden_by_analytics(tmp_path):
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    body = {**_NO_AUTHOR, "author_unique_id": "someoneelse", "author_url": "https://www.tiktok.com/@someoneelse"}
+    reason = tiktok_permalink_verdict(cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(200, body),
+                                      account_id="acc1", analytics_body=_analytics_row())
+    assert reason == "author_mismatch"
+    assert verify_tiktok_permalink(cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(200, body)) is False
+
+
+def test_verdict_video_id_mismatch(tmp_path):
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    other = {**_NO_AUTHOR, "embed_product_id": "111", "author_unique_id": "backlikeineveeft"}
+    assert tiktok_permalink_verdict(cfg, url, "backlikeineveeft",
+                                    get=lambda u, **kw: _OE(200, other)) == "video_id_mismatch"
+    # URL and oEmbed agree; the analytics row for this account is a different video.
+    assert tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(200, _NO_AUTHOR),
+        account_id="acc1", analytics_body=_analytics_row(vid="999")) == "video_id_mismatch"
+
+
+def test_verdict_analytics_row_proves_when_oembed_has_no_author(tmp_path):
+    # Same video id under a different @handle still 200s with the same embed_product_id. Authorship is
+    # the analytics row whose accountId._id == account_id and whose video id == embed_product_id.
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@notourhandle/video/{_VID}"
+    calls = []
+    def get(u, **kw):
+        calls.append(u)
+        assert "oembed" in u                                    # analytics_body is passed — no second fetch
+        return _OE(200, {**_NO_AUTHOR, "embed_product_id": int(_VID)})
+    assert tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=get, account_id="acc1", analytics_body=_analytics_row()) == ""
+    assert calls and all("oembed" in u for u in calls)
+    # A different account's row, or no analytics at all, is not proof. verify never receives analytics.
+    assert tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=get, account_id="other", analytics_body=_analytics_row()) == "oembed_no_author"
+    assert verify_tiktok_permalink(cfg, url, "backlikeineveeft", get=get) is False
+    share = {"platformAnalytics": [{"platform": "tiktok", "shareUrl": url,
+                                    "accountId": {"_id": "acc1", "username": "backlikeineveeft"}}]}
+    assert tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=get, account_id="acc1", analytics_body=share) == ""
+
+
+def test_verdict_status_body_is_not_authorship(tmp_path):
+    # Option B is forbidden: the GET /posts/{id} status row (platforms[], username, platformPostUrl)
+    # does not prove authorship even when accountId and platformPostId match.
+    cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    status_body = {"post": {"platforms": [{
+        "platform": "tiktok", "status": "published", "platformPostId": _VID, "platformPostUrl": url,
+        "accountId": {"_id": "acc1", "username": "backlikeineveeft"}}]}}
+    reason = tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=lambda u, **kw: _OE(200, _NO_AUTHOR),
+        account_id="acc1", analytics_body=status_body)
+    assert reason == "oembed_no_author"
+
+
+def test_verdict_fetches_analytics_by_submission_id(tmp_path, monkeypatch):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    url = f"https://www.tiktok.com/@backlikeineveeft/video/{_VID}"
+    sid = "6ad620cfe0938a352f21ca22"
+    def get(u, **kw):
+        if "oembed" in u:
+            return _OE(200, _NO_AUTHOR)
+        assert u.endswith("/analytics") and (kw.get("params") or {}).get("postId") == sid
+        return _OE(200, _analytics_row())
+    assert tiktok_permalink_verdict(
+        cfg, url, "backlikeineveeft", get=get, account_id="acc1", submission_id=sid) == ""
+
+
+def test_status_lists_each_tiktok_row_without_dropping_callers(tmp_path, monkeypatch, mocker):
+    _zenv(monkeypatch); cfg = Config(root=tmp_path)
+    row = {**_LIVE_ZERNIO_TIKTOK_ROW, "publishedAt": "2026-11-10T12:00:00Z"}
+    other = {"platform": "tiktok", "accountId": {"_id": "OTHER", "username": "someone_else"},
+             "platformPostId": 42, "publishedAt": "2026-11-09T00:00:00Z", "status": "published",
+             "platformPostUrl": "https://www.tiktok.com/@someone_else/video/42"}
+    ig = {"platform": "instagram", "accountId": {"_id": "IG", "username": "ig"}, "status": "published"}
+    body = {"post": {"platforms": [row, ig, other]}}
+    mocker.patch("fanops.post.metrics.requests.get", return_value=_R(200, body))
+    out = ZernioStatusClient(cfg).get_status("zid")
+    assert out["status"] == "published"
+    assert out["publicUrl"] == row["platformPostUrl"]
+    assert "tiktokUsername" not in out                            # two TikTok rows, integration_id is None
+    assert out["tiktokAccounts"] == [
+        {"accountId": "6a37ea985f7d1751ab2e7e92", "username": "wahed_bared",
+         "platformPostId": "7658622855357173009", "publishedAt": "2026-11-10T12:00:00Z"},
+        {"accountId": "OTHER", "username": "someone_else", "platformPostId": "42",
+         "publishedAt": "2026-11-09T00:00:00Z"}]
 
 
 # ================================================================ the FULL real case, end-to-end ====

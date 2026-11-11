@@ -146,6 +146,23 @@ def test_studio_poll_expected_generation_answers_on_third_try(monkeypatch):
     assert sleeps == [2.0] * 2
 
 
+def test_studio_fingerprint_changed_only_when_the_resident_sha_differs(tmp_path, monkeypatch):
+    from fanops import daemon_studio
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert daemon_studio.studio_fingerprint_changed("abc") is False          # no plist: not a change
+
+    plist = tmp_path / "Library" / "LaunchAgents" / f"{daemon.STUDIO_LABEL}.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_text("studio")
+    monkeypatch.setattr(daemon_studio, "_studio_get_fingerprint", lambda *a, **k: {"sha": "abc", "pid": 9})
+    assert daemon_studio.studio_fingerprint_changed("abc") is False
+    monkeypatch.setattr(daemon_studio, "_studio_get_fingerprint", lambda *a, **k: {"sha": "def", "pid": 9})
+    assert daemon_studio.studio_fingerprint_changed("abc") is True
+    monkeypatch.setattr(daemon_studio, "_studio_get_fingerprint", lambda *a, **k: None)
+    assert daemon_studio.studio_fingerprint_changed("abc") is False          # unread is not a change
+    assert daemon_studio.studio_fingerprint_changed(None) is False
+
+
 def test_install_studio_raises_on_non_darwin(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon.sys, "platform", "linux")
     cfg = Config(root=tmp_path)

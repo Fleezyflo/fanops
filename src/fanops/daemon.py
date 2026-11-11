@@ -358,10 +358,16 @@ def install(cfg: Config, *, interval: int) -> dict:
     return out
 
 # launchd opens StandardOutPath / StandardErrorPath once and does not rotate them. Those fds are
-# O_APPEND, so the keeper can copytruncate without a kickstart: the pump's next write goes to EOF.
-# Unreadable flags are not proof — the live file stays untouched.
+# O_APPEND, so the keeper can copytruncate without a kickstart: the next write goes to EOF.
+# daemon.out / daemon.err are the pump's fds 1 and 2. studio.err is the Studio resident's fd 2
+# (a different pid — the pump's fd 2 is daemon.err). Unreadable flags are not proof.
 LAUNCHD_LOG_ROTATE_BYTES = 50 * 1024 * 1024
-_LAUNCHD_LOG_FDS = (("daemon.out", 1), ("daemon.err", 2))
+_LAUNCHD_LOGS = (
+    ("daemon.out", 1, "pump"),
+    ("daemon.err", 2, "pump"),
+    ("studio.err", 2, "studio"),
+)
+_STUDIO_PID_UNSET = object()
 
 
 def _same_file_append(flags: int, ino: int, dev: int, path: Path) -> bool:
@@ -463,19 +469,35 @@ def _copytruncate(path: Path, size: int) -> bool:
                 _log.warning("rotate temp unlink %s failed: %s", tmp, exc)
 
 
+def _studio_resident_pid() -> int | None:
+    """Live com.fanops.studio pid, or None. studio.err is that process's fd 2, not the pump's."""
+    from fanops.daemon_studio import studio_agent_status
+    pid = studio_agent_status().get("pid")
+    return pid if isinstance(pid, int) and pid > 0 else None
+
+
 def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
+                        studio_pid: int | None | object = _STUDIO_PID_UNSET,
                         minimum_bytes: int | None = None,
                         fd_is_append: Callable[[int, int, Path], bool] | None = None) -> list[str]:
-    """Copytruncate daemon.out / daemon.err once each exceeds the cap. Does not kickstart.
+    """Copytruncate daemon.out, daemon.err, and studio.err once each exceeds the cap. Does not kickstart.
 
     stdout is fd 1 and stderr is fd 2 — the descriptors launchd installs for StandardOutPath and
-    StandardErrorPath. Truncation happens only when that fd is still this path and O_APPEND.
+    StandardErrorPath. Truncation happens only when THAT process's fd is still this path and O_APPEND.
+    `studio_pid` omitted looks the Studio resident up when studio.err is over the cap. Pass None when
+    there is no Studio pid and the lookup must not run.
     """
     cap = LAUNCHD_LOG_ROTATE_BYTES if minimum_bytes is None else minimum_bytes
     probe = launchd_fd_is_append if fd_is_append is None else fd_is_append
-    use_pid = pid
+    pump_pid = pid
+    if studio_pid is _STUDIO_PID_UNSET:
+        studio_known = False
+        studio_live: int | None = None
+    else:
+        studio_known = True
+        studio_live = studio_pid if isinstance(studio_pid, int) and studio_pid > 0 else None
     rotated: list[str] = []
-    for name, fd in _LAUNCHD_LOG_FDS:
+    for name, fd, owner in _LAUNCHD_LOGS:
         path = cfg.reports / name
         if path.is_symlink() or not path.is_file():
             continue
@@ -485,8 +507,15 @@ def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
             continue
         if size < cap:
             continue
-        if use_pid is None:
-            use_pid, _age = _pump_pid_age_s()
+        if owner == "pump":
+            if pump_pid is None:
+                pump_pid, _age = _pump_pid_age_s()
+            use_pid = pump_pid
+        else:
+            if not studio_known:
+                studio_live = _studio_resident_pid()
+                studio_known = True
+            use_pid = studio_live
         if use_pid is None or not probe(use_pid, fd, path):
             _log.warning("rotate_launchd_logs: %s is %s bytes but O_APPEND on fd %s is not proven "
                          "(pid=%s) — leaving it", name, size, fd, use_pid)
@@ -501,8 +530,8 @@ def rotate_launchd_logs(cfg: Config, *, pid: int | None = None,
 def ensure(cfg: Config) -> dict:
     """Keeper hook: re-assert main pump load when launchctl print says it is absent; also rewrite a
     stale on-disk plist when it no longer matches render_plist (direct-exec ProgramArguments + env).
-    Copytruncates an over-cap launchd log when its fd is O_APPEND, without kickstart. A rotation
-    failure is logged and does not skip the rest of ensure."""
+    Copytruncates an over-cap daemon.out, daemon.err, or studio.err when that process's fd is
+    O_APPEND, without kickstart. A rotation failure is logged and does not skip the rest of ensure."""
     _require_darwin()
     try:
         rotate_launchd_logs(cfg)
@@ -534,19 +563,23 @@ def ensure(cfg: Config) -> dict:
             if action == "none":
                 action = "rewrite_plist"
     # Code-drift self-heal (keeper-adopts-pump): the pump's in-process os.execv adopter was deleted, so
-    # the EXTERNAL keeper adopts disk code. Kickstart the PUMP (not the keeper) when the heartbeat SHA
-    # differs from the SHA on disk, and when the pump is already loaded and either SHA is missing.
-    # Kill switch default-on (matches cli). Fail-open with one breadcrumb — a git/launchctl hiccup
-    # leaves the pump alone.
+    # the EXTERNAL keeper adopts disk code. Kickstart the PUMP when the heartbeat SHA differs from the
+    # SHA on disk, or when the pump is already loaded and either SHA is missing. Studio is not that
+    # signal: it restarts only when its own /_fingerprint sha differs from disk. A dead pump cannot
+    # stamp a heartbeat, and that miss must not kickstart Studio on every keeper fire.
+    # A refused fast-forward raises DeployRefused and names the files. It is not wrapped in fail_open.
+    # The merge itself runs with dev hooks off (deploy-ff-no-hooks) so post-merge does not regen
+    # derived/ against the live tree.
     # cfg.auto_adopt (default ON): off-words disable; a typo keeps the default ON
     # instead of the old `!= "0"` read, where "false"/"off" (anything but the literal "0") stayed ON.
     # Nothing else advances the production checkout, so disk moves here first: a fast-forward makes the
     # disk SHA differ from the heartbeat and the stale-code branch below adopts it in this same call.
     if cfg.auto_adopt:
         from fanops.errors import fail_open
+        from fanops.daemon_studio import studio_fingerprint_changed
         if was_loaded:
-            with fail_open("ensure.fast_forward"):
-                _fast_forward_checkout(cfg)
+            _fast_forward_checkout(cfg)
+        deployed = None
         with fail_open("ensure.kickstart_stale_code"):
             running = _last_heartbeat_code(cfg)              # SHA the pump reports it is on
             deployed = _version_signal(cfg)[0]               # SHA on disk now
@@ -577,16 +610,33 @@ def ensure(cfg: Config) -> dict:
                     else:
                         _launchctl("kickstart", "-k", f"gui/{os.getuid()}/{LABEL}",
                                    timeout=_KICKSTART_TIMEOUT)   # cycle the PUMP onto new code
-                        _kickstart_studio_if_present(cfg)         # Studio's only adopter now (execv path deleted)
                         if action == "none":
                             action = "kickstart_stale_code"
+        if studio_fingerprint_changed(deployed):
+            _kickstart_studio_if_present(cfg)
+            if action == "none":
+                action = "kickstart_studio"
     ensure_keeper_loaded(cfg)                             # keeper cannot heal itself when it is unloaded
     return {"label": LABEL, "loaded": loaded, "action": action}
 
 
+def _crash_loop_verdict(pid: int | None, last_exit: int | None) -> str | None:
+    """FAIL text when there is no live PID and the last exit is non-zero, else None.
+
+    KeepAlive respawns a non-zero exit, so a crash loop stays loaded with no PID and that same
+    last exit. A fresh heartbeat or a daemon_progress line is the previous process, not liveness.
+    """
+    if pid is not None and pid > 0:
+        return None
+    if last_exit in (None, 0):
+        return None
+    return f"FAIL: crash-looping (no PID, last exit {last_exit})"
+
+
 def status(cfg: Config, *, interval: int = 600) -> dict:
-    """Read-only liveness + readiness — PID-primary, thin caller of the one liveness owner. A live
-    launchd PID + a loop-origin heartbeat (or mid-pass JSON activity that is NOT a MANUAL heartbeat
+    """Read-only liveness + readiness — PID-primary. A loaded job with no live PID and a non-zero
+    LastExitStatus is `FAIL: crash-looping` before heartbeat age or daemon_progress are consulted.
+    A live launchd PID + a loop-origin heartbeat (or mid-pass JSON activity that is NOT a MANUAL heartbeat
     and NOT any-line TSV) is the PRIMARY truth: while loaded and daemon_progress reports alive_mid
     (newest *owned* run.log activity younger than the ceiling), the verdict is `alive` REGARDLESS of
     the loop-heartbeat age (that heartbeat only lands after a whole pass finishes, so it must NEVER
@@ -628,10 +678,13 @@ def status(cfg: Config, *, interval: int = 600) -> dict:
     target = _installed_program(cfg)
     if loaded and target and not os.access(target, os.X_OK):
         exec_fail = {"reason": "interpreter_not_executable", "target": target}
+    crash = _crash_loop_verdict(pid, last_exit)
     if not loaded:
         verdict = _VERDICT_UNLOADED_ALARM if installed else "not installed"
     elif exec_fail:
         verdict = f"loaded but interpreter not executable: {exec_fail['target']}"
+    elif crash:
+        verdict = crash                                      # PID + last exit; daemon_progress does not override
     elif not stale:
         verdict = "alive"                                    # fresh loop heartbeat (regression path)
     else:
@@ -1047,14 +1100,41 @@ def _git_code(root: Path, *args: str, timeout: float = 60) -> subprocess.Complet
         return None
 
 
+class DeployRefused(RuntimeError):
+    """The keeper's ff-only deploy did not land. The message names the blocking files."""
+
+
+# deploy-ff-no-hooks: the live checkout's core.hooksPath is .githooks, and post-merge regenerates
+# .reports/architecture/derived/ in the working tree. On the production checkout that dirties tracked
+# derived files, so the next ff-only refuses every source land. /dev/null is not a hook directory.
+_DEPLOY_FF_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
+def _files_merge_would_overwrite(stderr: str) -> list[str]:
+    """Paths git names under 'would be overwritten by merge:' (tab-indented)."""
+    files: list[str] = []
+    capture = False
+    for line in (stderr or "").splitlines():
+        if "would be overwritten by merge:" in line:
+            capture = True
+            continue
+        if capture and line.startswith("\t"):
+            name = line.strip()
+            if name:
+                files.append(name)
+            continue
+        capture = False
+    return files
+
+
 def _fast_forward_checkout(cfg: Config) -> str:
     """Fast-forward the code checkout onto origin/main so `ensure`'s stale-code adopt has new code to adopt.
 
-    `git merge --ff-only origin/main` runs only when HEAD is a strict ancestor of origin/main, no pass
-    holds the run flock, and the pump is past the adopt settle window — the same moment the stale-code
-    kickstart may fire, so new modules are never lazily imported into a pump that is not about to be
-    replaced. Works on a detached HEAD. Returns the outcome word; every refusal leaves the tree as it was
-    and logs one breadcrumb.
+    `git merge --ff-only origin/main` runs with dev hooks disabled, and only when HEAD is a strict
+    ancestor of origin/main, no pass holds the run flock, and the pump is past the adopt settle window —
+    the same moment the stale-code kickstart may fire, so new modules are never lazily imported into a
+    pump that is not about to be replaced. Works on a detached HEAD. A merge that does not complete
+    raises DeployRefused and leaves the tree as it was. Every other non-move returns an outcome word.
 
     Binding non-goal §6 (docs/design/briefs/16-one-step-bring-up.md) forbade tree mutation because a
     `reset --hard` sync clobbered a live accounts.json and a stale `main` produced a false verdict.
@@ -1091,11 +1171,13 @@ def _fast_forward_checkout(cfg: Config) -> str:
     if run_held(cfg):
         _log.warning("ensure.fast_forward: run flock held — deferring %s -> %s", head[:12], target[:12])
         return "run_held"
-    merged = _git_code(root, "merge", "--ff-only", "origin/main", timeout=120)
+    merged = _git_code(root, *_DEPLOY_FF_NO_HOOKS, "merge", "--ff-only", "origin/main", timeout=120)
     if merged is None or merged.returncode != 0:
-        _log.warning("ensure.fast_forward: merge --ff-only %s -> %s did not complete (%s)", head[:12], target[:12],
-                     _tail(merged.stderr, 2) if merged else "git missing or timed out")
-        return "refused"
+        err = merged.stderr if merged is not None else ""
+        files = _files_merge_would_overwrite(err or "")
+        detail = ", ".join(files) if files else (_tail(err or "", 4) or "git missing or timed out")
+        raise DeployRefused(
+            f"ensure.fast_forward: deploy refused {head[:12]} -> {target[:12]}: {detail}")
     _log.warning("ensure.fast_forward: %s -> %s", head[:12], target[:12])
     return "fast_forward"
 
@@ -1115,6 +1197,8 @@ def _plane_daemon(cfg: Config, *, kickstart: bool = True) -> dict:
     try:
         was_running = _confirm_loaded(LABEL)
         ens = ensure(cfg)                          # aliveness: load if absent / rewrite a stale plist
+    except DeployRefused as e:
+        return {"plane": "daemon", "ok": False, "skipped": False, "restarted": False, "detail": str(e)}
     except (RuntimeError, ToolchainMissingError) as e:
         return {"plane": "daemon", "ok": False, "skipped": True, "restarted": False, "detail": str(e)}
     if not ens.get("loaded"):
@@ -1196,9 +1280,9 @@ def _redeploy_studio(cfg: Config, *, wait: bool = False) -> bool:
 
 
 def _kickstart_studio_if_present(cfg: Config) -> None:
-    """Best-effort Studio redeploy used by the self-adopt path (cli run loop): if the Studio launchd
-    job is installed, cycle it onto current code; no-op when absent. Never raises (fail-open with a
-    breadcrumb) — a Studio redeploy hiccup must not abort the daemon's own self-adopt re-exec."""
+    """Cycle Studio onto current code when ensure has already decided its fingerprint changed.
+    No-op when the plist is absent. A redeploy hiccup is logged and re-raised by fail_open — it does
+    not pretend the resident moved."""
     from fanops.errors import fail_open
     with fail_open("kickstart_studio_if_present"):
         _redeploy_studio(cfg)
