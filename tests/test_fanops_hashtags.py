@@ -2070,6 +2070,60 @@ def test_refresh_store_if_due_skips_when_locks_pending(tmp_path):
     assert client.media_calls == [] and client.info_calls == []
 
 
+def test_pending_locks_cannot_hide_an_unreadable_cooldown(tmp_path):
+    """A torn cooldown file is the tick's verdict even while a native lock is unfinished.
+
+    The read used to sit behind `locks_pending`, so the outage existed only in doctor."""
+    from datetime import datetime, timezone
+    from fanops.fanops_hashtags import _cooldown_path, refresh_store_if_due, reset_safari_tick_slot
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); _persona(cfg)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_pending", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_sidecar(cfg, ["#alpha"], sid="src_done")
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text("{not-json")
+    reset_safari_tick_slot()
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    client = _FakeClient({"#alpha": 10})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0, max_age_s=10)
+    assert out == {"refreshed": False, "reason": "cooldown", "level": "error",
+                   "cooldown_reason": "cooldown_unreadable"}
+    assert client.media_calls == [] and client.info_calls == []
+    assert _cooldown_path(cfg).read_text() == "{not-json"
+    rec = _log_recs(cfg, "scrape_outage")
+    assert len(rec) == 1 and rec[0]["level"] == "error" and rec[0]["reason"] == "cooldown_unreadable"
+    assert ".hashtag_scrape_cooldown.json invalid:" in rec[0]["detail"]
+
+
+def test_pending_locks_cannot_hide_an_active_cooldown(tmp_path):
+    """A live freeze is the tick's verdict while a native lock is unfinished — same order."""
+    from datetime import datetime, timedelta, timezone
+    from fanops.fanops_hashtags import _cooldown_path, refresh_store_if_due, reset_safari_tick_slot
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    cfg = Config(root=tmp_path); _persona(cfg)
+    led = Ledger.load(cfg)
+    led.add_source(Source(id="src_pending", source_path=str(tmp_path / "a.mp4"),
+                          state=SourceState.catalogued))
+    led.save()
+    _write_sidecar(cfg, ["#alpha"], sid="src_done")
+    t0 = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    _cooldown_path(cfg).parent.mkdir(parents=True, exist_ok=True)
+    _cooldown_path(cfg).write_text(json.dumps({
+        "streak": 1, "until": (t0 + timedelta(minutes=20)).isoformat(),
+        "updated_at": (t0 - timedelta(minutes=10)).isoformat(), "reason": "throttle"}))
+    reset_safari_tick_slot()
+    client = _FakeClient({"#alpha": 10})
+    out = refresh_store_if_due(cfg, scrape_client=client, now=t0, max_age_s=10)
+    assert out["refreshed"] is False and out["reason"] == "cooldown"
+    assert out["cooldown_reason"] == "throttle"
+    assert client.media_calls == [] and client.info_calls == []
+
+
 def test_refresh_store_if_due_runs_when_all_locks_complete(tmp_path):
     """G2: when every native source is stamped, remesure path is unchanged."""
     from datetime import datetime, timezone
