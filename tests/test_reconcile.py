@@ -7,7 +7,8 @@ that HAVE a submission_id; posts without one cannot be looked up via the API and
 human reconcile (the digest surfaces them). reconcile_posts:
   - status 'published'   -> PostState.published (+ public_url), so track can later measure it
   - status 'failed'      -> PostState.failed (definitely not live -> safe to re-queue) on PENDING posts
-  - 'in-progress'/'scheduled' -> leave pending as-is (not yet resolved)
+  - 'in-progress'/'scheduled' -> leave pending as-is (not yet resolved), except an aged
+    submitted_awaiting_permalink row that still has no https URL (missing-url terminal)
   - no submission_id      -> skipped (cannot poll; human reconcile)
   - failed/queued + real sid -> still observed (MOL-991): QUEUE recovers failed to queued; PUBLISHED
     promotes; vendor absent rejects failed; resting published never reopens failed
@@ -2054,3 +2055,166 @@ def test_published_no_url_captures_body_permalink(tmp_path):
     assert "publish_missing_url" not in (held.error_reason or "")
     assert led.posts["ttok"].state is PostState.published
     assert led.posts["ttok"].public_url == tt
+
+
+_AWAITING_PERMALINK = (
+    "submitted_awaiting_permalink: backend accepted without a public URL — "
+    "reconcile will back-fill on next pass (R1/D2 gate)")
+
+
+def test_awaiting_permalink_captures_https_even_past_the_window(tmp_path):
+    # Later pass with a real https permalink promotes. The age window does not win.
+    # A non-https body is not copied onto the post.
+    from datetime import datetime, timedelta, timezone
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=80)).isoformat()
+    url = "https://www.instagram.com/p/backfill/"
+    led.add_post(Post(id="cap", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="postiz_cap",
+                      error_reason=_AWAITING_PERMALINK, scheduled_time=old))
+    led.add_post(Post(id="junk", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="postiz_junk",
+                      error_reason=_AWAITING_PERMALINK, scheduled_time=old))
+    bodies = {
+        "postiz_cap": {"status": "published", "publicUrl": url},
+        "postiz_junk": {"status": "in-progress", "publicUrl": "javascript:alert(1)"},
+    }
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: bodies[sid])
+    cap = led.posts["cap"]
+    assert cap.state is PostState.published
+    assert cap.public_url == url
+    assert cap.error_reason is None
+    assert cap.submission_id == "postiz_cap"
+    junk = led.posts["junk"]
+    assert junk.state is PostState.rejected
+    assert junk.public_url is None
+    assert "javascript:" not in (junk.public_url or "")
+
+
+def test_awaiting_permalink_terminal_after_age_window(tmp_path):
+    # No https after the window: one missing-url terminal, off the strip, not rewritten.
+    # Inside the window the awaiting reason is left alone. A different reason is not this path.
+    # Published with no https uses that same terminal. A permalink still on the body is kept.
+    from datetime import datetime, timedelta, timezone
+    from fanops.post.publish_requeue import _requeue_rate_limited_for_daemon
+    from fanops.reconcile import _MISSING_URL_TERMINAL
+    from fanops.studio.views_schedule import inflight_watch
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=80)).isoformat()
+    fresh = (now - timedelta(hours=3)).isoformat()
+
+    def _row(pid, when, reason=_AWAITING_PERMALINK):
+        led.add_post(Post(id=pid, parent_id="c", account="a", account_id="1",
+                          platform=Platform.instagram, caption="x",
+                          state=PostState.needs_reconcile, submission_id=f"postiz_{pid}",
+                          error_reason=reason, scheduled_time=when))
+
+    _row("old", old)
+    _row("young", fresh)
+    _row("pub", old)
+    _row("other", old, reason="postiz network error, may be live")
+    held_url = "https://www.instagram.com/p/still-pending/"
+    _row("held", old)
+    before_other = led.posts["other"].model_dump()
+    before_young = led.posts["young"].model_dump()
+    bodies = {
+        "postiz_old": {"status": "in-progress"},
+        "postiz_young": {"status": "scheduled"},
+        "postiz_pub": {"status": "published", "liveness": {"published_no_url": True, "captured_url": None}},
+        "postiz_other": {"status": "in-progress"},
+        "postiz_held": {"status": "in-progress", "publicUrl": held_url},
+    }
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: bodies[sid])
+    old_p = led.posts["old"]
+    assert old_p.state is PostState.rejected
+    assert old_p.error_reason == _MISSING_URL_TERMINAL
+    assert old_p.error_kind is None
+    assert old_p.public_url is None
+    assert old_p.submission_id == "postiz_old"
+    assert old_p.state is not PostState.queued
+    assert old_p.state is not PostState.failed
+    assert led.posts["pub"].state is PostState.rejected
+    assert led.posts["pub"].error_reason == _MISSING_URL_TERMINAL
+    assert led.posts["pub"].public_url is None
+    young = led.posts["young"]
+    assert young.state is PostState.needs_reconcile
+    assert young.error_reason == _AWAITING_PERMALINK
+    assert young.model_dump() == before_young
+    assert led.posts["other"].model_dump() == before_other
+    held = led.posts["held"]
+    assert held.state is PostState.needs_reconcile
+    assert held.public_url is None
+    assert held.error_reason == _AWAITING_PERMALINK
+    watch = {r.post_id for r in inflight_watch(led, cfg, now=now)}
+    assert "old" not in watch and "pub" not in watch
+    assert "young" in watch and "other" in watch and "held" in watch
+    snap = old_p.model_dump()
+    pub_snap = led.posts["pub"].model_dump()
+    led = reconcile_posts(led, cfg, now=now, get_status=lambda sid: bodies[sid])
+    assert led.posts["old"].model_dump() == snap
+    assert led.posts["pub"].model_dump() == pub_snap
+    assert led.posts["young"].error_reason == _AWAITING_PERMALINK
+    led.save()
+    assert _requeue_rate_limited_for_daemon(cfg) == 0
+    assert Ledger.load(cfg).posts["old"].state is PostState.rejected
+
+
+def test_awaiting_permalink_poll_error_is_not_a_terminal(tmp_path):
+    # A failed read is not "still no https". The row stays for a later pass that can capture.
+    from datetime import datetime, timedelta, timezone
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    led.add_post(Post(id="down", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="postiz_down",
+                      error_reason=_AWAITING_PERMALINK,
+                      scheduled_time=(now - timedelta(hours=80)).isoformat()))
+    before = led.posts["down"].model_dump()
+
+    def boom(_sid):
+        raise RuntimeError("status down")
+
+    led = reconcile_posts(led, cfg, now=now, get_status=boom)
+    assert led.posts["down"].model_dump() == before
+    assert led.posts["down"].state is PostState.needs_reconcile
+
+
+def test_awaiting_permalink_birth_token_keeps_remint(tmp_path):
+    # This reason on a birth token is still 1344's remint, or the not-promotable reject.
+    from datetime import datetime, timedelta, timezone
+    from fanops.reconcile import _BIRTH_NOT_PROMOTABLE
+    from fanops.timeutil import parse_iso
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    _live_lineage(led)
+    now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    old = (now - timedelta(hours=40)).isoformat()
+    led.add_post(Post(id="birth", parent_id="c", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="fanops_birth",
+                      error_reason=_AWAITING_PERMALINK, scheduled_time=old))
+    led.add_post(Post(id="dead", parent_id="missing", account="a", account_id="1",
+                      platform=Platform.instagram, caption="x",
+                      state=PostState.needs_reconcile, submission_id="fanops_dead",
+                      error_reason=_AWAITING_PERMALINK, scheduled_time=old))
+    polled = []
+    led = reconcile_posts(led, cfg, now=now,
+                          get_status=lambda sid: polled.append(sid) or {"status": "in-progress"})
+    assert polled == []
+    birth = led.posts["birth"]
+    assert birth.state is PostState.queued
+    assert birth.submission_id == "fanops_birth"
+    assert birth.error_reason is None
+    assert parse_iso(birth.scheduled_time) > now
+    dead = led.posts["dead"]
+    assert dead.state is PostState.rejected
+    assert dead.error_reason == _BIRTH_NOT_PROMOTABLE
+    assert dead.submission_id == "fanops_dead"
+    assert dead.state is not PostState.queued
