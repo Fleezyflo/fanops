@@ -121,15 +121,24 @@ def _ig_failopen_maybe_escalate(post, led: Ledger, captured_url, log) -> tuple:
 
 def _tiktok_url_confirmed(cfg: Config, post, url: Optional[str], sub: Optional[str],
                           reported_username: Optional[str], *, get=None) -> bool:
-    """REST-gate for TikTok: real submission_id + safe_public_url + oEmbed author == Zernio-reported username."""
+    """Real submission_id + safe url + tiktok_permalink_verdict '' (proven). Any other reason parks.
+
+    oembed_no_author is not proven. The verdict fetches GET /analytics?postId= itself when the
+    oEmbed author is missing; a status body is never passed as analytics_body."""
     ok = safe_public_url(url)
     if not (ok and is_real_submission_id(sub)):
         return False
     if not (reported_username or "").strip():
         return False
     try:
-        from fanops.post.metrics import verify_tiktok_permalink
-        return bool(verify_tiktok_permalink(cfg, ok, reported_username, get=get))
+        from fanops.post.metrics.zernio_read import tiktok_permalink_verdict
+        reason = tiktok_permalink_verdict(
+            cfg, url, reported_username, get=get,
+            account_id=post.account_id, submission_id=sub)
+        if reason == "":
+            return True
+        get_logger(cfg)("reconcile", post.id, "unverified_identity_parked", reason=reason)
+        return False
     except Exception as exc:
         get_logger(cfg)("reconcile", post.id, "tiktok_verify_error", err=str(exc)[:120])
         return False
@@ -495,13 +504,37 @@ def _auto_heal_unbound_submissions(cfg: Config, led: Ledger, poll, log, now: dat
             _try_vendor_lookup_bind(cfg, led, post, log, now, url_hint=hint)
 
 
+def _reported_tiktok_username(info: dict, post) -> str | None:
+    """Username for post.account_id. A tiktokAccounts row with that accountId wins.
+
+    A row whose accountId is some other integration is not this post. Rows with no accountId
+    are not a disambiguation — get_status still puts the sole-row name in tiktokUsername."""
+    acct = str(getattr(post, "account_id", "") or "").strip()
+    accounts = info.get("tiktokAccounts")
+    if isinstance(accounts, list) and acct:
+        saw_other = False
+        for row in accounts:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("accountId") or "").strip()
+            if row_id == acct:
+                name = row.get("username")
+                return name.strip() if isinstance(name, str) and name.strip() else None
+            if row_id:
+                saw_other = True
+        if saw_other:                                    # other integrations listed; ours is not
+            return None
+    name = info.get("tiktokUsername")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
 def _capture_publish_fields(info: dict, post) -> tuple[str | None, str | None, str | None, str | None]:
     """Shared published-row capture: (captured_url, reported_username, new_sub, release_id)."""
     real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
                  if is_real_submission_id(info.get(k))), None)
     new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
     captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
-    reported_username = info.get("tiktokUsername")
+    reported_username = _reported_tiktok_username(info, post)
     _rid = info.get("releaseId")
     _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
     return captured_url, reported_username, new_sub, _rid
@@ -887,11 +920,7 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     continue
             else:
                 # Inline liveness (no poll cache — direct reconcile_posts callers / tests).
-                real = next((info[k] for k in ("postSubmissionId", "id", "submissionId")
-                             if is_real_submission_id(info.get(k))), None)
-                new_sub = real or (post.submission_id if is_real_submission_id(post.submission_id) else None)
-                captured_url = safe_public_url(info.get("publicUrl")) or post.public_url
-                reported_username = info.get("tiktokUsername")
+                captured_url, reported_username, new_sub, _rid = _capture_publish_fields(info, post)
                 if not (captured_url or "").strip():
                     from fanops.models import Platform as _Plat
                     if post.platform is _Plat.tiktok:
@@ -909,8 +938,6 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                     log("reconcile", post.id, "published_no_url_parked")
                     continue
                 _reason = None
-                _rid = info.get("releaseId")
-                _rid = _rid.strip() if isinstance(_rid, str) and _rid.strip() else None
                 if post.platform is Platform.tiktok:
                     if not _tiktok_url_confirmed(cfg, post, captured_url, new_sub, reported_username):
                         _reason = _UNVERIFIED_TIKTOK
