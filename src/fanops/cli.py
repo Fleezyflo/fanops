@@ -955,11 +955,12 @@ def _check_preflight(cfg: Config) -> int:
     do credentialless nothing — the #1 cutover trap. Sibling to _check_accounts (config-level):
     returns 0 clean, else prints an actionable line to stderr and returns 2.
 
-      - `grok` (`cfg.llm_cli_binary`) is not on PATH: gates are answered ONLY by the LLM (the
-        manual responder was retired). Without the binary, reachable gates raise
-        ToolchainMissingError and stay pending -> zero content. Hard exit 2 with an install +
-        `grok login` pointer (empty/unset FANOPS_RESPONDER resolves to llm too). Login is the
-        grok session file, not an API key; also probes `grok models`.
+      - A missing `grok` binary (`cfg.llm_cli_binary`) is not a process-wide refusal. It is a
+        failing row from health_probes.dep_health_list. LLM stages stop (the responder
+        quarantines ToolchainMissingError per gate). Publish and reconcile still run.
+
+      - `grok` on PATH but `grok models` fails: hard exit 2. Login is the grok session file,
+        not an API key.
 
       - FANOPS_RESPONDER set to anything but 'llm' (or unset): HARD REFUSE — there is no manual mode to
         fall back to, so a bad value must fail loudly rather than silently stop answering gates."""
@@ -971,13 +972,8 @@ def _check_preflight(cfg: Config) -> int:
     except ValueError as e:
         problems.append(str(e))
     cli_bin = cfg.llm_cli_binary
-    if shutil.which(cli_bin) is None:
-        # ALWAYS fail closed: gates are answered only by the LLM, so a missing CLI produces zero content.
-        problems.append(
-            "`grok` is not on PATH — the autonomous responder shells `grok --no-auto-update` to "
-            "answer every gate. Install Grok CLI and run `grok login` on this host (session file, "
-            "no API key).")
-    elif not grok_models_ok():
+    # Missing binary is health_probes.llm_cli_dep_health (a failure row), not this refusal.
+    if shutil.which(cli_bin) is not None and not grok_models_ok():
         problems.append(
             "`grok models` failed — grok is on PATH but not logged in. Run `grok login` "
             "(session file, no API key).")
@@ -1031,11 +1027,12 @@ def _heartbeat(cfg: Config, s: dict, *, origin: str | None = None) -> None:
     """B5/E2: emit a heartbeat line every run/advance so an external monitor diffing consecutive
     lines can tell 'alive-but-idle' (ts advances, published_in_run may be 0) from 'cron is dead'
     (ts frozen / no new line). The ts comes from a LIVE clock so it changes every invocation —
-    that mutation is the load-bearing signal, not cosmetic. Printed to stdout AND appended to
+    that mutation is the load-bearing signal, not cosmetic. Printed to stdout (flushed — launchd
+    block-buffers the pipe, so an unflushed line never lands in daemon.out) AND appended to
     cfg.log_path via get_logger (which mkdirs reports/) so cron+mail/PagerDuty can alert.
     `origin='loop'` marks resident --loop ticks; daemon.status ignores heartbeats without it."""
     hb = cli_run.heartbeat_dict(cfg, s)
-    print(json.dumps(hb))
+    print(json.dumps(hb), flush=True)
     cli_run.heartbeat_log(cfg, hb, origin=origin)
 
 def cmd_run(cfg: Config, args) -> int:

@@ -27,5 +27,9 @@ updates:
       - dependency-name: "flask"
       - dependency-name: "pydantic"
       - dependency-name: "instagrapi"
+    ignore:
+      # instagrapi 3.x: curl default transport (unpinned curl_cffi fails the hashed install), login() with no password-endpoint fallback, 2.18 envelopes stay on requests (accounts split by age); CI fakes the client, so remove only in a planned migration proven by a live scrape-login.
+      - dependency-name: "instagrapi"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore"
