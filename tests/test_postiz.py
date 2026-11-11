@@ -316,7 +316,7 @@ def test_dedup_two_equally_close_publish_dates_does_not_adopt(tmp_path, monkeypa
     post_mock = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
     rows = [
         {**_matching_postiz_row(sid="a"), "publishDate": "2026-07-16T12:05:00Z"},
-        {**_matching_postiz_row(sid="b"), "publishDate": "2026-07-16T11:55:00Z"},
+        {**_matching_postiz_row(sid="b"), "publishDate": "2026-07-16T12:05:00Z"},
     ]
     _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": rows}))
     led = PostizPoster(cfg).publish(led, "p1")
