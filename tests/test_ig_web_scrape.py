@@ -194,6 +194,35 @@ def test_open_web_session_refuses_without_safari(tmp_path, monkeypatch):
         assert "profile" in str(e) or "session" in str(e)
 
 
+def test_open_web_session_names_safari_setting_when_javascript_refused(tmp_path, monkeypatch):
+    """Safari refuses `do JavaScript` while Allow JavaScript from Apple Events is off. Only the operator can
+    turn it on, so the opener names the Safari menu path — not scrape-login, which never opens Safari —
+    and stops at the first refusal instead of polling it. osascript's own text stays out of the reason."""
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    refusal = ("173:196: execution error: Safari got an error: You must enable “Allow JavaScript from Apple "
+               "Events” in the Developer section of Safari Settings to use “do JavaScript”. (8)\n")
+    scripts = []
+
+    def fake_co(cmd, *a, **k):
+        script = k.get("input") or ""
+        scripts.append(script)
+        if "do JavaScript" in script:
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr=refusal)
+        return "have\n"
+
+    monkeypatch.setattr("subprocess.check_output", fake_co)
+    try:
+        open_web_session(Config(root=tmp_path), "u")
+        raise AssertionError("expected ScrapeUnavailable")
+    except ScrapeUnavailable as e:
+        msg = str(e)
+    assert "Safari > Settings > Advanced > Show features for web developers" in msg
+    assert "Developer > Allow JavaScript from Apple Events" in msg
+    assert "scrape-login" not in msg
+    assert "execution error" not in msg and "(8)" not in msg
+    assert sum("do JavaScript" in s for s in scripts) == 1
+
+
 def test_lock_walk_uses_unfrozen_users(tmp_path, monkeypatch):
     monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,wolf")
     cfg = Config(root=tmp_path)

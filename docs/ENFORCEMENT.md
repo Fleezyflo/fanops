@@ -143,9 +143,10 @@ from "passed silently" would rebuild the blind spot it exists to close.
   `[FAIL]` and exits non-zero.
 - `.github/workflows/nightly.yml` — pip-audit (`continue-on-error: true`) + ASR smoke. `asr-smoke`
   restores an `actions/cache` of `~/.cache/huggingface` keyed to the pinned `tiny` checkpoint and
-  `pyproject.toml`, then prewarms `WhisperModel` before pytest. Schedule runs require repo secret
-  `HF_TOKEN` (GitHub Actions only — not product `CONFIG.md`). An empty secret fails the prewarm
-  and the smoke. Anonymous Hub access is not a pass. Scheduled, independent; never touches the e2e job.
+  `pyproject.toml`, then prewarms `WhisperModel` before pytest. No token: the product
+  (`fanops._fwrun._load_model`) fetches the model anonymously, so the smoke does too, and
+  `tests/test_ci_asr_hf_prewarm.py` fails if the job carries any secret or Hub token name.
+  Scheduled, independent; never touches the e2e job.
   Whether it is actually ENABLED in GitHub is DC-8's question — from 2026-07-14 it was not, and
   nothing here could tell.
 
