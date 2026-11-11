@@ -640,6 +640,8 @@ _MISSING_URL_PARK = (
     "https url captured (M2 safe_public_url rejected it); re-polling next pass")
 _MISSING_URL_TERMINAL = (
     "publish_missing_url_terminal: backend reports published but no valid https url")
+# Written by _publish_one when the accept has no safe_public_url. Not a birth token.
+_AWAITING_PERMALINK_PREFIX = "submitted_awaiting_permalink:"
 _PERMALINK_KEYS = ("publicUrl", "releaseURL", "platformPostUrl", "permalink", "postUrl", "shareUrl")
 
 
@@ -671,6 +673,21 @@ def _permalink_on_status(info) -> str | None:
                 if url:
                     return url
     return None
+
+
+def _awaiting_permalink_unresolved(post, info, now) -> bool:
+    """Accept parked needs_reconcile with no https yet. A permalink on the post or on this
+    observation stays for the published branch to capture. Past the escalate window, with
+    neither, the row is the missing-url terminal — once, not a rewrite every pass."""
+    if post.state is not PostState.needs_reconcile:
+        return False
+    if not (post.error_reason or "").startswith(_AWAITING_PERMALINK_PREFIX):
+        return False
+    if safe_public_url(post.public_url):
+        return False
+    if _permalink_on_status(info):
+        return False
+    return _past_escalate(post, now)
 
 
 def _close_missing_url(led: Ledger, post, now, log) -> None:
@@ -1149,10 +1166,15 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 log("reconcile", post.id, f"left: {status or 'unknown'}")
                 continue
             # Pending: the observation did not RESOLVE the post. Age-escalate submitting only.
+            # Aged submitted_awaiting_permalink with no https uses the missing-url terminal.
+            # A birth token never reaches here. A poll error never reaches here.
             term = _apply_age_terminal(post, now)
             if term is not None:
                 led.posts[post.id] = post.model_copy(update=term["update"])
                 log("reconcile", post.id, term["log"])
+                continue
+            if _awaiting_permalink_unresolved(post, info, now):
+                _close_missing_url(led, post, now, log)
                 continue
             log("reconcile", post.id, f"left: {status or 'unknown'}")
     _remint_birth_tokens(led, cfg, remint_ids, now, log)
