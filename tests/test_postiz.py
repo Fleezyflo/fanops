@@ -282,6 +282,62 @@ def test_publish_pre_post_dedup_adopts_without_post(tmp_path, monkeypatch, mocke
     assert led.posts["p1"].submission_id == "postiz_existing"
 
 
+def test_dedup_two_identical_captions_does_not_adopt(tmp_path, monkeypatch, mocker):
+    # Two clips with the same hashtag line are not one post. No publishDate to separate them,
+    # so the lookup refuses and the caller POSTs.
+    cfg = _cfg(tmp_path, monkeypatch); led = _led(cfg, _post())
+    post_mock = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    rows = [_matching_postiz_row(sid="a"), _matching_postiz_row(sid="b")]
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": rows}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_called()
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_dedup_two_captions_adopts_the_unique_closest_publish_date(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post().model_copy(update={"submission_started_at": "2026-07-16T12:00:00Z"})
+    led = _led(cfg, post)
+    post_mock = mocker.patch("fanops.post.postiz.requests.post")
+    rows = [
+        {**_matching_postiz_row(sid="near"), "publishDate": "2026-07-16T12:01:00Z"},
+        {**_matching_postiz_row(sid="far"), "publishDate": "2026-07-16T18:00:00Z"},
+    ]
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": rows}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_not_called()
+    assert led.posts["p1"].submission_id == "near"
+
+
+def test_dedup_two_equally_close_publish_dates_does_not_adopt(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post().model_copy(update={"submission_started_at": "2026-07-16T12:00:00Z"})
+    led = _led(cfg, post)
+    post_mock = mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    rows = [
+        {**_matching_postiz_row(sid="a"), "publishDate": "2026-07-16T12:05:00Z"},
+        {**_matching_postiz_row(sid="b"), "publishDate": "2026-07-16T12:05:00Z"},
+    ]
+    _integrations_get(mocker, posts_get=lambda *a, **kw: _R(200, {"posts": rows}))
+    led = PostizPoster(cfg).publish(led, "p1")
+    post_mock.assert_called()
+    assert led.posts["p1"].submission_id == "postiz_new"
+
+
+def test_dedup_query_includes_the_adjacent_utc_day(tmp_path, monkeypatch, mocker):
+    cfg = _cfg(tmp_path, monkeypatch)
+    post = _post().model_copy(update={"submission_started_at": "2026-07-16T00:30:00Z"})
+    led = _led(cfg, post)
+    seen = {}
+    def posts_get(url, **kw):
+        seen["params"] = kw.get("params") or {}
+        return _R(200, {"posts": []})
+    mocker.patch("fanops.post.postiz.requests.post", return_value=_R(201, {"id": "postiz_new"}))
+    _integrations_get(mocker, posts_get=posts_get)
+    PostizPoster(cfg).publish(led, "p1")
+    assert seen["params"]["startDate"] == "2026-07-15"
+
+
 def test_publish_does_not_adopt_submission_held_by_another_post(tmp_path, monkeypatch, mocker):
     # Fan accounts repost the same clip and hashtags-only captions collide, so a content + integration
     # match can be another post's create. Adopting it would swallow this post; it must ship as its own.
