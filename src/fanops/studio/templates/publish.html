@@ -3,8 +3,8 @@
 {% block title %}Recovery{% endblock %}
 {% block body %}
   <h2>Recovery &amp; manual publish</h2>
-  {% if not cfg.is_live %}<p class="publish-guard warn">Publishing is off — use <strong>Mark posted</strong> if you shipped by hand, or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>{% endif %}
-  <p class="muted">Queued posts you publish yourself, or posts that need a manual nudge. For auto-publish, use <a href="{{ url_for('schedule') }}">Schedule</a> or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>
+  {% if not cfg.is_live %}<p class="publish-guard warn">Publishing is off — record the real platform submission id and permalink. A <code>fanops_</code> birth token is not a published post. Or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>{% endif %}
+  <p class="muted">Queued posts you publish yourself, or posts that need a manual nudge. Record the real platform submission id and permalink (<code>fanops resolve &lt;post_id&gt; published --url &lt;permalink&gt; --submission-id &lt;real-id&gt;</code>). A <code>fanops_</code> birth token is not a published post. For auto-publish, use <a href="{{ url_for('schedule') }}">Schedule</a> or <a href="{{ url_for('golive_connect') }}">Go Live</a>.</p>
   {% include "_account_filter.html" %}
   {% if rows %}
   <ul class="publish-scan-list">
@@ -21,7 +21,7 @@
         <div class="row-actions-menu">
           <a class="button" href="{{ url_for('media', post_id=r.post_id) }}" download>Download clip</a>
           <form hx-post="{{ url_for('do_mark_posted', post_id=r.post_id) }}" hx-target="#res-{{ r.post_id }}" hx-swap="innerHTML">
-            <input name="url" placeholder="live URL (optional)">
+            <input name="url" placeholder="permalink">
             <button type="submit" class="primary">Mark posted</button>
           </form>
           {% if cfg.is_live %}
