@@ -957,6 +957,93 @@ def test_lock_ready_no_seat_opens_safari_once_not_per_source(tmp_path, monkeypat
     assert seen == ["mark", "wolf"]
 
 
+def test_lock_walk_records_why_scrape_was_unavailable(tmp_path, monkeypatch):
+    """A refused seat logs its fixed reason with the source id and the user, at error.
+
+    Main dropped the ScrapeUnavailable in _iter_lock_clients; run.log only said `<sid> no_scrape`."""
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "u")
+    cfg = _cfg(tmp_path)
+    reason = "scrape-reason-visible: unique refusal"
+
+    def opener(_cfg, user=None, **_k):
+        raise ScrapeUnavailable(reason)
+
+    assert ensure_source_lock(cfg, _src("src_9"), open_client_fn=opener,
+                              research_fn=lambda *_a: ["music"]) is False
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [(r["unit_id"], r["level"], r["user"], r["reason"]) for r in recs
+            if r.get("outcome") == "scrape_unavailable"] == [("src_9", "error", "u", reason)]
+    assert [r["unit_id"] for r in recs if r.get("outcome") == "no_scrape"] == ["src_9"]
+
+
+@pytest.mark.parametrize("where", ["search", "measure"])
+def test_stop_dead_records_scrape_unavailable_text(tmp_path, where):
+    """Both stop_dead branches carry ScrapeUnavailable's fixed text in `reason`, not only its class name."""
+    cfg = _cfg(tmp_path)
+    reason = f"scrape-reason-visible: {where} refusal"
+
+    class _Refuses(_SearchClient):
+        def search_hashtags(self, query):
+            if where == "search":
+                raise ScrapeUnavailable(reason)
+            return super().search_hashtags(query)
+
+    client = _Refuses({"music": [_Hit("music")]}, refuse=ScrapeUnavailable(reason))
+    ensure_source_lock(cfg, _src(), client=client, research_fn=lambda *_a: ["music"], **_ok_graph())
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    assert [(r["err"], r.get("reason")) for r in recs if r.get("outcome") == "stop_dead"] == [
+        ("ScrapeUnavailable", reason)]
+
+
+def test_stop_dead_keeps_platform_text_out_of_the_log(tmp_path):
+    """A platform stop's text can carry Instagram's response; stop_dead records only its class name."""
+    from fanops.ig_safari_shell import LoginRequired
+    cfg = _cfg(tmp_path)
+    raw = "instagram response text that must not reach run.log"
+
+    class _Dead(_SearchClient):
+        def search_hashtags(self, query):
+            raise LoginRequired(raw)
+
+    ensure_source_lock(cfg, _src(), client=_Dead({}), research_fn=lambda *_a: ["music"], **_ok_graph())
+    text = cfg.log_path.read_text()
+    recs = [json.loads(line) for line in text.splitlines() if line.strip()]
+    assert [(r["err"], r.get("reason")) for r in recs if r.get("outcome") == "stop_dead"] == [
+        ("LoginRequired", "LoginRequired")]
+    assert raw not in text
+
+
+def test_lock_ready_closed_seat_refusals_log_at_info(tmp_path, monkeypatch):
+    """One error line per scrape user names the real cause; the sources after it meet the closed seat at info.
+
+    Main logged neither, and the closed seat's own text pointed at scrape-login whatever the cause."""
+    from fanops.ledger import Ledger
+    from fanops.models import Source, SourceState
+    monkeypatch.setenv("FANOPS_IG_SCRAPE_USER", "mark,wolf")
+    cfg = _cfg(tmp_path)
+    led = Ledger.load(cfg)
+    for i, stem in enumerate(("a", "b", "c"), start=1):
+        led.add_source(Source(id=f"src_{i}", source_path=str(tmp_path / f"{stem}.mp4"),
+                              state=SourceState.catalogued, created_at=f"2026-09-0{i}T00:00:00Z"))
+        _write_whisper(cfg, stem)
+    led.save()
+    reason = "scrape-reason-visible: real refusal"
+
+    def opener(_cfg, user=None, **_k):
+        raise ScrapeUnavailable(reason)
+
+    lock_ready_sources(cfg, open_client_fn=opener, research_fn=lambda *_a: ["music"])
+    recs = [json.loads(line) for line in cfg.log_path.read_text().splitlines() if line.strip()]
+    refused = [r for r in recs if r.get("outcome") == "scrape_unavailable"]
+    assert [(r["unit_id"], r["user"], r["reason"]) for r in refused if r["level"] == "error"] == [
+        ("src_3", "mark", reason), ("src_3", "wolf", reason)]
+    closed = [r for r in refused if r["level"] == "info"]
+    assert [(r["unit_id"], r["user"]) for r in closed] == [
+        ("src_2", "mark"), ("src_2", "wolf"), ("src_1", "mark"), ("src_1", "wolf")]
+    assert all("closed earlier in this run" in r["reason"] and "scrape-login" not in r["reason"]
+               for r in closed)
+
+
 def test_lock_default_opener_is_open_client(tmp_path, monkeypatch):
     """Default lock opener (open_client_fn is None) is open_web_session. An explicit opener still wins."""
     import inspect
