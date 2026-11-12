@@ -2218,3 +2218,85 @@ def test_awaiting_permalink_birth_token_keeps_remint(tmp_path):
     assert dead.error_reason == _BIRTH_NOT_PROMOTABLE
     assert dead.submission_id == "fanops_dead"
     assert dead.state is not PostState.queued
+
+
+def _no_poll(sid):
+    raise AssertionError(sid)
+
+
+def test_dedup_one_postiz_row_adopts_instagram_birth_token(tmp_path, mocker):
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc)
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="ig1",
+                      platform=Platform.instagram, caption="See this", sent_content="See this",
+                      state=PostState.submitting, submission_id="fanops_abc",
+                      submission_started_at="2026-07-16T12:00:00Z",
+                      scheduled_time="2026-07-16T12:00:00Z"))
+    sid = "cmwrealid00000000000000001"
+    window = {sid: {
+        "state": "PUBLISHED", "status": "published",
+        "releaseURL": "https://www.instagram.com/reel/abc/", "releaseId": "1789",
+        "raw": {"content": "See this", "integration": {"id": "ig1"},
+                "publishDate": "2026-07-16T12:05:00Z", "state": "PUBLISHED",
+                "releaseURL": "https://www.instagram.com/reel/abc/"},
+    }}
+    posted = mocker.patch("requests.post")
+    led = reconcile_posts(led, cfg, now=now, postiz_window=window, get_status=_no_poll)
+    assert posted.call_count == 0
+    p = led.posts["p1"]
+    assert p.submission_id == sid
+    assert p.state is PostState.published
+    assert p.public_url == "https://www.instagram.com/reel/abc/"
+
+
+def test_dedup_two_equally_close_postiz_rows_do_not_adopt(tmp_path, mocker):
+    from datetime import datetime, timezone
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    now = datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc)
+    led.add_post(Post(id="p1", parent_id="c", account="a", account_id="ig1",
+                      platform=Platform.instagram, caption="See this", sent_content="See this",
+                      state=PostState.submitting, submission_id="fanops_abc",
+                      submission_started_at="2026-07-16T12:00:00Z"))
+    raw = {"content": "See this", "integration": {"id": "ig1"},
+           "publishDate": "2026-07-16T12:05:00Z", "state": "QUEUE"}
+    window = {
+        "cma": {"state": "QUEUE", "status": "scheduled", "releaseURL": None, "releaseId": None, "raw": raw},
+        "cmb": {"state": "QUEUE", "status": "scheduled", "releaseURL": None, "releaseId": None,
+                "raw": dict(raw)},
+    }
+    posted = mocker.patch("requests.post")
+    led = reconcile_posts(led, cfg, now=now, postiz_window=window, get_status=_no_poll)
+    assert posted.call_count == 0
+    assert led.posts["p1"].state is PostState.submitting
+    assert led.posts["p1"].submission_id == "fanops_abc"
+
+
+def test_queued_real_sid_absent_from_mirror_parks_needs_reconcile(tmp_path):
+    from fanops.reconcile import _mirror_info
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    sid = "cmthevbww001np87w7qdcuwkb"
+    _post(led, "p1", PostState.queued, sub=sid)
+    led = reconcile_posts(led, cfg, mirror={sid: _mirror_info(None)}, get_status=_no_poll)
+    p = led.posts["p1"]
+    assert p.state is PostState.needs_reconcile
+    assert p.submission_id == sid
+    assert sid in (p.error_reason or "")
+
+
+def test_queued_real_sid_published_in_mirror_promotes(tmp_path):
+    cfg = Config(root=tmp_path)
+    led = Ledger.load(cfg)
+    sid = "cmthevbww001np87w7qdcuwkb"
+    _post(led, "p1", PostState.queued, sub=sid)
+    led = reconcile_posts(led, cfg, get_status=_no_poll, mirror={sid: {
+        "status": "published", "publicUrl": "https://www.instagram.com/reel/xyz/",
+        "postiz_state": "PUBLISHED", "releaseId": "1789",
+    }})
+    p = led.posts["p1"]
+    assert p.state is PostState.published
+    assert p.public_url == "https://www.instagram.com/reel/xyz/"
+    assert p.submission_id == sid

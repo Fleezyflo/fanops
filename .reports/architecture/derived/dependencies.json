@@ -1754,6 +1754,7 @@
         "fanops.models",
         "fanops.post.metrics",
         "fanops.post.metrics.zernio_read",
+        "fanops.post.postiz",
         "fanops.post.postiz_errors",
         "fanops.post.publish_archive",
         "fanops.post.run",
@@ -3407,7 +3408,7 @@
   "generated_by": "tools/arch",
   "generator_version": "arch/1.0.0",
   "hand_edits": "FORBIDDEN — this file is regenerated. Edit the code, or the DECLARED artifact it derives from, and re-run the regeneration command.",
-  "lazy_downward_count": 302,
+  "lazy_downward_count": 303,
   "lazy_lateral": [
     {
       "from": "fanops.accounts",
@@ -5267,7 +5268,7 @@
     "G2_module_sccs_total": 109,
     "G2_non_trivial_sccs": 8,
     "compile_edges_G1": 850,
-    "lazy_edges": 478,
+    "lazy_edges": 479,
     "lazy_edges_lateral": 49,
     "lazy_edges_strictly_upward": 127,
     "lazy_edges_to_equal_or_higher_level": 176,
