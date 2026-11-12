@@ -31,13 +31,13 @@ backend stops resolving is LATE, not failed, and lateness is DERIVED from the ro
 at read time by the digest — never stamped into `error_reason`, because a stamp is a decision and
 this module makes none.
 
-Consequence (the honest boundary): AUDIT H1 (Phase D) stamps EVERY crossposted post with a client
-idempotency token (submission_id="fanops_..."), which is not a real backend id, so such a post can
-never appear in a Postiz window and is never a Zernio GET key. It is never mirrored and never
-carries a postiz_state, but it IS still visited, so the (state, age) escalation can move a
-crash-stranded `submitting` claim into `needs_reconcile`. A post with genuinely NO submission_id
-at all (older data) is SKIPPED for human reconcile (the digest surfaces it). A real backend id
-from an ambiguous-5xx body overwrites the token, making that post cleanly auto-reconcilable. We
+Consequence (the honest boundary): a `fanops_` token is not a GET key and is not a mirror key.
+Instagram and YouTube bind it to a Postiz row only through the publish dedup identity
+(`_pick_postiz_adopt`: one content+integration row, or one unique in-window publishDate). No
+match or a tie leaves the token for the age ladder. A `queued` post whose real id is absent from
+that list is parked `needs_reconcile` with the id kept, so publish_due does not send it again.
+A post with genuinely NO submission_id at all (older data) is SKIPPED for human reconcile. A
+real backend id from an ambiguous-5xx body overwrites the token. We
 never guess a post's fate — a wrong guess either drops a live post (untrackable) or re-queues a
 live one (double-publish), the exact C1/cascade hazards.
 
@@ -862,6 +862,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         ensure_up(cfg)
     polled_as: dict[str, str] = {}                       # post_id -> submission_id at read time (stale guard)
     mirror: dict[str, dict] = {}                         # sid -> the observation reconcile_posts applies
+    window = None                                        # raw Postiz list, for fanops_ birth-token adopt
     # Every PENDING post on the Postiz side starts UNOBSERVED: status unknown, no postiz_state key, so the
     # apply writes nothing on its behalf. A successful window overwrites that with the real observation. A
     # failed window therefore degrades to exactly this: visited, un-mirrored, un-written.
@@ -869,8 +870,10 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         if p.state in _RECONCILABLE or (p.state in _MIRROR_HELD and is_real_submission_id(p.submission_id)):
             mirror[p.submission_id] = {"status": "unknown"}
             polled_as[p.id] = p.submission_id
-    if mirrored:
-        window = None
+    birth_tokens = [p for p in token_only
+                    if p.platform in (Platform.instagram, Platform.youtube)
+                    and not is_real_submission_id(p.submission_id)]
+    if mirrored or birth_tokens:
         try:
             from fanops.post.metrics import PostizStatusClient
             window = PostizStatusClient(cfg).list_all()   # ONE call, widest window, no lock held
@@ -878,7 +881,7 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
             raise                                        # bad key: every read fails -> halt, don't grind
         except Exception as exc:
             get_logger(cfg)("reconcile", "-", "mirror_fetch_error", err=str(exc)[:200], posts=len(mirrored))
-        if window is not None:
+        if mirrored and window is not None:
             for p in mirrored:
                 info = _mirror_info(window.get(p.submission_id))
                 if info["status"] == "published" and (
@@ -920,7 +923,8 @@ def reconcile_due(cfg: Config) -> dict[str, int]:
         if isinstance(r, Exception): raise r             # reconcile_posts' per-post except logs it
         return r
     with Ledger.transaction(cfg) as led:
-        led = reconcile_posts(led, cfg, get_status=cached, polled_as=polled_as, mirror=mirror)
+        led = reconcile_posts(led, cfg, get_status=cached, polled_as=polled_as, mirror=mirror,
+                              postiz_window=window)
         return {"needs_reconcile": len(led.posts_in_state(PostState.needs_reconcile)),
                 "published": len(led.posts_in_state(PostState.published)),
                 "healed_submitting": healed}
@@ -949,10 +953,57 @@ def _route_held_vendor_error(led: Ledger, post, info: dict, log) -> None:
     log("reconcile", post.id, "failed: queued held real sid on vendor ERROR", kind=kind.value)
 
 
+def _adopt_postiz_birth(cfg: Config, led: Ledger, post, window: dict | None,
+                        now: datetime) -> tuple[str, dict] | None:
+    """Bind an Instagram or YouTube `fanops_` token to one Postiz list row. No network.
+
+    Identity is the publish dedup: content (`caption_shown`) + integration, then
+    `_pick_postiz_adopt`. One row adopts. Several adopt only when one publishDate is the
+    unique closest inside the attempt. A tie or a miss returns None and does not POST."""
+    if not window or post.platform not in (Platform.instagram, Platform.youtube):
+        return None
+    if is_real_submission_id(post.submission_id):
+        return None
+    if post.state not in (PostState.submitting, PostState.submitted, PostState.needs_reconcile):
+        return None
+    from fanops.caption_compose import caption_shown
+    from fanops.post.postiz import _pick_postiz_adopt, _row_integration_id, _submission_held_by_other
+    want = caption_shown(cfg, led, post)
+    want_intg = (post.account_id or "").strip()
+    if not want or not want_intg:
+        return None
+    matches: list[tuple[str, dict]] = []
+    for sid, rec in window.items():
+        raw = rec.get("raw") if isinstance(rec, dict) else None
+        if not isinstance(raw, dict) or not isinstance(sid, str) or not sid:
+            continue
+        if raw.get("content") != want:
+            continue
+        if _row_integration_id(raw) != want_intg:
+            continue
+        if _submission_held_by_other(led, sid, post.id):
+            continue
+        matches.append((sid, raw))
+    if post.submission_started_at:
+        try:
+            start = parse_iso(post.submission_started_at)
+        except ValueError:
+            start = now - timedelta(hours=24)
+    else:
+        start = now - timedelta(hours=24)
+    sid, _raw = _pick_postiz_adopt(
+        matches, anchor=start if post.submission_started_at else None,
+        attempt_start=start, attempt_end=now)
+    if not sid or sid not in window:
+        return None
+    return sid, _mirror_info(window.get(sid))
+
+
 def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus] = None,
                     now: Optional[datetime] = None,
                     polled_as: dict[str, str] | None = None,
-                    mirror: dict[str, dict] | None = None) -> Ledger:
+                    mirror: dict[str, dict] | None = None,
+                    postiz_window: dict | None = None) -> Ledger:
     """The in-lock APPLY. `mirror` is the caller's pre-fetched Postiz observations, keyed by submission
     id — this function performs NO bulk read of its own, because the read belongs outside the flock. A
     submission id present in `mirror` is answered from it and never polled; everything else pending goes
@@ -983,23 +1034,30 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
         if polled_as is not None and polled_as.get(post.id) != post.submission_id:
             log("reconcile", post.id, "skipped: stale poll (submission_id changed)")
             continue                       # M04: post mutated between read and apply — skip cached row
+        info = None
         if not is_real_submission_id(post.submission_id):
-            term = _apply_age_terminal(post, now)
-            if term is not None:
-                led.posts[post.id] = post.model_copy(update=term["update"])
-                log("reconcile", post.id, term["log"])
-            elif post.state is PostState.needs_reconcile and _past_escalate(post, now):
-                # A real vendor id never reaches this branch. Keep the birth token; do not invent one.
-                if led.can_promote(post):
-                    remint_ids.append(post.id)
+            bound = _adopt_postiz_birth(cfg, led, post, postiz_window, now)
+            if bound is None:
+                term = _apply_age_terminal(post, now)
+                if term is not None:
+                    led.posts[post.id] = post.model_copy(update=term["update"])
+                    log("reconcile", post.id, term["log"])
+                elif post.state is PostState.needs_reconcile and _past_escalate(post, now):
+                    # A real vendor id never reaches this branch. Keep the birth token; do not invent one.
+                    if led.can_promote(post):
+                        remint_ids.append(post.id)
+                    else:
+                        _drop_unpromotable_birth(led, post, log)
                 else:
-                    _drop_unpromotable_birth(led, post, log)
-            else:
-                log("reconcile", post.id, "skipped: client token is not a backend id")
-            continue
-        if post.submission_id in mirror:
+                    log("reconcile", post.id, "skipped: client token is not a backend id")
+                continue
+            sid, info = bound
+            post = post.model_copy(update={"submission_id": sid})
+            led.posts[post.id] = post
+            log("reconcile", post.id, "adopted: postiz birth token", sub=sid)
+        if info is None and post.submission_id in mirror:
             info = mirror[post.submission_id]
-        else:
+        elif info is None:
             # Per-post resilience (mirrors publish_due, run.py:70-76): one post's poll error must NOT
             # abort the whole pass — uncaught, that raise strands every post LATER in iteration order
             # (an order-dependent availability bug). Contain it to THIS post.
@@ -1163,6 +1221,11 @@ def reconcile_posts(led: Ledger, cfg: Config, *, get_status: Optional[GetStatus]
                 log("reconcile", post.id, f"left: {status or 'unknown'}")
                 continue
             if post.state is PostState.queued:
+                if (info.get("postiz_state") or "") == _MIRROR_ABSENT:
+                    led.set_post_state(post.id, PostState.needs_reconcile, error_reason=(
+                        f"vendor corpus has no row for {post.submission_id} — not re-sent")[:400])
+                    log("reconcile", post.id, "parked: queued real sid absent")
+                    continue
                 log("reconcile", post.id, f"left: {status or 'unknown'}")
                 continue
             # Pending: the observation did not RESOLVE the post. Age-escalate submitting only.
