@@ -56,6 +56,19 @@ def _cooling_off(p: Post, now: datetime, cool_off: timedelta | None) -> bool:
     return started is not None and now - started < cool_off
 
 
+def _rate_limit_held(p: Post, now: datetime, cool_off: timedelta | None) -> bool:
+    """True when this unsent 429 must stay failed.
+
+    Inside the Postiz hour it stays failed. At the retry cap with no cool-off (the Studio retry
+    passes none) it stays failed. Once that hour has elapsed, the cap does not bury it: the hour
+    is what stops a same-pass resend."""
+    if _cooling_off(p, now, cool_off):
+        return True
+    if int(getattr(p, "daemon_transient_retry", 0) or 0) < _DAEMON_TRANSIENT_MAX:
+        return False
+    return cool_off is None
+
+
 def _requeue_rate_limited_for_daemon(cfg: Config, *, cool_off: timedelta | None = None) -> int:
     """Re-queue failed 429 rows (no real id), at most one per account_id per pass, spaced by the Postiz throttle.
     The daemon prep passes `_RATE_LIMIT_COOL_OFF`; the operator's Studio retry passes none and re-queues at once."""
@@ -68,9 +81,7 @@ def _requeue_rate_limited_for_daemon(cfg: Config, *, cool_off: timedelta | None 
             continue
         if getattr(p, "error_kind", None) is not ErrorKind.rate_limit:
             continue
-        if _cooling_off(p, now, cool_off):
-            continue
-        if int(getattr(p, "daemon_transient_retry", 0) or 0) >= _DAEMON_TRANSIENT_MAX:
+        if _rate_limit_held(p, now, cool_off):
             continue
         if not led.can_promote(p):
             continue
@@ -92,12 +103,12 @@ def _requeue_rate_limited_for_daemon(cfg: Config, *, cool_off: timedelta | None 
                     continue
                 if getattr(cur, "error_kind", None) is not ErrorKind.rate_limit:
                     continue
-                if _cooling_off(cur, now, cool_off):
+                if _rate_limit_held(cur, now, cool_off):
                     continue
                 if not lg.can_promote(cur):
                     continue
                 n = int(getattr(cur, "daemon_transient_retry", 0) or 0) + 1
-                if n > _DAEMON_TRANSIENT_MAX:
+                if cool_off is None and n > _DAEMON_TRANSIENT_MAX:
                     continue
                 cur.submission_id = None
                 cur.scheduled_time = iso_z(now + gap)

@@ -337,3 +337,37 @@ def test_429_is_not_resent_in_its_pass_and_returns_after_the_postiz_hour(tmp_pat
 # submission_id idempotency is owned by
 # test_publish_transient_retry.py::test_idempotency_skips_resubmit_when_submission_id_exists
 # (an identical copy lived here; that one seeds created_at, so it is the stronger seed).
+
+
+def test_rate_limit_at_cap_stays_failed_inside_the_hour(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from fanops.post.publish_requeue import _RATE_LIMIT_COOL_OFF
+    from fanops.timeutil import iso_z
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "r1", retry=3)
+    started = datetime.now(timezone.utc) - timedelta(minutes=30)
+    with Ledger.transaction(cfg) as led:
+        led.posts["r1"].submission_started_at = iso_z(started)
+    assert _requeue_rate_limited_for_daemon(cfg, cool_off=_RATE_LIMIT_COOL_OFF) == 0
+    assert Ledger.load(cfg).posts["r1"].state is PostState.failed
+
+
+def test_rate_limit_at_cap_requeues_after_the_hour(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from fanops.post.publish_requeue import _RATE_LIMIT_COOL_OFF
+    from fanops.timeutil import iso_z
+    monkeypatch.setenv("FANOPS_POSTER", "postiz")
+    monkeypatch.setenv("POSTIZ_API_KEY", "k")
+    cfg = Config(root=tmp_path)
+    _rate_fail(cfg, "r1", retry=3)
+    started = datetime.now(timezone.utc) - timedelta(hours=2)
+    with Ledger.transaction(cfg) as led:
+        led.posts["r1"].submission_started_at = iso_z(started)
+    assert _requeue_rate_limited_for_daemon(cfg, cool_off=_RATE_LIMIT_COOL_OFF) == 1
+    p = Ledger.load(cfg).posts["r1"]
+    assert p.state is PostState.queued
+    assert p.error_kind is None
+    assert p.submission_id is None
+    assert p.daemon_transient_retry == 4
