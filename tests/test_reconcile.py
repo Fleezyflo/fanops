@@ -1102,8 +1102,8 @@ def test_reconcile_due_resting_and_held_mirror_leaves_postiz_asleep(tmp_path, mo
 
 
 def test_reconcile_due_zernio_and_token_reads_leave_postiz_asleep(tmp_path, monkeypatch, mocker):
-    # Both posts are pending, but no Postiz row can resolve either: the TikTok one is a per-post Zernio GET, and a
-    # `fanops_` token names no row. The Zernio read still runs; the stack stays asleep.
+    # The TikTok row is a per-post Zernio GET. The Instagram `fanops_` token is not a GET key, so the
+    # pass reads the Postiz list once to try a content match. That read does not wake the stack.
     from types import SimpleNamespace
     from fanops.accounts import add_account, set_backend
     _mirror_env(monkeypatch)
@@ -1122,7 +1122,7 @@ def test_reconcile_due_zernio_and_token_reads_leave_postiz_asleep(tmp_path, monk
     ensure = mocker.patch("fanops.postiz_lifecycle.ensure_up")
     reconcile_due(cfg)
     ensure.assert_not_called()
-    assert gets == ["6aa2bb24bf207c028b657feb"]
+    assert gets == ["posts", "6aa2bb24bf207c028b657feb"]
 
 
 def test_a_published_row_that_vanishes_is_recorded_absent_never_reopened(tmp_path, monkeypatch, mocker):
